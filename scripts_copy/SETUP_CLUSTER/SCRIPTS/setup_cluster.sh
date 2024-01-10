@@ -2,10 +2,10 @@
 LOCAL_IP=$(ifconfig eno1 | grep inet | awk -F"inet " '{print $2}' | awk -F' ' '{print $1}')
 
 
-REDIS_SRC_DIR="/mnt/stratos/redis/src/redis/src"
-REDIS_MAIN_SCRIPT_DIR="/mnt/stratos/redis/scripts/SETUP_CLUSTER/SCRIPTS"
-LOCAL_SETUP_DIR="/home/entallaris/redis_bin"
-YCSB_DIR="/mnt/stratos/modded_redis/bin"
+REDIS_SRC_DIR="/root/rd/src"
+REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
+LOCAL_SETUP_DIR="/root/rd/redis_bin"
+YCSB_DIR="/root/ycsb_client/bin"
 
 #YCSB_RECORDS="5000000"
 YCSB_RECORDS="500"
