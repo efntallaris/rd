@@ -1,0 +1,2 @@
+cd /mnt/stratos/modded_redis/run_workload_redis/bin
+sudo ./ycsb run redis -p "redis.host=192.168.20.1" -p "redis.port=8000" -p "redis.cluster=true" -P ../../workloads/workloadinsertonly -p status.interval=2 -s  -p \measurementtype=timeseries -p redis.timeout=10000 -threads 25
