@@ -1,35 +1,39 @@
 #!/bin/bash -e
-declare -A redis_donors
-declare -A redis_recipients
+declare -A instances
+
+LOCAL_SETUP_DIR="/root/rd/redis_bin"
 
 
+instances["redis0"]="redis0|10.10.1.1"
+instances["redis1"]="redis1|10.10.1.2"
+instances["redis2"]="redis2|10.10.1.3"
+instances["redis3"]="redis3|10.10.1.4"
+instances["redis4"]="redis4|10.10.1.5"
 
-redis_donors["redis0"]="redis0|redis0|9000|apf_redis2|db_redis2"
-redis_donors["redis1"]="redis1|redis1|9000|apf_redis0|db_redis0"
-redis_donors["redis2"]="redis2|redis2|9000|apf_redis1|db_redis1"
-redis_donors["redis3"]="redis3|redis3|9000|apf_redis1|db_redis1"
-redis_donors["redis4"]="redis4|redis4|9000|apf_redis1|db_redis1"
+instances["redis5"]="redis0|10.10.1.5"
+instances["ycsb0"]="ycsb0|10.10.1.6"
+instances["ycsb1"]="ycsb1|10.10.1.7"
+instances["ycsb2"]="ycsb2|10.10.1.8"
 
-#redis_donors["redis4"]="redis4|node05|9000|apf_redis1|db_redis1"
+for redisInstance in "${!instances[@]}"; do
+	echo "Processing $redisInstance..."
+	IFS='|' read -r -a info <<< "${instances[$redisInstance]}"
+	node_host=${info[0]}
+	echo "Attempting to run script on $node_host"
+	output=$(ssh -o StrictHostKeyChecking=no "$node_host" sudo bash <<EOF
+	    echo "Running on $node_host"
+	    pkill -9 redis-server
+	    pkill -9 redis-cli
+	    pkill -9 mpstat
+	    pkill -9 iostat
+	    pkill -9 ifstat
+	    pkill -9 ycsb
+	    rm -rf ${LOCAL_SETUP_DIR}/*
+EOF
+	2>&1)
+
+	echo "$output"
 
 
-for redisInstance in "${!redis_donors[@]}"; do
-    echo "Processing $redisInstance..."
-    IFS='|' read -r -a info <<< "${redis_donors[$redisInstance]}"
-    node_host=${info[0]}
-    echo "Attempting to run script on $node_host"
-
-    ssh "$node_host" sudo bash -c "'
-        echo "Running on $node_host"
-        pkill -9 redis-server
-        pkill -9 redis-cli
-        pkill -9 mpstat
-        pkill -9 iostat
-        pkill -9 ifstat
-        pkill -9 ycsb
-	pwd
-
-    '"
-    echo "Completed running script on $node_host"
 done
 
