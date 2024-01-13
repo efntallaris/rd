@@ -14,6 +14,10 @@ sudo apt install -y build-essential
 sudo apt install -y libatomic-ops-dev
 sudo apt-get install -y sysstat
 sudo apt-get install -y ifstat
+
+chmod +x loadibmodules.sh
+sudo ./loadibmodules.sh
+
 # Navigate to the 'deps' directory
 cd ../deps
 
@@ -40,6 +44,3 @@ chmod +x src/mkreleasehdr.sh
 sudo make
 
 
-cd -
-chmod +x loadibmodules.sh
-sudo ./loadibmodules.sh
