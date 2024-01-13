@@ -14,6 +14,31 @@ sudo apt install -y build-essential
 sudo apt install -y libatomic-ops-dev
 sudo apt-get install -y sysstat
 sudo apt-get install -y ifstat
+sudo apt-get install -y git build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev
+
+
+# Clone the rdma-core repository
+git clone https://github.com/linux-rdma/rdma-core.git
+cd rdma-core
+
+# Create a build directory and navigate into it
+mkdir build
+cd build
+
+# Configure the build
+cmake ..
+
+# Compile the source code
+make
+
+# Install the library (requires root permission)
+sudo make install
+
+# Update the library cache
+sudo ldconfig
+
+echo "Installation of librdmacm is complete."
+
 
 chmod +x loadibmodules.sh
 sudo ./loadibmodules.sh
