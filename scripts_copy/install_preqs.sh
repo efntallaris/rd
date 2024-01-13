@@ -39,3 +39,7 @@ pwd
 chmod +x src/mkreleasehdr.sh
 sudo make
 
+
+cd -
+chmod +x loadibmodules.sh
+sudo ./loadibmodules.sh
