@@ -12,8 +12,8 @@ sudo apt-get install -y pkg-config
 sudo apt-get install -y libuv1-dev
 sudo apt install -y build-essential
 sudo apt install -y libatomic-ops-dev
-sudo apt-get install -y ifstat mpstat iostat
-
+sudo apt-get install -y sysstat
+sudo apt-get install -y ifstat
 # Navigate to the 'deps' directory
 cd ../deps
 
