@@ -2,6 +2,7 @@
 declare -A instances
 
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
+LOCAL_LOG_DIR="/root/systat_logs"
 
 
 instances["redis0"]="redis0|10.10.1.1"
@@ -29,6 +30,7 @@ for redisInstance in "${!instances[@]}"; do
 	    pkill -9 ifstat
 	    pkill -9 ycsb
 	    rm -rf ${LOCAL_SETUP_DIR}/*
+	    rm -rf ${LOCAL_LOG_DIR}/*
 EOF
 	2>&1)
 

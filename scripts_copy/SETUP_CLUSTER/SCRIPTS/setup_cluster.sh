@@ -10,14 +10,12 @@ REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
 YCSB_DIR="/root/ycsb_client"
 
-#YCSB_RECORDS="5000000"
 MASTER_HOST="10.10.1.1"
 MASTER_PORT="8000"
-REDIS_HOST="10.10.1.1"
-REDIS_PORT="8000"
 REDIS_WORKLOAD="workloadfulva5050"
 
 YCSB_LOADER_INSTANCE="ycsb0"
+REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
 
 
 # 	COMPILE THE SOURCE CODE		#
@@ -31,7 +29,7 @@ redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
 redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-3"]="redis3|192.168.20.4|8000|/home/entallaris/node04.conf|node-4.aof|dump-4.rdb"
+redis_migrate_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node04.conf"
 #redis_migrate_instances["redis-4"]="redis4|192.168.20.5|8000|/home/entallaris/node05.conf|node-5.aof|dump-5.rdb"
 
 
@@ -56,7 +54,7 @@ for redis_instance in "${!redis_master_instances[@]}"; do
             cd "${REDIS_SRC_DIR}"
             sudo make PREFIX="${LOCAL_SETUP_DIR}" install
             cd "${REDIS_MAIN_SCRIPT_DIR}/HELP_SCRIPTS"
-            /bin/sh create_conf.sh ${info[3]} ${info[2]} "/proj/streamstore-PG0/experiment_outputs/${info[0]}__"
+            /bin/sh create_conf.sh ${info[3]} ${info[2]} "${REDIS_LOG_DIR}/${info[0]}__"
             cd "${LOCAL_SETUP_DIR}/bin"
             sudo ./redis-server ${info[3]}
 
@@ -92,7 +90,7 @@ tko=$(
 	cd "${REDIS_MAIN_SCRIPT_DIR}/"
 	sudo /bin/sh build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
 	cd ${YCSB_DIR}/bin
-	sudo ./ycsb.sh load redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${MAIN_DIR}/workloads/${REDIS_WORKLOAD} -threads 100
+	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${MAIN_DIR}/workloads/${REDIS_WORKLOAD} -threads 100
 EOF
 2>&1)
 echo ${tko}
