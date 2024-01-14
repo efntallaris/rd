@@ -31,7 +31,7 @@ cd build
 cmake ..
 
 # Compile the source code
-make
+make -j16
 
 # Install the library (requires root permission)
 sudo make install
@@ -59,10 +59,10 @@ cd jemalloc
 /bin/sh autogen.sh
 /bin/sh configure
 cd ..
-sudo make jemalloc
-sudo make hiredis
-sudo make hdr_histogram
-sudo make linenoise
+sudo make jemalloc -j16
+sudo make hiredis -j16
+sudo make hdr_histogram -j16
+sudo make linenoise -j16
 
 # Return to the original directory
 cd -
