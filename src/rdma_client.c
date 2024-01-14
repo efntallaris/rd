@@ -1,6 +1,7 @@
 
 #include "rdma_client.h"
 #include <stdlib.h>
+#include <errno.h>
 #include <stdio.h>
 
 
@@ -41,6 +42,7 @@ void create_ep_client(struct rdma_client_info *ci) {
 
     err = rdma_create_ep(&(ci->id), ci->res, NULL, &(ci->attr));
     if(err) {
+        fprintf(debug_file, "rdma_create_ep error: %d\n", err);
         fprintf(debug_file, "rdma_create_ep error: %s\n", strerror(errno));
         fclose(debug_file);
         return;
