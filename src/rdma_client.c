@@ -17,34 +17,58 @@ void init_qp_attr_client( struct rdma_client_info *ci) {
     ci->attr.qp_type = IBV_QPT_RC;
 }
 
-void create_ep_client( struct rdma_client_info *ci) {
+
+void create_ep_client(struct rdma_client_info *ci) {
+    FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
+    if (!debug_file) {
+        perror("Error opening debug file");
+        return;
+    }
+
     int err;
     err = rdma_getaddrinfo(ci->ip_address, ci->port, &(ci->hints), &(ci->res));
 
     if(err) {
-        printf("rdma_getaddrinfo error\n");
+        fprintf(debug_file, "rdma_getaddrinfo error: %d\n", err);
+        fclose(debug_file);
         return;
+    } else {
+        fprintf(debug_file, "rdma_getaddrinfo success\n");
     }
+
     err = rdma_create_ep(&(ci->id), ci->res, NULL, &(ci->attr));
     if(err) {
-        printf("rdma_create_ep error\n");
+        fprintf(debug_file, "rdma_create_ep error: %d\n", err);
+        fclose(debug_file);
         return;
+    } else {
+        fprintf(debug_file, "rdma_create_ep success\n");
     }
 
     rdma_freeaddrinfo(ci->res);
+    fclose(debug_file);
 }
 
-int rd_connect( struct rdma_client_info *ci) {
+int rd_connect(struct rdma_client_info *ci) {
+    FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
+    if (!debug_file) {
+        perror("Error opening debug file");
+        return 0;
+    }
+
     int ret;
     ret = rdma_connect(ci->id, NULL);
     if(ret) {
+        fprintf(debug_file, "rdma_connect error: %d\n", ret);
+        fclose(debug_file);
         return 0;
-        printf("rdma_connect error");
+    } else {
+        fprintf(debug_file, "rdma_connect success\n");
     }
+
+    fclose(debug_file);
     return 1;
-
 }
-
 
 int RDMA_connect_to_server( struct rdma_client_info *ci) {
 
