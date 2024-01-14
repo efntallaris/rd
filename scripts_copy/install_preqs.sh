@@ -41,8 +41,18 @@ sudo ldconfig
 
 echo "Installation of librdmacm is complete."
 
-
 cd ..
+cd ..
+
+# Clone the rdma-core repository
+git clone https://github.com/ofiwg/libfabric
+cd libfabric 
+sudo ./autogen.sh
+sudo ./configure
+sudo make
+sudo make install
+echo "Installation of new libfabric is complete."
+
 cd ..
 
 chmod +x loadibmodules.sh
