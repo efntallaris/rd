@@ -1,3 +1,3 @@
-#define REDIS_GIT_SHA1 "78acc212"
-#define REDIS_GIT_DIRTY "55"
-#define REDIS_BUILD_ID "redis0.entall-186471.streamstore-pg0.apt.emulab.net-1705256564"
+#define REDIS_GIT_SHA1 "398f44b4"
+#define REDIS_GIT_DIRTY "0"
+#define REDIS_BUILD_ID "redis0.entall-186484.streamstore-pg0.apt.emulab.net-1705261872"
