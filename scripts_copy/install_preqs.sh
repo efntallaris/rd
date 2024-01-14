@@ -40,6 +40,9 @@ sudo ldconfig
 echo "Installation of librdmacm is complete."
 
 
+cd ..
+cd ..
+
 chmod +x loadibmodules.sh
 sudo ./loadibmodules.sh
 
