@@ -1,5 +1,8 @@
 
 #include "rdma_client.h"
+#include <stdlib.h>
+#include <stdio.h>
+
 
 void init_hints_client( struct rdma_client_info *ci) {
     memset(&(ci->hints), 0, sizeof(struct rdma_addrinfo));
