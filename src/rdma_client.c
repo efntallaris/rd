@@ -19,7 +19,6 @@ void init_qp_attr_client( struct rdma_client_info *ci) {
 
 void create_ep_client( struct rdma_client_info *ci) {
     int err;
-    printf("IP IS %s\n", ci->ip_address);
     err = rdma_getaddrinfo(ci->ip_address, ci->port, &(ci->hints), &(ci->res));
 
     if(err) {
@@ -37,7 +36,6 @@ void create_ep_client( struct rdma_client_info *ci) {
 
 int rd_connect( struct rdma_client_info *ci) {
     int ret;
-    printf("im here\n");
     ret = rdma_connect(ci->id, NULL);
     if(ret) {
         return 0;

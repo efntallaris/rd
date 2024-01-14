@@ -6170,20 +6170,20 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
 
-	if(strcmp(myself->ip, "192.168.20.1") == 0) {
+	if(strcmp(myself->ip, "10.10.1.1") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 10 SECONDS");
 		sleep(10);
 
 	}
 
-	if(strcmp(myself->ip, "192.168.20.2") == 0) {
+	if(strcmp(myself->ip, "10.10.1.2") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 30 SECONDS");
 		sleep(60);
 		//sleep(70);
 		//sleep(200);
 	}
 
-	if(strcmp(myself->ip, "192.168.20.3") == 0) {
+	if(strcmp(myself->ip, "10.10.1.3") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
 		sleep(120);
 		//sleep(140);
@@ -6228,6 +6228,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	char *ip = (char *)args[3];
 	char *port = (char *)args[5];
 
+	serverLog(LL_WARNING, "STRATOS IP IS %s, PORT %s", ip, port);
 	server.rdma_client = init_rdma_client(ip, port);
 	int res = server.rdma_client->connect_ops.RDMA_connect_to_server(server.rdma_client);
 
@@ -6468,10 +6469,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			}
 
-			//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
-usleep(8000);
-			//	usleep(3600);
-			//	usleep(1800);
 		}
 
 		int number_of_received_acks = total_acks;
