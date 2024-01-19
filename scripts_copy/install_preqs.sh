@@ -18,8 +18,6 @@ sudo apt-get install -y libtool autoconf automake
 #libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
 
-sudo rm -rf /usr/local/include/infiniband
-
 # Clone the rdma-core repository
 git clone https://github.com/linux-rdma/rdma-core.git
 cd rdma-core
@@ -82,6 +80,10 @@ cd ..
 cd ..
 pwd
 chmod +x src/mkreleasehdr.sh
+
+sudo rm -rf /usr/local/include/infiniband
+cp -rf /usr/include/infiniband/ /usr/local/include/
+
 sudo make
 
 
