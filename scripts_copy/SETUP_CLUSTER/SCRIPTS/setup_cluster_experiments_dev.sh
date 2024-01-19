@@ -2,50 +2,32 @@
 LOCAL_IP=$(ifconfig eno1 | grep inet | awk -F"inet " '{print $2}' | awk -F' ' '{print $1}')
 
 
-REDIS_SRC_DIR="/mnt/stratos/redis/src/redis/src"
-REDIS_MAIN_SCRIPT_DIR="/mnt/stratos/redis/scripts/SETUP_CLUSTER/SCRIPTS"
-LOCAL_SETUP_DIR="/home/entallaris/redis_bin"
-YCSB_DIR="/mnt/stratos/modded_redis/run_workload_redis/bin"
+# DONT ADD / at the end of the filepath or dir
+MAIN_DIR="/root/rd"
+REDIS_SRC_DIR="/root/rd/src"
+YCSB_SRC_DIR="/root/rd/ycsb_client"
+REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
+LOCAL_SETUP_DIR="/root/rd/redis_bin"
+YCSB_DIR="/root/ycsb_client"
 
-#YCSB_RECORDS="5000000"
-REDIS_HOST="127.0.0.1"
-REDIS_PORT="8000"
-REDIS_WORKLOAD_PATH="../../workloads_dev/"
-REDIS_WORKLOAD_NAME=$1
-REDIS_WORKLOAD=${REDIS_WORKLOAD_PATH}${REDIS_WORKLOAD_NAME}
 
 # 	COMPILE THE SOURCE CODE		#
 cd "${REDIS_SRC_DIR}"
 sudo make 
 
 
-#	MASTER NODES 	#
 declare -A redis_master_instances 
-redis_master_instances["redis-0"]="redis0|192.168.20.1|8000|/home/entallaris/node01.conf|node-1.aof|dump-1.rdb"
-redis_master_instances["redis-1"]="redis1|192.168.20.2|8000|/home/entallaris/node02.conf|node-2.aof|dump-2.rdb"
-redis_master_instances["redis-2"]="redis2|192.168.20.3|8000|/home/entallaris/node03.conf|node-3.aof|dump-3.rdb"
-
-
-#	SLAVE NODES 	#
-#declare -A redis_slave_instances
-#redis_slave_instances["redis-4"]="redis3|192.168.20.4|8000|/home/entallaris/node04.conf|node-4.aof|dump-4.rdb"
+redis_master_instances["redis-0"]="redis0|130.127.134.83|8000|/root/node01.conf"
+redis_master_instances["redis-1"]="redis1|130.127.134.73|8000|/root/node02.conf"
+redis_master_instances["redis-2"]="redis2|130.127.134.96|8000|/root/node03.conf"
 
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-3"]="redis3|192.168.20.4|8000|/home/entallaris/node04.conf|node-4.aof|dump-4.rdb"
-#redis_migrate_instances["redis-4"]="redis4|192.168.20.5|8000|/home/entallaris/node05.conf|node-5.aof|dump-5.rdb"
-
+redis_migrate_instances["redis-3"]="redis3|130.127.134.75|8000|/root/node03.conf"
 
 #       THE NODE WHERE YCSB RUNS        #
 declare -A redis_ycsb_instance
-redis_ycsb_instance["redis-4"]="redis4|192.168.20.4|8000|/home/entallaris/node05.conf|node-5.aof|dump-5.rdb"
-
-
-#TO run redis with detailed logs
-#sudo ./redis-server ${info[3]} --loglevel debug
-
-#TO run redis 
-#sudo ./redis-server ${info[3]} 
+redis_ycsb_instance["ycsb-0"]="redis4|130.127.134.81"
 
 for redis_instance in "${!redis_master_instances[@]}"; do
         echo    "$redis_instance - ${redis_master_instances[$redis_instance]}"
@@ -153,7 +135,8 @@ EOF
 )
 
 			sleep 3
-			/home/entallaris/redis_bin/bin/redis-cli -p 8000  --cluster add-node ${info[1]}:${info[2]} 192.168.20.1:${info[2]}
+			cd ${LOCAL_SETUP_DIR}
+			./redis-cli -p 8000  --cluster add-node ${info[1]}:${info[2]} 130.127.134.83:${info[2]}
         done
 done
 

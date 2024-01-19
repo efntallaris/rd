@@ -14,12 +14,6 @@ declare -A redis_experiments
 #redis_experiments["experiment_update_only"]="workloadupdateonly|workload_update_only"
 redis_experiments["experiment_fulva_95_5"]="workloadfulva955|workload_fulva_95_5"
 redis_experiments["experiment_fulva_50_50"]="workloadfulva5050|workload_fulva_50_50"
-#TO run redis with detailed logs
-#sudo ./redis-server ${info[3]} --loglevel debug
-
-#TO run redis 
-#sudo ./redis-server ${info[3]} 
-
 
 SETUP_NODE=$(nslookup ${SETUP_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
 YCSB_NODE=$(nslookup ${YCSB_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
@@ -60,23 +54,23 @@ EOF
 					./setup_2_workload_.sh ${info[0]}
 EOF
 2>&1)
-#		echo "$tko"
-#		echo "SLEEPING FOR 3 MINUTES"
-#		sleep 3m 
-#
-#		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_NODE} bash <<EOF
-#            		echo "KILLING SCRIPTS"
-#			cd ${REDIS_MAIN_SCRIPT_DIR}
-#			sudo ./kill_scripts.sh
-#			cd ${OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE}
-#			mkdir ${info[1]}
-#			cd ${info[1]}
-#			#todo change to variable
-#			cp -rf /root/ycsb_output .
-#			sudo cp -rf ${REDIS_LOG_DIR} .
-#			sudo rm -rf /root/ycsb_output
-#EOF
-#2>&1)
+		echo "$tko"
+		echo "SLEEPING FOR 3 MINUTES"
+		sleep 3m 
+
+		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_NODE} bash <<EOF
+            		echo "KILLING SCRIPTS"
+			cd ${REDIS_MAIN_SCRIPT_DIR}
+			sudo ./kill_scripts.sh
+			cd ${OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE}
+			mkdir ${info[1]}
+			cd ${info[1]}
+			#todo change to variable
+			cp -rf /root/ycsb_output .
+			sudo cp -rf ${REDIS_LOG_DIR} .
+			sudo rm -rf /root/ycsb_output
+EOF
+2>&1)
 	done
 done
 

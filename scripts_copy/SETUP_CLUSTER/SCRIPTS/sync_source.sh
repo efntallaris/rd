@@ -4,13 +4,10 @@
 MAIN_DIR="/root/rd"
 #	MASTER NODES 	#
 declare -A redis_master_instances 
-redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
-redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
-redis_master_instances["redis-3"]="redis2|10.10.1.4|8000|/root/node03.conf"
-redis_master_instances["redis-4"]="redis0|10.10.1.5|8000|/root/node01.conf"
-redis_master_instances["ycsb-0"]="ycsb0|10.10.1.6|8000|/root/node02.conf"
-redis_master_instances["ycsb-1"]="ycsb1|10.10.1.7|8000|/root/node03.conf"
-redis_master_instances["ycsb-2"]="ycsb2|10.10.1.8|8000|/root/node03.conf"
+redis_master_instances["redis-1"]="redis1|130.127.134.73|8000|/root/node02.conf"
+redis_master_instances["redis-2"]="redis2|130.127.134.96|8000|/root/node03.conf"
+redis_master_instances["redis-3"]="redis3|130.127.134.75|8000|/root/node03.conf"
+redis_master_instances["ycsb-0"]="redis4|130.127.134.81"
 for redis_instance in "${!redis_master_instances[@]}"; do
     echo "$redis_instance - ${redis_master_instances[$redis_instance]}"
     IFS=',' read -r -a nodeInstance <<< "${redis_master_instances[$redis_instance]}"
