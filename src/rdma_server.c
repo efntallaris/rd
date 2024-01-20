@@ -1,4 +1,7 @@
 #include "rdma_server.h"
+#include <stdlib.h>
+#include <errno.h>
+#include <stdio.h>
 
 void create_event_channel_server(struct rdma_server_info *se) {
 	se->cm_channel = rdma_create_event_channel();
@@ -87,7 +90,7 @@ void accept_connection(struct rdma_server_info *se) {
 			return;
 		}
 
-		fprintf(debug_file, "rdma_accept() ERROR: %d\n", err);
+		fprintf(debug_file, "rdma_accept() ERROR\n");
 		printf("STRATOS rdma_accept_error");
 	}
 	printf("STRATOS CLIENT ACCEPTED\n");
