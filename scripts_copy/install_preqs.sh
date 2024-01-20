@@ -51,6 +51,7 @@ echo "Installation of librdmacm is complete."
 
 cd ..
 cd ..
+cd ..
 
 ## Clone the rdma-core repository
 #git clone https://github.com/ofiwg/libfabric
