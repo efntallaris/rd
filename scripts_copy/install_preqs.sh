@@ -17,32 +17,32 @@ sudo apt-get install -y ifstat
 sudo apt-get install -y libtool autoconf automake 
 libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
+#___________________
+# # Clone the rdma-core repository
+# git clone https://github.com/linux-rdma/rdma-core.git
+# cd rdma-core
 
-# Clone the rdma-core repository
-git clone https://github.com/linux-rdma/rdma-core.git
-cd rdma-core
+# # Create a build directory and navigate into it
+# mkdir build
+# cd build
 
-# Create a build directory and navigate into it
-mkdir build
-cd build
+# # Configure the build
+# cmake ..
 
-# Configure the build
-cmake ..
+# # Compile the source code
+# make -j16
 
-# Compile the source code
-make -j16
+# # Install the library (requires root permission)
+# sudo make install
 
-# Install the library (requires root permission)
-sudo make install
+# # Update the library cache
+# sudo ldconfig
 
-# Update the library cache
-sudo ldconfig
+# echo "Installation of librdmacm is complete."
 
-echo "Installation of librdmacm is complete."
-
-cd ..
-cd ..
-
+# cd ..
+# cd ..
+#___________________
 ## Clone the rdma-core repository
 #git clone https://github.com/ofiwg/libfabric
 #cd libfabric 
