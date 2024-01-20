@@ -17,6 +17,7 @@ for redis_instance in "${!redis_master_instances[@]}"; do
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
         sudo rm -rf ${MAIN_DIR}
 	cd /root
+	rm -rf rd
 	git clone https://github.com/efntallaris/rd
 	cd rd/scripts_copy/
 	chmod +x install_preqs.sh
