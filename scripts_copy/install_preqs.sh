@@ -15,7 +15,7 @@ sudo apt install -y libatomic-ops-dev
 sudo apt-get install -y sysstat
 sudo apt-get install -y ifstat
 sudo apt-get install -y libtool autoconf automake 
-#libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
+libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
 
 # Clone the rdma-core repository
@@ -37,6 +37,15 @@ sudo make install
 
 # Update the library cache
 sudo ldconfig
+
+git clone https://github.com/ofiwg/librdmacm/
+cd librdmacm
+chmod +x autogen.sh
+chmod +x configure
+./autogen.sh
+./configure
+sudo make -j100
+sudo make install -j100
 
 echo "Installation of librdmacm is complete."
 
@@ -80,9 +89,6 @@ cd ..
 cd ..
 pwd
 chmod +x src/mkreleasehdr.sh
-
-sudo rm -rf /usr/local/include/infiniband
-cp -rf /usr/include/infiniband/ /usr/local/include/
 
 sudo make
 
