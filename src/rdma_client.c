@@ -62,7 +62,7 @@ int rd_connect(struct rdma_client_info *ci) {
     int ret;
     ret = rdma_connect(ci->id, NULL);
     if(ret) {
-        fprintf(debug_file, "rdma_connect error: %d\n", ret);
+        fprintf(debug_file, "rdma_connect  error: %s\n", strerror(errno));
         fclose(debug_file);
         return 0;
     } else {
