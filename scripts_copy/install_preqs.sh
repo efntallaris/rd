@@ -38,18 +38,8 @@ sudo make install
 # Update the library cache
 sudo ldconfig
 
-git clone https://github.com/ofiwg/librdmacm/
-cd librdmacm
-chmod +x autogen.sh
-chmod +x configure
-./autogen.sh
-./configure
-sudo make -j100
-sudo make install -j100
-
 echo "Installation of librdmacm is complete."
 
-cd ..
 cd ..
 cd ..
 
