@@ -7,7 +7,7 @@ REDIS_MAIN_SCRIPT_DIR="/mnt/stratos/redis/scripts/SETUP_CLUSTER/SCRIPTS"
 LOCAL_SETUP_DIR="/home/entallaris/redis_bin"
 YCSB_DIR="/mnt/stratos/modded_redis/run_workload_redis/bin"
 
-#YCSB_RECORDS="5000000"
+YCSB_LOADER_INSTANCE="130.127.134.81"
 REDIS_HOST="130.127.134.83"
 REDIS_PORT="8000"
 REDIS_WORKLOAD_PATH="../../workloads_dev/"
@@ -118,10 +118,15 @@ eval "$clusterCreateCommand"
 
 echo "RUNNING WORKLOAD ${REDIS_WORKLOAD}"
 sleep 5
-cd $YCSB_DIR
-ycsbCommand=$(sudo ./ycsb load redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads 25)
-echo ${ycsbCommand}
-sleep 10
+tko=$(
+    sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} <<-EOF
+	cd "${REDIS_MAIN_SCRIPT_DIR}/"
+	sudo /bin/sh build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
+	cd ${YCSB_DIR}/bin
+	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${MAIN_DIR}/workloads/${REDIS_WORKLOAD} -threads 100
+EOF
+2>&1)
+echo ${tko}
 
 #sleep 1 h
 echo " SETTING UP RECIPIENTS"

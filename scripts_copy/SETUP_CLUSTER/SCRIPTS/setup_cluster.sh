@@ -14,7 +14,7 @@ MASTER_HOST="130.127.134.83"
 MASTER_PORT="8000"
 REDIS_WORKLOAD="workloadfulva5050"
 
-YCSB_LOADER_INSTANCE="ycsb0"
+YCSB_LOADER_INSTANCE="130.127.134.81"
 REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
 
 
@@ -86,8 +86,10 @@ sleep 5
 tko=$(
     sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} <<-EOF
 	cd "${REDIS_MAIN_SCRIPT_DIR}/"
-	sudo /bin/sh build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
+	chmod +x build_ycsb.sh
+	sudo ./build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
 	cd ${YCSB_DIR}/bin
+	echo "running loading phase for workload ${REDIS_WORKLOAD}"
 	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${MAIN_DIR}/workloads/${REDIS_WORKLOAD} -threads 100
 EOF
 2>&1)
@@ -118,4 +120,4 @@ EOF
     echo "$tko"
     done
 done
-
+#

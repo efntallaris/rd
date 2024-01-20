@@ -3,7 +3,7 @@
 #YCSB_DIR="/mnt/stratos/ycsb-0.5.0/new_modded_ycsb/newer/YCSB"
 YCSB_DIR=$1
 YCSB_INTERMEDIATE_FOLDER="/tmp/ycsb_temp"
-#YCSB_BIN="/root/ycsb"
+YCSB_BIN="/root/ycsb_client"
 YCSB_BIN=$2
 
 

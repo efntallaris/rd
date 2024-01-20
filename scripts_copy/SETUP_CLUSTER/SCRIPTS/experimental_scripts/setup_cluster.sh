@@ -50,7 +50,6 @@ for redis_experiment in "${!redis_experiments[@]}"; do
 			cd ${REDIS_MAIN_SCRIPT_DIR}
 			./setup_scripts.sh
 			./setup_cluster_experiments_2.sh ${info[0]}
-			#./setup_cluster_experiments_2_without_migration.sh ${info[0]}
 		EOF
 		)
 		echo "SLEEPING FOR 3 MINUTES"

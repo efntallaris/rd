@@ -13,7 +13,7 @@ instances["ycsb0"]="ycsb0|130.127.134.81"
 for redisInstance in "${!instances[@]}"; do
 	echo "Processing $redisInstance..."
 	IFS='|' read -r -a info <<< "${instances[$redisInstance]}"
-	node_host=${info[0]}
+	node_host=${info[1]}
 	echo "Attempting to run script on $node_host"
 	output=$(ssh -o StrictHostKeyChecking=no "$node_host" sudo bash <<EOF
 	    echo "Running on $node_host"

@@ -15,8 +15,10 @@ declare -A redis_experiments
 redis_experiments["experiment_fulva_95_5"]="workloadfulva955|workload_fulva_95_5"
 redis_experiments["experiment_fulva_50_50"]="workloadfulva5050|workload_fulva_50_50"
 
-SETUP_NODE=$(nslookup ${SETUP_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
-YCSB_NODE=$(nslookup ${YCSB_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
+#SETUP_NODE=$(nslookup ${SETUP_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
+#YCSB_NODE=$(nslookup ${YCSB_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
+SETUP_NODE="130.127.134.83"
+YCSB_NODE="130.127.134.81"
 
 
 
@@ -50,6 +52,7 @@ EOF
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_NODE} bash <<EOF
 					cd ${REDIS_MAIN_SCRIPT_DIR}
 					echo "Running script setup_2_workload"
+						
 					chmod +x setup_2_workload_.sh
 					./setup_2_workload_.sh ${info[0]}
 EOF
