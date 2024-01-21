@@ -30,17 +30,11 @@ void create_id_server(struct rdma_server_info *se, enum rdma_port_space ps) {
 
 void init_qp_attr_server(struct rdma_server_info *se) {
 	memset(&(se->attr), 0, sizeof se->attr);
-	//	se->attr.cap.max_send_wr = MAX_SEND_WR;
-	//	se->attr.cap.max_recv_wr = MAX_RECV_WR;
-	//	se->attr.cap.max_send_sge = MAX_SEND_SGE;
-	//	se->attr.cap.max_recv_sge = MAX_RECV_SGE;
-	//	se->attr.sq_sig_all = SG_SIG_ALL;
-	//	se->attr.qp_type = IBV_QPT_RC;
-	se->attr.cap.max_send_wr = 1;
-	se->attr.cap.max_recv_wr = 1;
-	se->attr.cap.max_send_sge = 1;
-	se->attr.cap.max_recv_sge = 1;
-	se->attr.sq_sig_all = 0;
+	se->attr.cap.max_send_wr = MAX_SEND_WR;
+	se->attr.cap.max_recv_wr = MAX_RECV_WR;
+	se->attr.cap.max_send_sge = MAX_SEND_SGE;
+	se->attr.cap.max_recv_sge = MAX_RECV_SGE;
+	se->attr.sq_sig_all = SG_SIG_ALL;
 	se->attr.qp_type = IBV_QPT_RC;
 }
 

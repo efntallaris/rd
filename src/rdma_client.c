@@ -13,17 +13,11 @@ void init_hints_client( struct rdma_client_info *ci) {
 
 void init_qp_attr_client( struct rdma_client_info *ci) {
     memset(&(ci->attr), 0, sizeof(struct rdma_addrinfo));
-//    ci->attr.cap.max_send_wr = MAX_SEND_WR;
-//    ci->attr.cap.max_recv_wr = MAX_RECV_WR;
-//    ci->attr.cap.max_send_sge = MAX_SEND_SGE;
-//    ci->attr.cap.max_recv_sge = MAX_RECV_SGE;
-//    ci->attr.sq_sig_all = SG_SIG_ALL;
-//    ci->attr.qp_type = IBV_QPT_RC;
-    ci->attr.cap.max_send_wr = 1;
-    ci->attr.cap.max_recv_wr = 1;
-    ci->attr.cap.max_send_sge = 1;
-    ci->attr.cap.max_recv_sge = 1;
-    ci->attr.sq_sig_all = 0;
+    ci->attr.cap.max_send_wr = MAX_SEND_WR;
+    ci->attr.cap.max_recv_wr = MAX_RECV_WR;
+    ci->attr.cap.max_send_sge = MAX_SEND_SGE;
+    ci->attr.cap.max_recv_sge = MAX_RECV_SGE;
+    ci->attr.sq_sig_all = SG_SIG_ALL;
     ci->attr.qp_type = IBV_QPT_RC;
 }
 
