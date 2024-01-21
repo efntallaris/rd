@@ -27,13 +27,16 @@ declare -A redis_master_instances
 redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
 redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
 redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
+redis_master_instances["redis-3"]="redis2|10.10.1.4|8000|/root/node03.conf"
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node03.conf"
+redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node03.conf"
 
 #       THE NODE WHERE YCSB RUNS        #
-declare -A redis_ycsb_instance
-redis_ycsb_instance["ycsb-0"]="redis4|10.10.1.5"
+declare -A redis_ycsb_instances
+redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.6"
+redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.7"
+redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.8"
 
 #TO run redis with detailed logs
 #sudo ./redis-server ${info[3]} --loglevel debug
@@ -94,6 +97,24 @@ tko=$(
 EOF
 2>&1)
 echo ${tko}
+
+
+# INSTALL YCSB IN YCSB_INSTANCES
+for redis_instance in "${!redis_ycsb_instances[@]}"; do
+    echo "$redis_instance - ${redis_ycsb_instances[$redis_instance]}"
+    IFS=',' read -r -a nodeInstance <<< "${redis_ycsb_instances[$redis_instance]}"
+    for i in "${!nodeInstance[@]}"; do
+        IFS="|" read -r -a info <<< "${nodeInstance[i]}"
+        echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
+        tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
+		cd "${REDIS_MAIN_SCRIPT_DIR}/"
+		chmod +x build_ycsb.sh
+		sudo ./build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
+EOF
+2>&1)
+    echo "$tko"
+    done
+done
 
 
 

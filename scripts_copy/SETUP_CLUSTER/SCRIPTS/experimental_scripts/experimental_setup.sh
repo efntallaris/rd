@@ -18,7 +18,7 @@ redis_experiments["experiment_fulva_50_50"]="workloadfulva5050|workload_fulva_50
 #SETUP_NODE=$(nslookup ${SETUP_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
 #YCSB_NODE=$(nslookup ${YCSB_NODE} | grep 'Address:' | grep -v '#' | awk '{ print $2 }')
 SETUP_NODE="10.10.1.1"
-YCSB_NODE="10.10.1.5"
+YCSB_NODE="10.10.1.6"
 
 
 
