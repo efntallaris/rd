@@ -30,12 +30,12 @@ void create_id_server(struct rdma_server_info *se, enum rdma_port_space ps) {
 
 void init_qp_attr_server(struct rdma_server_info *se) {
 	memset(&(se->attr), 0, sizeof se->attr);
-//	se->attr.cap.max_send_wr = MAX_SEND_WR;
-//	se->attr.cap.max_recv_wr = MAX_RECV_WR;
-//	se->attr.cap.max_send_sge = MAX_SEND_SGE;
-//	se->attr.cap.max_recv_sge = MAX_RECV_SGE;
-//	se->attr.sq_sig_all = SG_SIG_ALL;
-//	se->attr.qp_type = IBV_QPT_RC;
+	//	se->attr.cap.max_send_wr = MAX_SEND_WR;
+	//	se->attr.cap.max_recv_wr = MAX_RECV_WR;
+	//	se->attr.cap.max_send_sge = MAX_SEND_SGE;
+	//	se->attr.cap.max_recv_sge = MAX_RECV_SGE;
+	//	se->attr.sq_sig_all = SG_SIG_ALL;
+	//	se->attr.qp_type = IBV_QPT_RC;
 	se->attr.cap.max_send_wr = 1;
 	se->attr.cap.max_recv_wr = 1;
 	se->attr.cap.max_send_sge = 1;
@@ -46,7 +46,7 @@ void init_qp_attr_server(struct rdma_server_info *se) {
 
 void init_hints_server(struct rdma_server_info *se) {
 	memset(&(se->hints), 0, sizeof(struct rdma_addrinfo));
-	//se->hints.ai_flags = RAI_PASSIVE;
+	se->hints.ai_flags = RAI_PASSIVE;
 	se->hints.ai_port_space = RDMA_PS_TCP;
 	se->hints.ai_qp_type = IBV_QPT_RC;
 }
@@ -103,13 +103,20 @@ void accept_connection(struct rdma_server_info *se) {
 		fclose(debug_file);
 		printf("STRATOS rdma_accept_error");
 	}
+	FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
+	if (!debug_file) {
+		perror("Error opening debug file");
+		return;
+	}
+	fprintf(debug_file, "Client Accepted\n", strerror(errno));
+	fclose(debug_file);
 	printf("STRATOS CLIENT ACCEPTED\n");
 }
 
 void init_conn_param_server(struct rdma_server_info *se) {
 	memset(&(se->conn_param), 0, sizeof(struct rdma_conn_param));
-	se->conn_param.responder_resources = 1;
-	se->conn_param.initiator_depth = 1;
+	//se->conn_param.responder_resources = 1;
+	//se->conn_param.initiator_depth = 1;
 
 }
 
@@ -142,7 +149,7 @@ void *listenThread(void *data) {
 		printf("STRATOS rdma_accept_error");
 	}
 	se->server_ops.get_request(se);
-	se->server_ops.init_conn_param(se);
+	//se->server_ops.init_conn_param(se);
 	se->server_ops.accept_connection(se);
 
 
