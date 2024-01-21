@@ -27,7 +27,7 @@ for redisInstance in "${!instances[@]}"; do
 	    pkill -9 ifstat
 	    pkill -9 ycsb
 	    rm -rf ${LOCAL_SETUP_DIR}/*
-	    rm -rf ${LOCAL_LOG_DIR}/*
+	    #rm -rf ${LOCAL_LOG_DIR}/*
 EOF
 	2>&1)
 

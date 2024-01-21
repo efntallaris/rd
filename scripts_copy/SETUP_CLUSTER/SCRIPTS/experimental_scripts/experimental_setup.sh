@@ -1,9 +1,10 @@
 #!/bin/bash -e
 REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
-OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE="/root/experimental_dir"
+OUTPUT_EXPERIMENT_DIR="/proj/streamstore-PG0/experiments"
 REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
 SETUP_NODE="redis0"
 YCSB_NODE="ycsb0"
+LOCAL_LOG_DIR="/root/systat_logs"
 
 #running workload
 declare -A redis_experiments
@@ -21,17 +22,33 @@ SETUP_NODE="10.10.1.1"
 YCSB_NODE="10.10.1.6"
 
 
+LOCAL_LOG_DIR="/root/systat_logs"
+
+#	MASTER NODES 	#
+declare -A redis_master_instances 
+redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
+redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
+redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
+redis_master_instances["redis-3"]="redis2|10.10.1.4|8000|/root/node04.conf"
+
+declare -A redis_migrate_instances
+redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node05.conf"
+
+declare -A redis_ycsb_instances
+redis_ycsb_instances["ycsb0"]="ycsb0|10.10.1.6"
+redis_ycsb_instances["ycsb1"]="ycsb1|10.10.1.7"
+redis_ycsb_instances["ycsb2"]="ycsb2|10.10.1.8"
 
 tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_NODE} bash <<EOF
-	if [ ! -d "$OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE" ]; then
+	if [ ! -d "$OUTPUT_EXPERIMENT_DIR" ]; then
 	    # If it doesn't exist, create it
-	    mkdir -p "$OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE"
-	    echo "Directory created: $OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE"
+	    mkdir -p "$OUTPUT_EXPERIMENT_DIR"
+	    echo "Directory created: $OUTPUT_EXPERIMENT_DIR"
 	else
-	    echo "Directory already exists: $OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE"
+	    echo "Directory already exists: $OUTPUT_EXPERIMENT_DIR"
 	fi
-	cd ${OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE}
-	sudo rm -rf *
+	#cd ${OUTPUT_EXPERIMENT_DIR}
+	#sudo rm -rf *
 EOF
 2>&1)
 echo "$tko"
@@ -61,17 +78,51 @@ EOF
 		echo "SLEEPING FOR 3 MINUTES"
 		sleep 3m 
 
+		timestamp=$(date '+%Y_%m_%d_%H_%M_%S')
+		exp_dir=${info[1]}_${timestamp}
+		cd ${OUTPUT_EXPERIMENT_DIR}
+		mkdir -p ${exp_dir}
+		mkdir -p ${exp_dir}/logs
+
+		for redis_instance in "${!redis_ycsb_instances[@]}"; do
+		    echo "$redis_instance - ${redis_ycsb_instances[$redis_instance]}"
+		    IFS=',' read -r -a nodeInstance <<< "${redis_ycsb_instances[$redis_instance]}"
+		    for i in "${!nodeInstance[@]}"; do
+			IFS="|" read -r -a info <<< "${nodeInstance[i]}"
+			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
+			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
+				cd ${OUTPUT_EXPERIMENT_DIR}
+				cd ${exp_dir}
+				cp -rf /tmp/ycsb_output_* .
+				sudo rm -rf /tmp/ycsb_output_*
+EOF
+2>&1)
+		    echo "$tko"
+		    done
+		done
+
+		for redis_instance in "${!redis_master_instances[@]}"; do
+		    echo "$redis_instance - ${redis_master_instances[$redis_instance]}"
+		    IFS=',' read -r -a nodeInstance <<< "${redis_master_instances[$redis_instance]}"
+		    for i in "${!nodeInstance[@]}"; do
+			IFS="|" read -r -a info <<< "${nodeInstance[i]}"
+			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
+			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
+			    cd ${OUTPUT_EXPERIMENT_DIR}
+			    cd ${exp_dir}
+			    cd logs
+			    cp -rf ${LOCAL_LOG_DIR}/* .
+			    rm -rf ${LOCAL_LOG_DIR}
+EOF
+2>&1)
+    echo "$tko"
+    done
+done
+
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_NODE} bash <<EOF
             		echo "KILLING SCRIPTS"
 			cd ${REDIS_MAIN_SCRIPT_DIR}
 			sudo ./kill_scripts.sh
-			cd ${OUTPUT_EXPERIMENT_DIR_AT_YCSB_NODE}
-			mkdir ${info[1]}
-			cd ${info[1]}
-			#todo change to variable
-			cp -rf /root/ycsb_output .
-			sudo cp -rf ${REDIS_LOG_DIR} .
-			sudo rm -rf /root/ycsb_output
 EOF
 2>&1)
 	done

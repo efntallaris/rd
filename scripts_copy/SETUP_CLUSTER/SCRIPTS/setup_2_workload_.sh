@@ -24,8 +24,16 @@ REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 REDIS_WORKLOAD_NAME=$1
 REDIS_WORKLOAD=${REDIS_WORKLOAD_PATH}${REDIS_WORKLOAD_NAME}
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
+
+#	MASTER NODES 	#
+declare -A redis_master_instances 
+redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
+redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
+redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
+redis_master_instances["redis-3"]="redis2|10.10.1.4|8000|/root/node04.conf"
+
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node03.conf"
+redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node05.conf"
 
 declare -A redis_ycsb_instances
 redis_ycsb_instances["ycsb0"]="ycsb0|10.10.1.6"
@@ -43,7 +51,7 @@ for redis_instance in "${!redis_ycsb_instances[@]}"; do
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 		cd $YCSB_DIR
 
-		sudo ./ycsb.sh run redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=1 -s  -p \measurementtype=timeseries -p redis.timeout=1000 -threads 400 >> ${YCSB_LOG_FILENAME}_${info[0]} 2>&1 &
+		sudo ./ycsb.sh run redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=1 -s  -p \measurementtype=timeseries -p redis.timeout=1000 -threads 200 >> ${YCSB_LOG_FILENAME}_${info[0]} 2>&1 &
 EOF
 2>&1)
     echo "$tko"
