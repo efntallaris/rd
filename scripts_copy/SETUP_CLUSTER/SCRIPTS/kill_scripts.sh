@@ -4,11 +4,11 @@ declare -A instances
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
 LOCAL_LOG_DIR="/root/systat_logs"
 
-instances["redis-0"]="redis0|130.127.134.83"
-instances["redis-1"]="redis1|130.127.134.73"
-instances["redis-2"]="redis2|130.127.134.96"
-instances["redis-3"]="redis3|130.127.134.75"
-instances["ycsb0"]="ycsb0|130.127.134.81"
+instances["redis-0"]="redis0|10.10.1.1"
+instances["redis-1"]="redis1|10.10.1.2"
+instances["redis-2"]="redis2|10.10.1.3"
+instances["redis-3"]="redis3|10.10.1.4"
+instances["ycsb0"]="ycsb0|10.10.1.5"
 
 for redisInstance in "${!instances[@]}"; do
 	echo "Processing $redisInstance..."

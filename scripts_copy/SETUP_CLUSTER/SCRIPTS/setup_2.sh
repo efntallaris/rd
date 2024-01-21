@@ -16,13 +16,13 @@ cd "${REDIS_SRC_DIR}"
 sudo make PREFIX="${LOCAL_SETUP_DIR}" install
 
 
-REDIS_HOST="130.127.134.83"
+REDIS_HOST="10.10.1.1"
 REDIS_PORT="8000"
 REDIS_WORKLOAD="../../workloads/workloadreadonly"
 
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-3"]="redis3|130.127.134.75|8000|/root/node03.conf"
+redis_migrate_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node03.conf"
 
 cd $YCSB_DIR
 ycsbCommand=$(sudo ./ycsb run redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=2 -s  -p \measurementtype=timeseries -p redis.timeout=10000 -threads 50 >> ${YCSB_LOG_FILENAME} 2>&1 &)
@@ -33,7 +33,7 @@ for redis_instance in "${!redis_migrate_instances[@]}"; do
 	IFS="|" read -r -a info <<< "${nodeInstance[0]}"
 	cd ${LOCAL_SETUP_DIR}/bin
 	migrateNodeID=$(./redis-cli -c -h ${info[1]} -p ${info[2]} CLUSTER MYID)
-	tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard 130.127.134.75:8000 --cluster-timeout 1200 &
+	tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard 10.10.1.4:8000 --cluster-timeout 1200 &
 	sleep 4 
 	echo "4095" >> ${COMMAND_PIPE}
 	sleep 1

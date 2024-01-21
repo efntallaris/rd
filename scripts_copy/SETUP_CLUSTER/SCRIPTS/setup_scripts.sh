@@ -10,10 +10,10 @@ HOME_DIR="/home/entallaris"
 
 #       MASTER NODES    #
 declare -A redis_master_instances
-redis_master_instances["redis-0"]="redis0|130.127.134.83|8000|/root/node01.conf"
-redis_master_instances["redis-1"]="redis1|130.127.134.73|8000|/root/node02.conf"
-redis_master_instances["redis-2"]="redis2|130.127.134.96|8000|/root/node03.conf"
-redis_master_instances["redis-3"]="redis3|130.127.134.75|8000|/root/node03.conf"
+redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
+redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
+redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
+redis_master_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node03.conf"
 
 
 IF_STAT="_ifstat.txt"
