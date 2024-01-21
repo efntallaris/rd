@@ -2,47 +2,7 @@
 LOCAL_IP=$(ifconfig eno1 | grep inet | awk -F"inet " '{print $2}' | awk -F' ' '{print $1}')
 
 
-# DONT ADD / at the end of the filepath or dir
-MAIN_DIR="/root/rd"
-REDIS_SRC_DIR="/root/rd/src"
-YCSB_SRC_DIR="/root/rd/ycsb_client"
-REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
-LOCAL_SETUP_DIR="/root/rd/redis_bin"
-YCSB_DIR="/root/ycsb_client"
-
-MASTER_HOST="10.10.1.1"
-MASTER_PORT="8000"
-REDIS_WORKLOAD="workloadfulva5050"
-
-YCSB_LOADER_INSTANCE="10.10.1.5"
-REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
-
-
-# 	COMPILE THE SOURCE CODE		#
-cd "${REDIS_SRC_DIR}"
-sudo make
-
-#	MASTER NODES 	#
-declare -A redis_master_instances 
-redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
-redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
-redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
-redis_master_instances["redis-3"]="redis2|10.10.1.4|8000|/root/node03.conf"
-
-declare -A redis_migrate_instances
-redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node03.conf"
-
-#       THE NODE WHERE YCSB RUNS        #
-declare -A redis_ycsb_instances
-redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.6"
-redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.7"
-redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.8"
-
-#TO run redis with detailed logs
-#sudo ./redis-server ${info[3]} --loglevel debug
-
-#TO run redis 
-#sudo ./redis-server ${info[3]} 
+source ./config.sh
 
 for redis_instance in "${!redis_master_instances[@]}"; do
     echo "$redis_instance - ${redis_master_instances[$redis_instance]}"

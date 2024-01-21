@@ -1,8 +1,8 @@
 #!/bin/bash -e
 
+source ./config.sh
 COMMAND_PIPE="/tmp/command-input"
-LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
-sudo rm -rf ${LOG_DIR}/*
+sudo rm -rf ${REDIS_LOG_DIR}/*
 sudo rm -rf ${COMMAND_PIPE}
 mkfifo ${COMMAND_PIPE}
 

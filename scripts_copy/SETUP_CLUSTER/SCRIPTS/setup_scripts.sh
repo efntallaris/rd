@@ -1,25 +1,6 @@
 #!/bin/bash -e
-declare -A redis_donors
-declare -A redis_recipients
+source ./config.sh
 
-
-
-LOCAL_SETUP_DIR="/root/rd/redis_bin"
-SCRIPT_DIR="/mnt/stratos/redis/scripts"
-HOME_DIR="/home/entallaris"
-
-#       MASTER NODES    #
-declare -A redis_master_instances
-redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
-redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
-redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
-redis_master_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node03.conf"
-
-
-IF_STAT="_ifstat.txt"
-MP_STAT="_mpstat.txt"
-IO_STAT="_iostat.txt"
-LOCAL_LOG_DIR="/root/systat_logs"
 # Check if the directory exists
 if [ ! -d "$LOCAL_LOG_DIR" ]; then
     # If it doesn't exist, create it

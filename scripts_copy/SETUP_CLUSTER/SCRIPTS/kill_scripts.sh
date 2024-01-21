@@ -1,17 +1,5 @@
 #!/bin/bash -e
-declare -A instances
-
-LOCAL_SETUP_DIR="/root/rd/redis_bin"
-LOCAL_LOG_DIR="/root/systat_logs"
-
-instances["redis-0"]="redis0|10.10.1.1"
-instances["redis-1"]="redis1|10.10.1.2"
-instances["redis-2"]="redis2|10.10.1.3"
-instances["redis-3"]="redis3|10.10.1.4"
-instances["redis-4"]="redis4|10.10.1.5"
-instances["ycsb0"]="ycsb0|10.10.1.6"
-instances["ycsb1"]="ycsb1|10.10.1.7"
-instances["ycsb2"]="ycsb1|10.10.1.8"
+source ./config.sh
 
 for redisInstance in "${!instances[@]}"; do
 	echo "Processing $redisInstance..."
