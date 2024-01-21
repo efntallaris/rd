@@ -90,7 +90,8 @@ void accept_connection(struct rdma_server_info *se) {
 			return;
 		}
 
-		fprintf(debug_file, "rdma_accept() ERROR\n");
+		fprintf(debug_file, "rdma_accept() ERROR: %s\n", strerror(errno));
+		fclose(debug_file);
 		printf("STRATOS rdma_accept_error");
 	}
 	printf("STRATOS CLIENT ACCEPTED\n");
