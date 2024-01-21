@@ -23,7 +23,7 @@ YCSB_DIR="/root/ycsb_client/bin"
 REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 REDIS_WORKLOAD_NAME=$1
 REDIS_WORKLOAD=${REDIS_WORKLOAD_PATH}${REDIS_WORKLOAD_NAME}
-YCSB_LOG_FILENAME="/root/ycsb_output"
+YCSB_LOG_FILENAME="/tmp/ycsb_output"
 declare -A redis_migrate_instances
 redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node03.conf"
 
@@ -43,7 +43,7 @@ for redis_instance in "${!redis_ycsb_instances[@]}"; do
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 		cd $YCSB_DIR
 
-		ycsbCommand=$(sudo ./ycsb.sh run redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=1 -s  -p \measurementtype=timeseries -p redis.timeout=1000 -threads 100 >> ${YCSB_LOG_FILENAME} 2>&1 &)
+		sudo ./ycsb.sh run redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=1 -s  -p \measurementtype=timeseries -p redis.timeout=1000 -threads 100 >> ${YCSB_LOG_FILENAME} 2>&1 &
 EOF
 2>&1)
     echo "$tko"
@@ -52,7 +52,7 @@ done
 
 
 sleep 10 
-for redis_instance in "${!redis_migrate_instances[@]}"; do
+#for redis_instance in "${!redis_migrate_instances[@]}"; do
 #        IFS=',' read -r -a nodeInstance <<< "${redis_migrate_instances[$redis_instance]}"
 #	IFS="|" read -r -a info <<< "${nodeInstance[0]}"
 #	cd ${LOCAL_SETUP_DIR}/bin
