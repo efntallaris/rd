@@ -2,8 +2,6 @@
 REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
 OUTPUT_EXPERIMENT_DIR="/proj/streamstore-PG0/experiments"
 REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
-SETUP_NODE="redis0"
-YCSB_NODE="ycsb0"
 LOCAL_LOG_DIR="/root/systat_logs"
 
 #running workload

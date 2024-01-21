@@ -7,6 +7,7 @@ sudo rm -rf /mnt/stratos/redis/logs/*
 sudo rm -rf ${COMMAND_PIPE}
 mkfifo ${COMMAND_PIPE}
 
+cd "${REDIS_SRC_DIR}"
 sudo make PREFIX="${LOCAL_SETUP_DIR}" install
 
 

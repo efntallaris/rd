@@ -27,6 +27,8 @@ EOF
 done
 
 
+cd ${LOCAL_SETUP_DIR}/bin
+pwd
 clusterCreateCommand="sudo ./redis-cli --cluster create"
 for redis_instance in "${!redis_master_instances[@]}"; do
         echo    "$redis_instance - ${redis_master_instances[$redis_instance]}"
@@ -43,8 +45,7 @@ echo "SETTING UP CLUSTER"
 clusterCreateCommand="$clusterCreateCommand --cluster-yes"
 echo "cluster create command is ${clusterCreateCommand}"
 eval "$clusterCreateCommand"
-#
-#
+
 sleep 5
 tko=$(
     sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} <<-EOF
@@ -92,7 +93,6 @@ for redis_instance in "${!redis_migrate_instances[@]}"; do
             /bin/sh create_conf.sh ${info[3]} ${info[2]} "/proj/streamstore-PG0/experiment_outputs/${info[0]}__"
             cd "${LOCAL_SETUP_DIR}/bin"
             sudo ./redis-server ${info[3]}
-
 	    ps aux | grep redis-server
             sleep 3
 	    sudo ./redis-cli -p 8000 --cluster add-node ${info[1]}:${info[2]} ${MASTER_HOST}:${MASTER_PORT}
@@ -101,4 +101,3 @@ EOF
     echo "$tko"
     done
 done
-#
