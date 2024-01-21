@@ -22,6 +22,7 @@ void create_id_server(struct rdma_server_info *se, enum rdma_port_space ps) {
 		}
 
 		fprintf(debug_file, "rdma_create_id() ERROR: %d\n", err);
+		fclose(debug_file);
 	}
 	printf("RDMA CREATE ID SUCCESS \n");
 	return;
@@ -29,19 +30,25 @@ void create_id_server(struct rdma_server_info *se, enum rdma_port_space ps) {
 
 void init_qp_attr_server(struct rdma_server_info *se) {
 	memset(&(se->attr), 0, sizeof se->attr);
-	se->attr.cap.max_send_wr = MAX_SEND_WR;
-	se->attr.cap.max_recv_wr = MAX_RECV_WR;
-	se->attr.cap.max_send_sge = MAX_SEND_SGE;
-	se->attr.cap.max_recv_sge = MAX_RECV_SGE;
-	se->attr.sq_sig_all = SG_SIG_ALL;
-	se->attr.qp_type = IBV_QPT_RC;
+//	se->attr.cap.max_send_wr = MAX_SEND_WR;
+//	se->attr.cap.max_recv_wr = MAX_RECV_WR;
+//	se->attr.cap.max_send_sge = MAX_SEND_SGE;
+//	se->attr.cap.max_recv_sge = MAX_RECV_SGE;
+//	se->attr.sq_sig_all = SG_SIG_ALL;
+//	se->attr.qp_type = IBV_QPT_RC;
+	se->attr.cap.max_send_wr = 1;
+	se->attr.cap.max_recv_wr = 1;
+	se->attr.cap.max_send_sge = 1;
+	se->attr.cap.max_recv_sge = 1;
+	se->attr.sq_sig_all = 0;
+	//se->attr.qp_type = IBV_QPT_RC;
 }
 
 void init_hints_server(struct rdma_server_info *se) {
 	memset(&(se->hints), 0, sizeof(struct rdma_addrinfo));
-	se->hints.ai_flags = RAI_PASSIVE;
+	//se->hints.ai_flags = RAI_PASSIVE;
 	se->hints.ai_port_space = RDMA_PS_TCP;
-	se->hints.ai_qp_type = IBV_QPT_RC;
+	//se->hints.ai_qp_type = IBV_QPT_RC;
 }
 
 void create_ep_server(struct rdma_server_info *se) {
@@ -56,6 +63,7 @@ void create_ep_server(struct rdma_server_info *se) {
 		}
 
 		fprintf(debug_file, "rdma_getaddrinfo() ERROR: %d\n", err);
+		fclose(debug_file);
 	}
 	err = rdma_create_ep(&(se->listen_id), se->res, NULL, &(se->attr));
 	if(err) {
@@ -67,6 +75,7 @@ void create_ep_server(struct rdma_server_info *se) {
 		}
 
 		fprintf(debug_file, "rdma_create_ep() ERROR: %d\n", err);
+		fclose(debug_file);
 		return ;
 	}
 	rdma_freeaddrinfo(se->res);
@@ -99,8 +108,8 @@ void accept_connection(struct rdma_server_info *se) {
 
 void init_conn_param_server(struct rdma_server_info *se) {
 	memset(&(se->conn_param), 0, sizeof(struct rdma_conn_param));
-	se->conn_param.responder_resources = 32;
-	se->conn_param.initiator_depth = 32;
+	//se->conn_param.responder_resources = 32;
+	//se->conn_param.initiator_depth = 32;
 
 }
 
