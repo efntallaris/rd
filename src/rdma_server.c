@@ -41,14 +41,14 @@ void init_qp_attr_server(struct rdma_server_info *se) {
 	se->attr.cap.max_send_sge = 1;
 	se->attr.cap.max_recv_sge = 1;
 	se->attr.sq_sig_all = 0;
-	//se->attr.qp_type = IBV_QPT_RC;
+	se->attr.qp_type = IBV_QPT_RC;
 }
 
 void init_hints_server(struct rdma_server_info *se) {
 	memset(&(se->hints), 0, sizeof(struct rdma_addrinfo));
 	//se->hints.ai_flags = RAI_PASSIVE;
 	se->hints.ai_port_space = RDMA_PS_TCP;
-	//se->hints.ai_qp_type = IBV_QPT_RC;
+	se->hints.ai_qp_type = IBV_QPT_RC;
 }
 
 void create_ep_server(struct rdma_server_info *se) {
@@ -108,8 +108,8 @@ void accept_connection(struct rdma_server_info *se) {
 
 void init_conn_param_server(struct rdma_server_info *se) {
 	memset(&(se->conn_param), 0, sizeof(struct rdma_conn_param));
-	//se->conn_param.responder_resources = 32;
-	//se->conn_param.initiator_depth = 32;
+	se->conn_param.responder_resources = 1;
+	se->conn_param.initiator_depth = 1;
 
 }
 

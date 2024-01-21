@@ -8,7 +8,7 @@
 void init_hints_client( struct rdma_client_info *ci) {
     memset(&(ci->hints), 0, sizeof(struct rdma_addrinfo));
     ci->hints.ai_port_space = RDMA_PS_TCP;
-    //ci->hints.ai_qp_type = IBV_QPT_RC;
+    ci->hints.ai_qp_type = IBV_QPT_RC;
 }
 
 void init_qp_attr_client( struct rdma_client_info *ci) {
@@ -24,7 +24,7 @@ void init_qp_attr_client( struct rdma_client_info *ci) {
     ci->attr.cap.max_send_sge = 1;
     ci->attr.cap.max_recv_sge = 1;
     ci->attr.sq_sig_all = 0;
-    //ci->attr.qp_type = IBV_QPT_RC;
+    ci->attr.qp_type = IBV_QPT_RC;
 }
 
 
@@ -48,7 +48,6 @@ void create_ep_client(struct rdma_client_info *ci) {
 
     err = rdma_create_ep(&(ci->id), ci->res, NULL, &(ci->attr));
     if(err) {
-        fprintf(debug_file, "rdma_create_ep error: %d\n", err);
         fprintf(debug_file, "rdma_create_ep error: %s\n", strerror(errno));
         fclose(debug_file);
         return;
