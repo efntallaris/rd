@@ -34,11 +34,11 @@ declare -A redis_ycsb_instances
 redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.6"
 redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.7"
 redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.8"
-# redis_ycsb_instances["ycsb-3"]="ycsb1|10.10.1.9"
-# redis_ycsb_instances["ycsb-4"]="ycsb2|10.10.1.10"
-# redis_ycsb_instances["ycsb-5"]="ycsb1|10.10.1.11"
-# redis_ycsb_instances["ycsb-6"]="ycsb2|10.10.1.12"
-# redis_ycsb_instances["ycsb-7"]="ycsb2|10.10.1.13"
+redis_ycsb_instances["ycsb-3"]="ycsb1|10.10.1.9"
+redis_ycsb_instances["ycsb-4"]="ycsb2|10.10.1.10"
+redis_ycsb_instances["ycsb-5"]="ycsb1|10.10.1.11"
+redis_ycsb_instances["ycsb-6"]="ycsb2|10.10.1.12"
+redis_ycsb_instances["ycsb-7"]="ycsb2|10.10.1.13"
 
 
 declare -A instances
@@ -50,11 +50,11 @@ instances["redis-4"]="redis4|10.10.1.5"
 instances["ycsb0"]="ycsb0|10.10.1.6"
 instances["ycsb1"]="ycsb1|10.10.1.7"
 instances["ycsb2"]="ycsb1|10.10.1.8"
-# instances["ycsb3"]="ycsb1|10.10.1.9"
-# instances["ycsb4"]="ycsb1|10.10.1.10"
-# instances["ycsb5"]="ycsb1|10.10.1.11"
-# instances["ycsb6"]="ycsb1|10.10.1.12"
-# instances["ycsb7"]="ycsb1|10.10.1.13"
+instances["ycsb3"]="ycsb1|10.10.1.9"
+instances["ycsb4"]="ycsb1|10.10.1.10"
+instances["ycsb5"]="ycsb1|10.10.1.11"
+instances["ycsb6"]="ycsb1|10.10.1.12"
+instances["ycsb7"]="ycsb1|10.10.1.13"
 
 
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
