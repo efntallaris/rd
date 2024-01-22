@@ -32,8 +32,8 @@ redis_migrate_instances["redis-4"]="redis3|10.10.1.5|8000|/root/node05.conf"
 #       THE NODE WHERE YCSB RUNS        #
 declare -A redis_ycsb_instances
 redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.6"
-redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.7"
-redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.8"
+# redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.7"
+# redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.8"
 
 
 declare -A instances
@@ -43,8 +43,8 @@ instances["redis-2"]="redis2|10.10.1.3"
 instances["redis-3"]="redis3|10.10.1.4"
 instances["redis-4"]="redis4|10.10.1.5"
 instances["ycsb0"]="ycsb0|10.10.1.6"
-instances["ycsb1"]="ycsb1|10.10.1.7"
-instances["ycsb2"]="ycsb1|10.10.1.8"
+# instances["ycsb1"]="ycsb1|10.10.1.7"
+# instances["ycsb2"]="ycsb1|10.10.1.8"
 
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
 SCRIPT_DIR="/mnt/stratos/redis/scripts"
