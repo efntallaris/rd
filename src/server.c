@@ -2480,7 +2480,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 						sp->changes, (int)sp->seconds);
 				rdbSaveInfo rsi, *rsiptr;
 				rsiptr = rdbPopulateSaveInfo(&rsi);
-				rdbSaveBackground(server.rdb_filename,rsiptr);
+				//rdbSaveBackground(server.rdb_filename,rsiptr);
 				break;
 			}
 		}
@@ -2569,8 +2569,8 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 	{
 		rdbSaveInfo rsi, *rsiptr;
 		rsiptr = rdbPopulateSaveInfo(&rsi);
-		if (rdbSaveBackground(server.rdb_filename,rsiptr) == C_OK)
-			server.rdb_bgsave_scheduled = 0;
+		//if (rdbSaveBackground(server.rdb_filename,rsiptr) == C_OK)
+		//	server.rdb_bgsave_scheduled = 0;
 	}
 
 	/* Fire the cron loop modules event. */
