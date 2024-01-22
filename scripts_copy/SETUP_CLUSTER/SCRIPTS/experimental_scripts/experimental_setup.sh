@@ -111,6 +111,8 @@ EOF
 			    cd logs
 			    cp -rf ${LOCAL_LOG_DIR}/* .
 			    rm -rf ${LOCAL_LOG_DIR}
+			    cp -rf ${REDIS_LOG_DIR}/* .
+		            rm -rf ${REDIS_LOG_DIR}/*
 EOF
 2>&1)
     echo "$tko"
