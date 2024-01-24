@@ -1,6 +1,21 @@
 #!/bin/bash -e
 
-source ../config.sh
+MAIN_DIR="/root/rd"
+REDIS_SRC_DIR="/root/rd/src"
+YCSB_SRC_DIR="/root/rd/ycsb_client"
+REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
+LOCAL_SETUP_DIR="/root/rd/redis_bin"
+YCSB_DIR="/root/ycsb_client"
+YCSB_LOG_FILENAME="/tmp/ycsb_output"
+MASTER_HOST="10.10.1.1"
+MASTER_PORT="8000"
+REDIS_WORKLOAD="workloadfulva5050"
+YCSB_LOADER_INSTANCE="10.10.1.6"
+REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
+YCSB_DIR_BIN="/root/ycsb_client/bin"
+REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
+YCSB_LOG_FILENAME="/tmp/ycsb_output"
+LOCAL_LOG_DIR="/root/systat_logs"
 declare -A redis_experiments
 #redis_experiments["experiment_write_heavy"]="workloadwriteheavy|workload_write_heavy"
 #redis_experiments["experiment_read_heavy"]="workloadreadheavy|workload_read_heavy"

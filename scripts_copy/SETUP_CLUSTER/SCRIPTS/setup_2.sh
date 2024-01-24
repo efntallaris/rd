@@ -1,5 +1,4 @@
 #!/bin/bash -e
-LOCAL_IP=$(ifconfig eno1 | grep inet | awk -F"inet " '{print $2}' | awk -F' ' '{print $1}')
 
 REDIS_SRC_DIR="/mnt/stratos/redis/src/redis/src"
 REDIS_MAIN_SCRIPT_DIR="/mnt/stratos/redis/scripts/SETUP_CLUSTER/SCRIPTS"
