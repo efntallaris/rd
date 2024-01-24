@@ -73,8 +73,8 @@ EOF
 EOF
 2>&1)
 		echo "$tko"
-		echo "SLEEPING FOR 3 MINUTES"
-		sleep 3m 
+		echo "SLEEPING FOR 5 MINUTES"
+		sleep 5m 
 
 		timestamp=$(date '+%Y_%m_%d_%H_%M_%S')
 		exp_dir=${info[1]}_${timestamp}
