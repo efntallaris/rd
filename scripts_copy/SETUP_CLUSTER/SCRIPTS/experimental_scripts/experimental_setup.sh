@@ -1,7 +1,6 @@
 #!/bin/bash -e
 
 source ../config.sh
-#running workload
 declare -A redis_experiments
 #redis_experiments["experiment_write_heavy"]="workloadwriteheavy|workload_write_heavy"
 #redis_experiments["experiment_read_heavy"]="workloadreadheavy|workload_read_heavy"
