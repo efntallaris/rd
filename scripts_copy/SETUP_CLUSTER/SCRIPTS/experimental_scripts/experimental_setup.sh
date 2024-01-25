@@ -62,7 +62,7 @@ EOF
 			IFS="|" read -r -a info <<< "${nodeInstance[i]}"
 			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
 			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
-				cd ${REDIS_LOG_DIR}
+				cd ${EXPERIMENTAL_OUTPUT_DIR}
 				cd ${exp_dir}
 				cp -rf /tmp/ycsb_output_* .
 				sudo rm -rf /tmp/ycsb_output_*
@@ -79,7 +79,7 @@ EOF
 			IFS="|" read -r -a info <<< "${nodeInstance[i]}"
 			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
 			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
-			    cd ${REDIS_LOG_DIR}
+			    cd ${EXPERIMENTAL_OUTPUT_DIR}
 			    cd ${exp_dir}
 			    cd logs
 			    cp -rf ${LOCAL_LOG_DIR}/* .
