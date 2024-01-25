@@ -62,7 +62,7 @@ EOF
 			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
 			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 				cd ${EXPERIMENTAL_OUTPUT_DIR}
-				cd ${EXPERIMENTAL_DIR}
+				cd ${EXPERIMENT_DIR}
 				cp -rf /tmp/ycsb_output_* .
 				sudo rm -rf /tmp/ycsb_output_*
 EOF
