@@ -7067,12 +7067,13 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				// }
 				// r_allocator_lock_slot_blocks(slotInt);
 			}
-			sleep(2);
 			//dictDisableMigration();
 
 
 
 			if(strcmp("LAST", item->message)==0){
+				//todo remove
+				sleep(2);
 				connection *conn = item->c->conn;
 				char ip[1000];
 				int port;
