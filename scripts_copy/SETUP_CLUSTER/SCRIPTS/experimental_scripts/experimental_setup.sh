@@ -62,7 +62,7 @@ EOF
 			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
 			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 				cd ${EXPERIMENTAL_OUTPUT_DIR}
-				cd ${EXPERIMENTAL__DIR}
+				cd ${EXPERIMENTAL_DIR}
 				cp -rf /tmp/ycsb_output_* .
 				sudo rm -rf /tmp/ycsb_output_*
 EOF
@@ -92,8 +92,8 @@ EOF
 done
 
 		cd ${EXPERIMENTAL_OUTPUT_DIR}
-		mkdir -p ${EXPERIMENT_DIR}_${info[0]}
-		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${info[0]}
+		mkdir -p ${EXPERIMENT_DIR}_${timestamp}
+		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${timestamp}
 		rm -rf ${EXPERIMENT_DIR}/*
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
             		echo "KILLING SCRIPTS"
