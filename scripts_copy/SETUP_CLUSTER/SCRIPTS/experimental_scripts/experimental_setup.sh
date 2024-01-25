@@ -29,7 +29,7 @@ for redis_experiment in "${!redis_experiments[@]}"; do
 	for i in ${!expInstance[@]};
 	do
 		IFS="|" read -r -a info <<< "${expInstance[i]}"
-		tko=$(sudo ssh -o StrictHostKeyChecking=no ${MASTER_NODE} bash <<EOF
+		tko=$(sudo ssh -o StrictHostKeyChecking=no ${MASTER_HOST} bash <<EOF
 					cd ${REDIS_MAIN_SCRIPT_DIR}
 					chmod +x setup_1.sh
 					sudo ./setup_1.sh
