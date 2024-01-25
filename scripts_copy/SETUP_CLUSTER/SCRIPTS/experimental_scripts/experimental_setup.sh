@@ -50,10 +50,9 @@ EOF
 		sleep 5m 
 
 		timestamp=$(date '+%Y_%m_%d_%H_%M_%S')
-		EXP_DIR=${info[1]}_${timestamp}
 		cd ${EXPERIMENTAL_OUTPUT_DIR}
-		mkdir -p ${EXP_DIR}
-		mkdir -p ${EXP_DIR}/logs
+		mkdir -p ${EXPERIMENT_DIR}
+		mkdir -p ${EXPERIMENT_DIR}/logs
 
 		for redis_instance in "${!redis_ycsb_instances[@]}"; do
 		    echo "$redis_instance - ${redis_ycsb_instances[$redis_instance]}"
@@ -63,7 +62,7 @@ EOF
 			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
 			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 				cd ${EXPERIMENTAL_OUTPUT_DIR}
-				cd ${EXP_DIR}
+				cd ${EXPERIMENTAL__DIR}
 				cp -rf /tmp/ycsb_output_* .
 				sudo rm -rf /tmp/ycsb_output_*
 EOF
@@ -80,7 +79,7 @@ EOF
 			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
 			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 			    cd ${EXPERIMENTAL_OUTPUT_DIR}
-			    cd ${EXP_DIR}
+			    cd ${EXPERIMENT_DIR}
 			    cd logs
 			    cp -rf ${LOCAL_LOG_DIR}/* .
 			    rm -rf ${LOCAL_LOG_DIR}
@@ -92,6 +91,10 @@ EOF
     done
 done
 
+		cd ${EXPERIMENTAL_OUTPUT_DIR}
+		mkdir -p ${EXPERIMENT_DIR}_${info[0]}
+		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${info[0]}
+		rm -rf ${EXPERIMENT_DIR}/*
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
             		echo "KILLING SCRIPTS"
 			cd ${REDIS_MAIN_SCRIPT_DIR}
