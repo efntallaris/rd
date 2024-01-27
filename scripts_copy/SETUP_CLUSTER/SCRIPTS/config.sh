@@ -34,16 +34,16 @@ redis_master_instances["redis-7"]="redis7|10.10.1.8|8000|/root/node07.conf"
 #redis_master_instances["redis-8"]="redis7|10.10.1.9|8000|/root/node07.conf"
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-9"]="redis3|10.10.1.10|8000|/root/node04.conf"
+redis_migrate_instances["redis-9"]="redis3|10.10.1.9|8000|/root/node04.conf"
 
 #       THE NODE WHERE YCSB RUNS        #
 declare -A redis_ycsb_instances
-redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.11"
-redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.12"
-redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.13"
-redis_ycsb_instances["ycsb-3"]="ycsb3|10.10.1.14"
-redis_ycsb_instances["ycsb-4"]="ycsb2|10.10.1.15"
-redis_ycsb_instances["ycsb-5"]="ycsb2|10.10.1.16"
+redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.10"
+redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.11"
+redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.12"
+redis_ycsb_instances["ycsb-3"]="ycsb3|10.10.1.13"
+# redis_ycsb_instances["ycsb-4"]="ycsb2|10.10.1.15"
+# redis_ycsb_instances["ycsb-5"]="ycsb2|10.10.1.16"
 # redis_ycsb_instances["ycsb-5"]="ycsb1|10.10.1.11"
 # redis_ycsb_instances["ycsb-6"]="ycsb2|10.10.1.12"
 # redis_ycsb_instances["ycsb-7"]="ycsb2|10.10.1.13"
@@ -63,9 +63,9 @@ instances["ycsb1"]="ycsb1|10.10.1.10"
 instances["ycsb2"]="ycsb2|10.10.1.11"
 instances["ycsb3"]="ycsb3|10.10.1.12"
 instances["ycsb4"]="ycsb1|10.10.1.13"
-instances["ycsb5"]="ycsb1|10.10.1.14"
-instances["ycsb6"]="ycsb1|10.10.1.15"
-instances["ycsb7"]="ycsb1|10.10.1.16"
+# instances["ycsb5"]="ycsb1|10.10.1.14"
+# instances["ycsb6"]="ycsb1|10.10.1.15"
+# instances["ycsb7"]="ycsb1|10.10.1.16"
 
 
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
