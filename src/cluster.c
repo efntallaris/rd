@@ -6178,40 +6178,46 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	if(strcmp(myself->ip, "10.10.1.2") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 30 SECONDS");
-		sleep(60);
+		sleep(30);
+		// sleep(60);
 		//sleep(70);
 		//sleep(200);
 	}
 
 	if(strcmp(myself->ip, "10.10.1.3") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 90 SECONDS");
-		sleep(110);
+		sleep(30);
+		// sleep(110);
 		//sleep(140);
 		//sleep(400);
 	}
 
 	if(strcmp(myself->ip, "10.10.1.4") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 130 SECONDS");
-		sleep(150);
+		sleep(30);
+		// sleep(150);
 		//sleep(140);
 		//sleep(400);
 	}
 	
 	if(strcmp(myself->ip, "10.10.1.5") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 170 SECONDS");
-		sleep(190);
+		sleep(30);
+		// sleep(190);
 		//sleep(140);
 		//sleep(400);
 	}
 	if(strcmp(myself->ip, "10.10.1.6") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 200 SECONDS");
-		sleep(230);
+		sleep(30);
+		// sleep(230);
 		//sleep(140);
 		//sleep(400);
 	}
 	if(strcmp(myself->ip, "10.10.1.7") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 240 SECONDS");
-		sleep(260);
+		sleep(30);
+		// sleep(260);
 		//sleep(140);
 		//sleep(400);
 	}
