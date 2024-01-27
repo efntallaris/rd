@@ -11,6 +11,7 @@ for redis_instance in "${!redis_master_instances[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
+	    ulimit -n 65535
             sudo rm -rf ${info[3]}
             cd "${REDIS_SRC_DIR}"
             sudo make PREFIX="${LOCAL_SETUP_DIR}" install
@@ -86,6 +87,7 @@ for redis_instance in "${!redis_migrate_instances[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
+	    ulimit -n 65535
             sudo rm -rf ${info[3]}
             cd "${REDIS_SRC_DIR}"
             sudo make PREFIX="${LOCAL_SETUP_DIR}" install
