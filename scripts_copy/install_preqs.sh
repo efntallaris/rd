@@ -73,4 +73,6 @@ chmod +x src/mkreleasehdr.sh
 
 sudo make
 
+sudo ulimit -n 100000
+
 
