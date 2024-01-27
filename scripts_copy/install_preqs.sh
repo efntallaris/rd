@@ -72,7 +72,7 @@ chmod +x src/mkreleasehdr.sh
 #sudo cp -rf /usr/include/infiniband /usr/local/include
 
 sudo make
-
-sudo ulimit -n 100000
+sudo su
+ulimit -n 100000
 
 
