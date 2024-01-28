@@ -20,7 +20,7 @@ REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
 
-EXPERIMENT_NAME="2Donors2Recipients4YCSB"
+EXPERIMENT_NAME="3Donors1Recipient4YCSB"
 
 #	MASTER NODES 	#
 declare -A redis_master_instances 
@@ -31,12 +31,12 @@ redis_master_instances["redis-3"]="redis4|10.10.1.4|8000|/root/node04.conf"
 redis_master_instances["redis-4"]="redis5|10.10.1.5|8000|/root/node05.conf"
 redis_master_instances["redis-5"]="redis6|10.10.1.6|8000|/root/node06.conf"
 redis_master_instances["redis-6"]="redis7|10.10.1.7|8000|/root/node07.conf"
-redis_master_instances["redis-7"]="redis8|10.10.1.8|8000|/root/node07.conf"
+redis_master_instances["redis-7"]="redis8|10.10.1.8|8000|/root/node08.conf"
 #redis_master_instances["redis-8"]="redis7|10.10.1.9|8000|/root/node07.conf"
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-9"]="redis3|10.10.1.9|8000|/root/node04.conf"
-redis_migrate_instances["redis-14"]="redis10|10.10.1.14|8000|/root/node04.conf"
+redis_migrate_instances["redis-9"]="redis3|10.10.1.9|8000|/root/node09.conf"
+# redis_migrate_instances["redis-14"]="redis10|10.10.1.14|8000|/root/node04.conf"
 
 #       THE NODE WHERE YCSB RUNS        #
 declare -A redis_ycsb_instances
