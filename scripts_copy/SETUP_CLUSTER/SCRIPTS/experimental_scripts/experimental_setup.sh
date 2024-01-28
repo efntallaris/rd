@@ -98,6 +98,7 @@ done
 		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
 		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
 		rm -rf ${EXPERIMENT_DIR}/*
+  		echo "HELLO ${expInstance[0]}"
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
             		echo "KILLING SCRIPTS"
 			cd ${REDIS_MAIN_SCRIPT_DIR}
