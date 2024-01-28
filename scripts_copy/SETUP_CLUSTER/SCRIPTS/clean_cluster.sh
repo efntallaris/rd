@@ -9,7 +9,7 @@ REDIS_MAIN_SCRIPT_DIR="/root/rd/scripts_copy/SETUP_CLUSTER/SCRIPTS"
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
 YCSB_DIR="/root/ycsb_client"
 
-source ../config.sh
+source ./config.sh
 
 echo "CLEANING MASTERS"
 
