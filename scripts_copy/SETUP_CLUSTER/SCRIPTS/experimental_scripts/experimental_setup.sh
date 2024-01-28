@@ -96,9 +96,12 @@ done
 
 		cd ${EXPERIMENTAL_OUTPUT_DIR}
 		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
-		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
+		IFS="|" read -r -a expInfo <<< "${expInstance[i]}"
+		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}/${expInfo[0]}
+  		target_path = ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${EXPERIMENT_NAME}/${expInfo[0]}
+  		cp -rf ${EXPERIMENT_DIR}/* ${target_path}
 		rm -rf ${EXPERIMENT_DIR}/*
-  		echo "HELLO ${expInstance[0]}"
+
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
             		echo "KILLING SCRIPTS"
 			cd ${REDIS_MAIN_SCRIPT_DIR}
