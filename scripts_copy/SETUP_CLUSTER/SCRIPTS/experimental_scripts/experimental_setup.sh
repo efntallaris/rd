@@ -7,8 +7,11 @@ declare -A redis_experiments
 #redis_experiments["experiment_read_only"]="workloadreadonly|workload_read_only"
 #redis_experiments["experiment_write_only"]="workloadwriteonly|workload_write_only"
 #redis_experiments["experiment_update_only"]="workloadupdateonly|workload_update_only"
+redis_experiments["experiment_read_only"]="workloadreadonly|workloadreadonly"
 redis_experiments["experiment_fulva_95_5"]="workloadfulva955|workload_fulva_95_5"
 redis_experiments["experiment_fulva_50_50"]="workloadfulva5050|workload_fulva_50_50"
+
+
 
 tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
 	if [ ! -d "$REDIS_LOG_DIR" ]; then
