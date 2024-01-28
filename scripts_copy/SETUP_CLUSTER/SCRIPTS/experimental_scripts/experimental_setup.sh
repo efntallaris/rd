@@ -92,8 +92,8 @@ EOF
 done
 
 		cd ${EXPERIMENTAL_OUTPUT_DIR}
-		mkdir -p ${EXPERIMENT_DIR}_${timestamp}
-		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${timestamp}
+		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
+		cp -rf ${EXPERIMENT_DIR}/* ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
 		rm -rf ${EXPERIMENT_DIR}/*
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
             		echo "KILLING SCRIPTS"
