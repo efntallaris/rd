@@ -98,7 +98,7 @@ done
 		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
 		IFS="|" read -r -a expInfo <<< "${expInstance[i]}"
 		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}/${expInfo[0]}
-  		target_path = ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${EXPERIMENT_NAME}/${expInfo[0]}
+  		target_path=${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_DIR}_${EXPERIMENT_NAME}/${expInfo[0]}
   		cp -rf ${EXPERIMENT_DIR}/* ${target_path}
 		rm -rf ${EXPERIMENT_DIR}/*
 
