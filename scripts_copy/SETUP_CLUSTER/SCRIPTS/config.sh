@@ -41,9 +41,9 @@ redis_migrate_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node09.conf"
 #       THE NODE WHERE YCSB RUNS        #
 declare -A redis_ycsb_instances
 redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.10"
-# redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.11"
-# redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.12"
-# redis_ycsb_instances["ycsb-3"]="ycsb3|10.10.1.13"
+redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.11"
+redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.12"
+redis_ycsb_instances["ycsb-3"]="ycsb3|10.10.1.13"
 # redis_ycsb_instances["ycsb-4"]="ycsb2|10.10.1.15"
 # redis_ycsb_instances["ycsb-5"]="ycsb2|10.10.1.16"
 # redis_ycsb_instances["ycsb-5"]="ycsb1|10.10.1.11"
