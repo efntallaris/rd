@@ -27,15 +27,15 @@ declare -A redis_master_instances
 redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
 redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
 redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
-# redis_master_instances["redis-3"]="redis4|10.10.1.4|8000|/root/node04.conf"
-# redis_master_instances["redis-4"]="redis5|10.10.1.5|8000|/root/node05.conf"
-# redis_master_instances["redis-5"]="redis6|10.10.1.6|8000|/root/node06.conf"
-# redis_master_instances["redis-6"]="redis7|10.10.1.7|8000|/root/node07.conf"
-# redis_master_instances["redis-7"]="redis8|10.10.1.8|8000|/root/node08.conf"
-#redis_master_instances["redis-8"]="redis7|10.10.1.9|8000|/root/node07.conf"
+redis_master_instances["redis-3"]="redis4|10.10.1.4|8000|/root/node04.conf"
+redis_master_instances["redis-4"]="redis5|10.10.1.5|8000|/root/node05.conf"
+redis_master_instances["redis-5"]="redis6|10.10.1.6|8000|/root/node06.conf"
+redis_master_instances["redis-6"]="redis7|10.10.1.7|8000|/root/node07.conf"
+redis_master_instances["redis-7"]="redis8|10.10.1.8|8000|/root/node08.conf"
+# redis_master_instances["redis-8"]="redis7|10.10.1.9|8000|/root/node07.conf"
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-3"]="redis3|10.10.1.4|8000|/root/node09.conf"
+redis_migrate_instances["redis-8"]="redis9|10.10.1.8|8000|/root/node09.conf"
 # redis_migrate_instances["redis-14"]="redis10|10.10.1.14|8000|/root/node04.conf"
 
 #       THE NODE WHERE YCSB RUNS        #
