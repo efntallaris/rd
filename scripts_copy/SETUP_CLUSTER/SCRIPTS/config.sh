@@ -35,7 +35,7 @@ redis_master_instances["redis-7"]="redis8|10.10.1.8|8000|/root/node08.conf"
 # redis_master_instances["redis-8"]="redis7|10.10.1.9|8000|/root/node07.conf"
 
 declare -A redis_migrate_instances
-redis_migrate_instances["redis-8"]="redis9|10.10.1.8|8000|/root/node09.conf"
+redis_migrate_instances["redis-8"]="redis9|10.10.1.9|8000|/root/node09.conf"
 # redis_migrate_instances["redis-14"]="redis10|10.10.1.14|8000|/root/node04.conf"
 
 #       THE NODE WHERE YCSB RUNS        #
