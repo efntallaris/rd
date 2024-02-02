@@ -11,7 +11,7 @@ YCSB_LOG_FILENAME="/tmp/ycsb_output"
 MASTER_HOST="10.10.1.1"
 MASTER_PORT="8000"
 REDIS_WORKLOAD="workloadfulva5050"
-YCSB_LOADER_INSTANCE="10.10.1.9"
+YCSB_LOADER_INSTANCE="10.10.1.1"
 REDIS_LOG_DIR="/proj/streamstore-PG0/experiment_outputs"
 EXPERIMENTAL_OUTPUT_DIR="/proj/streamstore-PG0/experiments"
 EXPERIMENT_DIR="exp"
@@ -20,7 +20,7 @@ REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
 
-EXPERIMENT_NAME="7Donors2Recipient4YCSB"
+EXPERIMENT_NAME="3Donors1Recipient1YCSB"
 
 #	MASTER NODES 	#
 declare -A redis_master_instances 
@@ -42,9 +42,9 @@ redis_migrate_instances["redis-4"]="redis4|10.10.1.4|8000|/root/node04.conf"
 #       THE NODE WHERE YCSB RUNS        #
 declare -A redis_ycsb_instances
 redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.5"
-redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.6"
-redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.7"
-redis_ycsb_instances["ycsb-3"]="ycsb3|10.10.1.8"
+# redis_ycsb_instances["ycsb-1"]="ycsb1|10.10.1.6"
+# redis_ycsb_instances["ycsb-2"]="ycsb2|10.10.1.7"
+# redis_ycsb_instances["ycsb-3"]="ycsb3|10.10.1.8"
 # redis_ycsb_instances["ycsb-4"]="ycsb2|10.10.1.15"
 # redis_ycsb_instances["ycsb-5"]="ycsb2|10.10.1.16"
 # redis_ycsb_instances["ycsb-5"]="ycsb1|10.10.1.11"
