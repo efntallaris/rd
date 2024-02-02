@@ -95,6 +95,26 @@ EOF
     done
 done
 
+		for redis_instance in "${!redis_migrate_instances[@]}"; do
+		    echo "$redis_instance - ${redis_migrate_instances[$redis_instance]}"
+		    IFS=',' read -r -a nodeInstance <<< "${redis_migrate_instances[$redis_instance]}"
+		    for i in "${!nodeInstance[@]}"; do
+			IFS="|" read -r -a info <<< "${nodeInstance[i]}"
+			echo "running script on $redis_instance, ${info[1]} port ${info[2]}"
+			tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
+			    cd ${EXPERIMENTAL_OUTPUT_DIR}
+			    cd ${EXPERIMENT_DIR}
+			    cd logs
+			    cp -rf ${LOCAL_LOG_DIR}/* .
+			    rm -rf ${LOCAL_LOG_DIR}
+			    cp -rf ${REDIS_LOG_DIR}/* .
+		            rm -rf ${REDIS_LOG_DIR}/*
+EOF
+2>&1)
+    echo "$tko"
+    done
+done
+
 		cd ${EXPERIMENTAL_OUTPUT_DIR}
 		mkdir -p ${EXPERIMENT_DIR}_${EXPERIMENT_NAME}
 		IFS="|" read -r -a expInfo <<< "${expInstance[i]}"
