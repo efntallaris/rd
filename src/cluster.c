@@ -6469,7 +6469,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 
 			//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
-usleep(8000);
+
 			//	usleep(3600);
 			//	usleep(1800);
 		}
