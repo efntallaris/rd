@@ -6170,54 +6170,27 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
 
-	if(strcmp(myself->ip, "10.10.1.1") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 30 SECONDS");
-		sleep(30);
+	if(strcmp(myself->ip, "192.168.20.1") == 0) {
+		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 10 SECONDS");
+		sleep(10);
 
 	}
 
-	if(strcmp(myself->ip, "10.10.1.2") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
+	if(strcmp(myself->ip, "192.168.20.2") == 0) {
+		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 30 SECONDS");
 		sleep(60);
 		//sleep(70);
 		//sleep(200);
 	}
 
-	if(strcmp(myself->ip, "10.10.1.3") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 90 SECONDS");
-		sleep(90);
-		//sleep(140);
-		//sleep(400);
-	}
-
-	if(strcmp(myself->ip, "10.10.1.4") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 130 SECONDS");
+	if(strcmp(myself->ip, "192.168.20.3") == 0) {
+		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
 		sleep(120);
 		//sleep(140);
 		//sleep(400);
 	}
-	
-	if(strcmp(myself->ip, "10.10.1.5") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 170 SECONDS");
-		sleep(150);
-		//sleep(140);
-		//sleep(400);
-	}
-	if(strcmp(myself->ip, "10.10.1.6") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 200 SECONDS");
-		sleep(180);
-		//sleep(140);
-		//sleep(400);
-	}
-	if(strcmp(myself->ip, "10.10.1.7") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 240 SECONDS");
-		sleep(210);
-		//sleep(140);
-		//sleep(400);
-	}
 
-	
-	
+
 	serverLog(LL_WARNING, "STRATOS STARTED MIGRATION ON DONOR SIDE");
 	dictEnableMigration();
 
@@ -6255,7 +6228,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	char *ip = (char *)args[3];
 	char *port = (char *)args[5];
 
-	serverLog(LL_WARNING, "STRATOS IP IS %s, PORT %s", ip, port);
 	server.rdma_client = init_rdma_client(ip, port);
 	int res = server.rdma_client->connect_ops.RDMA_connect_to_server(server.rdma_client);
 
@@ -6268,7 +6240,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 2731;
+	int chunk_size = 456;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 
 		int end = start + chunk_size;
@@ -6388,7 +6360,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 		// 1 readline for the reply and one for the +OK ack
 
-		if(connSyncReadLine(cs->conn, remote_keys, 1024, 100) <=0) {
+		if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
 			serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
 		}
 
@@ -6495,8 +6467,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 			}
-			usleep(10000);
 
+			//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
+usleep(8000);
+			//	usleep(3600);
+			//	usleep(1800);
 		}
 
 		int number_of_received_acks = total_acks;
@@ -6594,19 +6569,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			total_number_of_remote_rest_buffers += blocksDiff;
 			total_number_of_active_slots++;
 		}
-
-                for(int i=0;i<100;i++){
-                        char buff[1024];
-                        if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
-                                serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
-                                break;
-                        }
-
-                        //serverLog(LL_WARNING, "BUFF:%s", buff);
-
-
-                }
-		
 		serverLog(LL_WARNING, "STRATOS TOTAL NUMBER OF REMOTE REST BUFFERS:%d", total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
@@ -7081,13 +7043,10 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
-			dictDisableMigration();
-
+			//dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
-				//todo remove
-				// sleep(2);
 				connection *conn = item->c->conn;
 				char ip[1000];
 				int port;
@@ -7779,4 +7738,3 @@ void printTimevalInMilliseconds(struct timeval *tv_start, struct timeval *tv_end
 	snprintf(output, 50, "%ld", micros);
 	serverLog(LL_WARNING, "STRATOS TOTAL TIME: %s WALL-CLOCK: %s time \n", output, timerName);
 }
-
