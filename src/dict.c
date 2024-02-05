@@ -113,22 +113,16 @@ static void _dictReset(dictht *ht)
 
 
 void dictInitLocks(){
-	log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-	fprintf(log_file, "INITIALIZING LOCKS\n");
-	fclose(log_file);
+	
 	if(migration_dict_locks == NULL){
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
-			log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-			fclose(log_file);
+			
 		}
 		unsigned long numLocks = 30000000;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
-				log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-				fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-				fclose(log_file);
+				
 			}
 		}
 
@@ -145,17 +139,13 @@ dict *dictCreate(dictType *type,
 
 	if(migration_dict_locks == NULL){
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
-			log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-			fclose(log_file);
+			
 		}
 		unsigned long numLocks = 30000000;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
-				log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-				fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-				fclose(log_file);
+				
 			}
 		}
 
@@ -173,17 +163,13 @@ dict *dictCreateBig(dictType *type,
 
 	if(migration_dict_locks == NULL){
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
-			log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-			fclose(log_file);
+			
 		}
 		unsigned long numLocks = 30000000;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
-				log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-				fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-				fclose(log_file);
+				
 			}
 		}
 
@@ -269,9 +255,7 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 	n.size = realsize;
 	n.sizemask = realsize-1;
 
-//	log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "SIZEMASK : %ld, SIZE:%ld\n", n.sizemask, n.size);
-//	fclose(log_file);
+
 
 	if (malloc_failed) {
 		n.table = ztrycalloc(realsize*sizeof(dictEntry*));
@@ -474,24 +458,6 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	//pthread_mutex_lock(&general_dict_lock);
 	ht->used++;
 	//pthread_mutex_unlock(&general_dict_lock);
-
-//	char buffer1[4096];
-//	dictGetStats(buffer1,	sizeof(buffer1),d);
-//	log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "HT : %s\n", buffer1);
-//	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
-//	fclose(log_file);
-
-//	log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
-//	fclose(log_file);
-
-//	char buffer1[4096];
-//	dictGetStats(buffer1,	sizeof(buffer1),d);
-//	log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "HT : %s\n", buffer1);
-//	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
-//	fclose(log_file);
 
 	/* Set the hash entry fields. */
 	dictSetKey(d, entry, key);
@@ -1159,16 +1125,12 @@ static int _dictExpandIfNeeded(dict *d)
 
 	/* If the hash table is empty expand it to the initial size. */
 	if( d->ht[0].size == 0 && d->isBig){
-		log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-		fprintf(log_file, "INITIALIZING BIG HT\n");
-		fclose(log_file);
+		
 		return dictExpand(d, DICT_HT_BIG_INITIAL_SIZE);
 
 	}
 	if( d->ht[0].size == 0 && d->isBig == 0){
-		log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-		fprintf(log_file, "INITIALIZING SMALL HT\n");
-		fclose(log_file);
+		
 		return dictExpand(d, DICT_HT_INITIAL_SIZE);
 
 	}
@@ -1223,9 +1185,7 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
 		return -1;
 	for (table = 0; table <= 1; table++) {
 		idx = hash & d->ht[table].sizemask;
-		//log_file = fopen("/home/entallaris/dictlog", "a");  // Open file in append mode
-		//fprintf(log_file, "idx index: %ld, hash:%ld, sizemask:%ld\n", idx, hash, d->ht[table].sizemask);
-		//fclose(log_file);
+		
 		/* Search if this slot does not already contain the given key */
 		pthread_mutex_lock(&migration_dict_locks[idx]);
 		he = d->ht[table].table[idx];
