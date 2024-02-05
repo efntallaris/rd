@@ -6192,7 +6192,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 	serverLog(LL_WARNING, "STRATOS STARTED MIGRATION ON DONOR SIDE");
-	dictEnableMigration();
+	// dictEnableMigration();
 
 	// does rdma connection exists in cache? if not initiate new one
 	migrateCachedSocket *cs;
