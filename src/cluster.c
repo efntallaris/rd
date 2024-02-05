@@ -6170,20 +6170,20 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
 
-	if(strcmp(myself->ip, "192.168.20.1") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 10 SECONDS");
-		sleep(10);
+	if(strcmp(myself->ip, "10.10.1.1") == 0) {
+		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 20 SECONDS");
+		sleep(20);
 
 	}
 
-	if(strcmp(myself->ip, "192.168.20.2") == 0) {
-		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 30 SECONDS");
-		sleep(60);
+	if(strcmp(myself->ip, "10.10.1.2") == 0) {
+		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
+		sleep(70);
 		//sleep(70);
 		//sleep(200);
 	}
 
-	if(strcmp(myself->ip, "192.168.20.3") == 0) {
+	if(strcmp(myself->ip, "10.10.1.3") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
 		sleep(120);
 		//sleep(140);
