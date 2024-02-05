@@ -139,7 +139,7 @@ dict *dictCreate(dictType *type,
 	    if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 	        // Handle error
 	    }
-	    unsigned long numLocks = 134217728; // Changed number of locks
+	    unsigned long numLocks = 67108864; // Changed number of locks
 	    migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 	    for (unsigned long i = 0; i < numLocks; i++) {
 	        if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
