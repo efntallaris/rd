@@ -7023,30 +7023,31 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
-			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+			// for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
-				int slotInt = j;
-				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-				robj *key_meta, *val_meta;
-				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-					//if key does not exist then add it to dictionary, else ignore
-					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
-						dbAddNoCopy(item->c->db, key_meta, val_meta);
-						total_keys_added++;
-						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
-					}
-					if(total_keys_added % 10 == 0){
-						//usleep(10);
-					}
-				}
-				r_allocator_lock_slot_blocks(slotInt);
-			}
-			dictDisableMigration();
+			// 	int slotInt = j;
+			// 	segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+			// 	robj *key_meta, *val_meta;
+			// 	while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+			// 		key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+			// 		val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+			// 		//if key does not exist then add it to dictionary, else ignore
+			// 		if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
+			// 			dbAddNoCopy(item->c->db, key_meta, val_meta);
+			// 			total_keys_added++;
+			// 			//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
+			// 		}
+			// 		if(total_keys_added % 10 == 0){
+			// 			//usleep(10);
+			// 		}
+			// 	}
+			// 	r_allocator_lock_slot_blocks(slotInt);
+			// }
+			// dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
+				sleep(2);
 				connection *conn = item->c->conn;
 				char ip[1000];
 				int port;
