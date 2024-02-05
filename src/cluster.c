@@ -6388,7 +6388,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 		// 1 readline for the reply and one for the +OK ack
 
-		if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
+		if(connSyncReadLine(cs->conn, remote_keys, 1024, 100) <=0) {
 			serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
 		}
 
