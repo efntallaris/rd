@@ -6495,7 +6495,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 			}
-			usleep(5000);
 
 		}
 
