@@ -6593,6 +6593,19 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			total_number_of_remote_rest_buffers += blocksDiff;
 			total_number_of_active_slots++;
 		}
+
+                for(int i=0;i<100;i++){
+                        char buff[1024];
+                        if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
+                                serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
+                                break;
+                        }
+
+                        //serverLog(LL_WARNING, "BUFF:%s", buff);
+
+
+                }
+		
 		serverLog(LL_WARNING, "STRATOS TOTAL NUMBER OF REMOTE REST BUFFERS:%d", total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
