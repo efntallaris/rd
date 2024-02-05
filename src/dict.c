@@ -117,7 +117,7 @@ void dictInitLocks(){
 	if(migration_dict_locks == NULL){
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 		}
-		unsigned long numLocks = 134217728;
+		unsigned long numLocks = 67108864;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
