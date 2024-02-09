@@ -7043,7 +7043,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
-			dictDisableMigration();
+			// dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
