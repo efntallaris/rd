@@ -6899,9 +6899,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					"configEpoch updated after importing slot");
 		}
 		clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
-		clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-				CLUSTER_TODO_UPDATE_STATE|
-				CLUSTER_TODO_FSYNC_CONFIG);
 		serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
 		// CHANGE OWNERSHIP STOP
 
