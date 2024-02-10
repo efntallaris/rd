@@ -6883,13 +6883,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 
 			clusterDelSlot(slot);
-			clusterAddSlot(n,slot);
+			clusterAddSlot(recipientNode,slot);
 
-			if (n == myself &&
-					server.cluster->importing_slots_from[slot])
-			{
-				server.cluster->importing_slots_from[slot] = NULL;
-			}
+			server.cluster->migrating_slots_to[slot] = NULL;
+			server.cluster->importing_slots_from[slot] = NULL;
 
 			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		}
