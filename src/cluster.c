@@ -6856,46 +6856,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 			//pthread_mutex_unlock(&server.lock_slots[intSlot]);
 		}
-
-
-		for(int j = start; j<end; j++) {
-			int slot;
-			slot = atoi(args[j]);
-			clusterNode *n = server.cluster->migrating_slots_to[slot];
-			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
-			//serverLog(LL_WARNING, "STRATOS slotID on setslots is %d", slot);
-			//	    serverLog(LL_WARNING, "STRATOS slotID on setslots is %s 2",  c->argv[j]->ptr);
-			// DO I STILL HOLD KEYS FOR THIS NODE?
-			if (server.cluster->slots[slot] == myself && n != myself) {
-				if (countKeysInSlot(slot) != 0) {
-					addReplyErrorFormat(c,
-							"Can't assign hashslot %d to a different node "
-							"while I still hold keys for this hash slot.", slot);
-
-					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-					return;
-				}
-			}
-
-			if (countKeysInSlot(slot) == 0 && server.cluster->migrating_slots_to[slot]) {
-				server.cluster->migrating_slots_to[slot] = NULL;
-
-			}
-
-			clusterDelSlot(slot);
-			clusterAddSlot(recipientNode,slot);
-
-			server.cluster->migrating_slots_to[slot] = NULL;
-			server.cluster->importing_slots_from[slot] = NULL;
-
-			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-		}
-
-		if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
-			serverLog(LL_WARNING,
-					"configEpoch updated after importing slot");
-		}
-		clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
 		serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
 		// CHANGE OWNERSHIP STOP
 
