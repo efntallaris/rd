@@ -4644,9 +4644,9 @@ int processCommand(client *c) {
 
 
 					//}
-					server.cluster->slots[intSlot] = recipientNode;
-					server.cluster->migrating_slots_to[intSlot] = NULL;
-					server.cluster->importing_slots_from[intSlot] = NULL;
+					//server.cluster->slots[intSlot] = recipientNode;
+					//server.cluster->migrating_slots_to[intSlot] = NULL;
+					//server.cluster->importing_slots_from[intSlot] = NULL;
 					sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
 					addReplyErrorSds(c,command);
 					server.migration_ownership_changed[intSlot] = 0;
@@ -4670,9 +4670,9 @@ int processCommand(client *c) {
 				if(server.migration_ownership_changed[intSlot] == 1){
 					clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
 					int port = recipientNode->port;
-					server.cluster->slots[intSlot] = recipientNode;
-					server.cluster->migrating_slots_to[intSlot] = NULL;
-					server.cluster->importing_slots_from[intSlot] = NULL;
+					//server.cluster->slots[intSlot] = recipientNode;
+					//server.cluster->migrating_slots_to[intSlot] = NULL;
+					//server.cluster->importing_slots_from[intSlot] = NULL;
 					sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
 					addReplyErrorSds(c,command);
 					server.migration_ownership_changed[intSlot] = 0;
@@ -4699,37 +4699,6 @@ int processCommand(client *c) {
 				handleClientsBlockedOnKeys();
 		}
 	}
-
-	//	if(is_write_command || is_read_command){
-	//		int intSlot = keyHashSlot((char *) c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
-	//		if(pthread_mutex_trylock(&server.ownership_lock_slots[intSlot]) == 0){
-	//			if(server.migration_ownership_changed[intSlot] == 1){
-	//				clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
-	//				int port = recipientNode->port;
-	//				//int pending_writes = server.pending_migration_writes[intSlot];
-	//				//sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
-	//				//serverLog(LL_WARNING, "STRATOS COMMAND IS %s", command);
-	//				//for(int i=0;i<pending_writes;i++){
-	//					//int nwritten = connWrite(c->conn,command, sdslen(command));
-	//					//serverLog(LL_WARNING, "STRATOS IM HERE %d", nwritten);
-	//
-	//
-	//				//}
-	//				server.cluster->slots[intSlot] = recipientNode;
-	//				server.cluster->migrating_slots_to[intSlot] = NULL;
-	//				server.cluster->importing_slots_from[intSlot] = NULL;
-	//				serverLog(LL_WARNING, "STRATOS HERE");
-	//
-	//			}
-	//			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
-	//		}else{
-	//
-	//			addReplyError(c,"-TRYAGAIN Multiple keys request during rehashing of slot");
-	//
-	//		}
-
-
-	//	}
 
 	return C_OK;
 }
