@@ -14,8 +14,7 @@ sudo apt install -y build-essential
 sudo apt install -y libatomic-ops-dev
 sudo apt-get install -y sysstat
 sudo apt-get install -y ifstat
-sudo apt-get install -y libtool autoconf automake 
-libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
+sudo apt-get install -y libtool autoconf automake libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
 # Clone the rdma-core repository
 git clone https://github.com/linux-rdma/rdma-core.git
