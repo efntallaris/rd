@@ -4658,7 +4658,7 @@ int processCommand(client *c) {
 					if (listLength(server.ready_keys))
 						handleClientsBlockedOnKeys();
 				}
-				//pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 			}else{
 				addReplyError(c,"-TRYAGAIN  Key is migrating");
 				//serverLog(LL_WARNING, "STRATOS COULD NOT ACQUIRE LOCK FOR SLOT %d", intSlot);
