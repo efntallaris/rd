@@ -4673,7 +4673,7 @@ int processCommand(client *c) {
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
 					addReplyErrorSds(c,command);
-					//server.migration_ownership_changed[intSlot] = 0;
+					server.migration_ownership_changed[intSlot] = 0;
 
 				}else{
 					call(c,CMD_CALL_FULL);
