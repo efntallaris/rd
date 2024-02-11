@@ -6256,27 +6256,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			rio lockCmdRecipient;
 			rioInitWithBuffer(&lockCmdRecipient,sdsempty());
 
-			// PREPARE initRDMAServer Command
-			// Get Socket of the Recipient
-			//			serverAssertWithInfo(c,NULL,rioWriteBulkCount(&lockCmdRecipient, '*', 5));
-			//			serverAssertWithInfo(c,NULL,rioWriteBulkString(&lockCmdRecipient,"cluster", 7));
-			//			serverAssertWithInfo(c,NULL,rioWriteBulkString(&lockCmdRecipient, "setslot", 7));
-			//			serverAssertWithInfo(c,NULL,rioWriteBulkString(&lockCmdRecipient, slotString, sdslen(slotString)));
-			//			serverAssertWithInfo(c,NULL,rioWriteBulkString(&lockCmdRecipient, "importing", 9));
-			//			serverAssertWithInfo(c,NULL,rioWriteBulkString(&lockCmdRecipient, myself->name, CLUSTER_NAMELEN));
-			//			// SEND RDMA SERVER COMMAND AND WAIT FOR ACK
-			//			int nwritten = 0;
-			//			char lockCmdRecipientReply[1024];
-			//			sds buf = lockCmdRecipient.io.buffer.ptr;
-			//			nwritten = connSyncWrite(targetSocket->conn, buf, sdslen(buf), 1000000);
-			//			if(nwritten != (int) sdslen(buf)) {
-			//				serverLog(LL_WARNING, "SOCKET WRITE ERROR INIT RDMA SERVER");
-			//			}
-			//			// 1 readline for the reply and one for the +OK ack
-			//			connSyncReadLine(targetSocket->conn, lockCmdRecipientReply, sizeof(lockCmdRecipientReply), 1000000);
-			//			//serverLog(LL_WARNING, "STRATOS RECEIVED ACK %s", lockCmdRecipientReply);
-			//			sdsfree(lockCmdRecipient.io.buffer.ptr);
-
 			pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
 			server.cluster->migrating_slots_to[slotInt] = recipientNode;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
