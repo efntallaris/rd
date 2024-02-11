@@ -316,21 +316,24 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		int allocated_block = 0;
 		robj *allocator_value;
 		robj *allocator_key;
-
+		
 		int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
-
+		if(strcmp(server.cluster->myself->ip, "10.10.1.4") == 0){
+			if(hashSlot >= 5461 && hashSlot <= 6661){
+				serverLog(LL_WARNING, "STRATOS 5461 - 6661");
+			}
+			if(hashSlot >= 0 && hashSlot <= 1200){
+				serverLog(LL_WARNING, "STRATOS 0 - 1200");
+			}
+			if(hashSlot >= 10923 && hashSlot <= 12123){
+				serverLog(LL_WARNING, "STRATOS 10923 - 12123");
+			}
+		}
+		
 		//LOCK AND UNLOCK UNTIL A SHADOWWRITE IS DONE or OWNERSHIP CHANGED
 		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
 
 		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
-//		r_allocator_insert_kv(hashSlot,
-//				(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
-//				(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
-//				key, sizeof(robj),
-//				val, sizeof(robj),
-//				&allocated_block,
-//				&allocator_key,
-//				&allocator_value);
 		r_allocator_insert_kv(hashSlot,
 				(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
 				(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
