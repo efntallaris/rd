@@ -6766,10 +6766,31 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
 			server.migration_ownership_changed[intSlot] = 1;
+			
+			clusterDelSlot(intSlot);
+			clusterAddSlot(recipientNode,intSlot);
+	
+			if (n == myself &&
+					server.cluster->importing_slots_from[slot])
+			{
+				server.cluster->importing_slots_from[slot] = NULL;
+			}
+	
+			if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+				serverLog(LL_WARNING,
+						"configEpoch updated after importing slot");
+			}
+			clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+			clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+					CLUSTER_TODO_UPDATE_STATE|
+					CLUSTER_TODO_FSYNC_CONFIG);
+
 			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 			//pthread_mutex_unlock(&server.lock_slots[intSlot]);
 		}
 		serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
+		
+		
 		// CHANGE OWNERSHIP STOP
 
 	}
