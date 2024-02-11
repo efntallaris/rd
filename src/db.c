@@ -318,17 +318,17 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		robj *allocator_key;
 		
 		int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
-		if(strcmp(server.cluster->myself->ip, "10.10.1.4") == 0){
-			if(hashSlot >= 5461 && hashSlot <= 6661){
-				serverLog(LL_WARNING, "STRATOS 5461 - 6661");
-			}
-			if(hashSlot >= 0 && hashSlot <= 1200){
-				serverLog(LL_WARNING, "STRATOS 0 - 1200");
-			}
-			if(hashSlot >= 10923 && hashSlot <= 12123){
-				serverLog(LL_WARNING, "STRATOS 10923 - 12123");
-			}
-		}
+		// if(strcmp(server.cluster->myself->ip, "10.10.1.4") == 0){
+		// 	if(hashSlot >= 5461 && hashSlot <= 6661){
+		// 		serverLog(LL_WARNING, "STRATOS 5461 - 6661");
+		// 	}
+		// 	if(hashSlot >= 0 && hashSlot <= 1200){
+		// 		serverLog(LL_WARNING, "STRATOS 0 - 1200");
+		// 	}
+		// 	if(hashSlot >= 10923 && hashSlot <= 12123){
+		// 		serverLog(LL_WARNING, "STRATOS 10923 - 12123");
+		// 	}
+		// }
 		
 		//LOCK AND UNLOCK UNTIL A SHADOWWRITE IS DONE or OWNERSHIP CHANGED
 		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
