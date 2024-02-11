@@ -4633,17 +4633,12 @@ int processCommand(client *c) {
 			int intSlot = keyHashSlot((char *) c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
 			if(pthread_mutex_trylock(&server.ownership_lock_slots[intSlot]) == 0){
 				if(server.migration_ownership_changed[intSlot] == 1){
+					serverLog(LL_WARNING, "STRATOS IM HERE 1");
 					clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
+					if(!recipientNode){
+						serverLog(LL_WARNING, "Recipient Node is null");
+					}
 					int port = recipientNode->port;
-					//int pending_writes = server.pending_migration_writes[intSlot];
-					//sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
-					//serverLog(LL_WARNING, "STRATOS COMMAND IS %s", command);
-					//for(int i=0;i<pending_writes;i++){
-					//int nwritten = connWrite(c->conn,command, sdslen(command));
-					//serverLog(LL_WARNING, "STRATOS IM HERE %d", nwritten);
-
-
-					//}
 					server.cluster->slots[intSlot] = recipientNode;
 					server.cluster->migrating_slots_to[intSlot] = NULL;
 					server.cluster->importing_slots_from[intSlot] = NULL;
@@ -4652,7 +4647,7 @@ int processCommand(client *c) {
 					server.migration_ownership_changed[intSlot] = 0;
 
 				}else{
-
+					// serverLog(LL_WARNING, "STRATOS IM HERE 2");
 					call(c,CMD_CALL_FULL);
 					c->woff = server.master_repl_offset;
 					if (listLength(server.ready_keys))
@@ -4669,6 +4664,9 @@ int processCommand(client *c) {
 			if(pthread_mutex_trylock(&server.ownership_lock_slots[intSlot]) == 0){
 				if(server.migration_ownership_changed[intSlot] == 1){
 					clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
+					if(!recipientNode){
+						serverLog(LL_WARNING, "Recipient Node is null");
+					}
 					int port = recipientNode->port;
 					server.cluster->slots[intSlot] = recipientNode;
 					server.cluster->migrating_slots_to[intSlot] = NULL;
