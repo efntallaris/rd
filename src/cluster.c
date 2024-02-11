@@ -6769,7 +6769,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			
 			clusterDelSlot(intSlot);
 			clusterAddSlot(recipientNode,intSlot);
-			server.cluster->importing_slots_from[slot] = NULL;
+			server.cluster->importing_slots_from[intSlot] = NULL;
 			if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 				serverLog(LL_WARNING,
 						"configEpoch updated after importing slot");
