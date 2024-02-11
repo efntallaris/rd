@@ -6820,7 +6820,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			clusterNode *node = dictGetVal(de);
 			if(strcmp(node->ip, myself->ip) == 0) {
 				// DO NOT SEND OWNERSHIP CHANGE RPC TO MYSELF.
-				// continue;
+				continue;
 			}
 			char tempPortBuffer[20];
 			sprintf(tempPortBuffer, "%d", node->port);
