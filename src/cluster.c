@@ -7002,6 +7002,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG IN RDMADONEACK RPC");
 				}
 				connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
+				serverLog(LL_WARNING, "OK HERE");
 				//				if(i==2){
 				//					break;
 				//
