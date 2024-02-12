@@ -6971,7 +6971,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			// 		}
 			// 	}
 			// 	r_allocator_lock_slot_blocks(slotInt);
-			}
+			// }
 			// dictDisableMigration();
 
 
@@ -7006,6 +7006,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			}
 			i++;
 		}
+	}
 }
 
 
