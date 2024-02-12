@@ -4633,7 +4633,6 @@ int processCommand(client *c) {
 			int intSlot = keyHashSlot((char *) c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
 			if(pthread_mutex_trylock(&server.ownership_lock_slots[intSlot]) == 0){
 				if(server.migration_ownership_changed[intSlot] == 1){
-					serverLog(LL_WARNING, "STRATOS IM HERE 1");
 					clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
 					if(!recipientNode){
 						serverLog(LL_WARNING, "Recipient Node is null");
