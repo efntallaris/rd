@@ -6976,7 +6976,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 
 			if(strcmp("LAST", item->message)==0){
-				// sleep(2);
 				connection *conn = item->c->conn;
 				char ip[1000];
 				int port;
@@ -7003,17 +7002,10 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
 				serverLog(LL_WARNING, "OK HERE");
-				//				if(i==2){
-				//					break;
-				//
-				//				}
-
-
 
 			}
 			i++;
 		}
-	};
 }
 
 
