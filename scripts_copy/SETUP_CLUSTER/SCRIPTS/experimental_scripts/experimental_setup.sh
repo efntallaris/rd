@@ -36,7 +36,7 @@ for redis_experiment in "${!redis_experiments[@]}"; do
 		tko=$(sudo ssh -o StrictHostKeyChecking=no ${MASTER_HOST} bash <<EOF
 					cd ${REDIS_MAIN_SCRIPT_DIR}
 					chmod +x setup_1.sh
-					sudo ./setup_1.sh
+					sudo ./setup_1.sh ${info[0]}
 EOF
 2>&1)
 		echo "$tko"
