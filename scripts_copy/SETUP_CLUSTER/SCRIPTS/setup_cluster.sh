@@ -4,6 +4,9 @@ LOCAL_IP=$(ifconfig eno1 | grep inet | awk -F"inet " '{print $2}' | awk -F' ' '{
 
 source ./config.sh
 
+REDIS_WORKLOAD_NAME=$1
+REDIS_WORKLOAD=${REDIS_WORKLOAD_PATH}${REDIS_WORKLOAD_NAME}
+
 for redis_instance in "${!redis_master_instances[@]}"; do
     echo "$redis_instance - ${redis_master_instances[$redis_instance]}"
     IFS=',' read -r -a nodeInstance <<< "${redis_master_instances[$redis_instance]}"
@@ -55,7 +58,7 @@ tko=$(
 	sudo ./build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
 	cd ${YCSB_DIR}/bin
 	echo "running loading phase for workload ${REDIS_WORKLOAD}"
-	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${MAIN_DIR}/workloads/${REDIS_WORKLOAD} -threads 100
+	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads 100
 EOF
 2>&1)
 echo ${tko}
