@@ -5,7 +5,7 @@ rm -rf ${YCSB_LOG_FILENAME}
 rm -rf ${LOCAL_LOG_DIR}
 for redis_instance in "${!instances[@]}"; do
     echo "$redis_instance - ${instances[$redis_instance]}"
-    IFS=',' read -r -a nodeInstance <<< "${redis_master_instances[$redis_instance]}"
+    IFS=',' read -r -a nodeInstance <<< "${instances[$redis_instance]}"
     for i in "${!nodeInstance[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
