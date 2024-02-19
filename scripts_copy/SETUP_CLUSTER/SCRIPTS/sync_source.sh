@@ -8,17 +8,18 @@ for redis_instance in "${!instances[@]}"; do
     IFS=',' read -r -a nodeInstance <<< "${instances[$redis_instance]}"
     for i in "${!nodeInstance[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
-        tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
-        sudo rm -rf ${MAIN_DIR}
-        cd /root
-        git clone https://github.com/efntallaris/rd
-        cd rd/scripts_copy/
-        chmod +x install_preqs.sh
-        ./install_preqs.sh
-
+        (
+            tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<'EOF'
+            sudo rm -rf ${MAIN_DIR}
+            cd /root
+            git clone https://github.com/efntallaris/rd
+            cd rd/scripts_copy/
+            chmod +x install_preqs.sh
+            ./install_preqs.sh
 EOF
 2>&1)
-
-        echo "$tko"
+            echo "$tko"
+        ) &
     done
+    wait # Wait for all parallel tasks to finish
 done
