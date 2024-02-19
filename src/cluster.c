@@ -6972,9 +6972,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
-			dictDisableMigration();
-
-
+			
 			if(strcmp("LAST", item->message)==0){
 				connection *conn = item->c->conn;
 				char ip[1000];
