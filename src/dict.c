@@ -118,7 +118,7 @@ void dictInitLocks(){
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 			
 		}
-		unsigned long long numLocks = 33554432;
+		unsigned long long numLocks = 67108864;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
@@ -141,7 +141,7 @@ dict *dictCreate(dictType *type,
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 			
 		}
-		unsigned long numLocks = 33554432;
+		unsigned long numLocks = 67108864;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
@@ -165,7 +165,7 @@ dict *dictCreateBig(dictType *type,
 		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 			
 		}
-		unsigned long numLocks = 33554432;
+		unsigned long numLocks = 67108864;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
