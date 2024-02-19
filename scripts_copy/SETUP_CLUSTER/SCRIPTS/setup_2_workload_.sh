@@ -53,7 +53,7 @@ sleep 10
 
 #SINGLE DONOR SINGLE RECIPIENT START
 cd ${LOCAL_SETUP_DIR}/bin
-first_migration_instance_details=${redis_migrate_instances["redis-1"]}
+first_migration_instance_details=${redis_migrate_instances["redis-4"]}
 IFS='|' read -ra ADDR <<< "$first_migration_instance_details"
 ip=${ADDR[1]}
 port=${ADDR[2]}
