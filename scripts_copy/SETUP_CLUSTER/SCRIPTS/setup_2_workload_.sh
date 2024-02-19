@@ -53,12 +53,12 @@ sleep 10
 
 #SINGLE DONOR SINGLE RECIPIENT START
 cd ${LOCAL_SETUP_DIR}/bin
-first_migration_instance_details=${redis_migrate_instances["redis-7"]}
+first_migration_instance_details=${redis_migrate_instances["redis-1"]}
 IFS='|' read -ra ADDR <<< "$first_migration_instance_details"
 ip=${ADDR[1]}
 port=${ADDR[2]}
 migrateNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)	
-first_instance_details=${redis_master_instances["redis-0"]}
+first_instance_details=${redis_master_instances["redis-1"]}
 # Extract IP and Port
 IFS='|' read -ra ADDR <<< "$first_instance_details"
 ip=${ADDR[1]}
