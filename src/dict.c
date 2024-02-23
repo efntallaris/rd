@@ -187,7 +187,7 @@ int _dictInitBig(dict *d, dictType *type,
 	d->type = type;
 	d->privdata = privDataPtr;
 	d->rehashidx = -1;
-	d->pauserehash = 0;
+	d->pauserehash = 1;
 	d->isBig = 1;
 	return DICT_OK;
 }
