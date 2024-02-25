@@ -7095,14 +7095,21 @@ void registerRDMABufferClientCommand(client *c) {
 
 // INCOMING COMMAND SLOTS [ID] [NUMBER_OF_BLOCKS]
 void registerRDMABlockSlotsCommand(client *c) {
+	clock_t start_total, end_total;
+    	double total_cpu_time_used;
 	serverLog(LL_WARNING, "STRATOS STARTED REGISTERING SLOT BLOCKS ON SERVER SIDE");
-
+    	start_total = clock(); // Start total time measurement
+	clock_t start_mem_alloc = clock();
 	rdmaRemoteBufferInfo *remote_buffers;
 	// WARNING THIS IS STATIC
 	remote_buffers = (rdmaRemoteBufferInfo *) zmalloc(2000 * sizeof(rdmaRemoteBufferInfo));
 	int total_remote_buffers = 0;
-
+	clock_t end_mem_alloc = clock();
+    	double mem_alloc_time = ((double) (end_mem_alloc - start_mem_alloc)) / CLOCKS_PER_SEC;
+	clock_t start_rdma_conn = clock();
 	rdmaCachedConnection *cs =  rdmaGetConnection(c);
+	clock_t end_rdma_conn = clock();
+    	double rdma_conn_time = ((double) (end_rdma_conn - start_rdma_conn)) / CLOCKS_PER_SEC;
 	if(!cs) {
 		serverLog(LL_WARNING, "STRATOS RDMA CONNECTION NOT FOUND");
 	}
@@ -7143,7 +7150,14 @@ void registerRDMABlockSlotsCommand(client *c) {
 		block_index+=2;
 		//r_allocator_lock_slot_blocks(slotID);
 	}
+	end_total = clock(); // End total time measurement
+   	total_cpu_time_used = ((double) (end_total - start_total)) / CLOCKS_PER_SEC; // Calculate total time
+    	double loop_time = total_cpu_time_used - mem_alloc_time - rdma_conn_time; // Subtract memory allocation and RDMA connection time from total time to get loop time
 
+	serverLog(LL_WARNING, "Time taken for memory allocation: %f seconds", mem_alloc_time);
+    	serverLog(LL_WARNING, "Time taken for obtaining RDMA connection: %f seconds", rdma_conn_time);
+    	serverLog(LL_WARNING, "Time taken for loop: %f seconds", loop_time);
+    	serverLog(LL_WARNING, "Total time taken by registerRDMABlockSlotsCommand: %f seconds", total_cpu_time_used);
 
 	addReplyBulkCBuffer(c, (char *)remote_buffers, total_remote_buffers * sizeof(rdmaRemoteBufferInfo));
 	serverLog(LL_WARNING, "STRATOS STOPPED REGISTERING SLOT BLOCKS ON SERVER SIDE");
