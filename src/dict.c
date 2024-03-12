@@ -121,7 +121,7 @@ void dictInitLocks() {
         exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; i < NUM_LOCKS; ++i) {
+    for (int i = 0; i < 268435456; ++i) {
         migration_dict_locks[i] = (pthread_rwlock_t*)malloc(sizeof(pthread_rwlock_t));
         if (migration_dict_locks[i] == NULL) {
             // Handle error
