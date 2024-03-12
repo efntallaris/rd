@@ -115,7 +115,7 @@ static void _dictReset(dictht *ht)
 
 // Initialize the locks
 void dictInitLocks() {
-    migration_dict_locks = (pthread_rwlock_t**)malloc(NUM_LOCKS * sizeof(pthread_rwlock_t*));
+    migration_dict_locks = (pthread_rwlock_t**)malloc(268435456 * sizeof(pthread_rwlock_t*));
     if (migration_dict_locks == NULL) {
         // Handle error
         exit(EXIT_FAILURE);
@@ -377,7 +377,7 @@ int dictRehash(dict *d, int n) {
 
 			// pthread_mutex_unlock(&migration_dict_locks[h]);
 		}
-		release_write_lock(h);
+		release_write_lock(d->rehashidx);
 		acquire_write_lock(d->rehashidx);
 
 		// pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
