@@ -66,7 +66,7 @@ port=${ADDR[2]}
 sourceNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)
 tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard 10.10.1.4:8000 --cluster-timeout 1200 &
 sleep 4 
-echo "4095" >> ${COMMAND_PIPE}
+echo "2727" >> ${COMMAND_PIPE}
 sleep 1
 echo ${migrateNodeID} >> ${COMMAND_PIPE}
 sleep 1
