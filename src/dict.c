@@ -51,9 +51,7 @@
 static FILE *log_file;
 static int migration_activated = 0;
 static pthread_mutex_t* general_dict_lock; 
-// static pthread_mutex_t* migration_dict_locks; 
-pthread_rwlock_t** migration_dict_locks;
-
+static pthread_mutex_t* migration_dict_locks; 
 static dict *target_db;
 
 /* Using dictEnableResize() / dictDisableResize() we make possible to
@@ -113,38 +111,23 @@ static void _dictReset(dictht *ht)
 	ht->used = 0;
 }
 
-// Initialize the locks
-void dictInitLocks() {
-    migration_dict_locks = (pthread_rwlock_t**)malloc(268435456 * sizeof(pthread_rwlock_t*));
-    if (migration_dict_locks == NULL) {
-        // Handle error
-        exit(EXIT_FAILURE);
-    }
 
-    for (int i = 0; i < 268435456; ++i) {
-        migration_dict_locks[i] = (pthread_rwlock_t*)malloc(sizeof(pthread_rwlock_t));
-        if (migration_dict_locks[i] == NULL) {
-            // Handle error
-            exit(EXIT_FAILURE);
-        }
-        pthread_rwlock_init(migration_dict_locks[i], NULL);
-    }
-}
+void dictInitLocks(){
+	
+	if(migration_dict_locks == NULL){
+		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
+			
+		}
+		unsigned long long numLocks = 268435456;
+		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
+		for (unsigned long i = 0; i < numLocks; i++) {
+			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
+				
+			}
+		}
 
-void acquire_read_lock(int idx) {
-    pthread_rwlock_rdlock(migration_dict_locks[idx]);
-}
 
-void release_read_lock(int idx) {
-    pthread_rwlock_unlock(migration_dict_locks[idx]);
-}
-
-void acquire_write_lock(int idx) {
-    pthread_rwlock_wrlock(migration_dict_locks[idx]);
-}
-
-void release_write_lock(int idx) {
-    pthread_rwlock_unlock(migration_dict_locks[idx]);
+	}
 }
 
 /* Create a new hash table */
@@ -155,17 +138,16 @@ dict *dictCreate(dictType *type,
 	dict *d = zmalloc(sizeof(*d));
 
 	if(migration_dict_locks == NULL){
-		dictInitLocks();
-		// if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
+		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 			
-		// }
-		// unsigned long numLocks = 268435456;
-		// migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
-		// for (unsigned long i = 0; i < numLocks; i++) {
-		// 	if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
+		}
+		unsigned long numLocks = 268435456;
+		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
+		for (unsigned long i = 0; i < numLocks; i++) {
+			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
 				
-		// 	}
-		// }
+			}
+		}
 
 
 	}
@@ -180,17 +162,16 @@ dict *dictCreateBig(dictType *type,
 	dict *d = zmalloc(sizeof(*d));
 
 	if(migration_dict_locks == NULL){
-		dictInitLocks();
-		// if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
+		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
 			
-		// }
-		// unsigned long numLocks = 268435456;
-		// migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
-		// for (unsigned long i = 0; i < numLocks; i++) {
-		// 	if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
+		}
+		unsigned long numLocks = 268435456;
+		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
+		for (unsigned long i = 0; i < numLocks; i++) {
+			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
 				
-		// 	}
-		// }
+			}
+		}
 
 
 	}
@@ -336,28 +317,21 @@ int dictRehash(dict *d, int n) {
 
 		/* Note that rehashidx can't overflow as we are sure there are more
 		 * elements because ht[0].used != 0 */
-		acquire_write_lock(d->rehashidx);
-
-		// pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
 		assert(d->ht[0].size > (unsigned long)d->rehashidx);
 		while(d->ht[0].table[d->rehashidx] == NULL) {
-			release_write_lock(d->rehashidx);
-			// pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+			pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+			//pthread_mutex_lock(&general_dict_lock);
 			d->rehashidx++;
+			//pthread_mutex_unlock(&general_dict_lock);
 			if (--empty_visits == 0){
 				return 1;
 			}
 		}
-		release_write_lock(d->rehashidx);
-
-		// pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
-		acquire_write_lock(d->rehashidx);
-
-		// pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
 		de = d->ht[0].table[d->rehashidx];
-		release_write_lock(d->rehashidx);
-
-		// pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
 		/* Move all the keys in this bucket from the old to the new hash HT */
 		while(de) {
 			uint64_t h;
@@ -365,27 +339,22 @@ int dictRehash(dict *d, int n) {
 			nextde = de->next;
 			/* Get the index in the new hash table */
 			h = dictHashKey(d, de->key) & d->ht[1].sizemask;
-			acquire_write_lock(h);
-
-			// pthread_mutex_lock(&migration_dict_locks[h]);
+			pthread_mutex_lock(&migration_dict_locks[h]);
 			de->next = d->ht[1].table[h];
 			d->ht[1].table[h] = de;
+			//pthread_mutex_lock(&general_dict_lock);
 			d->ht[0].used--;
 			d->ht[1].used++;
+			//pthread_mutex_unlock(&general_dict_lock);
 			de = nextde;
-			release_write_lock(h);
-
-			// pthread_mutex_unlock(&migration_dict_locks[h]);
+			pthread_mutex_unlock(&migration_dict_locks[h]);
 		}
-		release_write_lock(d->rehashidx);
-		acquire_write_lock(d->rehashidx);
-
-		// pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
 		d->ht[0].table[d->rehashidx] = NULL;
-		release_write_lock(d->rehashidx);
-
-		// pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_lock(&general_dict_lock);
 		d->rehashidx++;
+		//pthread_mutex_unlock(&general_dict_lock);
 	}
 
 	/* Check if we already rehashed the whole table... */
@@ -483,18 +452,16 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	 * more frequently. */
 	ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
 	entry = zmalloc(sizeof(*entry));
-	acquire_write_lock(index);
-
-	// pthread_mutex_lock(&migration_dict_locks[index]);
+	pthread_mutex_lock(&migration_dict_locks[index]);
 	entry->next = ht->table[index];
 	ht->table[index] = entry;
+	//pthread_mutex_lock(&general_dict_lock);
 	ht->used++;
+	//pthread_mutex_unlock(&general_dict_lock);
 
 	/* Set the hash entry fields. */
 	dictSetKey(d, entry, key);
-	release_write_lock(index);
-
-	// pthread_mutex_unlock(&migration_dict_locks[index]);
+	pthread_mutex_unlock(&migration_dict_locks[index]);
 	return entry;
 }
 
@@ -554,9 +521,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
 	for (table = 0; table <= 1; table++) {
 		idx = h & d->ht[table].sizemask;
-		acquire_write_lock(idx);
-
-		// pthread_mutex_lock(&migration_dict_locks[idx]);
+		pthread_mutex_lock(&migration_dict_locks[idx]);
 		he = d->ht[table].table[idx];
 		prevHe = NULL;
 		while(he) {
@@ -572,17 +537,13 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 					zfree(he);
 				}
 				d->ht[table].used--;
-				release_write_lock(idx);
-
-				// pthread_mutex_unlock(&migration_dict_locks[idx]);
+				pthread_mutex_unlock(&migration_dict_locks[idx]);
 				return he;
 			}
 			prevHe = he;
 			he = he->next;
 		}
-		release_write_lock(idx);
-
-		// pthread_mutex_unlock(&migration_dict_locks[idx]);
+		pthread_mutex_unlock(&migration_dict_locks[idx]);
 		if (!dictIsRehashing(d)) break;
 	}
 	return NULL; /* not found */
@@ -675,21 +636,16 @@ dictEntry *dictFind(dict *d, const void *key)
 	h = dictHashKey(d, key);
 	for (table = 0; table <= 1; table++) {
 		idx = h & d->ht[table].sizemask;
-		// pthread_mutex_lock(&migration_dict_locks[idx]);
-		acquire_write_lock(idx);
-
+		pthread_mutex_lock(&migration_dict_locks[idx]);
 		he = d->ht[table].table[idx];
 		while(he) {
 			if (key==he->key || dictCompareKeys(d, key, he->key)){
-				release_write_lock(idx);
-
-				// pthread_mutex_unlock(&migration_dict_locks[idx]);
+				pthread_mutex_unlock(&migration_dict_locks[idx]);
 				return he;
 			}
 			he = he->next;
 		}
-		release_write_lock(idx);
-		// pthread_mutex_unlock(&migration_dict_locks[idx]);
+		pthread_mutex_unlock(&migration_dict_locks[idx]);
 		if (!dictIsRehashing(d)) return NULL;
 	}
 	return NULL;
@@ -821,23 +777,17 @@ dictEntry *dictGetRandomKey(dict *d)
 			/* We are sure there are no elements in indexes from 0
 			 * to rehashidx-1 */
 			h = d->rehashidx + (randomULong() % (dictSlots(d) - d->rehashidx));
-			// pthread_mutex_lock(&migration_dict_locks[h - d->ht[0].size]);
-			acquire_read_lock(h - d->ht[0].size);
-
+			pthread_mutex_lock(&migration_dict_locks[h - d->ht[0].size]);
 			he = (h >= d->ht[0].size) ? d->ht[1].table[h - d->ht[0].size] :
 				d->ht[0].table[h];
-			release_read_lock(h - d->ht[0].size);
-
-			// pthread_mutex_unlock(&migration_dict_locks[h - d->ht[0].size]);
+			pthread_mutex_unlock(&migration_dict_locks[h - d->ht[0].size]);
 		} while(he == NULL);
 	} else {
 		do {
 			h = randomULong() & d->ht[0].sizemask;
-			acquire_read_lock(h);
-			// pthread_mutex_lock(&migration_dict_locks[h]);
+			pthread_mutex_lock(&migration_dict_locks[h]);
 			he = d->ht[0].table[h];
-			release_read_lock(h);
-			// pthread_mutex_unlock(&migration_dict_locks[h]);
+			pthread_mutex_unlock(&migration_dict_locks[h]);
 		} while(he == NULL);
 	}
 
@@ -1237,24 +1187,19 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
 		idx = hash & d->ht[table].sizemask;
 		
 		/* Search if this slot does not already contain the given key */
-		// pthread_mutex_lock(&migration_dict_locks[idx]);
-		acquire_read_lock(idx);
-
+		pthread_mutex_lock(&migration_dict_locks[idx]);
 		he = d->ht[table].table[idx];
 		while(he) {
 			if (key==he->key || dictCompareKeys(d, key, he->key)) {
 				if (existing){ 
 					*existing = he;
 				}
-				release_read_lock(idx);
-
-				// pthread_mutex_unlock(&migration_dict_locks[idx]);
+				pthread_mutex_unlock(&migration_dict_locks[idx]);
 				return -1;
 			}
 			he = he->next;
 		}
-		release_read_lock(idx);
-		// pthread_mutex_unlock(&migration_dict_locks[idx]);
+		pthread_mutex_unlock(&migration_dict_locks[idx]);
 		if (!dictIsRehashing(d)) break;
 	}
 	return idx;
@@ -1300,22 +1245,18 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 	if (dictSize(d) == 0) return NULL; /* dict is empty */
 	for (table = 0; table <= 1; table++) {
 		idx = hash & d->ht[table].sizemask;
-		acquire_read_lock(idx);
-
-		// pthread_mutex_lock(&migration_dict_locks[idx]);
+		pthread_mutex_lock(&migration_dict_locks[idx]);
 		heref = &d->ht[table].table[idx];
 		he = *heref;
 		while(he) {
 			if (oldptr==he->key){
-				release_read_lock(idx);
 				pthread_mutex_unlock(&migration_dict_locks[idx]);
 				return heref;
 			}
 			heref = &he->next;
 			he = *heref;
 		}
-		release_read_lock(idx);
-		// pthread_mutex_unlock(&migration_dict_locks[idx]);
+		pthread_mutex_unlock(&migration_dict_locks[idx]);
 		if (!dictIsRehashing(d)) return NULL;
 	}
 	return NULL;
