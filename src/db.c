@@ -328,7 +328,7 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 			// if(hashSlot >= 10923 && hashSlot <= 12123){
 			// 	serverLog(LL_WARNING, "STRATOS 10923 - 12123");
 			// }
-			serverLog(LL_WARNING, "STRATOS RECEIVED READ");
+			// serverLog(LL_WARNING, "STRATOS RECEIVED READ");
 		}
 		
 		//LOCK AND UNLOCK UNTIL A SHADOWWRITE IS DONE or OWNERSHIP CHANGED
