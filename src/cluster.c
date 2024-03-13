@@ -7442,27 +7442,26 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	if(write_command){
 		// return myself;
 
-				pthread_mutex_trylock(&server.ownership_lock_slots[slot]);
+				if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
 		
-				if(server.migration_ownership_changed[slot] == 1) {
-					//server.migration_ownership_changed[slot] = 0;
-					clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-					if(error_code) {
-						*error_code = CLUSTER_REDIR_MOVED;
-					}
-					if(recipientNode != NULL) {
-						server.cluster->slots[slot] = recipientNode;
-						server.cluster->migrating_slots_to[slot] = NULL;
-						server.cluster->importing_slots_from[slot] = NULL;
-						pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-						return recipientNode;
-					}
+					if(server.migration_ownership_changed[slot] == 1) {
+						//server.migration_ownership_changed[slot] = 0;
+						clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+						if(error_code) {
+							*error_code = CLUSTER_REDIR_MOVED;
+						}
+						if(recipientNode != NULL) {
+							server.cluster->slots[slot] = recipientNode;
+							server.cluster->migrating_slots_to[slot] = NULL;
+							server.cluster->importing_slots_from[slot] = NULL;
+							pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+							return recipientNode;
+						}
+						pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		
 				}else{
-					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					return myself;
 				}
-				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 
 	}
 
