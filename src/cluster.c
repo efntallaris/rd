@@ -6961,11 +6961,11 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
 					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
 					//if key does not exist then add it to dictionary, else ignore
-					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
-						dbAddNoCopy(item->c->db, key_meta, val_meta);
-						total_keys_added++;
-						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
-					}
+					// if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
+					// 	dbAddNoCopy(item->c->db, key_meta, val_meta);
+					// 	total_keys_added++;
+					// 	//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
+					// }
 					if(total_keys_added % 10 == 0){
 						//usleep(10);
 					}
