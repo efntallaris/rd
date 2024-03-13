@@ -4644,6 +4644,7 @@ int processCommand(client *c) {
 					sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
 					addReplyErrorSds(c,command);
 					server.migration_ownership_changed[intSlot] = 0;
+				
 
 				}else{
 					// serverLog(LL_WARNING, "STRATOS IM HERE 2");
@@ -4653,6 +4654,7 @@ int processCommand(client *c) {
 						handleClientsBlockedOnKeys();
 				}
 				pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+				
 			}else{
 				addReplyError(c,"-TRYAGAIN  Key is migrating");
 				//serverLog(LL_WARNING, "STRATOS COULD NOT ACQUIRE LOCK FOR SLOT %d", intSlot);
