@@ -6476,9 +6476,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 
 			buf = rdmaDoneBatchCmd.io.buffer.ptr;
-			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 10000);
 			if(nwritten != (int) sdslen(buf)) {
-				serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+				serverLog(LL_WARNING, "STRATOS THIS SHOULD NOT HAPPEN!");
 			}
 			serverLog(LL_WARNING, "STRATOS RANGE %d-%d", prevSlot, currentSlot);
 			prevSlot += SPLIT_SLOTS;
