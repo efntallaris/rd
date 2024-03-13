@@ -7442,7 +7442,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	if(write_command){
 		// return myself;
 
-				pthread_mutex_tyrlock(&server.ownership_lock_slots[slot]);
+				pthread_mutex_trylock(&server.ownership_lock_slots[slot]);
 		
 				if(server.migration_ownership_changed[slot] == 1) {
 					//server.migration_ownership_changed[slot] = 0;
