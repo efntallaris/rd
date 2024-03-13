@@ -7429,6 +7429,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		
 						pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					}else{
+						pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 						return myself;
 					}
 		
@@ -7459,9 +7460,13 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 						}
 						pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		
+					}else{
+						pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+						return myself;
+					}
 				}else{
-					return myself;
-				}
+		                        return myself;
+		                }
 
 	}
 
