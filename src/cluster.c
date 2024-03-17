@@ -7061,6 +7061,7 @@ void initRDMAServerCommand(client *c) {
 	char *rdma_server_port = (char *) c->argv[1]->ptr;
 	struct rdma_server_info *s;
 	s = init_rdma_server(rdma_server_port);
+	s->server_ops.start_listen(s);
 	rdmaAddConnection(c, s, rdma_server_port);
 	if(s->context.qp == NULL) {
 		serverLog(LL_WARNING, "STRATOS CONNECTION IS NULL");
