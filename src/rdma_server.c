@@ -35,7 +35,6 @@ void *listenThread(void *data) {
 static struct rdma_server_info default_server_ops= {
 	.server_ops={
 		.start_listen = start_listen,
-		.start_listen_thread= start_listen_thread,
 		//todo destroy ctx
 	},
 	.buffer_ops = {
