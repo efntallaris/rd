@@ -1,5 +1,6 @@
 #include "rdma_client.h"
 #include "rdma_common.h"
+#include "zmalloc.h"
 
 void init_client(struct rdma_client_info *se) {
 	build_context(&se->context);
@@ -36,7 +37,7 @@ static struct rdma_client_info default_client_ops= {
 };
 
 struct rdma_client_info *init_rdma_client(const char *server_ip, const char *server_port){
-	struct rdma_client_info *c = (struct rdma_client_info *) malloc(sizeof(struct rdma_client_info));
+	struct rdma_client_info *c = (struct rdma_client_info *) zmalloc(sizeof(struct rdma_client_info));
 	strncpy(c->server_ip, server_ip, 60);
 	strncpy(c->server_port, server_port, 60);
 	printf("haha %s %s\n", c->server_ip, server_ip);
