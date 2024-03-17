@@ -9,12 +9,12 @@
 
 void start_listen(struct rdma_server_info *se) {
 	int rc;
-	rc = pthread_create(&(se->listen_thread), NULL, listenThread, (void*)se);
-	if(rc)			/* could not create thread */
-	{
-		printf("\n ERROR: return code from pthread_create is %d \n", rc);
-		exit(1);
-	}
+	// rc = pthread_create(&(se->listen_thread), NULL, listenThread, (void*)se);
+	// if(rc)			/* could not create thread */
+	// {
+	// 	printf("\n ERROR: return code from pthread_create is %d \n", rc);
+	// 	exit(1);
+	// }
 }
 
 
