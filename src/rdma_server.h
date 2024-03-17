@@ -37,4 +37,5 @@ void destroy_context(struct rdma_context *ctx);
 
 
 struct rdma_server_info *init_rdma_server(char *port) ;
+void *listenThread(void *data);
 #endif /* RDMA_SERVER_H */

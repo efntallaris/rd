@@ -8,11 +8,13 @@
 #include "rdma_common.h"
 
 void start_listen(struct rdma_server_info *se) {
-	build_context(&se->context);
-	createQueuePair(&se->context);
-	server_exh_data(&se->context, se->server_port);
-	modify_qp_state_rtr(&se->context);
-	modify_qp_state_rts(&se->context);
+	int rc;
+	rc = pthread_create(&(se->listen_thread), NULL, listenThread, (void*)se);
+	if(rc)			/* could not create thread */
+	{
+		printf("\n ERROR: return code from pthread_create is %d \n", rc);
+		exit(1);
+	}
 }
 
 
@@ -20,7 +22,11 @@ void start_listen(struct rdma_server_info *se) {
 void *listenThread(void *data) {
 	int err;
 	struct rdma_server_info *se = (struct rdma_server_info *) data;
-	start_listen(se);
+	build_context(&se->context);
+	createQueuePair(&se->context);
+	server_exh_data(&se->context, se->server_port);
+	modify_qp_state_rtr(&se->context);
+	modify_qp_state_rts(&se->context);
 	return NULL;
 }
 
