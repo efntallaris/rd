@@ -6229,7 +6229,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	char *port = (char *)args[5];
 
 	server.rdma_client = init_rdma_client(ip, port);
-	int res = server.rdma_client->connect_ops.RDMA_connect_to_server(server.rdma_client);
+	int res = server.rdma_client->connect_ops.rd_connect(server.rdma_client);
 
 	if(res) {
 		serverLog(LL_WARNING, "CLIENT CONNECTED TO SERVER SUCCESSFULLY ");
@@ -6307,7 +6307,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			int number_of_blocks = slots_number_of_blocks[j-7];
 			char **slots = all_slots[j-7];
 			for(int i=0; i<number_of_blocks; i++) {
-				rdma_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+				rdma_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->context.qp, server.rdma_client->context.pd, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
 				total_blocks_allocated++;
 				buffer_index++;
 			}
@@ -6415,7 +6415,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		for(int i=0; i<total_number_of_remote_buffers; i++) {
 			struct ibv_send_wr bad_wr;
-			if(ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr)!=0) {
+			if(ibv_post_send(rdma_buffers[0]->qp, &(wrs[i]), &bad_wr)!=0) {
 				serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
 			}
 			int ret = server.rdma_client->buffer_ops.wait_for_send_completion_non_blocking(server.rdma_client);
@@ -6564,7 +6564,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				int number_of_blocks = slots_number_of_rest_blocks[j-7];
 				char **slots = all_rest_slots[j-7];
 				for(int i=slots_number_of_blocks[j-7]; i<(slots_number_of_blocks[j-7] + slots_number_of_rest_blocks[j-7]); i++) {
-					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->context.qp, server.rdma_client->context.pd, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
 					total_rest_blocks_allocated++;
 					buffer_index++;
 				}
@@ -6639,11 +6639,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs_rest[current_buffer_index-1].send_flags = IBV_SEND_SIGNALED;
 
 			}
-			serverLog(LL_WARNING, "STRATOS QP IS:%d, rdma_buffres[0]->id->qp", rdma_rest_buffers[0]->id->qp);
+			serverLog(LL_WARNING, "STRATOS QP IS:%d, rdma_buffres[0]->id->qp", rdma_rest_buffers[0]->qp);
 			serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS");
 			for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
 				struct ibv_send_wr bad_wr;
-				if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
+				if(ibv_post_send(rdma_rest_buffers[0]->qp, &(wrs_rest[i]), &bad_wr)!=0) {
 					serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
 				}
 				//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
@@ -7049,7 +7049,7 @@ void initRDMAClientCommand(client *c) {
 	char *ip = (char *)c->argv[1]->ptr;
 	char *port = (char *)c->argv[2]->ptr;
 	server.rdma_client = init_rdma_client(ip, port);
-	server.rdma_client->connect_ops.RDMA_connect_to_server(server.rdma_client);
+	server.rdma_client->connect_ops.rd_connect(server.rdma_client);
 	addReply(c, shared.ok);
 }
 
@@ -7062,7 +7062,7 @@ void initRDMAServerCommand(client *c) {
 	struct rdma_server_info *s;
 	s = init_rdma_server(rdma_server_port);
 	rdmaAddConnection(c, s, rdma_server_port);
-	if(s->id == NULL) {
+	if(s->context.qp == NULL) {
 		serverLog(LL_WARNING, "STRATOS CONNECTION IS NULL");
 	}
 	serverLog(LL_WARNING, "RDMA ADDED CONNECTION");
@@ -7119,7 +7119,7 @@ void registerRDMABlockSlotsCommand(client *c) {
 			if(!allocated_block_ptr) {
 				serverLog(LL_WARNING, "STRATOS COULD NOT ALLOCATE BLOCK");
 			}
-			struct rdma_buffer_info *rdma_buffer = init_rdma_buffer(cs->s->id, allocated_block_ptr, BLOCK_SIZE_BYTES, 0);
+			struct rdma_buffer_info *rdma_buffer = init_rdma_buffer(cs->s->context.qp, cs->s->context.pd, allocated_block_ptr, BLOCK_SIZE_BYTES, 0);
 
 			if(rdma_buffer == NULL) {
 				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG REGISTERING BUFFER ON SERVER SIDE FOR SLOT %d", slotID);

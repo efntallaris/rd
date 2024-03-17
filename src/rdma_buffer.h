@@ -11,7 +11,8 @@
 
 struct rdma_buffer_info {
     char 		dummy[10];
-    struct rdma_cm_id	*id;
+    struct ibv_qp	*qp;
+    struct ibv_pd	*pd;
     char 		*buffer;
     size_t		size;
     struct ibv_mr	*mr;
@@ -56,6 +57,5 @@ void addBufferDataToBuffer(struct rdma_buffer_info *b);
 
 void setRemoteData(struct rdma_buffer_info *b, uint64_t buf_va, uint32_t buf_rkey);
 
-struct rdma_buffer_info *init_rdma_buffer(struct rdma_cm_id *id, char *buffer, size_t size, int access);
-struct rdma_buffer_info *init_zero_rdma_buffer(struct rdma_cm_id *id);
+struct rdma_buffer_info *init_rdma_buffer(struct ibv_qp *qp, struct ibv_pd *pd, char *buffer, size_t size, int access);
 #endif /* __RDMAB_H */

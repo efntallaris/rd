@@ -1,7 +1,7 @@
 redis-check-rdb.o: redis-check-rdb.c mt19937-64.h server.h fmacros.h \
  config.h solarisfixes.h rio.h sds.h connection.h atomicvar.h \
  rdma_buffer.h zmalloc.h ../deps/jemalloc/include/jemalloc/jemalloc.h \
- rdma_client.h rdma_server.h robj.h ../deps/lua/src/lua.h \
+ rdma_client.h rdma_common.h rdma_server.h robj.h ../deps/lua/src/lua.h \
  ../deps/lua/src/luaconf.h ae.h monotonic.h dict.h adlist.h anet.h \
  ziplist.h intset.h version.h util.h latency.h sparkline.h quicklist.h \
  rax.h ../deps/hiredis/hiredis.h ../deps/hiredis/read.h \

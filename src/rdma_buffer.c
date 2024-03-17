@@ -16,11 +16,11 @@ size_t getSize(struct rdma_buffer_info *b){
 
 void allocateBuffer(struct rdma_buffer_info *b){
 	b->buffer = (char *) malloc(b->size);
-	b->mr = ibv_reg_mr(b->id->pd, (void *)b->buffer, b->size, b->buffer_access);
+	b->mr = ibv_reg_mr(b->pd, (void *)b->buffer, b->size, b->buffer_access);
 }
 
 void registerBuffer(struct rdma_buffer_info *b){
-	b->mr = ibv_reg_mr(b->id->pd, (void *)b->buffer, b->size, b->buffer_access);
+	b->mr = ibv_reg_mr(b->pd, (void *)b->buffer, b->size, b->buffer_access);
 }
 
 void setSize(struct rdma_buffer_info *b, size_t newSize){
@@ -55,14 +55,15 @@ static struct rdma_buffer_info default_buffer_ops = {
 };
 
 
-struct rdma_buffer_info *init_rdma_buffer(struct rdma_cm_id *id, char *buffer, size_t size, int access){
+struct rdma_buffer_info *init_rdma_buffer(struct ibv_qp *qp, struct ibv_pd *pd, char *buffer, size_t size, int access){
 	struct rdma_buffer_info *newBuffer = (struct rdma_buffer_info *) zmalloc(sizeof(struct rdma_buffer_info));
 	if(newBuffer == NULL){
 		serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG init_rdma_buffer");
 
 	}
 	newBuffer->buffer_ops = default_buffer_ops.buffer_ops;
-	newBuffer->id = id;
+	newBuffer->qp = qp;
+	newBuffer->pd = pd;
 	newBuffer->buffer = buffer;
 	newBuffer->size = size;
 	newBuffer->buffer_access = access;
@@ -81,20 +82,6 @@ struct rdma_buffer_info *init_rdma_buffer(struct rdma_cm_id *id, char *buffer, s
 	return newBuffer;
 }
 
-
-struct rdma_buffer_info *init_zero_rdma_buffer(struct rdma_cm_id *id){
-	struct rdma_buffer_info *newBuffer = (struct rdma_buffer_info *) malloc(sizeof(struct rdma_buffer_info));
-	newBuffer->buffer_ops = default_buffer_ops.buffer_ops;
-	newBuffer->id = id;
-	newBuffer->buffer = NULL;
-	newBuffer->size = 0;
-	newBuffer->buffer_access = IBV_ACCESS_ZERO_BASED;
-	newBuffer->mr = ibv_reg_mr(newBuffer->id->pd, NULL, 0, IBV_ACCESS_ZERO_BASED);
-	if(newBuffer->mr == NULL){
-		return NULL;
-	}
-	return newBuffer;
-}
 
 void setRemoteData(struct rdma_buffer_info *b, uint64_t buf_va, uint32_t buf_rkey){
 	b->remote_data.buf_va = buf_va;
