@@ -22,13 +22,13 @@ void start_listen(struct rdma_server_info *se) {
 
 void *listenThread(void *data) {
         int err;
-        //struct rdma_server_info *se = (struct rdma_server_info *) data;
-        // build_context(&se->context);
-        // createQueuePair(&se->context);
-        // server_exh_data(&se->context, se->server_port);
-        // modify_qp_state_rtr(&se->context);
-        // modify_qp_state_rts(&se->context);
-        //return NULL;
+        struct rdma_server_info *se = (struct rdma_server_info *) data;
+        build_context(&se->context);
+        createQueuePair(&se->context);
+        server_exh_data(&se->context, se->server_port);
+        modify_qp_state_rtr(&se->context);
+        modify_qp_state_rts(&se->context);
+        return NULL;
 }
 
 
@@ -53,7 +53,8 @@ struct rdma_server_info *init_rdma_server(char *server_port){
         strncpy(s->server_port, server_port, sizeof(server_port));
         s->server_ops = default_server_ops.server_ops;
         s->buffer_ops = default_server_ops.buffer_ops;
-        s->server_ops.start_listen(s);
+        // s->server_ops.start_listen(s);
+        return s;
 
 
 }
