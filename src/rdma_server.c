@@ -22,11 +22,11 @@ void start_listen(struct rdma_server_info *se) {
 void *listenThread(void *data) {
 	int err;
 	struct rdma_server_info *se = (struct rdma_server_info *) data;
-	build_context(&se->context);
-	createQueuePair(&se->context);
-	server_exh_data(&se->context, se->server_port);
-	modify_qp_state_rtr(&se->context);
-	modify_qp_state_rts(&se->context);
+	// build_context(&se->context);
+	// createQueuePair(&se->context);
+	// server_exh_data(&se->context, se->server_port);
+	// modify_qp_state_rtr(&se->context);
+	// modify_qp_state_rts(&se->context);
 	return NULL;
 }
 
