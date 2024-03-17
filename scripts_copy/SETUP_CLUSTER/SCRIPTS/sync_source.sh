@@ -11,7 +11,7 @@ for redis_instance in "${!instances[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         (
             tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<'EOF'
-sudo rm -rf ${MAIN_DIR}
+sudo rm -rf /root/rd/src
 EOF
 2>&1)
             echo "$tko"
@@ -28,11 +28,11 @@ for redis_instance in "${!instances[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         (
             tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<'EOF'
-cd /root
-git clone https://github.com/efntallaris/rd
-cd rd/scripts_copy/
-chmod +x install_preqs.sh
-./install_preqs.sh
+cd /tmp
+rm -rf rd
+git clone -b redis_rdma_infiniband_layer https://github.com/efntallaris/rd
+cp -rf rd/src /root/rd/src
+
 EOF
 2>&1)
             echo "$tko"
