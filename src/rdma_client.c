@@ -67,7 +67,7 @@ int rd_connect(struct rdma_client_info *ci) {
 struct ibv_wc *wait_for_send_completion_with_wc_client(struct rdma_client_info *c) {
 	int ret;
 	struct ibv_wc *wc;
-	wc = (struct ibv_wc *) malloc(sizeof(struct ibv_wc));
+	wc = (struct ibv_wc *) zmalloc(sizeof(struct ibv_wc));
 	int result;
 
 	do {
@@ -80,7 +80,7 @@ struct ibv_wc *wait_for_send_completion_with_wc_client(struct rdma_client_info *
 int wait_for_send_completion_with_wc_client_non_blocking(struct rdma_client_info *c){
     int ret;
     struct ibv_wc *wc;
-    wc = (struct ibv_wc *) malloc(sizeof(struct ibv_wc));
+    wc = (struct ibv_wc *) zmalloc(sizeof(struct ibv_wc));
     ret = ibv_poll_cq(c->context.cq, 1, wc);
     free(wc);
     return ret;
