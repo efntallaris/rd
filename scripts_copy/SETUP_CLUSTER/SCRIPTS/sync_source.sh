@@ -9,16 +9,17 @@ for redis_instance in "${!instances[@]}"; do
     for i in "${!nodeInstance[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
-        sudo rm -rf ${MAIN_DIR}
-        cd /root
+        sudo rm -rf /root/rd/src
+        sudo rm -rf /root/rd/scripts_copy
+        sudo rm -rf /root/rd/workloads
+        cd /tmp
+        rm -rf rd
         git clone https://github.com/efntallaris/rd
-        cd rd/scripts_copy/
-        chmod +x install_preqs.sh
-        ./install_preqs.sh
+        cp -rf rd/scripts_copy /root/rd/scripts_copy
+        cp -rf rd/src /root/rd/src
+        cp -rf rd/workloads /root/rd/workloads
+#        chmod +x install_preqs.sh
+#        ./install_preqs.sh
 
 EOF
 2>&1)
-
-        echo "$tko"
-    done
-done
