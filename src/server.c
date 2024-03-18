@@ -1878,13 +1878,13 @@ int incrementallyRehash(int dbid) {
 
 	/* Keys dictionary */
 	if (dictIsRehashing(server.db[dbid].dict)) {
-		//serverLog(LL_WARNING, "STRATOS IM REHASHING %s %d", server.cluster->myself->ip, dbid);
+		serverLog(LL_WARNING, "STRATOS IM REHASHING %s %d", server.cluster->myself->ip, dbid);
 		dictRehashMilliseconds(server.db[dbid].dict,1);
 		return 1; /* already used our millisecond for this loop... */
 	}
 	/* Expires */
 	if (dictIsRehashing(server.db[dbid].expires)) {
-		//serverLog(LL_WARNING, "STRATOS IM REHASHING %s", server.cluster->myself->ip);
+		serverLog(LL_WARNING, "STRATOS IM REHASHING %s", server.cluster->myself->ip);
 		dictRehashMilliseconds(server.db[dbid].expires,1);
 		return 1; /* already used our millisecond for this loop... */
 	}
