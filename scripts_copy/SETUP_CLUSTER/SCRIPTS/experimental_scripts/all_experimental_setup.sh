@@ -44,12 +44,6 @@ for pattern in "${!source_lines[@]}"; do
                 done
             }
 
-            # Define restore_file function within the SSH session
-            restore_file() {
-                local file="\$1"
-                mv "\$file.bak" "\$file"
-            }
-
             append_text "EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT" "${source_lines[$pattern]}" "$file_name"
 EOF
         2>&1)
@@ -71,6 +65,11 @@ EOF
         output=$(ssh -o StrictHostKeyChecking=no "$node_host" sudo bash <<EOF
             echo "Running on $node_host"
             cp "$file_name" "$file_name.bak"
+            # Define restore_file function within the SSH session
+            restore_file() {
+                local file="\$1"
+                mv "\$file.bak" "\$file"
+            }
             restore_file "$file_name"
 EOF
         2>&1)
