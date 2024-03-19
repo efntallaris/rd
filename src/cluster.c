@@ -6178,14 +6178,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	if(strcmp(myself->ip, "10.10.1.2") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
-		sleep(90);
+		sleep(100);
 		//sleep(70);
 		//sleep(200);
 	}
 
 	if(strcmp(myself->ip, "10.10.1.3") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
-		sleep(140);
+		sleep(180);
 		//sleep(140);
 		//sleep(400);
 	}
@@ -6670,11 +6670,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
 					serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
 				}
+
+				struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 				//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
 
 				//              //      usleep(3600);
 				//              //      usleep(1800);
-				struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 			}
 			prevSlot = atoi(args[start]);
 			currentSlot = atoi(args[end-1]);
