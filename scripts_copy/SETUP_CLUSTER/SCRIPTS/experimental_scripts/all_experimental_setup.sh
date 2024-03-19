@@ -6,7 +6,7 @@ echo ${file_name}
 
 experimental_dir="${EXPERIMENTAL_OUTPUT_DIR}/DELAYS_${EXPERIMENT_NAME}"
 if [ ! -d "$experimental_dir" ]; then
-    mkdir -p "$experimental_dir"
+    sudo mkdir -p "$experimental_dir"
 fi
 
 
@@ -50,7 +50,7 @@ for pattern in "${!source_lines[@]}"; do
     cd "${REDIS_MAIN_SCRIPT_DIR}/experimental_scripts"
     sudo ./experimental_setup.sh
 
-    cp -rf ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_NAME} ${experimental_dir}/${pattern}
+    sudo cp -rf ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_NAME} ${experimental_dir}/${pattern}
 
     restore_file "$file_name"
 done
