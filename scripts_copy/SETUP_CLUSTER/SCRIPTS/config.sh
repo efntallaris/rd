@@ -72,7 +72,6 @@ instances["redis-7"]="redis3|10.10.1.8"
 
 
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
-SCRIPT_DIR="/mnt/stratos/redis/scripts"
 
 IF_STAT="_ifstat.txt"
 MP_STAT="_mpstat.txt"
