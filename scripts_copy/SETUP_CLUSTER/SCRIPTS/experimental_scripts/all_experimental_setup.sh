@@ -50,7 +50,7 @@ for pattern in "${!source_lines[@]}"; do
     cd "${REDIS_MAIN_SCRIPT_DIR}/experimental_scripts"
     sudo ./experimental_setup.sh
 
-    sudo cp -rf ${EXPERIMENTAL_OUTPUT_DIR}/${EXPERIMENT_NAME} ${experimental_dir}/${pattern}
+    sudo cp -rf ${EXPERIMENTAL_OUTPUT_DIR}/exp_${EXPERIMENT_NAME} ${experimental_dir}/${pattern}
 
     restore_file "$file_name"
 done
