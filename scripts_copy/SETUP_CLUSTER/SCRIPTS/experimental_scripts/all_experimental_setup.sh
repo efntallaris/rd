@@ -9,11 +9,6 @@ if [ ! -d "$experimental_dir" ]; then
     sudo mkdir -p "$experimental_dir"
 fi
 
-restore_file() {
-    local file="$1"
-    mv "$file.bak" "$file"
-}
-
 declare -A source_lines
 source_lines["no_sleep"]=""
 source_lines["2_ms_sleep"]="usleep(2000);"
@@ -47,6 +42,12 @@ for pattern in "${!source_lines[@]}"; do
                         }
                     }" "\$file"
                 done
+            }
+
+            # Define restore_file function within the SSH session
+            restore_file() {
+                local file="\$1"
+                mv "\$file.bak" "\$file"
             }
 
             append_text "EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT" "${source_lines[$pattern]}" "$file_name"
