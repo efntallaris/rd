@@ -6454,6 +6454,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			//	usleep(3600);
 			//	usleep(1800);
 		}
+		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
 		prevSlot = atoi(args[start]);
 		currentSlot = atoi(args[end-1]);
 
