@@ -64,13 +64,8 @@ EOF
         echo "Attempting to run script on $node_host"
         output=$(ssh -o StrictHostKeyChecking=no "$node_host" sudo bash <<EOF
             echo "Running on $node_host"
-            
-            # Define restore_file function within the SSH session
-            restore_file() {
-                local file="\$1"
-                mv "\$file.bak" "\$file"
-            }
-            restore_file "$file_name"
+sudo rm -rf ${file_name}
+sudo cp -rf ${file_name}.bak ${file_name}
 EOF
         2>&1)
 
