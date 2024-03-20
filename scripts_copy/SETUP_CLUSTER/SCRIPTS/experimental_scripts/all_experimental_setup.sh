@@ -11,9 +11,8 @@ fi
 
 declare -A source_lines
 source_lines["no_sleep"]=""
-source_lines["2_ms_sleep"]="usleep(2000);"
-source_lines["4_ms_sleep"]="usleep(4000);"
-source_lines["8_ms_sleep"]="usleep(8000);"
+source_lines["1_ms_sleep"]="usleep(1000);"
+source_lines["0.5_ms_sleep"]="usleep(500);"
 
 for pattern in "${!source_lines[@]}"; do
     for redisInstance in "${!instances[@]}"; do
