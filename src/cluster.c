@@ -6672,10 +6672,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				}
 
 				struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
-				//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
-
-				//              //      usleep(3600);
-				//              //      usleep(1800);
 			}
 			prevSlot = atoi(args[start]);
 			currentSlot = atoi(args[end-1]);
