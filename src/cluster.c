@@ -6605,6 +6605,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				/* PREPARE WORK REQUEST AND SEND IT START*/
 				struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
 				struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
+				int prev_current_buffer_index=0;
 				current_buffer_index = 0;
 				for(int j=chunk_start; j<chunk_end; j++) {
 					unsigned int intSlot = atoi(args[j]);
@@ -6643,7 +6644,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				}
 				serverLog(LL_WARNING, "STRATOS QP IS:%d, rdma_buffres[0]->id->qp", rdma_rest_buffers[0]->id->qp);
 				serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS");
-				for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
+				for(int i=prev_current_buffer_index+1; i<current_buffer_index; i++) {
 					struct ibv_send_wr bad_wr;
 					if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
 						serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
@@ -6651,6 +6652,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 					struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 				}
+				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 				prevSlot = atoi(args[chunk_start]);
 				currentSlot = atoi(args[chunk_end-1]);
 
@@ -6672,8 +6674,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
 				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
 				sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+				serverLog(LL_WARNING, "STRATOS WAITING ACK FOR BACKPATCHING");
 
-				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
+				
 				while(1) {
 					pthread_mutex_lock(&(server.generic_migration_mutex));
 					if(server.rdmaDoneAck==1) {
