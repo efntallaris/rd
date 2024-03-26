@@ -10,7 +10,9 @@ if [ ! -d "$experimental_dir" ]; then
 fi
 
 declare -A source_lines
+source_lines["0.5_ms_sleep"]="usleep(500);"
 source_lines["0.75_ms_sleep"]="usleep(750);"
+source_lines["1_ms_sleep"]="usleep(1000);"
 
 for pattern in "${!source_lines[@]}"; do
     for redisInstance in "${!instances[@]}"; do
