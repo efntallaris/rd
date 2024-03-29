@@ -2477,7 +2477,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 					 server.lastbgsave_status == C_OK))
 			{
 				//serverLog(LL_NOTICE,"%d changes in %d seconds. Saving...",
-			//			sp->changes, (int)sp->seconds);
+				//			sp->changes, (int)sp->seconds);
 				rdbSaveInfo rsi, *rsiptr;
 				rsiptr = rdbPopulateSaveInfo(&rsi);
 				//rdbSaveBackground(server.rdb_filename,rsiptr);
@@ -4628,73 +4628,10 @@ int processCommand(client *c) {
 		queueMultiCommand(c);
 		addReply(c,shared.queued);
 	} else {
-		if(is_write_command){
-
-			int intSlot = keyHashSlot((char *) c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
-			if(pthread_mutex_trylock(&server.ownership_lock_slots[intSlot]) == 0){
-				if(server.migration_ownership_changed[intSlot] == 1){
-					clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
-					if(!recipientNode){
-						serverLog(LL_WARNING, "Recipient Node is null");
-					}
-					int port = recipientNode->port;
-					server.cluster->slots[intSlot] = recipientNode;
-					server.cluster->migrating_slots_to[intSlot] = NULL;
-					server.cluster->importing_slots_from[intSlot] = NULL;
-					sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
-					addReplyErrorSds(c,command);
-					server.migration_ownership_changed[intSlot] = 0;
-
-				}else{
-					// serverLog(LL_WARNING, "STRATOS IM HERE 2");
-					call(c,CMD_CALL_FULL);
-					c->woff = server.master_repl_offset;
-					if (listLength(server.ready_keys))
-						handleClientsBlockedOnKeys();
-				}
-				pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
-			}else{
-				addReplyError(c,"-TRYAGAIN  Key is migrating");
-				//serverLog(LL_WARNING, "STRATOS COULD NOT ACQUIRE LOCK FOR SLOT %d", intSlot);
-			}
-
-		}else if(is_read_command){
-			int intSlot = keyHashSlot((char *) c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
-			if(pthread_mutex_trylock(&server.ownership_lock_slots[intSlot]) == 0){
-				if(server.migration_ownership_changed[intSlot] == 1){
-					clusterNode *recipientNode = server.cluster->migrating_slots_to[intSlot];
-					if(!recipientNode){
-						serverLog(LL_WARNING, "Recipient Node is null");
-					}
-					int port = recipientNode->port;
-					server.cluster->slots[intSlot] = recipientNode;
-					server.cluster->migrating_slots_to[intSlot] = NULL;
-					server.cluster->importing_slots_from[intSlot] = NULL;
-					sds command = sdscatprintf(sdsempty(), "-%s %d %s:%d", "MOVED", intSlot, recipientNode->ip, port); 
-					addReplyErrorSds(c,command);
-					server.migration_ownership_changed[intSlot] = 0;
-
-				}else{
-					call(c,CMD_CALL_FULL);
-					c->woff = server.master_repl_offset;
-					if (listLength(server.ready_keys))
-						handleClientsBlockedOnKeys();
-				}
-				pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
-			}else{
-				call(c,CMD_CALL_FULL);
-				c->woff = server.master_repl_offset;
-				if (listLength(server.ready_keys))
-					handleClientsBlockedOnKeys();
-				//serverLog(LL_WARNING, "STRATOS COULD NOT ACQUIRE LOCK FOR SLOT %d", intSlot);
-			}
-
-		}else{
-			call(c,CMD_CALL_FULL);
-			c->woff = server.master_repl_offset;
-			if (listLength(server.ready_keys))
-				handleClientsBlockedOnKeys();
-		}
+		call(c,CMD_CALL_FULL);
+		c->woff = server.master_repl_offset;
+		if (listLength(server.ready_keys))
+			handleClientsBlockedOnKeys();
 	}
 
 	return C_OK;

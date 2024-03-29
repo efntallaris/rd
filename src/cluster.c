@@ -6450,7 +6450,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			// }
 
 			//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
-			
+
 			//	usleep(3600);
 			//	usleep(1800);
 		}
@@ -6676,7 +6676,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
 				serverLog(LL_WARNING, "STRATOS WAITING ACK FOR BACKPATCHING");
 
-				
+
 				while(1) {
 					pthread_mutex_lock(&(server.generic_migration_mutex));
 					if(server.rdmaDoneAck==1) {
@@ -7396,61 +7396,59 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));
 
 	if(!write_command){
-		return myself;
-		//		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
-		//
-		//
-		//			if(server.migration_ownership_changed[slot] == 1) {
-		//				server.migration_ownership_changed[slot] = 0;
-		//				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-		//				if(error_code) {
-		//					*error_code = CLUSTER_REDIR_MOVED;
-		//				}
-		//				if(recipientNode != NULL) {
-		//					server.cluster->slots[slot] = recipientNode;
-		//					server.cluster->migrating_slots_to[slot] = NULL;
-		//					server.cluster->importing_slots_from[slot] = NULL;
-		//					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-		//					return recipientNode;
-		//				}
-		//
-		//				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-		//			}else{
-		//				return myself;
-		//			}
-		//
-		//
-		//
-		//		}else{
-		//			return myself;
-		//		}
+		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
+			if(server.migration_ownership_changed[slot] == 1) {
+				server.migration_ownership_changed[slot] = 0;
+				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+				//						if(error_code) {
+				//							*error_code = CLUSTER_REDIR_MOVED;
+				//						}
+				if(recipientNode != NULL) {
+					server.cluster->slots[slot] = recipientNode;
+					server.cluster->migrating_slots_to[slot] = NULL;
+					server.cluster->importing_slots_from[slot] = NULL;
+					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+					return recipientNode;
+				}
+
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			}else{
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				return myself;
+			}
+
+
+
+		}else{
+			return myself;
+		}
 
 	}
 	if(write_command){
-		return myself;
 
-		//		pthread_mutex_lock(&server.ownership_lock_slots[slot]);
-		//
-		//		if(server.migration_ownership_changed[slot] == 1) {
-		//			//server.migration_ownership_changed[slot] = 0;
-		//			clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-		//			if(error_code) {
-		//				*error_code = CLUSTER_REDIR_MOVED;
-		//			}
-		//			if(recipientNode != NULL) {
-		//				server.cluster->slots[slot] = recipientNode;
-		//				server.cluster->migrating_slots_to[slot] = NULL;
-		//				server.cluster->importing_slots_from[slot] = NULL;
-		//				pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-		//				return recipientNode;
-		//			}
-		//
-		//		}else{
-		//			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-		//			return myself;
-		//		}
-		//		pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+		pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+		if(server.migration_ownership_changed[slot] == 1) {
+			server.migration_ownership_changed[slot] = 0;
+			clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+			//					if(error_code) {
+			//						*error_code = CLUSTER_REDIR_MOVED;
+			//					}
+			if(recipientNode != NULL) {
+				server.cluster->slots[slot] = recipientNode;
+				server.cluster->migrating_slots_to[slot] = NULL;
+				server.cluster->importing_slots_from[slot] = NULL;
+				pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+				return recipientNode;
+			}
 
+		}else{
+			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			if(error_code) {
+				*error_code = CLUSTER_REDIR_TRYAGAIN;
+			}
+			return myself;
+		}
+		pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 	}
 
 
@@ -7528,6 +7526,8 @@ void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_co
 		addReplyError(c,"-CLUSTERDOWN The cluster is down and only accepts read commands");
 	} else if (error_code == CLUSTER_REDIR_DOWN_UNBOUND) {
 		addReplyError(c,"-CLUSTERDOWN Hash slot not served");
+	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
+		addReplyError(c,"-TRYAGAIN  Key is migrating");
 	} else if (error_code == CLUSTER_REDIR_MOVED ||
 			error_code == CLUSTER_REDIR_ASK)
 	{
