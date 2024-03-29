@@ -7396,59 +7396,59 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));
 
 	if(!write_command){
-		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
-			if(server.migration_ownership_changed[slot] == 1) {
-				server.migration_ownership_changed[slot] = 0;
-				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-				//						if(error_code) {
-				//							*error_code = CLUSTER_REDIR_MOVED;
-				//						}
-				if(recipientNode != NULL) {
-					server.cluster->slots[slot] = recipientNode;
-					server.cluster->migrating_slots_to[slot] = NULL;
-					server.cluster->importing_slots_from[slot] = NULL;
-					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-					return recipientNode;
-				}
-
-				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-			}else{
-				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-				return myself;
-			}
-
-
-
-		}else{
-			return myself;
-		}
+//		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
+//			if(server.migration_ownership_changed[slot] == 1) {
+//				server.migration_ownership_changed[slot] = 0;
+//				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+//				//						if(error_code) {
+//				//							*error_code = CLUSTER_REDIR_MOVED;
+//				//						}
+//				if(recipientNode != NULL) {
+//					server.cluster->slots[slot] = recipientNode;
+//					server.cluster->migrating_slots_to[slot] = NULL;
+//					server.cluster->importing_slots_from[slot] = NULL;
+//					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+//					return recipientNode;
+//				}
+//
+//				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+//			}else{
+//				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+//				return myself;
+//			}
+//
+//
+//
+//		}else{
+//			return myself;
+//		}
 
 	}
 	if(write_command){
 
-		pthread_mutex_lock(&server.ownership_lock_slots[slot]);
-		if(server.migration_ownership_changed[slot] == 1) {
-			server.migration_ownership_changed[slot] = 0;
-			clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-			//					if(error_code) {
-			//						*error_code = CLUSTER_REDIR_MOVED;
-			//					}
-			if(recipientNode != NULL) {
-				server.cluster->slots[slot] = recipientNode;
-				server.cluster->migrating_slots_to[slot] = NULL;
-				server.cluster->importing_slots_from[slot] = NULL;
-				pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				return recipientNode;
-			}
-
-		}else{
-			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-			if(error_code) {
-				*error_code = CLUSTER_REDIR_TRYAGAIN;
-			}
-			return myself;
-		}
-		pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+//		pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+//		if(server.migration_ownership_changed[slot] == 1) {
+//			server.migration_ownership_changed[slot] = 0;
+//			clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+//			//					if(error_code) {
+//			//						*error_code = CLUSTER_REDIR_MOVED;
+//			//					}
+//			if(recipientNode != NULL) {
+//				server.cluster->slots[slot] = recipientNode;
+//				server.cluster->migrating_slots_to[slot] = NULL;
+//				server.cluster->importing_slots_from[slot] = NULL;
+//				pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+//				return recipientNode;
+//			}
+//
+//		}else{
+//			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+//			if(error_code) {
+//				*error_code = CLUSTER_REDIR_TRYAGAIN;
+//			}
+//			return myself;
+//		}
+//		pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 	}
 
 
