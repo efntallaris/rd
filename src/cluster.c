@@ -7395,6 +7395,8 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	int write_command = (c->cmd->flags & CMD_WRITE) ||
 		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_WRITE));
 
+	int read_command = (c->cmd->flags & CMD_READONLY) ||
+		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_READONLY));
 	if(!write_command){
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
 			if(server.migration_ownership_changed[slot] == 1) {
@@ -7425,30 +7427,36 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	}
 	if(write_command){
+		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot])){
+			if(server.migration_ownership_changed[slot] == 1) {
+				server.migration_ownership_changed[slot] = 0;
+				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+				//						if(error_code) {
+				//							*error_code = CLUSTER_REDIR_MOVED;
+				//						}
+				if(recipientNode != NULL) {
+					server.cluster->slots[slot] = recipientNode;
+					server.cluster->migrating_slots_to[slot] = NULL;
+					server.cluster->importing_slots_from[slot] = NULL;
+					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+					return recipientNode;
+				}
 
-//		pthread_mutex_lock(&server.ownership_lock_slots[slot]);
-//		if(server.migration_ownership_changed[slot] == 1) {
-//			server.migration_ownership_changed[slot] = 0;
-//			clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-//			//					if(error_code) {
-//			//						*error_code = CLUSTER_REDIR_MOVED;
-//			//					}
-//			if(recipientNode != NULL) {
-//				server.cluster->slots[slot] = recipientNode;
-//				server.cluster->migrating_slots_to[slot] = NULL;
-//				server.cluster->importing_slots_from[slot] = NULL;
-//				pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-//				return recipientNode;
-//			}
-//
-//		}else{
-//			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-//			if(error_code) {
-//				*error_code = CLUSTER_REDIR_TRYAGAIN;
-//			}
-//			return myself;
-//		}
-//		pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			}else{
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				return myself;
+			}
+
+
+
+		}else{
+			if(error_code) {
+				*error_code = CLUSTER_REDIR_TRYAGAIN;
+			}
+			return myself;
+		}
+
 	}
 
 
