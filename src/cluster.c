@@ -7451,9 +7451,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 		}else{
-			if(error_code) {
-				*error_code = CLUSTER_REDIR_TRYAGAIN;
-			}
+			addReplyError(c,"-TRYAGAIN  Key is migrating");
 			return myself;
 		}
 
@@ -7534,8 +7532,8 @@ void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_co
 		addReplyError(c,"-CLUSTERDOWN The cluster is down and only accepts read commands");
 	} else if (error_code == CLUSTER_REDIR_DOWN_UNBOUND) {
 		addReplyError(c,"-CLUSTERDOWN Hash slot not served");
-	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
-		addReplyError(c,"-TRYAGAIN  Key is migrating");
+//	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
+//		addReplyError(c,"-TRYAGAIN  Key is migrating");
 	} else if (error_code == CLUSTER_REDIR_MOVED ||
 			error_code == CLUSTER_REDIR_ASK)
 	{
