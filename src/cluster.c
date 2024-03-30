@@ -6671,8 +6671,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
 				}
 				char rdmaDoneBatchCmdReply[1024];
-				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 70);
+				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 70);
 				sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
 				serverLog(LL_WARNING, "STRATOS WAITING ACK FOR BACKPATCHING");
 
