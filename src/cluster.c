@@ -6688,7 +6688,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 				for(int i=0;i<100;i++){
 					char buff[1024];
-					if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
+					if(connSyncReadLine(cs->conn, buff, 1024, 10) <=0) {
 						serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
 						break;
 					}
