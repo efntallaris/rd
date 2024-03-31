@@ -7294,7 +7294,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 
-			//pthread_mutex_lock(&server.ownership_lock_slots[thisslot]);
+			pthread_mutex_lock(&server.ownership_lock_slots[thisslot]);
 			if (firstkey == NULL) {
 				/* This is the first key we see. Check what is the slot
 				 * and node. */
@@ -7327,7 +7327,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				} else if (server.cluster->importing_slots_from[slot] != NULL) {
 					importing_slot = 1;
 				}
-				//pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
 			} else {
 				/* If it is not the first key, make sure it is exactly
 				 * the same key as the first we saw. */
@@ -7400,6 +7400,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	int read_command = (c->cmd->flags & CMD_READONLY) ||
 		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_READONLY));
+	serverLog(LL_WARNING, "STRATOS %d haha %d", migrating_slot, importing_slot);
 	if(importing_slot && !write_command){
 		serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
