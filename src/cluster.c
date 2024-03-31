@@ -6611,6 +6611,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					unsigned int intSlot = atoi(args[j]);
 					sds slotString = args[j];
 					int number_of_blocks = slots_number_of_rest_blocks[j-7];
+					pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 					//serverLog(LL_WARNING, "STRATOS NUMBER OF BLOCKS FOR SLOT:%s is %d", slotString, number_of_blocks);
 					char **slots = all_rest_slots[j-7];
 					for(int i=slots_number_of_blocks[j-7]; i<(slots_number_of_blocks[j-7] + slots_number_of_rest_blocks[j-7]); i++) {
