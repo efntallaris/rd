@@ -6591,7 +6591,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT");
 
-			int REST_CHUNK_SIZE = 10;
+			int REST_CHUNK_SIZE = 1;
 			int chunk_size = (end - start) / REST_CHUNK_SIZE; // calculate chunk size
 			int remainder = (end - start) % REST_CHUNK_SIZE; // handle remaining elements
 			for (int chunk = 0; chunk < REST_CHUNK_SIZE; chunk++) {
