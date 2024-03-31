@@ -4775,20 +4775,21 @@ void clusterCommand(client *c) {
 					return;
 				}
 			}
+			
+			server.cluster->migrating_slots_to[slot] = NULL;
+			// if (countKeysInSlot(slot) == 0 && server.cluster->migrating_slots_to[slot]) {
+			// 	server.cluster->migrating_slots_to[slot] = NULL;
 
-			if (countKeysInSlot(slot) == 0 && server.cluster->migrating_slots_to[slot]) {
-				server.cluster->migrating_slots_to[slot] = NULL;
-
-			}
+			// }
 
 			clusterDelSlot(slot);
 			clusterAddSlot(n,slot);
-
-			if (n == myself &&
-					server.cluster->importing_slots_from[slot])
-			{
-				server.cluster->importing_slots_from[slot] = NULL;
-			}
+			server.cluster->importing_slots_from[slot] = NULL;
+			// if (n == myself &&
+			// 		server.cluster->importing_slots_from[slot])
+			// {
+			// 	server.cluster->importing_slots_from[slot] = NULL;
+			// }
 
 			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		}
