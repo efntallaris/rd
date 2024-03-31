@@ -7310,7 +7310,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 					getKeysFreeResult(&result);
 					if (error_code)
 						*error_code = CLUSTER_REDIR_DOWN_UNBOUND;
-					//pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
 					return NULL;
 				}
 
