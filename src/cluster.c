@@ -7401,6 +7401,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	int read_command = (c->cmd->flags & CMD_READONLY) ||
 		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_READONLY));
 	if(importing_slot && !write_command){
+		serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
 				server.migration_ownership_changed[slot] = 0;
@@ -7430,6 +7431,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	}
 	if(importing_slot && write_command){
+		serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
 				server.migration_ownership_changed[slot] = 0;
