@@ -6259,6 +6259,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
 			server.cluster->migrating_slots_to[slotInt] = recipientNode;
+			server.cluster->importing_slots_from[slotInt] = recipientNode;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
 
 		}
