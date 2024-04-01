@@ -7358,8 +7358,11 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	/* No key at all in command? then we can serve the request
 	 * without redirections or errors in all the cases. */
-	if (n == NULL) return myself;
-
+	if (n == NULL){
+		serverLog(LL_WARNING, "STRATOS recipient is NULL");	
+		
+		return myself;
+	}
 	/* Cluster is globally down but we got keys? We only serve the request
 	 * if it is a read command and when allow_reads_when_down is enabled. */
 	if (server.cluster->state != CLUSTER_OK) {
@@ -7406,7 +7409,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	}
 	if(migrating_slot && !write_command){
-		serverLog(LL_WARNING, "IM HERE READ");
+		// serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
 				server.migration_ownership_changed[slot] = 0;
@@ -7415,6 +7418,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 	*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
+					serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
 				 	server.cluster->slots[slot] = recipientNode;
 				 	server.cluster->migrating_slots_to[slot] = NULL;
 				 	server.cluster->importing_slots_from[slot] = NULL;
@@ -7436,7 +7440,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	}
 	if(migrating_slot && write_command){
-		serverLog(LL_WARNING, "IM HERE WRITE");
+		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
 				server.migration_ownership_changed[slot] = 0;
@@ -7445,6 +7449,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 	*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
+					serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
 				 	server.cluster->slots[slot] = recipientNode;
 				 	server.cluster->migrating_slots_to[slot] = NULL;
 				 	server.cluster->importing_slots_from[slot] = NULL;
