@@ -6807,7 +6807,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
 							CLUSTER_TODO_UPDATE_STATE|
 							CLUSTER_TODO_FSYNC_CONFIG);
-
 					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 				}
 
@@ -7324,7 +7323,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 
-			pthread_mutex_lock(&server.ownership_lock_slots[thisslot]);
+			// pthread_mutex_lock(&server.ownership_lock_slots[thisslot]);
 			if (firstkey == NULL) {
 				/* This is the first key we see. Check what is the slot
 				 * and node. */
@@ -7340,7 +7339,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 					getKeysFreeResult(&result);
 					if (error_code)
 						*error_code = CLUSTER_REDIR_DOWN_UNBOUND;
-					pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
+					// pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
 					return NULL;
 				}
 
@@ -7357,7 +7356,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				} else if (server.cluster->importing_slots_from[slot] != NULL) {
 					importing_slot = 1;
 				}
-				pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
 			} else {
 				/* If it is not the first key, make sure it is exactly
 				 * the same key as the first we saw. */
