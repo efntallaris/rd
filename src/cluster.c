@@ -6420,64 +6420,96 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			if(ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr)!=0) {
 				serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
 			}
-			struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+			// struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 
-			// int ret = server.rdma_client->buffer_ops.wait_for_send_completion_non_blocking(server.rdma_client);
-			// if(ret > 0){
-			// 	currentSlot = prevSlot + SPLIT_SLOTS;
-			// 	rio rdmaDoneBatchCmd;
-			// 	rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
-			// 	serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
-			// 	serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+			int ret = server.rdma_client->buffer_ops.wait_for_send_completion_non_blocking(server.rdma_client);
+			if(ret > 0){
+				currentSlot = prevSlot + SPLIT_SLOTS;
+				rio rdmaDoneBatchCmd;
+				rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+				serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
-			// 	serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
-			// 	serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
-			// 	if(total_acks == awaiting_acks){
-			// 		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
-			// 	}else{
-			// 		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTERMEDIATE", 12));
-			// 	}
-			// 	serverLog(LL_WARNING, "STRATOS AWAITING ACKS:%d, %d", awaiting_acks, total_acks);
-			// 	serverLog(LL_WARNING, "STRATOS RECEIVED COMPLETION");
+				serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
+				serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
+				if(total_acks == awaiting_acks){
+					serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+				}else{
+					serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTERMEDIATE", 12));
+				}
+				serverLog(LL_WARNING, "STRATOS AWAITING ACKS:%d, %d", awaiting_acks, total_acks);
+				serverLog(LL_WARNING, "STRATOS RECEIVED COMPLETION");
 
-			// 	buf = rdmaDoneBatchCmd.io.buffer.ptr;
-			// 	nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
-			// 	if(nwritten != (int) sdslen(buf)) {
-			// 		serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
-			// 	}
-			// 	prevSlot += SPLIT_SLOTS;
-			// 	total_acks++;
+				buf = rdmaDoneBatchCmd.io.buffer.ptr;
+				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+				if(nwritten != (int) sdslen(buf)) {
+					serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+				}
+				prevSlot += SPLIT_SLOTS;
+				total_acks++;
 
 
-			// }
+			}
 
 			//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
 
 			//	usleep(3600);
 			//	usleep(1800);
 		}
-		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
-		prevSlot = atoi(args[start]);
-		currentSlot = atoi(args[end-1]);
+		int number_of_received_acks = total_acks;
+		for(int i=0;i<awaiting_acks - number_of_received_acks + 1;i++){
+			struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+			if(_completion->status != 0) {
+				serverLog(LL_WARNING, "STRATOS ERROR STATUS:%d", _completion->status);
+			}
+			currentSlot = prevSlot + SPLIT_SLOTS;
+			rio rdmaDoneBatchCmd;
+			rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+			serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
-		rio rdmaDoneBatchCmd;
-		rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
-		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
-		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+			serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
+			serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
 
-		serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
-		serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
-		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+			serverLog(LL_WARNING, "STRATOS WAITING_ACKS:%d, total_acks:%d", awaiting_acks, total_acks);
+			if(total_acks == awaiting_acks){
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+			}else{
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTERMEDIATE", 12));
+			}
 
-		buf = rdmaDoneBatchCmd.io.buffer.ptr;
-		nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
-		if(nwritten != (int) sdslen(buf)) {
-			serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+			buf = rdmaDoneBatchCmd.io.buffer.ptr;
+			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 10000);
+			if(nwritten != (int) sdslen(buf)) {
+				serverLog(LL_WARNING, "STRATOS THIS SHOULD NOT HAPPEN!");
+			}
+			serverLog(LL_WARNING, "STRATOS RANGE %d-%d", prevSlot, currentSlot);
+			prevSlot += SPLIT_SLOTS;
+			total_acks++;
+
 		}
-		char rdmaDoneBatchCmdReply[1024];
-		connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-		connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-		sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
+		// prevSlot = atoi(args[start]);
+		// currentSlot = atoi(args[end-1]);
+
+		// rio rdmaDoneBatchCmd;
+		// rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+		// serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+		// serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+
+		// serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
+		// serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
+		// serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+
+		// buf = rdmaDoneBatchCmd.io.buffer.ptr;
+		// nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+		// if(nwritten != (int) sdslen(buf)) {
+		// 	serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+		// }
+		// char rdmaDoneBatchCmdReply[1024];
+		// connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+		// connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+		// sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
 
 		while(1) {
 			pthread_mutex_lock(&server.generic_migration_mutex);
