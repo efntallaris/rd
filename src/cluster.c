@@ -4761,7 +4761,7 @@ void clusterCommand(client *c) {
 		for(int j = 2; j<c->argc - 2; j++) {
 			int slot;
 			slot = atoi(c->argv[j]->ptr);
-			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+			// pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 			//serverLog(LL_WARNING, "STRATOS slotID on setslots is %d", slot);
 			//	    serverLog(LL_WARNING, "STRATOS slotID on setslots is %s 2",  c->argv[j]->ptr);
 			// DO I STILL HOLD KEYS FOR THIS NODE?
@@ -4771,7 +4771,7 @@ void clusterCommand(client *c) {
 							"Can't assign hashslot %d to a different node "
 							"while I still hold keys for this hash slot.", slot);
 
-					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+					// pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					return;
 				}
 			}
@@ -4791,7 +4791,7 @@ void clusterCommand(client *c) {
 			// 	server.cluster->importing_slots_from[slot] = NULL;
 			// }
 
-			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		}
 
 		if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
@@ -6764,7 +6764,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					clusterNode *node = dictGetVal(de);
 					if(strcmp(node->ip, myself->ip) == 0) {
 						// DO NOT SEND OWNERSHIP CHANGE RPC TO MYSELF.
-						continue;
+						// continue;
 					}
 					char tempPortBuffer[20];
 					sprintf(tempPortBuffer, "%d", node->port);
