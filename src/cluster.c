@@ -7441,7 +7441,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	}
 	if(migrating_slot && !write_command){
-		// serverLog(LL_WARNING, "IM HERE READ");
+		serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
 				server.migration_ownership_changed[slot] = 0;
@@ -7474,7 +7474,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 	}
 	if(migrating_slot && write_command){
-		// serverLog(LL_WARNING, "IM HERE WRITE");
+		serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
 				server.migration_ownership_changed[slot] = 0;
