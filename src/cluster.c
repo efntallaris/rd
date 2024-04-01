@@ -6248,9 +6248,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		if (end > number_of_arguments) {
 			end = number_of_arguments;
 		}
-		serverLog(LL_WARNING, "STRATOS HERE:%d", slotInt);
+		
 		for(int j=start; j<end; j++) {
 			int slotInt = atoi(args[j]);
+			serverLog(LL_WARNING, "STRATOS HERE:%d", slotInt);
 			sds slotString = args[j];
 
 
