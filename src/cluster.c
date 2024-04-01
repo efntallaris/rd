@@ -6248,6 +6248,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		if (end > number_of_arguments) {
 			end = number_of_arguments;
 		}
+		serverLog(LL_WARNING, "STRATOS HERE:%d", slotInt);
 		for(int j=start; j<end; j++) {
 			int slotInt = atoi(args[j]);
 			sds slotString = args[j];
@@ -6796,6 +6797,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				//UNLOCK ALL THE SLOTS
 				for(int j=chunk_start; j<chunk_end; j++) {
 					unsigned int intSlot = atoi(args[j]);
+					serverLog(LL_WARNING, "STRATOS CHANGING SLOT %d", intSlot);
 					server.migration_ownership_changed[intSlot] = 1;
 
 					clusterDelSlot(intSlot);
