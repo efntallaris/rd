@@ -6560,7 +6560,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
 			sds slotString = args[j];
-			//pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 			r_allocator_lock_slot_blocks(intSlot);
 			char **slots;
 			int number_of_blocks;
@@ -7437,7 +7436,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		// serverLog(LL_WARNING, "STRATOS %d haha %d", migrating_slot, importing_slot);
 
 	}
-	if(migrating_slot && !write_command){
+	if(!write_command){
 		// serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
@@ -7472,7 +7471,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		}
 
 	}
-	if(migrating_slot && write_command){
+	if(write_command){
 		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_changed[slot] == 1) {
