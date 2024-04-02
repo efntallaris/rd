@@ -7436,6 +7436,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		// serverLog(LL_WARNING, "STRATOS %d haha %d", migrating_slot, importing_slot);
 
 	}
+	if(c->flags & CLIENT_ASKING || cmd->flags & CMD_ASKING){
+		serverLog(LL_WARNING, "STRATOS ASKING RECEIVED");
+	}
 	if(!write_command){
 		// serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
@@ -7449,12 +7452,11 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				}
 				if(recipientNode != NULL) {
 					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 	// server.cluster->slots[slot] = recipientNode;
-				 	// server.cluster->migrating_slots_to[slot] = NULL;
-				 	// server.cluster->importing_slots_from[slot] = NULL;
-				 	// pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				 	// return recipientNode;
-					return myself;
+				 	server.cluster->slots[slot] = recipientNode;
+				 	server.cluster->migrating_slots_to[slot] = NULL;
+				 	server.cluster->importing_slots_from[slot] = NULL;
+				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+				 	return recipientNode;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
 				}
@@ -7483,13 +7485,12 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 	*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
-					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 // 	server.cluster->slots[slot] = recipientNode;
-				 // 	server.cluster->migrating_slots_to[slot] = NULL;
-				 // 	server.cluster->importing_slots_from[slot] = NULL;
-				 // 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				 	// return recipientNode;
-					return myself;
+					serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
+				 	server.cluster->slots[slot] = recipientNode;
+				 	server.cluster->migrating_slots_to[slot] = NULL;
+				 	server.cluster->importing_slots_from[slot] = NULL;
+				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+				 	return recipientNode;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
 				}
