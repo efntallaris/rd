@@ -4747,7 +4747,7 @@ void clusterCommand(client *c) {
 					addReplyErrorFormat(c,
 							"Can't assign hashslot %d to a different node "
 							"while I still hold keys for this hash slot.", slot);
-					pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
 					return;
 				}
 			}
