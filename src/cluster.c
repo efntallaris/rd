@@ -4332,16 +4332,16 @@ void clusterGenNodesSlotsInfo(int filter) {
 	int start = -1;
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		pthread_mutex_lock(&(server.ownership_lock_slots[j]));
+		pthread_mutex_lock(&(server.ownership_lock_slots[i]));
 		/* Find start node and slot id. */
 		if (n == NULL) {
 			if (i == CLUSTER_SLOTS){ 
-				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+				pthread_mutex_unlock(&(server.ownership_lock_slots[i]));
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+			pthread_mutex_unlock(&(server.ownership_lock_slots[i]));
 			continue;
 		}
 
@@ -4357,13 +4357,13 @@ void clusterGenNodesSlotsInfo(int filter) {
 				}
 			}
 			if (i == CLUSTER_SLOTS){ 
-				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+				pthread_mutex_unlock(&(server.ownership_lock_slots[i]));
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
-		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+		pthread_mutex_unlock(&(server.ownership_lock_slots[i]));
 	}
 }
 
