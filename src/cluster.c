@@ -514,7 +514,13 @@ void clusterInit(void) {
 		server.cluster->stats_bus_messages_received[i] = 0;
 	}
 	server.cluster->stats_pfail_nodes = 0;
+	for(int i=0;i<16385;i++){
+		pthread_mutex_lock(&(server.ownership_lock_slots[i]));
+	}
 	memset(server.cluster->slots,0, sizeof(server.cluster->slots));
+	for(int i=0;i<16385;i++){
+		pthread_mutex_unlock(&(server.ownership_lock_slots[i]));
+	}
 	clusterCloseAllSlots();
 
 	/* Lock the cluster config file to make sure every node uses
@@ -1013,14 +1019,15 @@ void clusterDelNode(clusterNode *delnode) {
 
 	/* 1) Mark slots as unassigned. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		pthread_mutex_lock(&(server.lock_slots[j]));
+		
+		pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 		if (server.cluster->importing_slots_from[j] == delnode)
 			server.cluster->importing_slots_from[j] = NULL;
 		if (server.cluster->migrating_slots_to[j] == delnode)
 			server.cluster->migrating_slots_to[j] = NULL;
 		if (server.cluster->slots[j] == delnode)
 			clusterDelSlot(j);
-		pthread_mutex_unlock(&(server.lock_slots[j]));
+		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 	}
 
 	/* 2) Remove failure reports. */
@@ -1703,22 +1710,28 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 	}
 
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
+		pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 		if (bitmapTestBit(slots,j)) {
 			sender_slots++;
-
 			/* The slot is already bound to the sender of this message. */
-			if (server.cluster->slots[j] == sender) continue;
+			if (server.cluster->slots[j] == sender){
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+				continue;
+			}
 
 			/* The slot is in importing state, it should be modified only
 			 * manually via redis-trib (example: a resharding is in progress
 			 * and the migrating side slot was already closed and is advertising
 			 * a new config. We still want the slot to be closed manually). */
-			if (server.cluster->importing_slots_from[j]) continue;
-
+			if (server.cluster->importing_slots_from[j]){
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));	
+				continue;
+			}
 			/* We rebind the slot to the new node claiming it if:
 			 * 1) The slot was unassigned or the new node claims it with a
 			 *    greater configEpoch.
 			 * 2) We are not currently importing the slot. */
+			
 			if (server.cluster->slots[j] == NULL ||
 					server.cluster->slots[j]->configEpoch < senderConfigEpoch)
 			{
@@ -1744,6 +1757,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 						CLUSTER_TODO_FSYNC_CONFIG);
 			}
 		}
+		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 	}
 
 	/* After updating the slots configuration, don't do any actual change
@@ -2141,9 +2155,13 @@ int clusterProcessPacket(clusterLink *link) {
 			int j;
 
 			for (j = 0; j < CLUSTER_SLOTS; j++) {
+				pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 				if (bitmapTestBit(hdr->myslots,j)) {
 					if (server.cluster->slots[j] == sender ||
-							server.cluster->slots[j] == NULL) continue;
+							server.cluster->slots[j] == NULL){ 
+						pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+						continue;
+					}
 					if (server.cluster->slots[j]->configEpoch >
 							senderConfigEpoch)
 					{
@@ -2157,9 +2175,11 @@ int clusterProcessPacket(clusterLink *link) {
 						/* TODO: instead of exiting the loop send every other
 						 * UPDATE packet for other nodes that are the new owner
 						 * of sender's slots. */
+						pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 						break;
 					}
 				}
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 			}
 		}
 
@@ -3014,10 +3034,12 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 	 * slots that is >= the one of the masters currently serving the same
 	 * slots in the current configuration. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
+		pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 		if (bitmapTestBit(claimed_slots, j) == 0) continue;
 		if (server.cluster->slots[j] == NULL ||
 				server.cluster->slots[j]->configEpoch <= requestConfigEpoch)
 		{
+			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 			continue;
 		}
 		/* If we reached this point we found a slot that in our current slots
@@ -3029,6 +3051,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 				node->name, j,
 				(unsigned long long) server.cluster->slots[j]->configEpoch,
 				(unsigned long long) requestConfigEpoch);
+		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 		return;
 	}
 
@@ -4010,12 +4033,15 @@ void clusterUpdateState(void) {
 	/* Check if all the slots are covered. */
 	if (server.cluster_require_full_coverage) {
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
+			pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 			if (server.cluster->slots[j] == NULL ||
 					server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL))
 			{
 				new_state = CLUSTER_FAIL;
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 				break;
 			}
+			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 		}
 	}
 
@@ -4123,13 +4149,19 @@ int verifyClusterConfigWithData(void) {
 	/* Check that all the slots we see populated memory have a corresponding
 	 * entry in the cluster table. Otherwise fix the table. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		if (!countKeysInSlot(j)) continue; /* No keys in this slot. */
+		pthread_mutex_lock(&(server.ownership_lock_slots[j]));
+		if (!countKeysInSlot(j)){
+			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+			continue; /* No keys in this slot. */
+		}
 		/* Check if we are assigned to this slot or if we are importing it.
 		 * In both cases check the next slot as the configuration makes
 		 * sense. */
 		if (server.cluster->slots[j] == myself ||
-				server.cluster->importing_slots_from[j] != NULL) continue;
-
+				server.cluster->importing_slots_from[j] != NULL){
+			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));	
+			continue;
+		}
 		/* If we are here data and cluster config don't agree, and we have
 		 * slot 'j' populated even if we are not importing it, nor we are
 		 * assigned to this slot. Fix this condition. */
@@ -4146,6 +4178,7 @@ int verifyClusterConfigWithData(void) {
 					"Setting it to importing state.",j);
 			server.cluster->importing_slots_from[j] = server.cluster->slots[j];
 		}
+		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 	}
 	if (update_config) clusterSaveConfigOrDie(1);
 	return C_OK;
@@ -4299,11 +4332,16 @@ void clusterGenNodesSlotsInfo(int filter) {
 	int start = -1;
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
+		pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 		/* Find start node and slot id. */
 		if (n == NULL) {
-			if (i == CLUSTER_SLOTS) break;
+			if (i == CLUSTER_SLOTS){ 
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+				break;
+			}
 			n = server.cluster->slots[i];
 			start = i;
+			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 			continue;
 		}
 
@@ -4318,10 +4356,14 @@ void clusterGenNodesSlotsInfo(int filter) {
 					n->slots_info = sdscatfmt(n->slots_info," %i-%i",start,i-1);
 				}
 			}
-			if (i == CLUSTER_SLOTS) break;
+			if (i == CLUSTER_SLOTS){ 
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+				break;
+			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
+		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 	}
 }
 
@@ -4451,16 +4493,22 @@ void clusterReplyMultiBulkSlots(client * c) {
 	 *               3) node ID
 	 *           ... continued until done
 	 */
+	serverLog(LL_WARNING, "STRATOS IM HERE");
 	clusterNode *n = NULL;
 	int num_masters = 0, start = -1;
 	void *slot_replylen = addReplyDeferredLen(c);
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
+		pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
 		if (n == NULL) {
-			if (i == CLUSTER_SLOTS) break;
+			if (i == CLUSTER_SLOTS){
+				pthread_mutex_lock(&(server.ownership_lock_slots[i]));
+				break;
+			}
 			n = server.cluster->slots[i];
 			start = i;
+			pthread_mutex_unlock(&(server.ownership_lock_slots[i]));
 			continue;
 		}
 
@@ -4473,6 +4521,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 			n = server.cluster->slots[i];
 			start = i;
 		}
+		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 	setDeferredArrayLen(c, slot_replylen, num_masters);
 }
@@ -4692,11 +4741,13 @@ void clusterCommand(client *c) {
 			}
 			/* If this hash slot was served by 'myself' before to switch
 			 * make sure there are no longer local keys for this hash slot. */
+			pthread_mutex_lock(&(server.ownership_lock_slots[slot]));
 			if (server.cluster->slots[slot] == myself && n != myself) {
 				if (countKeysInSlot(slot) != 0) {
 					addReplyErrorFormat(c,
 							"Can't assign hashslot %d to a different node "
 							"while I still hold keys for this hash slot.", slot);
+					pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
 					return;
 				}
 			}
@@ -4733,6 +4784,7 @@ void clusterCommand(client *c) {
 				 * soon as possible. */
 				clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
 			}
+			pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
 		} else {
 			addReplyError(c,
 					"Invalid CLUSTER SETSLOT action or number of arguments. Try CLUSTER HELP");
@@ -4821,9 +4873,13 @@ void clusterCommand(client *c) {
 		int j;
 
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
+			pthread_mutex_lock(&(server.ownership_lock_slots[j]));
 			clusterNode *n = server.cluster->slots[j];
 
-			if (n == NULL) continue;
+			if (n == NULL){
+				pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+				continue;
+			}
 			slots_assigned++;
 			if (nodeFailed(n)) {
 				slots_fail++;
@@ -7322,7 +7378,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 
-			// pthread_mutex_lock(&server.ownership_lock_slots[thisslot]);
+			pthread_mutex_lock(&server.ownership_lock_slots[thisslot]);
 			if (firstkey == NULL) {
 				/* This is the first key we see. Check what is the slot
 				 * and node. */
@@ -7338,7 +7394,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 					getKeysFreeResult(&result);
 					if (error_code)
 						*error_code = CLUSTER_REDIR_DOWN_UNBOUND;
-					// pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
 					return NULL;
 				}
 
@@ -7355,7 +7411,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				} else if (server.cluster->importing_slots_from[slot] != NULL) {
 					importing_slot = 1;
 				}
-				// pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[thisslot]);
 			} else {
 				/* If it is not the first key, make sure it is exactly
 				 * the same key as the first we saw. */
@@ -7638,7 +7694,9 @@ int clusterRedirectBlockedClientIfNeeded(client *c) {
 		if ((de = dictNext(di)) != NULL) {
 			robj *key = dictGetKey(de);
 			int slot = keyHashSlot((char*)key->ptr, sdslen(key->ptr));
+			pthread_mutex_lock(&(server.ownership_lock_slots[slot]));
 			clusterNode *node = server.cluster->slots[slot];
+			pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
 
 			/* if the client is read-only and attempting to access key that our
 			 * replica can handle, allow it. */
