@@ -7510,11 +7510,12 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				}
 				if(recipientNode != NULL) {
 					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 	server.cluster->slots[slot] = recipientNode;
-				 	server.cluster->migrating_slots_to[slot] = NULL;
-				 	server.cluster->importing_slots_from[slot] = NULL;
+				 	// server.cluster->slots[slot] = recipientNode;
+				 	// server.cluster->migrating_slots_to[slot] = NULL;
+				 	// server.cluster->importing_slots_from[slot] = NULL;
 				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				 	return recipientNode;
+				 	// return recipientNode;
+					return myself;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
 				}
@@ -7543,12 +7544,13 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 	*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
-					serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 	server.cluster->slots[slot] = recipientNode;
-				 	server.cluster->migrating_slots_to[slot] = NULL;
-				 	server.cluster->importing_slots_from[slot] = NULL;
+					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
+				 // 	server.cluster->slots[slot] = recipientNode;
+				 // 	server.cluster->migrating_slots_to[slot] = NULL;
+				 // 	server.cluster->importing_slots_from[slot] = NULL;
 				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				 	return recipientNode;
+				 	// return recipientNode;
+					return myself;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
 				}
@@ -7562,7 +7564,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 		}else{
-			addReplyError(c,"-TRYAGAIN  Key is migrating");
+			// addReplyError(c,"-TRYAGAIN  Key is migrating");
 			return myself;
 		}
 
