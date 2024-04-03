@@ -4493,19 +4493,20 @@ void clusterReplyMultiBulkSlots(client * c) {
 	clusterNode *n = NULL;
 	int num_masters = 0, start = -1;
 	void *slot_replylen = addReplyDeferredLen(c);
-	serverLog(LL_WARNING, "CLUSTER SLOTS");
+	// serverLog(LL_WARNING, "CLUSTER SLOTS");
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
 		pthread_mutex_lock(&server.ownership_lock_slots[i]);
+	}
+	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
 		/* Find start node and slot id. */
 		if (n == NULL) {
 			// serverLog(LL_WARNING, "%d slot -> null");
 			if (i == CLUSTER_SLOTS){
-				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+			
 			continue;
 		}else{
 			// serverLog(LL_WARNING, "%d slot -> owner %s", i, n->name);
@@ -4517,13 +4518,15 @@ void clusterReplyMultiBulkSlots(client * c) {
 		if (i == CLUSTER_SLOTS || n != server.cluster->slots[i]) {
 			addNodeReplyForClusterSlot(c, n, start, i-1);
 			num_masters++;
-			if (i == CLUSTER_SLOTS){
-				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+			if (i == CLUSTER_SLOTS){	
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
+		
+	}
+	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
 		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 	setDeferredArrayLen(c, slot_replylen, num_masters);
@@ -4744,13 +4747,13 @@ void clusterCommand(client *c) {
 			}
 			/* If this hash slot was served by 'myself' before to switch
 			 * make sure there are no longer local keys for this hash slot. */
-			// pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 			if (server.cluster->slots[slot] == myself && n != myself) {
 				if (countKeysInSlot(slot) != 0) {
 					addReplyErrorFormat(c,
 							"Can't assign hashslot %d to a different node "
 							"while I still hold keys for this hash slot.", slot);
-					// pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					return;
 				}
 			}
@@ -4787,7 +4790,7 @@ void clusterCommand(client *c) {
 				 * soon as possible. */
 				clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
 			}
-			// pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		} else {
 			addReplyError(c,
 					"Invalid CLUSTER SETSLOT action or number of arguments. Try CLUSTER HELP");
