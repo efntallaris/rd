@@ -4508,7 +4508,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 			continue;
 		}
 
-		serverLog(LL_WARNING, "%d slot -> owner %s", slot, n->nanme);
+		serverLog(LL_WARNING, "%d slot -> owner %s", i, n->name);
 		/* Add cluster slots info when occur different node with start
 		 * or end of slot. */
 		if (i == CLUSTER_SLOTS || n != server.cluster->slots[i]) {
