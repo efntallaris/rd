@@ -1014,14 +1014,14 @@ void clusterDelNode(clusterNode *delnode) {
 	/* 1) Mark slots as unassigned. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
 		
-		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (server.cluster->importing_slots_from[j] == delnode)
 			server.cluster->importing_slots_from[j] = NULL;
 		if (server.cluster->migrating_slots_to[j] == delnode)
 			server.cluster->migrating_slots_to[j] = NULL;
 		if (server.cluster->slots[j] == delnode)
 			clusterDelSlot(j);
-		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* 2) Remove failure reports. */
@@ -1704,12 +1704,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 	}
 
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (bitmapTestBit(slots,j)) {
 			sender_slots++;
 			/* The slot is already bound to the sender of this message. */
 			if (server.cluster->slots[j] == sender){
-				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 
@@ -1718,7 +1718,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 			 * and the migrating side slot was already closed and is advertising
 			 * a new config. We still want the slot to be closed manually). */
 			if (server.cluster->importing_slots_from[j]){
-				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
 				continue;
 			}
 			/* We rebind the slot to the new node claiming it if:
@@ -1751,7 +1751,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 						CLUSTER_TODO_FSYNC_CONFIG);
 			}
 		}
-		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* After updating the slots configuration, don't do any actual change
@@ -2149,11 +2149,11 @@ int clusterProcessPacket(clusterLink *link) {
 			int j;
 
 			for (j = 0; j < CLUSTER_SLOTS; j++) {
-				// pthread_mutex_lock(&server.ownership_lock_slots[j]);
+				pthread_mutex_lock(&server.ownership_lock_slots[j]);
 				if (bitmapTestBit(hdr->myslots,j)) {
 					if (server.cluster->slots[j] == sender ||
 							server.cluster->slots[j] == NULL){ 
-						// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+						pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 						continue;
 					}
 					if (server.cluster->slots[j]->configEpoch >
@@ -2169,11 +2169,11 @@ int clusterProcessPacket(clusterLink *link) {
 						/* TODO: instead of exiting the loop send every other
 						 * UPDATE packet for other nodes that are the new owner
 						 * of sender's slots. */
-						// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+						pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 						break;
 					}
 				}
-				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			}
 		}
 
@@ -3028,15 +3028,15 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 	 * slots that is >= the one of the masters currently serving the same
 	 * slots in the current configuration. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (bitmapTestBit(claimed_slots, j) == 0){
-			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue;
 		}
 		if (server.cluster->slots[j] == NULL ||
 				server.cluster->slots[j]->configEpoch <= requestConfigEpoch)
 		{
-			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue;
 		}
 		/* If we reached this point we found a slot that in our current slots
@@ -3048,7 +3048,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 				node->name, j,
 				(unsigned long long) server.cluster->slots[j]->configEpoch,
 				(unsigned long long) requestConfigEpoch);
-		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 		return;
 	}
 
