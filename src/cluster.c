@@ -7509,7 +7509,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 	*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
-					serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
+					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
 				 	server.cluster->slots[slot] = recipientNode;
 				 	server.cluster->migrating_slots_to[slot] = NULL;
 				 	server.cluster->importing_slots_from[slot] = NULL;
