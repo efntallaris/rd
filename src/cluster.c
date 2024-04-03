@@ -6710,6 +6710,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					sds slotString = args[j];
 					int number_of_blocks = slots_number_of_rest_blocks[j-7];
 					pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+					server.migration_ownership_locked[intSlot] = 1;
+					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 					//serverLog(LL_WARNING, "STRATOS NUMBER OF BLOCKS FOR SLOT:%s is %d", slotString, number_of_blocks);
 					char **slots = all_rest_slots[j-7];
 					for(int i=slots_number_of_blocks[j-7]; i<(slots_number_of_blocks[j-7] + slots_number_of_rest_blocks[j-7]); i++) {
@@ -6861,15 +6863,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				for(int j=chunk_start; j<chunk_end; j++) {
 					unsigned int intSlot = atoi(args[j]);
 					// serverLog(LL_WARNING, "STRATOS CHANGING SLOT %d", intSlot);
+					pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 					server.migration_ownership_changed[intSlot] = 1;
-					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
-						serverLog(LL_WARNING,
-								"configEpoch updated after importing slot");
-					}
-					clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
-					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-							CLUSTER_TODO_UPDATE_STATE|
-							CLUSTER_TODO_FSYNC_CONFIG);
+					server.migration_ownership_locked[intSlot] = 0;
 					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 				}
 
@@ -7506,6 +7502,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	if(!write_command){
 		// serverLog(LL_WARNING, "IM HERE READ");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
+
 			if(server.migration_ownership_changed[slot] == 1) {
 				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
 
@@ -7551,6 +7548,11 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	if(write_command){
 		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
+			if(server.migration_ownership_locked[intSlot] == 1){
+					addReplyError(c,"-TRYAGAIN  Key is migrating");
+					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+					return myself;
+			}
 			if(server.migration_ownership_changed[slot] == 1) {
 				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
 				server.migration_ownership_changed[slot] = 0;
@@ -7572,6 +7574,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
 							CLUSTER_TODO_UPDATE_STATE|
 							CLUSTER_TODO_FSYNC_CONFIG);
+					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 				 	return recipientNode;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
