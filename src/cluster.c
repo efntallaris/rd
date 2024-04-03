@@ -514,13 +514,7 @@ void clusterInit(void) {
 		server.cluster->stats_bus_messages_received[i] = 0;
 	}
 	server.cluster->stats_pfail_nodes = 0;
-	for(int i=0;i<16385;i++){
-		pthread_mutex_lock(&server.ownership_lock_slots[i]);
-	}
 	memset(server.cluster->slots,0, sizeof(server.cluster->slots));
-	for(int i=0;i<16385;i++){
-		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
-	}
 	clusterCloseAllSlots();
 
 	/* Lock the cluster config file to make sure every node uses
@@ -1020,14 +1014,14 @@ void clusterDelNode(clusterNode *delnode) {
 	/* 1) Mark slots as unassigned. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
 		
-		pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (server.cluster->importing_slots_from[j] == delnode)
 			server.cluster->importing_slots_from[j] = NULL;
 		if (server.cluster->migrating_slots_to[j] == delnode)
 			server.cluster->migrating_slots_to[j] = NULL;
 		if (server.cluster->slots[j] == delnode)
 			clusterDelSlot(j);
-		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* 2) Remove failure reports. */
@@ -1710,12 +1704,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 	}
 
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (bitmapTestBit(slots,j)) {
 			sender_slots++;
 			/* The slot is already bound to the sender of this message. */
 			if (server.cluster->slots[j] == sender){
-				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 
@@ -1724,7 +1718,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 			 * and the migrating side slot was already closed and is advertising
 			 * a new config. We still want the slot to be closed manually). */
 			if (server.cluster->importing_slots_from[j]){
-				pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
+				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
 				continue;
 			}
 			/* We rebind the slot to the new node claiming it if:
@@ -1757,7 +1751,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 						CLUSTER_TODO_FSYNC_CONFIG);
 			}
 		}
-		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* After updating the slots configuration, don't do any actual change
@@ -2155,11 +2149,11 @@ int clusterProcessPacket(clusterLink *link) {
 			int j;
 
 			for (j = 0; j < CLUSTER_SLOTS; j++) {
-				pthread_mutex_lock(&server.ownership_lock_slots[j]);
+				// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 				if (bitmapTestBit(hdr->myslots,j)) {
 					if (server.cluster->slots[j] == sender ||
 							server.cluster->slots[j] == NULL){ 
-						pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+						// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 						continue;
 					}
 					if (server.cluster->slots[j]->configEpoch >
@@ -2175,11 +2169,11 @@ int clusterProcessPacket(clusterLink *link) {
 						/* TODO: instead of exiting the loop send every other
 						 * UPDATE packet for other nodes that are the new owner
 						 * of sender's slots. */
-						pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+						// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 						break;
 					}
 				}
-				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			}
 		}
 
@@ -3034,15 +3028,15 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 	 * slots that is >= the one of the masters currently serving the same
 	 * slots in the current configuration. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (bitmapTestBit(claimed_slots, j) == 0){
-			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue;
 		}
 		if (server.cluster->slots[j] == NULL ||
 				server.cluster->slots[j]->configEpoch <= requestConfigEpoch)
 		{
-			pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue;
 		}
 		/* If we reached this point we found a slot that in our current slots
@@ -3054,7 +3048,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 				node->name, j,
 				(unsigned long long) server.cluster->slots[j]->configEpoch,
 				(unsigned long long) requestConfigEpoch);
-		pthread_mutex_unlock(&(server.ownership_lock_slots[j]));
+		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 		return;
 	}
 
@@ -4036,15 +4030,15 @@ void clusterUpdateState(void) {
 	/* Check if all the slots are covered. */
 	if (server.cluster_require_full_coverage) {
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
-			pthread_mutex_lock(&server.ownership_lock_slots[j]);
+			// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 			if (server.cluster->slots[j] == NULL ||
 					server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL))
 			{
 				new_state = CLUSTER_FAIL;
-				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				break;
 			}
-			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 		}
 	}
 
@@ -4152,9 +4146,9 @@ int verifyClusterConfigWithData(void) {
 	/* Check that all the slots we see populated memory have a corresponding
 	 * entry in the cluster table. Otherwise fix the table. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (!countKeysInSlot(j)){
-			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue; /* No keys in this slot. */
 		}
 		/* Check if we are assigned to this slot or if we are importing it.
@@ -4162,7 +4156,7 @@ int verifyClusterConfigWithData(void) {
 		 * sense. */
 		if (server.cluster->slots[j] == myself ||
 				server.cluster->importing_slots_from[j] != NULL){
-			pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
+			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
 			continue;
 		}
 		/* If we are here data and cluster config don't agree, and we have
@@ -4181,7 +4175,7 @@ int verifyClusterConfigWithData(void) {
 					"Setting it to importing state.",j);
 			server.cluster->importing_slots_from[j] = server.cluster->slots[j];
 		}
-		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 	if (update_config) clusterSaveConfigOrDie(1);
 	return C_OK;
@@ -4335,16 +4329,16 @@ void clusterGenNodesSlotsInfo(int filter) {
 	int start = -1;
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		pthread_mutex_lock(&server.ownership_lock_slots[i]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
 		if (n == NULL) {
 			if (i == CLUSTER_SLOTS){ 
-				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 			continue;
 		}
 
@@ -4360,13 +4354,13 @@ void clusterGenNodesSlotsInfo(int filter) {
 				}
 			}
 			if (i == CLUSTER_SLOTS){ 
-				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
-		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+		// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 }
 
@@ -4501,16 +4495,16 @@ void clusterReplyMultiBulkSlots(client * c) {
 	void *slot_replylen = addReplyDeferredLen(c);
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		pthread_mutex_lock(&server.ownership_lock_slots[i]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
 		if (n == NULL) {
 			if (i == CLUSTER_SLOTS){
-				pthread_mutex_lock(&server.ownership_lock_slots[i]);
+				// pthread_mutex_lock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 			continue;
 		}
 
@@ -4523,7 +4517,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 			n = server.cluster->slots[i];
 			start = i;
 		}
-		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+		// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 	setDeferredArrayLen(c, slot_replylen, num_masters);
 }
@@ -4875,11 +4869,11 @@ void clusterCommand(client *c) {
 		int j;
 
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
-			pthread_mutex_lock(&server.ownership_lock_slots[j]);
+			// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 			clusterNode *n = server.cluster->slots[j];
 
 			if (n == NULL){
-				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 			slots_assigned++;
@@ -4890,7 +4884,7 @@ void clusterCommand(client *c) {
 			} else {
 				slots_ok++;
 			}
-			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 
 		}
 
