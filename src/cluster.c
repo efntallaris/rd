@@ -7548,7 +7548,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	if(write_command){
 		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
-			if(server.migration_ownership_locked[intSlot] == 1){
+			if(server.migration_ownership_locked[slot] == 1){
 					addReplyError(c,"-TRYAGAIN  Key is migrating");
 					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					return myself;
