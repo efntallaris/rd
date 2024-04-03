@@ -7508,9 +7508,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 				server.migration_ownership_changed[slot] = 0;
 				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-				if(error_code) {
-				 	*error_code = CLUSTER_REDIR_MOVED;
-				}
+				// if(error_code) {
+				//  	*error_code = CLUSTER_REDIR_MOVED;
+				// }
 				if(recipientNode != NULL) {
 					clusterDelSlot(slot);
 					clusterAddSlot(recipientNode,slot);
@@ -7557,9 +7557,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
 				server.migration_ownership_changed[slot] = 0;
 				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
-				if(error_code) {
-				 	*error_code = CLUSTER_REDIR_MOVED;
-				}
+				// if(error_code) {
+				//  	*error_code = CLUSTER_REDIR_MOVED;
+				// }
 				if(recipientNode != NULL) {
 					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
 				 	clusterDelSlot(slot);
