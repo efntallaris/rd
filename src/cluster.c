@@ -4495,16 +4495,16 @@ void clusterReplyMultiBulkSlots(client * c) {
 	void *slot_replylen = addReplyDeferredLen(c);
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		// pthread_mutex_lock(&server.ownership_lock_slots[i]);
+		pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
 		if (n == NULL) {
 			if (i == CLUSTER_SLOTS){
-				// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 			continue;
 		}
 
@@ -4514,14 +4514,14 @@ void clusterReplyMultiBulkSlots(client * c) {
 			addNodeReplyForClusterSlot(c, n, start, i-1);
 			num_masters++;
 			if (i == CLUSTER_SLOTS){
-				// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
-		// pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 	setDeferredArrayLen(c, slot_replylen, num_masters);
 }
@@ -4873,11 +4873,11 @@ void clusterCommand(client *c) {
 		int j;
 
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
-			// pthread_mutex_lock(&server.ownership_lock_slots[j]);
+			pthread_mutex_lock(&server.ownership_lock_slots[j]);
 			clusterNode *n = server.cluster->slots[j];
 
 			if (n == NULL){
-				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 			slots_assigned++;
@@ -4888,7 +4888,7 @@ void clusterCommand(client *c) {
 			} else {
 				slots_ok++;
 			}
-			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 
 		}
 
