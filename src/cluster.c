@@ -7515,10 +7515,20 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 	*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
-					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 	server.cluster->slots[slot] = recipientNode;
-				 	server.cluster->migrating_slots_to[slot] = NULL;
+					clusterDelSlot(slot);
+					clusterAddSlot(recipientNode,slot);
+					server.cluster->migrating_slots_to[slot] = NULL;
 				 	server.cluster->importing_slots_from[slot] = NULL;
+					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+						serverLog(LL_WARNING,
+								"configEpoch updated after importing slot");
+					}
+					clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+							CLUSTER_TODO_UPDATE_STATE|
+							CLUSTER_TODO_FSYNC_CONFIG);
+					
+				 	
 				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
 				 	return recipientNode;
 				}else{
@@ -7550,10 +7560,18 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				}
 				if(recipientNode != NULL) {
 					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 	server.cluster->slots[slot] = recipientNode;
-				 	server.cluster->migrating_slots_to[slot] = NULL;
+				 	clusterDelSlot(slot);
+					clusterAddSlot(recipientNode,slot);
+					server.cluster->migrating_slots_to[slot] = NULL;
 				 	server.cluster->importing_slots_from[slot] = NULL;
-				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+						serverLog(LL_WARNING,
+								"configEpoch updated after importing slot");
+					}
+					clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+							CLUSTER_TODO_UPDATE_STATE|
+							CLUSTER_TODO_FSYNC_CONFIG);
 				 	return recipientNode;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
