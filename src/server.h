@@ -1277,9 +1277,10 @@ struct redisServer {
     pthread_mutex_t lock_slots[16385];
     pthread_mutex_t ownership_lock_slots[16385];
     int pending_migration_writes[16385];
+
     rax *migrated_keys;
     //pthread_rwlock_t ownership_mutex;
-
+    int migration_ownership_locked[16385];
     int migration_ownership_changed[16385];
     int migrateActive;
 
