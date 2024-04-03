@@ -1014,14 +1014,14 @@ void clusterDelNode(clusterNode *delnode) {
 	/* 1) Mark slots as unassigned. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
 		
-		pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (server.cluster->importing_slots_from[j] == delnode)
 			server.cluster->importing_slots_from[j] = NULL;
 		if (server.cluster->migrating_slots_to[j] == delnode)
 			server.cluster->migrating_slots_to[j] = NULL;
 		if (server.cluster->slots[j] == delnode)
 			clusterDelSlot(j);
-		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* 2) Remove failure reports. */
