@@ -4148,7 +4148,7 @@ int verifyClusterConfigWithData(void) {
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
 		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (!countKeysInSlot(j)){
-			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue; /* No keys in this slot. */
 		}
 		/* Check if we are assigned to this slot or if we are importing it.
@@ -4873,11 +4873,11 @@ void clusterCommand(client *c) {
 		int j;
 
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
-			// pthread_mutex_lock(&server.ownership_lock_slots[j]);
+			pthread_mutex_lock(&server.ownership_lock_slots[j]);
 			clusterNode *n = server.cluster->slots[j];
 
 			if (n == NULL){
-				// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 			slots_assigned++;
@@ -4888,7 +4888,7 @@ void clusterCommand(client *c) {
 			} else {
 				slots_ok++;
 			}
-			// pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 
 		}
 
