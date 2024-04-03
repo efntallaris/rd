@@ -4513,7 +4513,11 @@ void clusterReplyMultiBulkSlots(client * c) {
 		if (i == CLUSTER_SLOTS || n != server.cluster->slots[i]) {
 			addNodeReplyForClusterSlot(c, n, start, i-1);
 			num_masters++;
-			if (i == CLUSTER_SLOTS) break;
+			if (i == CLUSTER_SLOTS){
+				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+
+				break;
+			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
