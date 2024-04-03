@@ -4498,7 +4498,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 		pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
 		if (n == NULL) {
-			serverLog(LL_WARNING, "%d slot -> null");
+			// serverLog(LL_WARNING, "%d slot -> null");
 			if (i == CLUSTER_SLOTS){
 				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
@@ -4508,7 +4508,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 			pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 			continue;
 		}else{
-			serverLog(LL_WARNING, "%d slot -> owner %s", i, n->name);
+			// serverLog(LL_WARNING, "%d slot -> owner %s", i, n->name);
 		}
 
 		
@@ -4519,7 +4519,6 @@ void clusterReplyMultiBulkSlots(client * c) {
 			num_masters++;
 			if (i == CLUSTER_SLOTS){
 				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
-
 				break;
 			}
 			n = server.cluster->slots[i];
