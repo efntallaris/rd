@@ -4493,7 +4493,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 	clusterNode *n = NULL;
 	int num_masters = 0, start = -1;
 	void *slot_replylen = addReplyDeferredLen(c);
-
+	serverLog(LL_WARNING, "CLUSTER SLOTS");
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
 		pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
