@@ -4820,35 +4820,10 @@ void clusterCommand(client *c) {
 			int slot;
 			slot = atoi(c->argv[j]->ptr);
 			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
-			//serverLog(LL_WARNING, "STRATOS slotID on setslots is %d", slot);
-			//	    serverLog(LL_WARNING, "STRATOS slotID on setslots is %s 2",  c->argv[j]->ptr);
-			// DO I STILL HOLD KEYS FOR THIS NODE?
-			if (server.cluster->slots[slot] == myself && n != myself) {
-				if (countKeysInSlot(slot) != 0) {
-					addReplyErrorFormat(c,
-							"Can't assign hashslot %d to a different node "
-							"while I still hold keys for this hash slot.", slot);
-
-					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-					return;
-				}
-			}
-			
-			server.cluster->migrating_slots_to[slot] = NULL;
-			// if (countKeysInSlot(slot) == 0 && server.cluster->migrating_slots_to[slot]) {
-			// 	server.cluster->migrating_slots_to[slot] = NULL;
-
-			// }
-
 			clusterDelSlot(slot);
 			clusterAddSlot(n,slot);
 			server.cluster->importing_slots_from[slot] = NULL;
-			// if (n == myself &&
-			// 		server.cluster->importing_slots_from[slot])
-			// {
-			// 	server.cluster->importing_slots_from[slot] = NULL;
-			// }
-
+			server.cluster->importing_slots_from[slot] = NULL;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		}
 
