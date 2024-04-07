@@ -6839,8 +6839,21 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					unsigned int intSlot = atoi(args[j]);
 					// serverLog(LL_WARNING, "STRATOS CHANGING SLOT %d", intSlot);
 					pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+					clusterNode *recipientNode = server.cluster->importing_slots_from[intSlot];
 					server.migration_ownership_changed[intSlot] = 1;
 					server.migration_ownership_locked[intSlot] = 0;
+					clusterDelSlot(intSlot);
+					clusterAddSlot(n,intSlot);
+					server.cluster->importing_slots_from[intSlot] = NULL;
+					server.cluster->importing_slots_from[intSlot] = NULL;
+					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+						serverLog(LL_WARNING,
+								"configEpoch updated after importing slot");
+					}
+					clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+							CLUSTER_TODO_UPDATE_STATE|
+							CLUSTER_TODO_FSYNC_CONFIG);
 					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 				}
 
