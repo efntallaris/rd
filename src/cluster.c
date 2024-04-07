@@ -6843,7 +6843,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					server.migration_ownership_changed[intSlot] = 1;
 					server.migration_ownership_locked[intSlot] = 0;
 					clusterDelSlot(intSlot);
-					clusterAddSlot(n,intSlot);
+					clusterAddSlot(recipientNode,intSlot);
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
