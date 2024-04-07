@@ -7377,7 +7377,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 * and node. */
 				firstkey = thiskey;
 				slot = thisslot;
+				pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 				n = server.cluster->slots[slot];
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 
 				/* Error: If a slot is not served, we are in "cluster down"
 				 * state. However the state is yet to be updated, so this was
