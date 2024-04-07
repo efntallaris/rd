@@ -6861,6 +6861,67 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 
 
+		}else{
+                                int total_slots_transferred = end - start;
+
+                                cs = migrateGetSocketOtherParams(c, args[3], args[4], args[3], args[4], 10000);
+                                rio unlockCmdRecipient;
+                                rioInitWithBuffer(&unlockCmdRecipient,sdsempty());
+                                serverAssertWithInfo(c,NULL,rioWriteBulkCount(&unlockCmdRecipient, '*', 4 + total_slots_transferred));
+                                serverAssertWithInfo(c,NULL,rioWriteBulkString(&unlockCmdRecipient,"CLUSTER", 7));
+                                serverAssertWithInfo(c,NULL,rioWriteBulkString(&unlockCmdRecipient, "SETSLOTS", 8));
+                                for(int j=start; j<end; j++) {
+                                        sds sdsSlot = args[j];
+                                        unsigned int intSlot;
+                                        sscanf(sdsSlot, "%d", &intSlot);
+                                        serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&unlockCmdRecipient, (long)intSlot));
+                                }
+
+                                serverAssertWithInfo(c,NULL,rioWriteBulkString(&unlockCmdRecipient, "NODE", 4));
+                                serverAssertWithInfo(c,NULL,rioWriteBulkString(&unlockCmdRecipient, recipientNode->name, CLUSTER_NAMELEN));
+
+                                serverLog(LL_WARNING, "PREPARED COMMAND FOR SLOTS %s until %s for recipientNode: %s", args[start], args[end-1], recipientNode->name);
+
+                                dictIterator *di;
+                                dictEntry *de;
+
+                                di = dictGetSafeIterator(server.cluster->nodes);
+                                nwritten = 0;
+                                char changeOwnershipCmdReply[1024];
+                                buf = unlockCmdRecipient.io.buffer.ptr;
+                                while((de = dictNext(di)) != NULL) {
+                                        clusterNode *node = dictGetVal(de);
+                                        if(strcmp(node->ip, myself->ip) == 0) {
+                                                // DO NOT SEND OWNERSHIP CHANGE RPC TO MYSELF.
+                                                continue;
+                                        }
+                                        char tempPortBuffer[20];
+                                        sprintf(tempPortBuffer, "%d", node->port);
+                                        robj *host = createObject(OBJ_STRING,sdsnew(node->ip));
+                                        robj *port = createObject(OBJ_STRING,sdsnew(tempPortBuffer));
+                                        connection *conn;
+                                        conn = server.tls_cluster ? connCreateTLS() : connCreateSocket();
+                                        connBlockingConnect(conn, host->ptr, atoi(port->ptr), 1000);
+                                        connEnableTcpNoDelay(conn);
+                                        serverLog(LL_WARNING, "SENDING change ownershp rpc to %s", node->ip);
+                                        char changeOwnershipCmdReply[1024];
+                                        sds changeOwnershipBuf = unlockCmdRecipient.io.buffer.ptr;
+
+                                        nwritten = connSyncWrite(conn, buf, sdslen(buf), 1000000);
+                                        if(nwritten != (int) sdslen(buf)) {
+                                                serverLog(LL_WARNING, "SOCKET WRITE ERROR changeOwnership SERVER");
+                                        }
+                                        connSyncReadLine(conn, changeOwnershipCmdReply, sizeof(changeOwnershipCmdReply), 10000000);
+                                        freeStringObject(host);
+                                        freeStringObject(port);
+                                        connClose(conn);
+                                        //serverLog(LL_WARNING, "RECEIVED WHAT? %s", changeOwnershipCmdReply);
+
+                                }
+                                dictReleaseIterator(di);
+                                // 1 readline for the reply and one for the +OK ack
+                                sdsfree(unlockCmdRecipient.io.buffer.ptr);
+
 		}
 
 		serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
