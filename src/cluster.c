@@ -4815,7 +4815,7 @@ void clusterCommand(client *c) {
 			return;
 		}
 
-		serverLog(LL_WARNING, "STRATOS IN RECIPIENT OF OWNERSHIP CHANGE FOR SLOTS %s -> %s", c->argv[2]->ptr, c->argv[c->argc-3]->ptr);
+		serverLog(LL_WARNING, "STRATOS IN RECIPIENT OF OWNERSHIP CHANGE FOR SLOTS %s -> %s to %s", c->argv[2]->ptr, c->argv[c->argc-3]->ptr, n->ip);
 		for(int j = 2; j<c->argc - 2; j++) {
 			int slot;
 			slot = atoi(c->argv[j]->ptr);
@@ -4824,6 +4824,7 @@ void clusterCommand(client *c) {
 			clusterAddSlot(n,slot);
 			server.cluster->importing_slots_from[slot] = NULL;
 			server.cluster->importing_slots_from[slot] = NULL;
+			server.cluster->slots[slot] = n;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		}
 
