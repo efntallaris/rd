@@ -7600,7 +7600,8 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 					
 				 	
 				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				 	return recipientNode;
+				 	// return recipientNode;
+					return myself;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
 				}
@@ -7648,7 +7649,8 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 							CLUSTER_TODO_UPDATE_STATE|
 							CLUSTER_TODO_FSYNC_CONFIG);
 					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-				 	return recipientNode;
+				 	// return recipientNode;
+					return myself;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
 				}
