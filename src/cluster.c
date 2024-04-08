@@ -6943,8 +6943,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 						CLUSTER_TODO_UPDATE_STATE|
 						CLUSTER_TODO_FSYNC_CONFIG);
 
-			}
-
 		}
 
 		serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
