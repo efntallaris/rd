@@ -134,15 +134,19 @@ public class ClientThread implements Runnable {
 
           throttleNanos(startTimeNanos);
 	}catch (Exception e){
-		if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
-			tryagain++;
-		} else {
-			//System.out.println("Jedis Data Exception occurred: " + e.getMessage());
-			System.out.println(e);
-			e.printStackTrace();
-			throw e;
+                if (e.getMessage().contains("B cannot be cast to class java.util.List"){
+                        System.out.println("CANNOT BE CAST");
 
-		}
+                }
+                else if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
+                        tryagain++;
+                } else {
+                        //System.out.println("Jedis Data Exception occurred: " + e.getMessage());
+                        System.out.println(e);
+                        e.printStackTrace();
+                        throw e;
+
+                }
 
 	 }
         }
