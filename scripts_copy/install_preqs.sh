@@ -1,5 +1,9 @@
 #!/bin/bash
 #
+cd /root/rd
+git stash
+git checkout spill_over_buffers_as_chunks
+
 sudo apt-get update
 sudo apt-get install -y libtool autoconf automake libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y libibverbs-dev
