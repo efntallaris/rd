@@ -110,36 +110,36 @@ public class RedisClient extends DB {
 
 
       //LETUCE
-      //io.lettuce.core.RedisURI redisURI = new io.lettuce.core.RedisURI(host, port, Duration.ofSeconds(60));
-      //io.lettuce.core.resource.ClientResources clientResources = io.lettuce.core.resource
-      //      .ClientResources
-      //      .builder()
-      //      .ioThreadPoolSize(60)
-      //      .computationThreadPoolSize(60)
-      //      .build();
+      io.lettuce.core.RedisURI redisURI = new io.lettuce.core.RedisURI(host, port, Duration.ofSeconds(60));
+      io.lettuce.core.resource.ClientResources clientResources = io.lettuce.core.resource
+           .ClientResources
+           .builder()
+           .ioThreadPoolSize(60)
+           .computationThreadPoolSize(60)
+           .build();
 
-      //redisClusterClient = io.lettuce.core.cluster.RedisClusterClient.create(clientResources, redisURI);
-      //io.lettuce.core.cluster.ClusterTopologyRefreshOptions topologyRefreshOptions = io.lettuce.core.cluster
-      //      .ClusterTopologyRefreshOptions
-      //      .builder()
-      //      .enableAllAdaptiveRefreshTriggers()
-      //      .dynamicRefreshSources(true)
-      //      .enablePeriodicRefresh()
-      //      .refreshPeriod(Duration.ofSeconds(1))
-      //      .build();
+      redisClusterClient = io.lettuce.core.cluster.RedisClusterClient.create(clientResources, redisURI);
+      io.lettuce.core.cluster.ClusterTopologyRefreshOptions topologyRefreshOptions = io.lettuce.core.cluster
+           .ClusterTopologyRefreshOptions
+           .builder()
+           .enableAllAdaptiveRefreshTriggers()
+           .dynamicRefreshSources(true)
+           .enablePeriodicRefresh()
+           .refreshPeriod(Duration.ofSeconds(1))
+           .build();
 
-      //io.lettuce.core.cluster.ClusterClientOptions clusterOptions = io.lettuce.core.cluster
-      //      .ClusterClientOptions
-      //      .builder()
-      //      .maxRedirects(15)
-      //      .topologyRefreshOptions(topologyRefreshOptions)
-      //      .build();
-      //redisClusterClient.setOptions(clusterOptions);
-      //io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection = 
-      //      redisClusterClient.connect();
-      //redisClusterClient.reloadPartitions();
-      //jedis2 = connection.sync();
-      //io.lettuce.core.cluster.models.partitions.Partitions clusterPartitions = connection.getPartitions();
+      io.lettuce.core.cluster.ClusterClientOptions clusterOptions = io.lettuce.core.cluster
+           .ClusterClientOptions
+           .builder()
+           .maxRedirects(15)
+           .topologyRefreshOptions(topologyRefreshOptions)
+           .build();
+      redisClusterClient.setOptions(clusterOptions);
+      io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection = 
+           redisClusterClient.connect();
+      redisClusterClient.reloadPartitions();
+      jedis2 = connection.sync();
+      io.lettuce.core.cluster.models.partitions.Partitions clusterPartitions = connection.getPartitions();
 
       // prepare key value writer
       //
@@ -210,8 +210,8 @@ public class RedisClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    //Object value = jedis2.get(key);
-    String value = jedis.get(key);
+    Object value = jedis2.get(key);
+    // String value = jedis.get(key);
     if(value != null){
       return Status.OK;
     }
@@ -232,7 +232,7 @@ public class RedisClient extends DB {
 
 
 
-    if (jedis.set(key, valueAllColumns).equals("OK")) {
+    if (jedis2.set(key, valueAllColumns).equals("OK")) {
       // Log data
       if (isDataLogEnabled) {
 	logData(key, valueAllColumns);
@@ -241,13 +241,6 @@ public class RedisClient extends DB {
     } else {
       return Status.ERROR;
     }
-    //return Status.ERROR;
-//    if (jedis.hmset(key, StringByteIterator.getStringMap(values))
-//        .equals("OK")) {
-//      jedis.zadd(INDEX_KEY, hash(key), key);
-//      return Status.OK;
-//    }
-//    return Status.ERROR;
   }
 
   @Override
