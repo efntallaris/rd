@@ -73,8 +73,8 @@ import java.io.FileOutputStream;
 public class RedisClient extends DB {
 
   private JedisCommands jedis;
-  //private io.lettuce.core.cluster.api.sync.RedisClusterCommands jedis2;
-  //private io.lettuce.core.cluster.RedisClusterClient redisClusterClient;
+  private io.lettuce.core.cluster.api.sync.RedisClusterCommands jedis2;
+  private io.lettuce.core.cluster.RedisClusterClient redisClusterClient;
 
   // Log data to binary file
   private DataOutputStream dataLogger = null;
