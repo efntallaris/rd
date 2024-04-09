@@ -230,6 +230,7 @@ public class RedisClient extends DB {
     }
 
     String result = jedis2.set(key, valueAllColumns);
+    System.out.println(result);
     if ("OK".equals(result)) {
 	return Status.OK;
     } else {
