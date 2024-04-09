@@ -291,7 +291,19 @@ int getGenericCommand(client *c) {
     robj *o;
 
     //serverLog(LL_WARNING, "STRATOS GETTING KEY %s", c->argv[1]);
-
+    int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
+	if(strcmp(server.cluster->myself->ip, "10.10.1.4") == 0){
+        serverLog(LL_WARNING, "STRATOS READING FROM RECIP");
+		// 	if(hashSlot >= 5461 && hashSlot <= 6661){
+		// 		serverLog(LL_WARNING, "STRATOS 5461 - 6661");
+		// 	}
+		// if(hashSlot >= 0 && hashSlot <= 1363){
+		// 	 serverLog(LL_WARNING, "STRATOS 0 - 1363");
+		// }
+		// 	if(hashSlot >= 10923 && hashSlot <= 12123){
+		// 		serverLog(LL_WARNING, "STRATOS 10923 - 12123");
+		// 	}
+	}
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL) {
         return C_OK;
     }
