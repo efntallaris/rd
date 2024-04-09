@@ -134,7 +134,7 @@ public class ClientThread implements Runnable {
 
           throttleNanos(startTimeNanos);
 	}catch (Exception e){
-                if (e.getMessage().contains("B cannot be cast to class java.util.List"){
+                if (e.getMessage().contains("B cannot be cast to class java.util.List")){
                         System.out.println("CANNOT BE CAST");
 
                 }
