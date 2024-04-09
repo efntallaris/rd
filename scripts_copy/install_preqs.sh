@@ -1,9 +1,5 @@
 #!/bin/bash
 #
-rm -rf /root/rd
-cd /root
-git clone -b spill_over_buffers_as_chunks https://github.com/efntallaris/rd
-
 sudo apt-get update
 sudo apt-get install -y libtool autoconf automake libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y libibverbs-dev
