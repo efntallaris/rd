@@ -52,9 +52,9 @@ import java.util.Vector;
 import java.util.List;
  
 // STRATOS LETTUCE
-//import io.lettuce.core.*;
-//import java.util.concurrent.TimeUnit ;
-//import java.time.Duration;
+import io.lettuce.core.*;
+import java.util.concurrent.TimeUnit ;
+import java.time.Duration;
 //STRATOS TIMESTAMPS
 //import java.sql.Timestamp;
 //import java.text.SimpleDateFormat;
@@ -73,8 +73,8 @@ import java.io.FileOutputStream;
 public class RedisClient extends DB {
 
   private JedisCommands jedis;
-  //private io.lettuce.core.cluster.api.sync.RedisClusterCommands jedis2;
-  //private io.lettuce.core.cluster.RedisClusterClient redisClusterClient;
+  private io.lettuce.core.cluster.api.sync.RedisClusterCommands jedis2;
+  private io.lettuce.core.cluster.RedisClusterClient redisClusterClient;
 
   // Log data to binary file
   private DataOutputStream dataLogger = null;
@@ -110,36 +110,36 @@ public class RedisClient extends DB {
 
 
       //LETUCE
-      //io.lettuce.core.RedisURI redisURI = new io.lettuce.core.RedisURI(host, port, Duration.ofSeconds(60));
-      //io.lettuce.core.resource.ClientResources clientResources = io.lettuce.core.resource
-      //      .ClientResources
-      //      .builder()
-      //      .ioThreadPoolSize(60)
-      //      .computationThreadPoolSize(60)
-      //      .build();
+      io.lettuce.core.RedisURI redisURI = new io.lettuce.core.RedisURI(host, port, Duration.ofSeconds(60));
+      io.lettuce.core.resource.ClientResources clientResources = io.lettuce.core.resource
+            .ClientResources
+            .builder()
+            .ioThreadPoolSize(60)
+            .computationThreadPoolSize(60)
+            .build();
 
-      //redisClusterClient = io.lettuce.core.cluster.RedisClusterClient.create(clientResources, redisURI);
-      //io.lettuce.core.cluster.ClusterTopologyRefreshOptions topologyRefreshOptions = io.lettuce.core.cluster
-      //      .ClusterTopologyRefreshOptions
-      //      .builder()
-      //      .enableAllAdaptiveRefreshTriggers()
-      //      .dynamicRefreshSources(true)
-      //      .enablePeriodicRefresh()
-      //      .refreshPeriod(Duration.ofSeconds(1))
-      //      .build();
+      redisClusterClient = io.lettuce.core.cluster.RedisClusterClient.create(clientResources, redisURI);
+      io.lettuce.core.cluster.ClusterTopologyRefreshOptions topologyRefreshOptions = io.lettuce.core.cluster
+            .ClusterTopologyRefreshOptions
+            .builder()
+            .enableAllAdaptiveRefreshTriggers()
+            .dynamicRefreshSources(true)
+            .enablePeriodicRefresh()
+            .refreshPeriod(Duration.ofSeconds(1))
+            .build();
 
-      //io.lettuce.core.cluster.ClusterClientOptions clusterOptions = io.lettuce.core.cluster
-      //      .ClusterClientOptions
-      //      .builder()
-      //      .maxRedirects(15)
-      //      .topologyRefreshOptions(topologyRefreshOptions)
-      //      .build();
-      //redisClusterClient.setOptions(clusterOptions);
-      //io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection = 
-      //      redisClusterClient.connect();
-      //redisClusterClient.reloadPartitions();
-      //jedis2 = connection.sync();
-      //io.lettuce.core.cluster.models.partitions.Partitions clusterPartitions = connection.getPartitions();
+      io.lettuce.core.cluster.ClusterClientOptions clusterOptions = io.lettuce.core.cluster
+            .ClusterClientOptions
+            .builder()
+            .maxRedirects(15)
+            .topologyRefreshOptions(topologyRefreshOptions)
+            .build();
+      redisClusterClient.setOptions(clusterOptions);
+      io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection = 
+            redisClusterClient.connect();
+      redisClusterClient.reloadPartitions();
+      jedis2 = connection.sync();
+      io.lettuce.core.cluster.models.partitions.Partitions clusterPartitions = connection.getPartitions();
 
       // prepare key value writer
       //
@@ -210,8 +210,8 @@ public class RedisClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    //Object value = jedis2.get(key);
-    String value = jedis.get(key);
+    Object value = jedis2.get(key);
+    // String value = jedis.get(key);
     if(value != null){
       return Status.OK;
     }
@@ -229,18 +229,23 @@ public class RedisClient extends DB {
       valueAllColumns += entry.getKey()+"_"+entry.getValue();
     }
 
-
-
-
-    if (jedis.set(key, valueAllColumns).equals("OK")) {
-      // Log data
-      if (isDataLogEnabled) {
-	logData(key, valueAllColumns);
-      }
-      return Status.OK;
+    String result = jedis2.set(key, valueAllColumns);
+    if ("OK".equals(result)) {
+	return Status.OK;
     } else {
-      return Status.ERROR;
+	return Status.ERROR;
     }
+
+
+ //    if (jedis.set(key, valueAllColumns).equals("OK")) {
+ //      // Log data
+ //      if (isDataLogEnabled) {
+	// logData(key, valueAllColumns);
+ //      }
+ //      return Status.OK;
+ //    } else {
+ //      return Status.ERROR;
+ //    }
     //return Status.ERROR;
 //    if (jedis.hmset(key, StringByteIterator.getStringMap(values))
 //        .equals("OK")) {
