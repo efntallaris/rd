@@ -6210,6 +6210,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	if(recipientNode == NULL) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
+	dictEnableMigration();
 
 	if(strcmp(myself->ip, "10.10.1.1") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 20 SECONDS");
@@ -6233,7 +6234,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 	serverLog(LL_WARNING, "STRATOS STARTED MIGRATION ON DONOR SIDE");
-	dictEnableMigration();
+
 
 	// does rdma connection exists in cache? if not initiate new one
 	migrateCachedSocket *cs;
