@@ -231,14 +231,15 @@ public class RedisClient extends DB {
 
 
 
-
-    if (jedis2.set(key, valueAllColumns).equals("OK")) {
+    String resultSet = jedis2.set(key, valueAllColumns).equals("OK");
+    if (resultSet.equals("OK")) {
       // Log data
       if (isDataLogEnabled) {
 	logData(key, valueAllColumns);
       }
       return Status.OK;
     } else {
+      System.out.println("Error " + resultSet);
       return Status.ERROR;
     }
   }
