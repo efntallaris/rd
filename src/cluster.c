@@ -6233,7 +6233,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 	serverLog(LL_WARNING, "STRATOS STARTED MIGRATION ON DONOR SIDE");
-	// dictEnableMigration();
+	dictEnableMigration();
 
 	// does rdma connection exists in cache? if not initiate new one
 	migrateCachedSocket *cs;
@@ -7007,7 +7007,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	//    serverLog(LL_WARNING, "STRATOS DISABLING REHASHING");
 	//    dictDisableResize();
 	//    server.activerehashing = 0;
-	//    dictEnableMigration();
+	   dictEnableMigration();
 	//
 	serverLog(LL_WARNING, "STRATOS STARTED (SLOTS) PATCHING AND ADDING TO DB");
 	// Nanosleep args
@@ -7133,7 +7133,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
-			dictDisableMigration();
+			// dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
