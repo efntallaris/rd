@@ -212,13 +212,14 @@ public class RedisClient extends DB {
       Map<String, ByteIterator> result) {
     Object value = jedis2.get(key);
     // String value = jedis.get(key);
-    if(value != null){
-      return Status.OK;
-    }
-    if (isDataLogEnabled) {
-      logData(key, "");
-    }
-    return Status.ERROR;
+    return Status.OK;
+    // if(value != null){
+    //   return Status.OK;
+    // }
+    // if (isDataLogEnabled) {
+    //   logData(key, "");
+    // }
+    // return Status.ERROR;
   }
 
   @Override
@@ -229,20 +230,21 @@ public class RedisClient extends DB {
       valueAllColumns += entry.getKey()+"_"+entry.getValue();
     }
 
+    jedis2.set(key, valueAllColumns);
+    return Status.OK;
 
-
-    String resultSet = jedis2.set(key, valueAllColumns);
-    if (resultSet.equals("OK")) {
-      // Log data
-      if (isDataLogEnabled) {
-	logData(key, valueAllColumns);
-      }
-      return Status.OK;
-    } else {
-      // System.out.println("Error " + resultSet);
-      return Status.ERROR;
-    }
-  }
+ //    String resultSet = jedis2.set(key, valueAllColumns);
+ //    if (resultSet.equals("OK")) {
+ //      // Log data
+ //      if (isDataLogEnabled) {
+	// logData(key, valueAllColumns);
+ //      }
+ //      return Status.OK;
+ //    } else {
+ //      // System.out.println("Error " + resultSet);
+ //      return Status.ERROR;
+ //    }
+ //  }
 
   @Override
   public Status delete(String table, String key) {
