@@ -239,7 +239,7 @@ public class RedisClient extends DB {
       }
       return Status.OK;
     } else {
-      System.out.println("Error " + resultSet);
+      // System.out.println("Error " + resultSet);
       return Status.ERROR;
     }
   }
