@@ -244,7 +244,7 @@ public class RedisClient extends DB {
  //      // System.out.println("Error " + resultSet);
  //      return Status.ERROR;
  //    }
- //  }
+   }
 
   @Override
   public Status delete(String table, String key) {
