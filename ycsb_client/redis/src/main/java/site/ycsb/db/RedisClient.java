@@ -231,7 +231,7 @@ public class RedisClient extends DB {
 
 
 
-    String resultSet = jedis2.set(key, valueAllColumns).equals("OK");
+    String resultSet = jedis2.set(key, valueAllColumns);
     if (resultSet.equals("OK")) {
       // Log data
       if (isDataLogEnabled) {
