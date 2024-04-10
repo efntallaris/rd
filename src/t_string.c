@@ -82,6 +82,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
             return;
         if (milliseconds <= 0 || (unit == UNIT_SECONDS && milliseconds > LLONG_MAX / 1000)) {
             /* Negative value provided or multiplication is gonna overflow. */
+	    serverLog(LL_WARNING, "STRATOS IM HERE3");
             addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
             return;
         }
@@ -91,6 +92,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
             when += mstime();
         if (when <= 0) {
             /* Overflow detected. */
+	    serverLog(LL_WARNING, "STRATOS IM HERE 2");
             addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
             return;
         }
@@ -99,6 +101,7 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
     if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
             (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
     {
+	serverLog(LL_WARNING, "STRATOS IM HERE");
         addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
         return;
     }
