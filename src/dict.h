@@ -105,9 +105,8 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 /* This is the initial size of every hash table */
 //#define DICT_HT_INITIAL_SIZE 16777216 
 //#define DICT_HT_INITIAL_SIZE 8388608
-// #define DICT_HT_INITIAL_SIZE 2048
-#define DICT_HT_INITIAL_SIZE 16384
-#define DICT_HT_BIG_INITIAL_SIZE 67108864
+#define DICT_HT_INITIAL_SIZE 4 
+#define DICT_HT_BIG_INITIAL_SIZE 16777216 
 //#define DICT_HT_INITIAL_SIZE 1048576
 
 /* ------------------------------- Macros ------------------------------------*/
