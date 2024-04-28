@@ -1281,6 +1281,7 @@ struct redisServer {
     rax *migrated_keys;
     //pthread_rwlock_t ownership_mutex;
     int migration_ownership_locked[16385];
+    int migration_spill_over_phase_activated[16385];
     int migration_ownership_changed[16385];
     int migrateActive;
 

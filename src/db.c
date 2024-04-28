@@ -334,14 +334,29 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
 
 		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
-		r_allocator_insert_kv(hashSlot,
-				(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
-				(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
-				key, sizeof(robj),
-				val, sizeof(robj),
-				&allocated_block,
-				&allocator_key,
-				&allocator_value);
+		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
+			r_allocator_insert_kv(17000,
+					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
+					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
+					key, sizeof(robj),
+					val, sizeof(robj),
+					&allocated_block,
+					&allocator_key,
+					&allocator_value);
+
+
+		}else{
+			r_allocator_insert_kv(hashSlot,
+					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
+					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
+					key, sizeof(robj),
+					val, sizeof(robj),
+					&allocated_block,
+					&allocator_key,
+					&allocator_value);
+
+
+		}
 
 		//ALLOCATOR DEBUG START
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) key->ptr, (char *)allocator_key + allocator_key->data_offset + 8);
