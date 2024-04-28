@@ -6636,16 +6636,18 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			total_number_of_active_slots++;
 		}
 
+
+		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
+		rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
 		{
 
 			int buffer_index = 0;
-			struct rdma_buffer_info **rdma_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
 			unsigned int intSlot = 17000;
 			sds slotString = "17000";
 			int number_of_blocks = total_number_of_remote_rest_buffers;
 			char **slots = all_slots;
 			for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
-				rdma_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
 				total_blocks_allocated++;
 				buffer_index++;
 			}
@@ -6668,7 +6670,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			nwritten = 0;
 			char prepareBuffersCmdReply[1024];
 			size_t size_of_remotebuffer =  sizeof(rdmaRemoteBufferInfo);
-			rdmaRemoteBufferInfo *all_remote_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
 			char remote_keys[1024];
 			buf = prepareBlocksCmd.io.buffer.ptr;
 			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
@@ -6681,15 +6682,60 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
 			}
 
-			if(connSyncRead(cs->conn, (char *) all_remote_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000) <=0) {
+			if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000) <=0) {
 				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
 			}
-			serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_data[0].ptr, all_remote_data[0].rkey);
-			serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_data[total_number_of_remote_rest_buffers-1].rkey);
+			serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
+			serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
+			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
+			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
+			int current_buffer_index = 0;
+			{
+				unsigned int intSlot = 17000;
+				sds slotString = "17000";
+				int number_of_blocks = slots_number_of_rest_blocks;
+				//serverLog(LL_WARNING, "STRATOS NUMBER OF BLOCKS FOR SLOT:%s is %d", slotString, number_of_blocks);
+				char **slots = all_rest_slots;
+				for(int i=0; i<slots_number_of_rest_blocks; i++) {
+					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
+					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
+					// PREPARE SGE STOP
+					sges_rest[current_buffer_index].addr = (uint64_t)(uintptr_t) slots[i];
+					sges_rest[current_buffer_index].length = (uint32_t)BLOCK_SIZE_BYTES;
+					sges_rest[current_buffer_index].lkey = rdma_rest_buffers[current_buffer_index]->mr->lkey;
+					// PREPARE SGE STOP
+					// PREPARE WR START
+					wrs_rest[current_buffer_index].wr_id = current_buffer_index;
+					wrs_rest[current_buffer_index].sg_list = &(sges_rest[current_buffer_index]);
+					wrs_rest[current_buffer_index].next = NULL;
+					wrs_rest[current_buffer_index].num_sge = 1;
+					wrs_rest[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
+					if(intSlot % SPLIT_SLOTS == 0){
+						//serverLog(LL_WARNING, "STRATOS REST SPLITTING SLOT ON %d",  intSlot);
+						//wrs_rest[current_buffer_index].schunk_end_flags = IBV_SEND_SIGNALED;
+
+					}
+					wrs_rest[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+					wrs_rest[current_buffer_index].wr.rdma.remote_addr = all_remote_rest_data[current_buffer_index].ptr;
+					wrs_rest[current_buffer_index].wr.rdma.rkey = all_remote_rest_data[current_buffer_index].rkey;
+					current_buffer_index++;
+				}
+			}
+
+			for(int i=0; i<current_buffer_index; i++) {
+				struct ibv_send_wr bad_wr;
+				if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
+					serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
+				}
+
+				struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+			}
+			serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
+
 		}
 
 
-		serverLog(LL_WARNING, "STRATOS TOTAL NUMBER OF REMOTE REST BUFFERS:%d", total_number_of_remote_rest_buffers);
+		//serverLog(LL_WARNING, "STRATOS TOTAL NUMBER OF REMOTE REST BUFFERS:%d", total_number_of_remote_rest_buffers);
 		// LOG START
 		// unsigned int number_of_kvs[16385];
 		// unsigned int spill_over_number_of_kvs[16385];
