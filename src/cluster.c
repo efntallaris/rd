@@ -6768,9 +6768,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			}
 
-			pthread_mutex_lock(&(server.generic_migration_mutex));
-			server.rdmaDoneAck = 0;
-			pthread_mutex_unlock(&(server.generic_migration_mutex));
 			while(1) {
 				pthread_mutex_lock(&(server.generic_migration_mutex));
 				if(server.rdmaDoneAck==1) {
