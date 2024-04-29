@@ -2282,6 +2282,9 @@ void preventCommandAOF(client *c);
 void preventCommandReplication(client *c);
 void slowlogPushCurrentCommand(client *c, struct redisCommand *cmd, ustime_t duration);
 int prepareForShutdown(int flags);
+unsigned long getSpillOverSlot(const char *ipAddress, unsigned long number);
+sds unsignedLongToSDS(unsigned long number);
+
 #ifdef __GNUC__
 void _serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));

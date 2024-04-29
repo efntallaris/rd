@@ -6625,7 +6625,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 		{
-			unsigned int intSlot = 20000;
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+			//unsigned int intSlot = 20000;
 			char **slots;
 			int number_of_blocks;
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
@@ -6642,8 +6644,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		{
 
 			int buffer_index = 0;
-			unsigned int intSlot = 20000;
-			sds slotString = "20000";
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+			sds slotString = unsignedLongToSDS(intSlot);	
+			
+			//sds slotString = "20000";
 			int number_of_blocks = total_number_of_remote_rest_buffers;
 			char **slots = all_slots;
 			for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
@@ -6691,8 +6696,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
 			int current_buffer_index = 0;
 			{
-				unsigned int intSlot = 20000;
-				sds slotString = "20000";
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+				serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+				sds slotString = unsignedLongToSDS(intSlot);	
+				//unsigned int intSlot = 20000;
+				//sds slotString = "20000";
 				int number_of_blocks = slots_number_of_rest_blocks;
 				//serverLog(LL_WARNING, "STRATOS NUMBER OF BLOCKS FOR SLOT:%s is %d", slotString, number_of_blocks);
 				char **slots = all_rest_slots;
@@ -6733,8 +6741,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 			{
 
-				prevSlot = 20000;
-				currentSlot = 20000;
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+				//serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%s", spill_over_slot);
+				//sds slotString = unsignedLongToSDS(intSlot);	
+				prevSlot = intSlot;
+				currentSlot = intSlot;
 
 				rio rdmaDoneBatchCmd;
 				rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());

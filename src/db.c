@@ -336,7 +336,9 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
 		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
 			//serverLog(LL_WARNING, "STRATOS IM HERE");
-			r_allocator_insert_kv(20000,
+			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%s", spill_over_slot);
+			r_allocator_insert_kv(spill_over_slot,
 					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
 					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
 					key, sizeof(robj),
