@@ -6620,7 +6620,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			unsigned int intSlot = atoi(args[j]);
 			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 			server.migration_ownership_locked[intSlot] = 1;
-			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 16385);
 			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT [GET BLOCK BUFFERS FOR SLOTS] IS:%d", spill_over_slot);
 			//unsigned int intSlot = 20000;
 			char **slots;
@@ -6642,7 +6642,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		{
 
 			int buffer_index = 0;
-			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
 			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 			sds slotString = unsignedLongToSDS(intSlot);	
 			
@@ -6694,7 +6694,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
 			int current_buffer_index = 0;
 			{
-				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
 				serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 				sds slotString = unsignedLongToSDS(intSlot);	
 				//unsigned int intSlot = 20000;
@@ -6739,7 +6739,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 			{
 
-				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
 				//serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%s", spill_over_slot);
 				//sds slotString = unsignedLongToSDS(intSlot);	
 				prevSlot = intSlot;
