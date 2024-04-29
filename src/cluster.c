@@ -6626,11 +6626,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		{
 			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			pthread_mutex_lock(&(server.lock_slots[intSlot]));
 			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 			//unsigned int intSlot = 20000;
 			char **slots;
 			int number_of_blocks;
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
+			pthread_mutex_unlock(&(server.lock_slots[intSlot]));
 			int blocksDiff = number_of_blocks;
 			all_rest_slots = slots;
 			slots_number_of_rest_blocks = blocksDiff;
