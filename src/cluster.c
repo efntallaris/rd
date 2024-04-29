@@ -6620,24 +6620,20 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			unsigned int intSlot = atoi(args[j]);
 			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 			server.migration_ownership_locked[intSlot] = 1;
-			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
-
-		}
-
-		{
-			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 20000);
-			pthread_mutex_lock(&(server.lock_slots[intSlot]));
-			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 20000);
+			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT [GET BLOCK BUFFERS FOR SLOTS] IS:%d", spill_over_slot);
 			//unsigned int intSlot = 20000;
 			char **slots;
 			int number_of_blocks;
-			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-			pthread_mutex_unlock(&(server.lock_slots[intSlot]));
+			pthread_mutex_lock(&(server.lock_slots[spill_over_slot]));
+			slots = r_allocator_get_block_buffers_for_slot(spill_over_slot, &number_of_blocks);
 			int blocksDiff = number_of_blocks;
 			all_rest_slots = slots;
 			slots_number_of_rest_blocks = blocksDiff;
 			total_number_of_remote_rest_buffers += blocksDiff;
 			total_number_of_active_slots++;
+			pthread_mutex_unlock(&(server.lock_slots[spill_over_slot]));
+			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 		}
 
 
