@@ -6650,7 +6650,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			
 			//sds slotString = "20000";
 			int number_of_blocks = total_number_of_remote_rest_buffers;
-			console.log(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
+			serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
 			char **slots = all_rest_slots;
 			for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
 				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
