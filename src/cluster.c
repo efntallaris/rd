@@ -6766,12 +6766,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 
 			while(1) {
-				pthread_mutex_lock(&(server.generic_migration_mutex));
+				pthread_mutex_lock(&server.generic_migration_mutex);
 				if(server.rdmaDoneAck==1) {
-					pthread_mutex_unlock(&(server.generic_migration_mutex));
+					pthread_mutex_unlock(&server.generic_migration_mutex);
 					break;
 				}
-				pthread_mutex_unlock(&(server.generic_migration_mutex));
+				pthread_mutex_unlock(&server.generic_migration_mutex);
 			}
 			serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK FOR REST BUFFERS");
 
@@ -7012,9 +7012,9 @@ void *rdmaDoneSlotsThread(void *arg) {
 	}
 	connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
 
-	pthread_mutex_lock(&(server.generic_migration_mutex));
+	pthread_mutex_lock(&server.generic_migration_mutex);
 	server.migration_active = 0;
-	pthread_mutex_unlock(&(server.generic_migration_mutex));
+	pthread_mutex_unlock(&server.generic_migration_mutex);
 
 	//TODO CLEAN STRUCTURES
 	serverLog(LL_WARNING, "STRATOS STOPPED (SLOTS) PATCHING AND ADDING TO DB");
@@ -7804,10 +7804,10 @@ void shadowWriteCommand(client *c) {
 }
 
 void rdmaDoneAckCommand(client *c) {
-	pthread_mutex_lock(&(server.generic_migration_mutex));
 	serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
+	pthread_mutex_lock(&server.generic_migration_mutex);
 	server.rdmaDoneAck = 1;
-	pthread_mutex_unlock(&(server.generic_migration_mutex));
+	pthread_mutex_unlock(&server.generic_migration_mutex);
 	addReply(c, shared.ok);
 }
 
