@@ -6626,7 +6626,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		{
 			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
-			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 			//unsigned int intSlot = 20000;
 			char **slots;
 			int number_of_blocks;
@@ -6639,8 +6638,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 		
-		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
+		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) zmalloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
 		rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
+		serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
 		{
 
 			int buffer_index = 0;
@@ -6650,7 +6650,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			
 			//sds slotString = "20000";
 			int number_of_blocks = total_number_of_remote_rest_buffers;
-			serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
+			
 			char **slots = all_rest_slots;
 			for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
 				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
