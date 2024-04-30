@@ -334,10 +334,13 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
 
 		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
+		if(server.migration_ownership_locked[hashSlot] == 1){
+			serverLog(LL_WARNING, "STRATOS IM HERE OWNERSHIP LOCKED");
+
+		}
 		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
 			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 16385);
-			pthread_mutex_lock(&(server.lock_slots[spill_over_slot]));
-			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT [ADD] IS:%d", spill_over_slot);
+			//serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT [ADD] IS:%d", spill_over_slot);
 			r_allocator_insert_kv(spill_over_slot,
 					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
 					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
@@ -346,9 +349,6 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 					&allocated_block,
 					&allocator_key,
 					&allocator_value);
-			pthread_mutex_unlock(&(server.lock_slots[spill_over_slot]));
-
-
 		}else{
 			r_allocator_insert_kv(hashSlot,
 					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,

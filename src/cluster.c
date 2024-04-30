@@ -7808,8 +7808,9 @@ void shadowWriteCommand(client *c) {
 
 void rdmaDoneAckCommand(client *c) {
 	pthread_mutex_lock(&(server.generic_migration_mutex));
+	serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
 	server.rdmaDoneAck = 1;
-	pthread_mutex_unlock((pthread_mutex_t *) &server.generic_migration_mutex);
+	pthread_mutex_unlock(&(server.generic_migration_mutex));
 	addReply(c, shared.ok);
 }
 
