@@ -6644,7 +6644,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		{
 
 			int buffer_index = 0;
-			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
 			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 			sds slotString = unsignedLongToSDS(intSlot);	
 			
