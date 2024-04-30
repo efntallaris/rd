@@ -6329,24 +6329,24 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 		// LOG START
-		unsigned int number_of_kvs[16385];
-		unsigned int spill_over_number_of_kvs[16385];
-		for(int i=0;i<16385;i++){
-			number_of_kvs[i] = 0;
-			spill_over_number_of_kvs[i] = 0;
-		}
-		for(int j=start; j<end; j++) {
-			unsigned int slotInt = atoi(args[j]);
-			r_allocator_lock_slot_blocks(slotInt);
-			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			robj *key_meta, *val_meta;
-			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-				number_of_kvs[slotInt]++;
-			}
-
-		}
+//		unsigned int number_of_kvs[16385];
+//		unsigned int spill_over_number_of_kvs[16385];
+//		for(int i=0;i<16385;i++){
+//			number_of_kvs[i] = 0;
+//			spill_over_number_of_kvs[i] = 0;
+//		}
+//		for(int j=start; j<end; j++) {
+//			unsigned int slotInt = atoi(args[j]);
+//			r_allocator_lock_slot_blocks(slotInt);
+//			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//			robj *key_meta, *val_meta;
+//			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//				number_of_kvs[slotInt]++;
+//			}
+//
+//		}
 		// LOG END
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
@@ -6871,19 +6871,19 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		// LOG START
 		// unsigned int number_of_kvs[16385];
 		// unsigned int spill_over_number_of_kvs[16385];
-		for(int j=start; j<end; j++) {
-			unsigned int _all_keys = 0;
-			unsigned int slotInt = atoi(args[j]);
-			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			robj *key_meta, *val_meta;
-			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-				_all_keys++;
-			}
-			spill_over_number_of_kvs[j] = _all_keys - number_of_kvs[j];
-			serverLog(LL_WARNING, "STRATOS number of keys for slot %d:%ld, number of rest keys:%ld", j, number_of_kvs[j], spill_over_number_of_kvs[j]);
-		}
+//		for(int j=start; j<end; j++) {
+//			unsigned int _all_keys = 0;
+//			unsigned int slotInt = atoi(args[j]);
+//			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//			robj *key_meta, *val_meta;
+//			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//				_all_keys++;
+//			}
+//			spill_over_number_of_kvs[j] = _all_keys - number_of_kvs[j];
+//			serverLog(LL_WARNING, "STRATOS number of keys for slot %d:%ld, number of rest keys:%ld", j, number_of_kvs[j], spill_over_number_of_kvs[j]);
+//		}
 		// LOG END
 
 	}

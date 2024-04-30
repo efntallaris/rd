@@ -335,8 +335,9 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 
 		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
 		if(server.migration_ownership_locked[hashSlot] == 1){
-			serverLog(LL_WARNING, "STRATOS IM HERE OWNERSHIP LOCKED");
-
+			addReplyError(c,"-TRYAGAIN  Key is migrating");
+			pthread_mutex_unlock(&server.ownership_lock_slots[hashSlot]);
+			return ;
 		}
 		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
 			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 16385);
