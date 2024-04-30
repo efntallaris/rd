@@ -6632,8 +6632,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
 			int blocksDiff = number_of_blocks;
 			all_rest_slots = slots;
-			slots_number_of_rest_blocks = blocksDiff;
-			total_number_of_remote_rest_buffers += blocksDiff;
+			slots_number_of_rest_blocks = number_of_blocks;
+			// total_number_of_remote_rest_buffers += blocksDiff;
+			total_number_of_remote_rest_buffers = number_of_blocks;
 			total_number_of_active_slots++;
 		}
 
@@ -6754,7 +6755,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
 
 				buf = rdmaDoneBatchCmd.io.buffer.ptr;
-				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
 				if(nwritten != (int) sdslen(buf)) {
 					serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
 				}
@@ -7212,6 +7213,7 @@ void registerRDMABlockSlotsCommand(client *c) {
 		}
 	}
 
+	serverLog(LL_WARNING, "__1");
 	int block_index = start_blocks_index;
 	while(block_index < number_of_arguments-1) {
 
@@ -7220,6 +7222,7 @@ void registerRDMABlockSlotsCommand(client *c) {
 		sscanf(c->argv[block_index]->ptr, "%d", &slotID);
 		sscanf(c->argv[block_index+1]->ptr, "%d", &number_of_blocks);
 		//serverLog(LL_WARNING, "STRATOS SLOT %d with Blocks %d", slotID, number_of_blocks);
+		serverLog(LL_WARNING, "__2");
 		for(int i=0; i<number_of_blocks; i++) {
 			void *allocated_block_ptr = r_allocator_alloc_new_empty_block(slotID);
 			if(!allocated_block_ptr) {
@@ -7237,10 +7240,12 @@ void registerRDMABlockSlotsCommand(client *c) {
 				total_remote_buffers++;
 			}
 		}
+		serverLog(LL_WARNING, "__3");
 
 		block_index+=2;
 		//r_allocator_lock_slot_blocks(slotID);
 	}
+	serverLog(LL_WARNING, "__4");
 
 
 	addReplyBulkCBuffer(c, (char *)remote_buffers, total_remote_buffers * sizeof(rdmaRemoteBufferInfo));
@@ -7804,7 +7809,6 @@ void shadowWriteCommand(client *c) {
 }
 
 void rdmaDoneAckCommand(client *c) {
-	serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
 	pthread_mutex_lock(&server.generic_migration_mutex);
 	server.rdmaDoneAck = 1;
 	pthread_mutex_unlock(&server.generic_migration_mutex);
