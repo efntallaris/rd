@@ -6334,7 +6334,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			char **slots;
 			int number_of_blocks;
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-			server.migration_spill_over_phase_activated[intSlot] = 1;
+			//server.migration_spill_over_phase_activated[intSlot] = 1;
 			pthread_mutex_unlock(&(server.lock_slots[intSlot]));
 			all_slots[j-7] = slots;
 			slots_number_of_blocks[j-7] = number_of_blocks;
