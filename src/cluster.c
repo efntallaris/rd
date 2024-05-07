@@ -1013,7 +1013,7 @@ void clusterDelNode(clusterNode *delnode) {
 
 	/* 1) Mark slots as unassigned. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		
+
 		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (server.cluster->importing_slots_from[j] == delnode)
 			server.cluster->importing_slots_from[j] = NULL;
@@ -1725,7 +1725,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 			 * 1) The slot was unassigned or the new node claims it with a
 			 *    greater configEpoch.
 			 * 2) We are not currently importing the slot. */
-			
+
 			if (server.cluster->slots[j] == NULL ||
 					server.cluster->slots[j]->configEpoch < senderConfigEpoch)
 			{
@@ -4506,13 +4506,13 @@ void clusterReplyMultiBulkSlots(client * c) {
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			
+
 			continue;
 		}else{
 			// serverLog(LL_WARNING, "%d slot -> owner %s", i, n->name);
 		}
 
-		
+
 		/* Add cluster slots info when occur different node with start
 		 * or end of slot. */
 		if (i == CLUSTER_SLOTS || n != server.cluster->slots[i]) {
@@ -4524,7 +4524,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 			n = server.cluster->slots[i];
 			start = i;
 		}
-		
+
 	}
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
 		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
@@ -6551,95 +6551,96 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 
-//		char ***all_rest_slots = (char ***) malloc(sizeof(char **));
-//		int slots_number_of_rest_blocks = 0;
-//		int total_number_of_remote_rest_buffers = 0;
-//		int total_rest_blocks_allocated = 0;
-//		int total_number_of_active_slots = 0;
-//		rio prepareRestBlocksCmd;
-//		rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
-//		// 2 * 1 because number of slots is only 1 (slot number:20000)
-//		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + (2*1)));
-//		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
-//		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
-//
-//		 for(int j=start; j<end; j++) {
-//		 	unsigned int intSlot = atoi(args[j]);
-//		 	pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
-//		 	server.migration_ownership_locked[intSlot] = 1;
-//		 	pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
-//
-//		 }
-//
-//		 {
-//		 	unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
-//		 	//unsigned int intSlot = 20000;
-//		 	char **slots;
-//		 	int number_of_blocks;
-//		 	slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-//		 	int blocksDiff = number_of_blocks;
-//		 	all_rest_slots = slots;
-//		 	slots_number_of_rest_blocks = number_of_blocks;
-//		 	// total_number_of_remote_rest_buffers += blocksDiff;
-//		 	total_number_of_remote_rest_buffers = number_of_blocks;
-//		 	total_number_of_active_slots++;
-//		}
-//
-//		
-//		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) zmalloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
-//		rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
-//		serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
-//		{
-//
-//			int buffer_index = 0;
-//		 	unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
-//		 	serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
-//		 	sds slotString = unsignedLongToSDS(intSlot);	
-//	
-//		 	int number_of_blocks = total_number_of_remote_rest_buffers;
-//			
-//		 	char **slots = all_rest_slots;
-//		 	for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
-//		 		rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
-//		 		total_blocks_allocated++;
-//		 		buffer_index++;
-//		 	}
-//		 	//Prepare the rpc
-//		 	serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, slotString, sdslen(slotString)));
-//
-//		 	char intBuff[10000];
-//		 	sprintf(intBuff, "%d", total_number_of_remote_rest_buffers);
-//		 	sds sdsTotalBlocks = sdsnew(intBuff);
-//
-//		 	serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
-//
-//		}
-//
-//		{
-//		 	nwritten = 0;
-//		 	char prepareBuffersCmdReply[1024];
-//			size_t size_of_remotebuffer =  sizeof(rdmaRemoteBufferInfo);
-//		 	char remote_keys[1024];
-//		 	buf = prepareBlocksCmd.io.buffer.ptr;
-//		 	nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
-//		 	if(nwritten != (int) sdslen(buf)) {
-//		 		serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
-//		 	}
-//		 	// 1 readline for the reply and one for the +OK ack
-//
-//		 	if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
-//		 		serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
-//		 	}
-//
-//		 	if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000) <=0) {
-//		 		serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
-//		 	}
-//		 	serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
-//		 	serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
-//		 	struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
-//		 	struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
-//		 	int current_buffer_index = 0;
-//		}
+		char ***all_rest_slots = (char ***) malloc(sizeof(char **));
+		int slots_number_of_rest_blocks = 0;
+		int total_number_of_remote_rest_buffers = 0;
+		int total_rest_blocks_allocated = 0;
+		int total_number_of_active_slots = 0;
+		rio prepareRestBlocksCmd;
+		rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
+		// 2 * 1 because number of slots is only 1 (slot number:20000)
+		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + (2*1)));
+		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
+		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
+
+		for(int j=start; j<end; j++) {
+			unsigned int intSlot = atoi(args[j]);
+			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+			server.migration_ownership_locked[intSlot] = 1;
+			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+
+		}
+
+		{
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+			//unsigned int intSlot = 20000;
+			char **slots;
+			int number_of_blocks;
+			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
+			int blocksDiff = number_of_blocks;
+			all_rest_slots = slots;
+			slots_number_of_rest_blocks = number_of_blocks;
+			// total_number_of_remote_rest_buffers += blocksDiff;
+			total_number_of_remote_rest_buffers = number_of_blocks;
+			total_number_of_active_slots++;
+		}
+
+
+		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) zmalloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
+		rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
+		serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
+		{
+
+			int buffer_index = 0;
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+			sds slotString = unsignedLongToSDS(intSlot);	
+
+			int number_of_blocks = total_number_of_remote_rest_buffers;
+
+			char **slots = all_rest_slots;
+			for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
+				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+				total_blocks_allocated++;
+				buffer_index++;
+			}
+			//Prepare the rpc
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, slotString, sdslen(slotString)));
+
+			char intBuff[10000];
+			sprintf(intBuff, "%d", total_number_of_remote_rest_buffers);
+			sds sdsTotalBlocks = sdsnew(intBuff);
+
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
+
+		}
+
+		{
+			nwritten = 0;
+			char prepareBuffersCmdReply[1024];
+			size_t size_of_remotebuffer =  sizeof(rdmaRemoteBufferInfo);
+			char remote_keys[1024];
+			buf = prepareBlocksCmd.io.buffer.ptr;
+			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
+			if(nwritten != (int) sdslen(buf)) {
+				serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+			}
+			// 1 readline for the reply and one for the +OK ack
+
+			if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
+				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
+			}
+
+			if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000) <=0) {
+				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
+			}
+			serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
+			serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
+			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
+			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
+			int current_buffer_index = 0;
+
+		}
 	}
 
 
@@ -6687,7 +6688,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	//    serverLog(LL_WARNING, "STRATOS DISABLING REHASHING");
 	//    dictDisableResize();
 	//    server.activerehashing = 0;
-	   dictEnableMigration();
+	dictEnableMigration();
 	//
 	serverLog(LL_WARNING, "STRATOS STARTED (SLOTS) PATCHING AND ADDING TO DB");
 	// Nanosleep args
@@ -7201,7 +7202,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	 * without redirections or errors in all the cases. */
 	if (n == NULL){
 		serverLog(LL_WARNING, "STRATOS recipient is NULL");	
-		
+
 		return myself;
 	}
 	/* Cluster is globally down but we got keys? We only serve the request
@@ -7262,13 +7263,13 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				server.migration_ownership_changed[slot] = 0;
 				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
 				if(error_code) {
-				 	*error_code = CLUSTER_REDIR_MOVED;
+					*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
 					clusterDelSlot(slot);
 					clusterAddSlot(recipientNode,slot);
 					server.cluster->migrating_slots_to[slot] = NULL;
-				 	server.cluster->importing_slots_from[slot] = NULL;
+					server.cluster->importing_slots_from[slot] = NULL;
 					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 						serverLog(LL_WARNING,
 								"configEpoch updated after importing slot");
@@ -7277,10 +7278,10 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
 							CLUSTER_TODO_UPDATE_STATE|
 							CLUSTER_TODO_FSYNC_CONFIG);
-					
-				 	
-				 	pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
-				 	return recipientNode;
+
+
+					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+					return recipientNode;
 
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
@@ -7303,23 +7304,23 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_locked[slot] == 1){
-					addReplyError(c,"-TRYAGAIN  Key is migrating");
-					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-					return myself;
+				addReplyError(c,"-TRYAGAIN  Key is migrating");
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				return myself;
 			}
 			if(server.migration_ownership_changed[slot] == 1) {
 				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
 				server.migration_ownership_changed[slot] = 0;
 				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
 				if(error_code) {
-				 	*error_code = CLUSTER_REDIR_MOVED;
+					*error_code = CLUSTER_REDIR_MOVED;
 				}
 				if(recipientNode != NULL) {
 					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
-				 	clusterDelSlot(slot);
+					clusterDelSlot(slot);
 					clusterAddSlot(recipientNode,slot);
 					server.cluster->migrating_slots_to[slot] = NULL;
-				 	server.cluster->importing_slots_from[slot] = NULL;
+					server.cluster->importing_slots_from[slot] = NULL;
 					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 						serverLog(LL_WARNING,
 								"configEpoch updated after importing slot");
@@ -7329,7 +7330,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 							CLUSTER_TODO_UPDATE_STATE|
 							CLUSTER_TODO_FSYNC_CONFIG);
 					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-				 	return recipientNode;
+					return recipientNode;
 					// return myself;
 				}else{
 					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
@@ -7425,23 +7426,23 @@ void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_co
 		addReplyError(c,"-CLUSTERDOWN The cluster is down and only accepts read commands");
 	} else if (error_code == CLUSTER_REDIR_DOWN_UNBOUND) {
 		addReplyError(c,"-CLUSTERDOWN Hash slot not served");
-//	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
-//		addReplyError(c,"-TRYAGAIN  Key is migrating");
-	} else if (error_code == CLUSTER_REDIR_MOVED ||
-			error_code == CLUSTER_REDIR_ASK)
-	{
-		/* Redirect to IP:port. Include plaintext port if cluster is TLS but
-		 * client is non-TLS. */
-		int use_pport = (server.tls_cluster &&
-				c->conn && connGetType(c->conn) != CONN_TYPE_TLS);
-		int port = use_pport && n->pport ? n->pport : n->port;
-		addReplyErrorSds(c,sdscatprintf(sdsempty(),
-					"-%s %d %s:%d",
-					(error_code == CLUSTER_REDIR_ASK) ? "ASK" : "MOVED",
-					hashslot, n->ip, port));
-	} else {
-		serverPanic("getNodeByQuery() unknown error.");
-	}
+		//	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
+		//		addReplyError(c,"-TRYAGAIN  Key is migrating");
+} else if (error_code == CLUSTER_REDIR_MOVED ||
+		error_code == CLUSTER_REDIR_ASK)
+{
+	/* Redirect to IP:port. Include plaintext port if cluster is TLS but
+	 * client is non-TLS. */
+	int use_pport = (server.tls_cluster &&
+			c->conn && connGetType(c->conn) != CONN_TYPE_TLS);
+	int port = use_pport && n->pport ? n->pport : n->port;
+	addReplyErrorSds(c,sdscatprintf(sdsempty(),
+				"-%s %d %s:%d",
+				(error_code == CLUSTER_REDIR_ASK) ? "ASK" : "MOVED",
+				hashslot, n->ip, port));
+} else {
+	serverPanic("getNodeByQuery() unknown error.");
+}
 }
 
 /* This function is called by the function processing clients incrementally
