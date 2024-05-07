@@ -344,6 +344,14 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 //					&allocated_block,
 //					&allocator_key,
 //					&allocator_value);
+			r_allocator_insert_kv(hashSlot,
+					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
+					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
+					key, sizeof(robj),
+					val, sizeof(robj),
+					&allocated_block,
+					&allocator_key,
+					&allocator_value);
 		}else{
 			r_allocator_insert_kv(hashSlot,
 					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
