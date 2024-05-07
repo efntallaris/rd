@@ -1281,6 +1281,7 @@ struct redisServer {
     rax *migrated_keys;
     //pthread_rwlock_t ownership_mutex;
     int migration_ownership_locked[16385];
+    int migration_spill_over_phase_activated[16385];
     int migration_ownership_changed[16385];
     int migrateActive;
 
@@ -2281,6 +2282,8 @@ void preventCommandAOF(client *c);
 void preventCommandReplication(client *c);
 void slowlogPushCurrentCommand(client *c, struct redisCommand *cmd, ustime_t duration);
 int prepareForShutdown(int flags);
+unsigned long getSpillOverSlot(const char *ipAddress, unsigned long number);
+sds unsignedLongToSDS(unsigned long number);
 #ifdef __GNUC__
 void _serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
