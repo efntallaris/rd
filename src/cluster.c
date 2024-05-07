@@ -6334,6 +6334,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			char **slots;
 			int number_of_blocks;
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
+			server.migration_spill_over_phase_activated[intSlot] = 1;
 			pthread_mutex_unlock(&(server.lock_slots[intSlot]));
 			all_slots[j-7] = slots;
 			slots_number_of_blocks[j-7] = number_of_blocks;
@@ -6541,6 +6542,113 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
 
 
+
+		//SPILL OVER BLOCKS START
+		for(int i=0;i<100;i++){
+			char buff[1024];
+			if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
+				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
+				break;
+			}
+
+			//serverLog(LL_WARNING, "BUFF:%s", buff);
+
+
+		}
+		if(SPLIT_SLOTS > end-start){
+			SPLIT_SLOTS = end-start;
+		}
+
+
+		char ***all_rest_slots = (char ***) malloc(sizeof(char **));
+		int slots_number_of_rest_blocks = 0;
+		int total_number_of_remote_rest_buffers = 0;
+		int total_rest_blocks_allocated = 0;
+		int total_number_of_active_slots = 0;
+		rio prepareRestBlocksCmd;
+		rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
+		// 2 * 1 because number of slots is only 1 (slot number:20000)
+		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + (2*1)));
+		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
+		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
+
+		 for(int j=start; j<end; j++) {
+		 	unsigned int intSlot = atoi(args[j]);
+		 	pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+		 	server.migration_ownership_locked[intSlot] = 1;
+		 	pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+
+		 }
+
+		 {
+		 	unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
+		 	//unsigned int intSlot = 20000;
+		 	char **slots;
+		 	int number_of_blocks;
+		 	slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
+		 	int blocksDiff = number_of_blocks;
+		 	all_rest_slots = slots;
+		 	slots_number_of_rest_blocks = number_of_blocks;
+		 	// total_number_of_remote_rest_buffers += blocksDiff;
+		 	total_number_of_remote_rest_buffers = number_of_blocks;
+		 	total_number_of_active_slots++;
+		}
+
+		
+		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) zmalloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
+		rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
+		serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
+		{
+
+			int buffer_index = 0;
+		 	unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+		 	serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+		 	sds slotString = unsignedLongToSDS(intSlot);	
+	
+		 	int number_of_blocks = total_number_of_remote_rest_buffers;
+			
+		 	char **slots = all_rest_slots;
+		 	for(int i=0; i<total_number_of_remote_rest_buffers; i++) {
+		 		rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+		 		total_blocks_allocated++;
+		 		buffer_index++;
+		 	}
+		 	//Prepare the rpc
+		 	serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, slotString, sdslen(slotString)));
+
+		 	char intBuff[10000];
+		 	sprintf(intBuff, "%d", total_number_of_remote_rest_buffers);
+		 	sds sdsTotalBlocks = sdsnew(intBuff);
+
+		 	serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
+
+		}
+
+		{
+		 	nwritten = 0;
+		 	char prepareBuffersCmdReply[1024];
+			size_t size_of_remotebuffer =  sizeof(rdmaRemoteBufferInfo);
+		 	char remote_keys[1024];
+		 	buf = prepareBlocksCmd.io.buffer.ptr;
+		 	nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
+		 	if(nwritten != (int) sdslen(buf)) {
+		 		serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+		 	}
+		 	// 1 readline for the reply and one for the +OK ack
+
+		 	if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
+		 		serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
+		 	}
+
+		 	if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000) <=0) {
+		 		serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
+		 	}
+		 	serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
+		 	serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
+		 	struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
+		 	struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
+		 	int current_buffer_index = 0;
+		}
 	}
 
 
