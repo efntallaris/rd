@@ -6639,6 +6639,50 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
 			int current_buffer_index = 0;
+			{
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
+				serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
+				sds slotString = unsignedLongToSDS(intSlot);
+				//unsigned int intSlot = 20000;
+				//sds slotString = "20000";
+				int number_of_blocks = slots_number_of_rest_blocks;
+				//serverLog(LL_WARNING, "STRATOS NUMBER OF BLOCKS FOR SLOT:%s is %d", slotString, number_of_blocks);
+				char **slots = all_rest_slots;
+				for(int i=0; i<slots_number_of_rest_blocks; i++) {
+					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
+					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
+					// PREPARE SGE STOP
+					sges_rest[current_buffer_index].addr = (uint64_t)(uintptr_t) slots[i];
+					sges_rest[current_buffer_index].length = (uint32_t)BLOCK_SIZE_BYTES;
+					sges_rest[current_buffer_index].lkey = rdma_rest_buffers[current_buffer_index]->mr->lkey;
+					// PREPARE SGE STOP
+					// PREPARE WR START
+					wrs_rest[current_buffer_index].wr_id = current_buffer_index;
+					wrs_rest[current_buffer_index].sg_list = &(sges_rest[current_buffer_index]);
+					wrs_rest[current_buffer_index].next = NULL;
+					wrs_rest[current_buffer_index].num_sge = 1;
+					wrs_rest[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
+					if(intSlot % SPLIT_SLOTS == 0){
+						//serverLog(LL_WARNING, "STRATOS REST SPLITTING SLOT ON %d",  intSlot);
+						//wrs_rest[current_buffer_index].schunk_end_flags = IBV_SEND_SIGNALED;
+
+					}
+					wrs_rest[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+					wrs_rest[current_buffer_index].wr.rdma.remote_addr = all_remote_rest_data[current_buffer_index].ptr;
+					wrs_rest[current_buffer_index].wr.rdma.rkey = all_remote_rest_data[current_buffer_index].rkey;
+					current_buffer_index++;
+				}
+			}
+
+			for(int i=0; i<current_buffer_index; i++) {
+				struct ibv_send_wr bad_wr;
+				if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
+					serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
+				}
+
+				struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+			}
+			serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 
 		}
 	}
