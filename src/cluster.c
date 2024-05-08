@@ -6683,14 +6683,53 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 			}
 			serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
+			{
+
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+				//serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%s", spill_over_slot);
+				//sds slotString = unsignedLongToSDS(intSlot);	
+				prevSlot = intSlot;
+				currentSlot = intSlot;
+
+				rio rdmaDoneBatchCmd;
+				rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+				serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+
+				serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
+				serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+
+				buf = rdmaDoneBatchCmd.io.buffer.ptr;
+				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
+				if(nwritten != (int) sdslen(buf)) {
+					serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+				}
+				char rdmaDoneBatchCmdReply[1024];
+				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 70);
+				connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 70);
+				sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+
+
+			while(1) {
+				pthread_mutex_lock(&server.generic_migration_mutex);
+				if(server.rdmaDoneAck==1) {
+					pthread_mutex_unlock(&server.generic_migration_mutex);
+					break;
+				}
+				pthread_mutex_unlock(&server.generic_migration_mutex);
+			}
+			serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK FOR REST BUFFERS");
 
 		}
+
 	}
+}
 
 
-	serverLog(LL_WARNING, "STRATOS ENDED MIGRATION ON DONOR SIDE");
-	//SOS TODO CLEAN ARGUMETNS TAKEN FROM migrateRDMASlots Command
-	return;
+serverLog(LL_WARNING, "STRATOS ENDED MIGRATION ON DONOR SIDE");
+//SOS TODO CLEAN ARGUMETNS TAKEN FROM migrateRDMASlots Command
+return;
 }
 
 // RPC to initiate RDMA migration
