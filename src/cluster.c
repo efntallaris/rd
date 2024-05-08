@@ -6605,20 +6605,20 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				buffer_index++;
 			}
 			//Prepare the rpc
-			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, slotString, sdslen(slotString)));
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
 
 			char intBuff[10000];
 			sprintf(intBuff, "%d", total_number_of_remote_rest_buffers);
 			sds sdsTotalBlocks = sdsnew(intBuff);
 
-			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
 
 
 			nwritten = 0;
 			char prepareBuffersCmdReply[1024];
 			size_t size_of_remotebuffer =  sizeof(rdmaRemoteBufferInfo);
 			char remote_keys[1024];
-			buf = prepareBlocksCmd.io.buffer.ptr;
+			buf = prepareRestBlocksCmd.io.buffer.ptr;
 			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
 			if(nwritten != (int) sdslen(buf)) {
 				serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
