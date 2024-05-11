@@ -6589,6 +6589,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		struct rdma_buffer_info **rdma_rest_buffers = (struct rdma_buffer_info **) zmalloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
 		rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
 		serverLog(LL_WARNING, "REMOTE BUFFERS SHOULD BE 1 and it is:%d", total_number_of_remote_rest_buffers);
+		serverLog(LL_WARNING, "STRATOS DONOR number of REST buffers %ld", total_number_of_remote_rest_buffers);
+
 		{
 
 			int buffer_index = 0;
