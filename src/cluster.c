@@ -6979,8 +6979,8 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 						robj *allocator_key;
 						int hashSlot = keyHashSlot((char *) key_meta->ptr, sdslen(key_meta->ptr));
 						r_allocator_insert_kv(hashSlot,
-								(char *)key_meta->ptr-8, sdslen(key->ptr)+ 8 + 1,
-								(char *)val_meta->ptr-8, sdslen(val->ptr)+ 8 + 1,
+								(char *)key_meta->ptr-8, sdslen(key_meta->ptr)+ 8 + 1,
+								(char *)val_meta->ptr-8, sdslen(val_meta->ptr)+ 8 + 1,
 								key_meta, sizeof(robj),
 								val_meta, sizeof(robj),
 								&allocated_block,
