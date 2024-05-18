@@ -894,9 +894,9 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
         char *ptr = WSIZE + cur_block->block_start + WSIZE;
         while (GET_SIZE(HDRP(ptr))) {
             if (GET_ALLOC(HDRP(ptr))) {
-                print_full_kv_segment(ptr, file);
+                print_full_kv_segment_filename(ptr, file);
             } else {
-                print_empty_kv_segment(ptr, file);
+                print_empty_kv_segment_filename(ptr, file);
             }
             ptr = NEXT_SEGMENT(ptr);
             fprintf(file, "\n");
