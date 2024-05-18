@@ -884,6 +884,13 @@ void print_full_kv_segment(void *ptr)
     printf("|");
 }
 
+void print_empty_kv_segment_filename(void *ptr, FILE *file)
+{
+    // Implementation for printing empty KV segments
+    // For now, let's assume it just prints a placeholder text
+    fprintf(file, "Empty KV Segment");
+}
+
 void print_empty_kv_segment(void *ptr)
 {
     size_t segment_size = GET_SIZE(HDRP(ptr));
