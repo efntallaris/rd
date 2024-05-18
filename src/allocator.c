@@ -867,6 +867,48 @@ alloc_bloc_t * get_block_from_ptr(int slot, void *ptr)
 }
 
 // DEBUG
+
+
+void traverse_print_slot_blocks_filename(int slot, const char *filename)
+{
+    FILE *file = fopen(filename, "a");
+    if (!file) {
+        perror("Failed to open file");
+        return;
+    }
+
+    fprintf(file, "%s:%d %s() DEBUG print blocks for slot %d\n", __FILE__, __LINE__, __func__, slot);
+    alloc_bloc_t *slot_head = r_allocator.slot_blocks[slot];
+    if (slot_head == NULL) {
+        fprintf(file, "%s:%d %s() slot %d has no allocated block\n", __FILE__, __LINE__, __func__, slot);
+        fclose(file);
+        return;
+    }
+
+    alloc_bloc_t *cur_block = slot_head;
+    while (cur_block != NULL) {
+        fprintf(file, "Bytes (u:%zu/f:%zu) Segments (u:%zu/f:%zu)\n", 
+                cur_block->bytes_total_in_use, cur_block->bytes_free,
+                cur_block->segments_used, cur_block->bytes_free);
+
+        char *ptr = WSIZE + cur_block->block_start + WSIZE;
+        while (GET_SIZE(HDRP(ptr))) {
+            if (GET_ALLOC(HDRP(ptr))) {
+                print_full_kv_segment(ptr, file);
+            } else {
+                print_empty_kv_segment(ptr, file);
+            }
+            ptr = NEXT_SEGMENT(ptr);
+            fprintf(file, "\n");
+        }
+        cur_block = cur_block->next;
+        fprintf(file, "\n");
+    }
+
+    fclose(file);
+}
+
+
 void traverse_print_slot_blocks(int slot)
 {
     printf("%s:%d %s() DEBUG print blocks for slot %d\n", __FILE__, __LINE__, __func__, slot);
