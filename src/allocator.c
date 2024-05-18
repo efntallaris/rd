@@ -789,7 +789,64 @@ void r_allocator_free_world()
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
 /* * * * * * * * DEBUG FUNCTIONS * * * * * * * * * */
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
+void print_full_kv_segment_in_a_file(void *ptr, const char *filename)
+{
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        perror("Failed to open file");
+        return;
+    }
 
+    // Header size
+    fprintf(file, "(%u)", GET_SIZE(HDRP(ptr)));
+    fprintf(file, "|");
+
+    // KEY META
+    fprintf(file, "%zu,", KEY_META_SIZE);
+    ptr += KEY_META_SIZE;
+
+    // VALUE META
+    fprintf(file, "%zu,", VAL_META_SIZE);
+    ptr += VAL_META_SIZE;
+    
+    // KEY
+    size_t key_size = 0;
+    memcpy(&key_size, ptr, ENTRY_HEADER_SIZE);
+    fprintf(file, "%zu:", key_size);
+    ptr += ENTRY_HEADER_SIZE; 
+    char *key = (char *) malloc(key_size + 1);
+    if (!key) {
+        perror("Failed to allocate memory for key");
+        fclose(file);
+        return;
+    }
+    memcpy(key, ptr, key_size);
+    key[key_size] = '\0';
+    fprintf(file, "%s,", key);
+    ptr += key_size;
+    free(key);
+
+    // VALUE
+    size_t val_size = 0;
+    memcpy(&val_size, ptr, ENTRY_HEADER_SIZE);
+    fprintf(file, "%zu:", val_size);
+    ptr += ENTRY_HEADER_SIZE; 
+    char *val = (char *) malloc(val_size + 1);
+    if (!val) {
+        perror("Failed to allocate memory for value");
+        fclose(file);
+        return;
+    }
+    memcpy(val, ptr, val_size);
+    val[val_size] = '\0';
+    fprintf(file, "%s", val);
+    ptr += val_size;
+    free(val);
+
+    fprintf(file, "|");
+
+    fclose(file);
+}
 
 // print segment that contains K-V
 void print_full_kv_segment(void *ptr)
