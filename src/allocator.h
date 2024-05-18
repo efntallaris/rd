@@ -101,6 +101,7 @@ segment_iterator_t * create_iterator_for_slot(int slot);
 
 /////////// DEBUG
 void traverse_print_slot_blocks(int slot);
+void traverse_print_slot_blocks_filename(int slot, const char *filename);
 void print_block_buffer(void *buffer_start);
 void freelist_print(int slot);
 // void freelist_print_debug(int slot);
