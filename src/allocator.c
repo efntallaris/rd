@@ -884,56 +884,6 @@ void print_full_kv_segment(void *ptr)
     printf("|");
 }
 
-
-void print_full_kv_segment(void *ptr)
-{
-    //ptr points to: <key meta> <value meta> <key size (ENTRY_HAEDER_SIZE)> <key> <value size (ENTRY_HAEDER_SIZE)> <value>
-    printf("(%u)", GET_SIZE(HDRP(ptr)));
-    printf("|");
-
-    // KEY META
-    // robj *key_meta = (robj *) malloc(meta_object_size);
-    // memcpy(key_meta, ptr, meta_object_size);
-    // printf("%d,", key_meta->data_offset);
-    printf("%zu,", KEY_META_SIZE);
-    ptr += KEY_META_SIZE;
-    // free(key_meta);
-
-    // VALUE META
-    // robj *value_meta = (robj *) malloc(meta_object_size);
-    // memcpy(value_meta, ptr, meta_object_size);
-    // printf("%d,", value_meta->data_offset);
-    printf("%zu,", VAL_META_SIZE);
-    ptr += VAL_META_SIZE;
-    // free(value_meta);
-    
-    // KEY
-    size_t key_size = 0;
-    memcpy(&key_size, ptr, ENTRY_HEADER_SIZE);
-    printf("%zu:", key_size);
-    ptr += ENTRY_HEADER_SIZE; 
-    char *key = (char *) malloc(key_size+1);
-    memcpy(key, ptr, key_size);
-    key[key_size] = '\0';
-    printf("%s,", key);
-    ptr += key_size;
-    free(key);
-
-    //VALUE
-    size_t val_size = 0;
-    memcpy(&val_size, ptr, ENTRY_HEADER_SIZE);
-    printf("%zu:", val_size);
-    ptr += ENTRY_HEADER_SIZE; 
-    char *val = (char *) malloc(val_size+1);
-    memcpy(val, ptr, val_size);
-    val[val_size] = '\0';
-    printf("%s", val);
-    ptr += val_size;
-    free(val);
-
-    printf("|");
-}
-
 void print_empty_kv_segment(void *ptr)
 {
     size_t segment_size = GET_SIZE(HDRP(ptr));
