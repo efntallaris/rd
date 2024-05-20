@@ -6301,7 +6301,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
 			server.cluster->migrating_slots_to[slotInt] = recipientNode;
 			server.cluster->importing_slots_from[slotInt] = recipientNode;
-			traverse_print_slot_blocks_filename(slotInt, "/tmp/slotInfo");
 			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
 
 		}
@@ -6568,7 +6567,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			unsigned int intSlot = atoi(args[j]);
 			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 			server.migration_ownership_locked[intSlot] = 1;
-			traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfoSpillOver");
 			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 
 		}
@@ -6808,7 +6806,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 						CLUSTER_TODO_UPDATE_STATE|
 						CLUSTER_TODO_FSYNC_CONFIG);
 				serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
-
+				for(int j=start;j<end;j++){
+					unsigned int intSlot = atoi(args[j]);
+					traverse_print_slot_blocks_filename(slotInt, "/tmp/slotInfo5050");
+				}
+				unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+				traverse_print_slot_blocks_filename(spillOverSlot, "/tmp/slotInfoSpillOver5050");
 			}
 
 		}
