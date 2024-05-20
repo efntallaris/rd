@@ -6568,7 +6568,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			unsigned int intSlot = atoi(args[j]);
 			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 			server.migration_ownership_locked[intSlot] = 1;
-			// traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfoSpillOver");
+			traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfoSpillOver");
 			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 
 		}
