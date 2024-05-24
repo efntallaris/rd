@@ -940,10 +940,12 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 
 
         char *ptr = WSIZE + cur_block->block_start + WSIZE;
-	unsigned long long total_block_used_bytes = 0;
+	unsigned long long total_used_bytes = 0;
+	unsigned long long total_segments = 0;
         while (GET_SIZE(HDRP(ptr))) {
             if (GET_ALLOC(HDRP(ptr))) {
-		total_block_used_bytes += 1112;
+		total_used_bytes += 1112;
+		total_segments += 1;
                 // print_full_kv_segment_filename(ptr, file);
             } else {
                 // print_empty_kv_segment_filename(ptr, file);
@@ -957,7 +959,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 	
         cur_block = cur_block->next;
     }
-    fprintf(file, "Bytes (u:%zu/f:%zu)\n", cur_block->bytes_total_in_use, cur_block->bytes_free);
+    fprintf(file, "Bytes (u:%zu/f:%zu) slots:%zu\n", total_used_bytes, total_segments);
     fprintf(file, "\n");
 
     fclose(file);
