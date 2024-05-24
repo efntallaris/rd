@@ -951,14 +951,14 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
             ptr = NEXT_SEGMENT(ptr);
             // fprintf(file, "\n");
         }
-	cur_block->bytes_total_in_use = total_block_used_bytes;
 	// fprintf(file, "Bytes (u:%zu/f:%zu) Segments (u:%zu/f:%zu)\n", 
  //                cur_block->bytes_total_in_use, cur_block->bytes_free,
  //                cur_block->segments_used, cur_block->bytes_free);
-	fprintf(file, "Bytes (u:%zu/f:%zu)\n", cur_block->bytes_total_in_use, cur_block->bytes_free);
+	
         cur_block = cur_block->next;
-        fprintf(file, "\n");
     }
+    fprintf(file, "Bytes (u:%zu/f:%zu)\n", cur_block->bytes_total_in_use, cur_block->bytes_free);
+    fprintf(file, "\n");
 
     fclose(file);
 }
