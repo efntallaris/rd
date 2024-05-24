@@ -959,7 +959,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 	
         cur_block = cur_block->next;
     }
-    fprintf(file, "Bytes (u:%zu/f:%zu) slots:%zu\n", total_used_bytes, total_segments);
+    fprintf(file, "Bytes (u:%zu/f:%zu)\n", total_used_bytes, total_segments);
     fprintf(file, "\n");
 
     fclose(file);
