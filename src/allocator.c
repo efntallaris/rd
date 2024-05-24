@@ -949,7 +949,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
                 // print_empty_kv_segment_filename(ptr, file);
             }
             ptr = NEXT_SEGMENT(ptr);
-            fprintf(file, "\n");
+            // fprintf(file, "\n");
         }
 	cur_block->bytes_total_in_use = total_block_used_bytes;
 	// fprintf(file, "Bytes (u:%zu/f:%zu) Segments (u:%zu/f:%zu)\n", 
