@@ -921,6 +921,8 @@ alloc_bloc_t * get_block_from_ptr(int slot, void *ptr)
 
 void traverse_print_slot_blocks_filename(int slot, const char *filename)
 {
+    unsigned long long total_used_bytes = 0;
+    unsigned long long total_segments = 0;
     FILE *file = fopen(filename, "a");
     if (!file) {
         perror("Failed to open file");
@@ -940,8 +942,6 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 
 
         char *ptr = WSIZE + cur_block->block_start + WSIZE;
-	unsigned long long total_used_bytes = 0;
-	unsigned long long total_segments = 0;
         while (GET_SIZE(HDRP(ptr))) {
             if (GET_ALLOC(HDRP(ptr))) {
 		total_used_bytes += 1112;
