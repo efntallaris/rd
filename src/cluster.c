@@ -6806,12 +6806,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 						CLUSTER_TODO_UPDATE_STATE|
 						CLUSTER_TODO_FSYNC_CONFIG);
 				serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
-				// for(int j=start;j<end;j++){
-				// 	unsigned int intSlot = atoi(args[j]);
-				// 	traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfo5050");
-				// }
-				// unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
-				// traverse_print_slot_blocks_filename(spillOverSlot, "/tmp/slotInfoSpillOver5050");
+				for(int j=start;j<end;j++){
+					unsigned int intSlot = atoi(args[j]);
+					traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfo5050");
+				}
+				unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+				traverse_print_slot_blocks_filename(spillOverSlot, "/tmp/slotInfoSpillOver5050");
 			}
 
 		}
