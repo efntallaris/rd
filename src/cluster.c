@@ -6979,18 +6979,18 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					//if key does not exist then add it to dictionary, else ignore
 					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
 						//with copy start
-						int allocated_block = 0;
-						robj *allocator_value;
-						robj *allocator_key;
-						int hashSlot = keyHashSlot((char *) key_meta->ptr, sdslen(key_meta->ptr));
-						r_allocator_insert_kv(hashSlot,
-								(char *)key_meta->ptr-8, sdslen(key_meta->ptr)+ 8 + 1,
-								(char *)val_meta->ptr-8, sdslen(val_meta->ptr)+ 8 + 1,
-								key_meta, sizeof(robj),
-								val_meta, sizeof(robj),
-								&allocated_block,
-								&allocator_key,
-								&allocator_value);
+						// int allocated_block = 0;
+						// robj *allocator_value;
+						// robj *allocator_key;
+						// int hashSlot = keyHashSlot((char *) key_meta->ptr, sdslen(key_meta->ptr));
+						// r_allocator_insert_kv(hashSlot,
+						// 		(char *)key_meta->ptr-8, sdslen(key_meta->ptr)+ 8 + 1,
+						// 		(char *)val_meta->ptr-8, sdslen(val_meta->ptr)+ 8 + 1,
+						// 		key_meta, sizeof(robj),
+						// 		val_meta, sizeof(robj),
+						// 		&allocated_block,
+						// 		&allocator_key,
+						// 		&allocator_value);
 						//with copy stop
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						total_keys_added++;
