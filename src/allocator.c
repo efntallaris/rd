@@ -923,7 +923,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 {
     unsigned long long total_used_bytes = 0;
     unsigned long long total_segments = 0;
-    unsigned long long slots_byte_free = 0;
+    unsigned long long slots_bytes_free = 0;
     FILE *file = fopen(filename, "a");
     if (!file) {
         perror("Failed to open file");
