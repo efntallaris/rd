@@ -969,7 +969,8 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
     if (bytes_used_in_last_block == 0) {
         remaining_free_bytes = 0;
     } else {
-        remaining_free_bytes = bytes_per_block - bytes_used_in_last_block;
+        remaining_free_bytes = slots_bytes_free - bytes_used_in_last_block;
+
     }
 	
     fprintf(file, "Total Blocks:%f, Total Segments:%zu, Last Slot unused bytes:%zu. Actual bytes free per block:%zu, total bytes of slot:%zu\n", total_blocks, total_segments, bytes_used_in_last_block, slots_bytes_free, total_used_bytes);
