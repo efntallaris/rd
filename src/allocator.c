@@ -961,16 +961,10 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
         cur_block = cur_block->next;
     }
     float total_blocks = (float)total_used_bytes / slots_bytes_free;
-    // Calculate the total bytes for the next whole block
-    size_t next_whole_block = (size_t)total_blocks + 1;
-
-    // Calculate the total bytes needed to reach the next whole block
-    float bytes_needed_for_next_block = next_whole_block * slots_bytes_free;
-
-    // Calculate the remainder bytes until the next whole block is reached
-    float remainder_bytes = bytes_needed_for_next_block - total_used_bytes;
+    size_t full_blocks = (size_t)total_blocks;
+    size_t bytes_used_in_last_block = total_used_bytes - (full_blocks * slots_bytes_free);
 	
-    fprintf(file, "Total Blocks:%f, Total Segments:%zu, Last Slot unused bytes:%zu. Actual bytes free per block:%zu, total bytes of slot:%zu\n", total_blocks, total_segments, remainder_bytes, slots_bytes_free, total_used_bytes);
+    fprintf(file, "Total Blocks:%f, Total Segments:%zu, Last Slot unused bytes:%zu. Actual bytes free per block:%zu, total bytes of slot:%zu\n", total_blocks, total_segments, bytes_used_in_last_block, slots_bytes_free, total_used_bytes);
     fprintf(file, "\n");
 
     fclose(file);
