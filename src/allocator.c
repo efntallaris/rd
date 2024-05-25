@@ -923,6 +923,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 {
     unsigned long long total_used_bytes = 0;
     unsigned long long total_segments = 0;
+    unsigned long long slots_byte_free = 0;
     FILE *file = fopen(filename, "a");
     if (!file) {
         perror("Failed to open file");
@@ -956,10 +957,11 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 	// fprintf(file, "Bytes (u:%zu/f:%zu) Segments (u:%zu/f:%zu)\n", 
  //                cur_block->bytes_total_in_use, cur_block->bytes_free,
  //                cur_block->segments_used, cur_block->bytes_free);
-	
+	slots_bytes_free = cur_block->bytes_free;
         cur_block = cur_block->next;
     }
-    fprintf(file, "Bytes (u:%zu/f:%zu)\n", total_used_bytes, total_segments);
+    int total_blocks = total_used_bytes/slots_bytes_free;
+    fprintf(file, "Total Blocks:%d, Total Segments:%zu, Last Slot unused bytes:%zu\n", total_blocks, total_segments, slots_bytes_free - total_used_bytes);
     fprintf(file, "\n");
 
     fclose(file);
