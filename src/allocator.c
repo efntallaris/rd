@@ -965,7 +965,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
     size_t next_whole_block = (size_t)total_blocks + 1;
 
     // Calculate the total bytes needed to reach the next whole block
-    float bytes_needed_for_next_block = next_whole_block * bytes_per_block;
+    float bytes_needed_for_next_block = next_whole_block * slots_bytes_free;
 
     // Calculate the remainder bytes until the next whole block is reached
     float remainder_bytes = bytes_needed_for_next_block - total_used_bytes;
