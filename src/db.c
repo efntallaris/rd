@@ -332,7 +332,7 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		
 		//LOCK AND UNLOCK UNTIL A SHADOWWRITE IS DONE or OWNERSHIP CHANGED
 		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
-
+		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
 		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
 			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, 16386);
 			r_allocator_insert_kv(spill_over_slot,
