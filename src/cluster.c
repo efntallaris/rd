@@ -6220,14 +6220,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	if(strcmp(myself->ip, "10.10.1.2") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
-		sleep(40);
+		sleep(45);
 		//sleep(70);
 		//sleep(200);
 	}
 
 	if(strcmp(myself->ip, "10.10.1.3") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 60 SECONDS");
-		sleep(60);
+		sleep(65);
 		//sleep(140);
 		//sleep(400);
 	}
