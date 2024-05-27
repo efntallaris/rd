@@ -957,7 +957,7 @@ void traverse_print_slot_blocks_filename(int slot, const char *filename)
 	// fprintf(file, "Bytes (u:%zu/f:%zu) Segments (u:%zu/f:%zu)\n", 
  //                cur_block->bytes_total_in_use, cur_block->bytes_free,
  //                cur_block->segments_used, cur_block->bytes_free);
-	slots_bytes_free = cur_block->bytes_free;
+	slots_bytes_free = 3984588;
         cur_block = cur_block->next;
     }
     float total_blocks = (float)total_used_bytes / slots_bytes_free;
