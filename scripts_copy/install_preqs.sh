@@ -47,10 +47,6 @@ sudo ./loadibmodules.sh
 # Navigate to the 'deps' directory
 cd ../deps
 
-# Execute the script
-chmod +x update-jemalloc.sh
-/bin/sh update-jemalloc.sh
-
 cd jemalloc
 /bin/sh autogen.sh
 /bin/sh configure
@@ -64,9 +60,8 @@ sudo make linenoise -j16
 cd -
 
 cd ..
-cd ..
 pwd
-chmod +x src/mkreleasehdr.sh
+#chmod +x src/mkreleasehdr.sh
 #sudo rm -rf /usr/local/include/infiniband
 #sudo cp -rf /usr/include/infiniband /usr/local/include
 
