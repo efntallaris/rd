@@ -457,6 +457,17 @@ start_server {tags {"string"}} {
             assert_equal [string range $bin $_start $_end] [r getrange bin $start $end]
         }
     }
+    
+if {[string match {*jemalloc*} [s mem_allocator]]} {
+    test {trim on SET with big value} {
+        # set a big value to trigger increasing the query buf
+        r set key [string repeat A 100000] 
+        # set a smaller value but > PROTO_MBULK_BIG_ARG (32*1024) Redis will try to save the query buf itself on the DB.
+        r set key [string repeat A 33000]
+        # asset the value was trimmed
+        assert {[r memory usage key] < 42000}; # 42K to count for Jemalloc's additional memory overhead. 
+    }
+} ;# if jemalloc
 
     test {Extended SET can detect syntax errors} {
         set e {}
@@ -574,4 +585,14 @@ start_server {tags {"string"}} {
     test {LCS indexes with match len and minimum match len} {
         dict get [r STRALGO LCS IDX KEYS virus1 virus2 WITHMATCHLEN MINMATCHLEN 5] matches
     } {{{1 222} {13 234} 222}}
+
+    test {SETRANGE with huge offset} {
+        foreach value {9223372036854775807 2147483647} {
+            catch {[r setrange K $value A]} res
+            # expecting a different error on 32 and 64 bit systems
+            if {![string match "*string exceeds maximum allowed size*" $res] && ![string match "*out of range*" $res]} {
+                assert_equal $res "expecting an error"
+           }
+        }
+    }
 }

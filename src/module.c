@@ -269,6 +269,7 @@ typedef struct RedisModuleCallReply {
         long long ll;    /* Reply value for integer reply. */
         struct RedisModuleCallReply *array; /* Array of sub-reply elements. */
     } val;
+    list *deferred_error_list;   /* list of errors in sds form or NULL */
 } RedisModuleCallReply;
 
 /* Structure representing a blocked client. We get a pointer to such
@@ -559,7 +560,6 @@ int moduleCreateEmptyKey(RedisModuleKey *key, int type) {
     default: return REDISMODULE_ERR;
     }
     dbAdd(key->db,key->key,obj);
-    serverLog(LL_WARNING, "STRATOS EMPTY KEY CREATED");
     key->value = obj;
     moduleInitKeyTypeSpecific(key);
     return REDISMODULE_OK;
@@ -1703,6 +1703,15 @@ int RM_ReplyWithCallReply(RedisModuleCtx *ctx, RedisModuleCallReply *reply) {
     if (c == NULL) return REDISMODULE_OK;
     sds proto = sdsnewlen(reply->proto, reply->protolen);
     addReplySds(c,proto);
+
+    /* Propagate the error list from that reply to the other client, to do some
+     * post error reply handling, like statistics.
+     * Note that if the original reply had an array with errors, and the module
+     * replied with just a portion of the original reply, and not the entire
+     * reply, the errors are currently not propagated and the errors stats
+     * will not get propagated. */
+    if (reply->deferred_error_list)
+        deferredAfterErrorReply(c, reply->deferred_error_list);
     return REDISMODULE_OK;
 }
 
@@ -2275,7 +2284,10 @@ static void moduleCloseKey(RedisModuleKey *key) {
     int signal = SHOULD_SIGNAL_MODIFIED_KEYS(key->ctx);
     if ((key->mode & REDISMODULE_WRITE) && signal)
         signalModifiedKey(key->ctx->client,key->db,key->key);
-    if (key->iter) zfree(key->iter);
+    if (key->iter) {
+        streamIteratorStop(key->iter);
+        zfree(key->iter);
+    }
     RM_ZsetRangeStop(key);
     if (key && key->value && key->value->type == OBJ_STREAM &&
         key->u.stream.signalready) {
@@ -2543,10 +2555,10 @@ int RM_StringTruncate(RedisModuleKey *key, size_t newlen) {
         if (newlen > curlen) {
             key->value->ptr = sdsgrowzero(key->value->ptr,newlen);
         } else if (newlen < curlen) {
-            sdsrange(key->value->ptr,0,newlen-1);
+            sdssubstr(key->value->ptr,0,newlen);
             /* If the string is too wasteful, reallocate it. */
             if (sdslen(key->value->ptr) < sdsavail(key->value->ptr))
-                key->value->ptr = sdsRemoveFreeSpace(key->value->ptr);
+                key->value->ptr = sdsRemoveFreeSpace(key->value->ptr, 0);
         }
     }
     return REDISMODULE_OK;
@@ -3320,6 +3332,7 @@ int RM_HashGet(RedisModuleKey *key, int flags, ...) {
  * - EDOM if the given ID was 0-0 or not greater than all other IDs in the
  *   stream (only if the AUTOID flag is unset)
  * - EFBIG if the stream has reached the last possible ID
+ * - ERANGE if the elements are too large to be stored.
  */
 int RM_StreamAdd(RedisModuleKey *key, int flags, RedisModuleStreamID *id, RedisModuleString **argv, long numfields) {
     /* Validate args */
@@ -3363,8 +3376,9 @@ int RM_StreamAdd(RedisModuleKey *key, int flags, RedisModuleStreamID *id, RedisM
         use_id_ptr = &use_id;
     }
     if (streamAppendItem(s, argv, numfields, &added_id, use_id_ptr) == C_ERR) {
-        /* ID not greater than all existing IDs in the stream */
-        errno = EDOM;
+        /* Either the ID not greater than all existing IDs in the stream, or
+         * the elements are too large to be stored. either way, errno is already
+         * set by streamAppendItem. */
         return REDISMODULE_ERR;
     }
     /* Postponed signalKeyAsReady(). Done implicitly by moduleCreateEmptyKey()
@@ -3530,6 +3544,7 @@ int RM_StreamIteratorStop(RedisModuleKey *key) {
         errno = EBADF;
         return REDISMODULE_ERR;
     }
+    streamIteratorStop(key->iter);
     zfree(key->iter);
     key->iter = NULL;
     return REDISMODULE_OK;
@@ -3752,12 +3767,16 @@ long long RM_StreamTrimByID(RedisModuleKey *key, int flags, RedisModuleStreamID 
 /* Create a new RedisModuleCallReply object. The processing of the reply
  * is lazy, the object is just populated with the raw protocol and later
  * is processed as needed. Initially we just make sure to set the right
- * reply type, which is extremely cheap to do. */
-RedisModuleCallReply *moduleCreateCallReplyFromProto(RedisModuleCtx *ctx, sds proto) {
+ * reply type, which is extremely cheap to do.
+ * The deferred_error_list is an optional list of errors that are present
+ * in the reply blob, if given, this function will take ownership on it.
+ */
+RedisModuleCallReply *moduleCreateCallReplyFromProto(RedisModuleCtx *ctx, sds proto, list *deferred_error_list) {
     RedisModuleCallReply *reply = zmalloc(sizeof(*reply));
     reply->ctx = ctx;
     reply->proto = proto;
     reply->protolen = sdslen(proto);
+    reply->deferred_error_list = deferred_error_list;
     reply->flags = REDISMODULE_REPLYFLAG_TOPARSE; /* Lazy parsing. */
     switch(proto[0]) {
     case '$':
@@ -3875,11 +3894,14 @@ void moduleFreeCallReplyRec(RedisModuleCallReply *reply, int freenested){
         }
     }
 
+
     /* For nested replies, we don't free reply->proto (which if not NULL
      * references the parent reply->proto buffer), nor the structure
      * itself which is allocated as an array of structures, and is freed
      * when the array value is released. */
     if (!(reply->flags & REDISMODULE_REPLYFLAG_NESTED)) {
+        if (reply->deferred_error_list)
+            listRelease(reply->deferred_error_list);
         if (reply->proto) sdsfree(reply->proto);
         zfree(reply);
     }
@@ -4201,7 +4223,8 @@ RedisModuleCallReply *RM_Call(RedisModuleCtx *ctx, const char *cmdname, const ch
         proto = sdscatlen(proto,o->buf,o->used);
         listDelNode(c->reply,listFirst(c->reply));
     }
-    reply = moduleCreateCallReplyFromProto(ctx,proto);
+    reply = moduleCreateCallReplyFromProto(ctx,proto,c->deferred_reply_errors);
+    c->deferred_reply_errors = NULL; /* now the responsibility of the reply object. */
     autoMemoryAdd(ctx,REDISMODULE_AM_REPLY,reply);
 
 cleanup:
@@ -5363,8 +5386,8 @@ int moduleTryServeClientBlockedOnKey(client *c, robj *key) {
  *     reply_callback:   called after a successful RedisModule_UnblockClient()
  *                       call in order to reply to the client and unblock it.
  *
- *     timeout_callback: called when the timeout is reached in order to send an
- *                       error to the client.
+ *     timeout_callback: called when the timeout is reached or if `CLIENT UNBLOCK`
+ *                       is invoked, in order to send an error to the client.
  *
  *     free_privdata:    called in order to free the private data that is passed
  *                       by RedisModule_UnblockClient() call.
@@ -5380,6 +5403,12 @@ int moduleTryServeClientBlockedOnKey(client *c, robj *key) {
  *
  * In these cases, a call to RedisModule_BlockClient() will **not** block the
  * client, but instead produce a specific error reply.
+ *
+ * A module that registers a timeout_callback function can also be unblocked
+ * using the `CLIENT UNBLOCK` command, which will trigger the timeout callback.
+ * If a callback function is not registered, then the blocked client will be
+ * treated as if it is not in a blocked state and `CLIENT UNBLOCK` will return
+ * a zero value.
  *
  * Measuring background time: By default the time spent in the blocked command
  * is not account for the total command duration. To include such time you should
@@ -5648,6 +5677,17 @@ void moduleHandleBlockedClients(void) {
         pthread_mutex_lock(&moduleUnblockedClientsMutex);
     }
     pthread_mutex_unlock(&moduleUnblockedClientsMutex);
+}
+
+/* Check if the specified client can be safely timed out using
+ * moduleBlockedClientTimedOut().
+ */
+int moduleBlockedClientMayTimeout(client *c) {
+    if (c->btype != BLOCKED_MODULE)
+        return 1;
+
+    RedisModuleBlockedClient *bc = c->bpop.module_blocked_handle;
+    return (bc && bc->timeout_callback != NULL);
 }
 
 /* Called when our client timed out. After this function unblockClient()
@@ -8281,7 +8321,8 @@ void moduleFireServerEvent(uint64_t eid, int subid, void *data) {
              * up to the specific event setup to change it when it makes
              * sense. For instance for FLUSHDB events we select the correct
              * DB automatically. */
-            selectDb(ctx.client, 0);
+            if (!real_client_used)
+                selectDb(ctx.client, 0);
 
             /* Event specific context and data pointer setup. */
             if (eid == REDISMODULE_EVENT_CLIENT_CHANGE) {
@@ -8680,8 +8721,9 @@ sds genModulesInfoStringRenderModulesList(list *l) {
     while((ln = listNext(&li))) {
         RedisModule *module = ln->value;
         output = sdscat(output,module->name);
+        if (ln != listLast(l))
+            output = sdscat(output,"|");
     }
-    output = sdstrim(output,"|");
     output = sdscat(output,"]");
     return output;
 }
@@ -9007,6 +9049,14 @@ int *RM_GetCommandKeys(RedisModuleCtx *ctx, RedisModuleString **argv, int argc, 
     return res;
 }
 
+/* Return the name of the command currently running */
+const char *RM_GetCurrentCommandName(RedisModuleCtx *ctx) {
+    if (!ctx || !ctx->client || !ctx->client->cmd)
+        return NULL;
+
+    return (const char*)ctx->client->cmd->name;
+}
+
 /* --------------------------------------------------------------------------
  * ## Defrag API
  * -------------------------------------------------------------------------- */
@@ -9281,6 +9331,8 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(StringTruncate);
     REGISTER_API(SetExpire);
     REGISTER_API(GetExpire);
+    REGISTER_API(SetAbsExpire);
+    REGISTER_API(GetAbsExpire);
     REGISTER_API(ResetDataset);
     REGISTER_API(DbSize);
     REGISTER_API(RandomKey);
@@ -9468,6 +9520,7 @@ void moduleRegisterCoreAPI(void) {
     REGISTER_API(GetServerVersion);
     REGISTER_API(GetClientCertificate);
     REGISTER_API(GetCommandKeys);
+    REGISTER_API(GetCurrentCommandName);
     REGISTER_API(GetTypeMethodVersion);
     REGISTER_API(RegisterDefragFunc);
     REGISTER_API(DefragAlloc);

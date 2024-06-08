@@ -132,6 +132,22 @@ start_server {tags {"tracking network"}} {
         assert {$keys eq {mykey}}
     }
 
+    test {Tracking gets notification of lazy expired keys} {
+        r CLIENT TRACKING off
+        r CLIENT TRACKING on BCAST REDIRECT $redir_id NOLOOP
+        # Use multi-exec to expose a race where the key gets an two invalidations
+        # in the same event loop, once by the client so filtered by NOLOOP, and
+        # the second one by the lazy expire
+        r MULTI
+        r SET mykey{t} myval px 1
+        r SET mykeyotherkey{t} myval ; # We should not get it
+        r DEBUG SLEEP 0.1
+        r GET mykey{t}
+        r EXEC
+        set keys [lsort [lindex [$rd_redirection read] 2]]
+        assert {$keys eq {mykey{t}}}
+    } {} {needs:debug}
+
     test {HELLO 3 reply is correct} {
         set reply [r HELLO 3]
         assert_equal [dict get $reply proto] 3
@@ -190,6 +206,19 @@ start_server {tags {"tracking network"}} {
         $rd_sg SET key1 2
         set res [lindex [$rd_redirection read] 2]
         assert {$res eq {key1}}
+    }
+
+    test {Invalid keys should not be tracked for scripts in NOLOOP mode} {
+        $rd_sg CLIENT TRACKING off
+        $rd_sg CLIENT TRACKING on NOLOOP
+        $rd_sg HELLO 3
+        $rd_sg SET key1 1
+        assert_equal "1" [$rd_sg GET key1]
+
+        # For write command in script, invalid key should not be tracked with NOLOOP flag
+        $rd_sg eval "return redis.call('set', 'key1', '2')" 1 key1
+        assert_equal "2" [$rd_sg GET key1]
+        $rd_sg CLIENT TRACKING off
     }
 
     test {RESP3 Client gets tracking-redir-broken push message after cached key changed when rediretion client is terminated} {
@@ -353,6 +382,101 @@ start_server {tags {"tracking network"}} {
         $r CLIENT TRACKING OFF
     }
 
+    test {hdel deliver invlidate message after response in the same connection} {
+        r CLIENT TRACKING off
+        r HELLO 3
+        r CLIENT TRACKING on
+        r HSET myhash f 1
+        r HGET myhash f
+        set res [r HDEL myhash f]
+        assert_equal $res 1
+        set res [r read]
+        assert_equal $res {invalidate myhash}
+    }
+
+    test {Tracking invalidation message is not interleaved with multiple keys response} {
+        r CLIENT TRACKING off
+        r HELLO 3
+        r CLIENT TRACKING on
+        # We need disable active expire, so we can trigger lazy expire
+        r DEBUG SET-ACTIVE-EXPIRE 0
+        r MULTI
+        r MSET x{t} 1 y{t} 2
+        r PEXPIRE y{t} 100
+        r GET y{t}
+        r EXEC
+        after 110
+        # Read expired key y{t}, generate invalidate message about this key
+        set res [r MGET x{t} y{t}]
+        assert_equal $res {1 {}}
+        # Consume the invalidate message which is after command response
+        set res [r read]
+        assert_equal $res {invalidate y{t}}
+        r DEBUG SET-ACTIVE-EXPIRE 1
+    } {OK} {needs:debug}
+
+    test {Tracking invalidation message is not interleaved with transaction response} {
+        r CLIENT TRACKING off
+        r HELLO 3
+        r CLIENT TRACKING on
+        r MSET a{t} 1 b{t} 2
+        r GET a{t}
+        # Start a transaction, make a{t} generate an invalidate message
+        r MULTI
+        r INCR a{t}
+        r GET b{t}
+        set res [r EXEC]
+        assert_equal $res {2 2}
+        set res [r read]
+        # Consume the invalidate message which is after command response
+        assert_equal $res {invalidate a{t}}
+    }
+
+    test {Tracking invalidation message of eviction keys should be before response} {
+        # Get the current memory limit and calculate a new limit.
+        r CLIENT TRACKING off
+        r HELLO 3
+        r CLIENT TRACKING on
+        set used [s used_memory]
+        set limit [expr {$used+100*1024}]
+        set old_policy [lindex [r config get maxmemory-policy] 1]
+        r config set maxmemory $limit
+        # We set policy volatile-random, so only keys with ttl will be evicted
+        r config set maxmemory-policy volatile-random
+        # Add a volatile key and tracking it.
+        r setex volatile-key 10000 x
+        r get volatile-key
+        # We use SETBIT here, so we can set a big key and get the used_memory
+        # bigger than maxmemory. Next command will evict volatile keys. We
+        # can't use SET, as SET uses big input buffer, so it will fail.
+        r setbit big-key 1000000 0
+        # volatile-key is evicted before response.
+        set res [r getbit big-key 0]
+        assert_equal $res {invalidate volatile-key}
+        set res [r read]
+        assert_equal $res 0
+        r config set maxmemory-policy $old_policy
+        r config set maxmemory 0
+    }
+
+    test {Unblocked BLMOVE gets notification after response} {
+        r RPUSH list2{t} a
+        $rd HELLO 3
+        $rd read
+        $rd CLIENT TRACKING on
+        $rd read
+        # Tracking key list2{t}
+        $rd LRANGE list2{t} 0 -1
+        $rd read
+        # We block on list1{t}
+        $rd BLMOVE list1{t} list2{t} left left 0
+        wait_for_blocked_clients_count 1
+        # unblock $rd, list2{t} gets element and generate invalidation message
+        r rpush list1{t} foo
+        assert_equal [$rd read] {foo}
+        assert_equal [$rd read] {invalidate list2{t}}
+    }
+
     test {Tracking gets notification on tracking table key eviction} {
         r CLIENT TRACKING off
         r CLIENT TRACKING on REDIRECT $redir_id NOLOOP
@@ -405,6 +529,20 @@ start_server {tags {"tracking network"}} {
         assert_equal [s 0 tracking_total_keys] 0
         assert_equal [lindex [$rd_redirection read] 2] {}
     }
+
+    test {flushdb tracking invalidation message is not interleaved with transaction response} {
+        clean_all
+        r HELLO 3
+        r CLIENT TRACKING on
+        r SET a{t} 1
+        r GET a{t}
+        r MULTI
+        r FLUSHDB
+        set res [r EXEC]
+        assert_equal $res {OK}
+        # Consume the invalidate message which is after command response
+        r read
+    } {invalidate {}}
 
     # Keys are defined to be evicted 100 at a time by default.
     # If after eviction the number of keys still surpasses the limit
@@ -570,6 +708,135 @@ start_server {tags {"tracking network"}} {
         assert_equal {} $prefixes
     }
 
+    test {Regression test for #11715} {
+        # This issue manifests when a client invalidates keys through the max key
+        # limit, which invalidates keys to get Redis below the limit, but no command is
+        # then executed. This can occur in several ways but the simplest is through 
+        # multi-exec which queues commands.
+        clean_all
+        r config set tracking-table-max-keys 2
+
+        # The cron will invalidate keys if we're above the limit, so disable it.
+        r debug pause-cron 1
+
+        # Set up a client that has listened to 2 keys and start a multi, this
+        # sets up the crash for later.
+        $rd HELLO 3
+        $rd read
+        $rd CLIENT TRACKING on
+        assert_match "OK" [$rd read]
+        $rd mget "1{tag}" "2{tag}"
+        assert_match "{} {}" [$rd read]
+        $rd multi
+        assert_match "OK" [$rd read]
+
+        # Reduce the tracking table keys to 1, this doesn't immediately take affect, but
+        # instead will apply on the next command.
+        r config set tracking-table-max-keys 1
+
+        # This command will get queued, so make sure this command doesn't crash.
+        $rd ping
+        $rd exec
+
+        # Validate we got some invalidation message and then the command was queued.
+        assert_match "invalidate *{tag}" [$rd read]
+        assert_match "QUEUED" [$rd read]
+        assert_match "PONG" [$rd read]
+
+        r debug pause-cron 0
+    } {OK} {needs:debug}
+
+    foreach resp {3 2} {
+        test "RESP$resp based basic invalidation with client reply off" {
+            # This entire test is mostly irrelevant for RESP2, but we run it anyway just for some extra coverage.
+            clean_all
+
+            $rd hello $resp
+            $rd read
+            $rd client tracking on
+            $rd read
+
+            $rd_sg set foo bar
+            $rd get foo
+            $rd read
+
+            $rd client reply off
+
+            $rd_sg set foo bar2
+
+            if {$resp == 3} {
+                assert_equal {invalidate foo} [$rd read]
+            } elseif {$resp == 2} { } ;# Just coverage
+
+            # Verify things didn't get messed up and no unexpected reply was pushed to the client.
+            $rd client reply on
+            assert_equal {OK} [$rd read]
+            $rd ping
+            assert_equal {PONG} [$rd read]
+        }
+    }
+
+    test {RESP3 based basic redirect invalidation with client reply off} {
+        clean_all
+
+        set rd_redir [redis_deferring_client]
+        $rd_redir hello 3
+        $rd_redir read
+
+        $rd_redir client id
+        set rd_redir_id [$rd_redir read]
+
+        $rd client tracking on redirect $rd_redir_id
+        $rd read
+
+        $rd_sg set foo bar
+        $rd get foo
+        $rd read
+
+        $rd_redir client reply off
+
+        $rd_sg set foo bar2
+        assert_equal {invalidate foo} [$rd_redir read]
+
+        # Verify things didn't get messed up and no unexpected reply was pushed to the client.
+        $rd_redir client reply on
+        assert_equal {OK} [$rd_redir read]
+        $rd_redir ping
+        assert_equal {PONG} [$rd_redir read]
+
+        $rd_redir close
+    }
+
+    test {RESP3 based basic tracking-redir-broken with client reply off} {
+        clean_all
+
+        $rd hello 3
+        $rd read
+        $rd client tracking on redirect $redir_id
+        $rd read
+
+        $rd_sg set foo bar
+        $rd get foo
+        $rd read
+
+        $rd client reply off
+
+        $rd_redirection quit
+        $rd_redirection read
+
+        $rd_sg set foo bar2
+
+        set res [lsearch -exact [$rd read] "tracking-redir-broken"]
+        assert_morethan_equal $res 0
+
+        # Verify things didn't get messed up and no unexpected reply was pushed to the client.
+        $rd client reply on
+        assert_equal {OK} [$rd read]
+        $rd ping
+        assert_equal {PONG} [$rd read]
+    }
+
     $rd_redirection close
+    $rd_sg close
     $rd close
 }

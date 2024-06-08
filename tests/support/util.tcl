@@ -504,6 +504,14 @@ proc stop_write_load {handle} {
     catch {exec /bin/kill -9 $handle}
 }
 
+proc wait_load_handlers_disconnected {{level 0}} {
+    wait_for_condition 50 100 {
+        ![string match {*name=LOAD_HANDLER*} [r $level client list]]
+    } else {
+        fail "load_handler(s) still connected after too long time."
+    }
+}
+
 proc K { x y } { set x } 
 
 # Shuffle a list with Fisher-Yates algorithm.
@@ -532,8 +540,11 @@ proc stop_bg_complex_data {handle} {
     catch {exec /bin/kill -9 $handle}
 }
 
-proc populate {num prefix size} {
-    set rd [redis_deferring_client]
+# Write num keys with the given key prefix and value size (in bytes). If idx is
+# given, it's the index (AKA level) used with the srv procedure and it specifies
+# to which Redis instance to write the keys.
+proc populate {num {prefix key:} {size 3} {idx 0}} {
+    set rd [redis_deferring_client $idx]
     for {set j 0} {$j < $num} {incr j} {
         $rd set $prefix$j [string repeat A $size]
     }
@@ -555,6 +566,15 @@ proc get_child_pid {idx} {
     close $fd
 
     return $child_pid
+}
+
+proc process_is_alive pid {
+    if {[catch {exec ps -p $pid -f} err]} {
+        return 0
+    } else {
+        if {[string match "*<defunct>*" $err]} { return 0 }
+        return 1
+    }
 }
 
 proc cmdrstat {cmd r} {
@@ -600,6 +620,7 @@ proc generate_fuzzy_traffic_on_key {key duration} {
         set arity [lindex $cmd_info 1]
         set arity [expr $arity < 0 ? - $arity: $arity]
         set firstkey [lindex $cmd_info 3]
+        set lastkey [lindex $cmd_info 4]
         set i 1
         if {$cmd == "XINFO"} {
             lappend cmd "STREAM"
@@ -629,7 +650,7 @@ proc generate_fuzzy_traffic_on_key {key duration} {
             incr i 4
         }
         for {} {$i < $arity} {incr i} {
-            if {$i == $firstkey} {
+            if {$i == $firstkey || $i == $lastkey} {
                 lappend cmd $key
             } else {
                 lappend cmd [randomValue]
@@ -762,3 +783,50 @@ proc punsubscribe {client {channels {}}} {
     $client punsubscribe {*}$channels
     consume_subscribe_messages $client punsubscribe $channels
 }
+
+proc wait_for_blocked_client {} {
+    wait_for_condition 50 100 {
+        [s blocked_clients] ne 0
+    } else {
+        fail "no blocked clients"
+    }
+}
+
+proc wait_for_blocked_clients_count {count {maxtries 100} {delay 10}} {
+    wait_for_condition $maxtries $delay  {
+        [s blocked_clients] == $count
+    } else {
+        fail "Timeout waiting for blocked clients"
+    }
+}
+
+proc config_set {param value {options {}}} {
+    set mayfail 0
+    foreach option $options {
+        switch $option {
+            "mayfail" {
+                set mayfail 1
+            }
+            default {
+                error "Unknown option $option"
+            }
+        }
+    }
+
+    if {[catch {r config set $param $value} err]} {
+        if {!$mayfail} {
+            error $err
+        } else {
+            if {$::verbose} {
+                puts "Ignoring CONFIG SET $param $value failure: $err"
+            }
+        }
+    }
+}
+
+proc config_get_set {param value {options {}}} {
+    set config [lindex [r config get $param] 1]
+    config_set $param $value $options
+    return $config
+}
+

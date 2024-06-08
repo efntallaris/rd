@@ -56,35 +56,6 @@ static inline int hi_sdsHdrSize(char type) {
     return 0;
 }
 
-
-int hi_sdsHdrSizeAlloc(char type) {
-    switch(type&HI_SDS_TYPE_MASK) {
-        case HI_SDS_TYPE_5:
-            return sizeof(struct hisdshdr5);
-        case HI_SDS_TYPE_8:
-            return sizeof(struct hisdshdr8);
-        case HI_SDS_TYPE_16:
-            return sizeof(struct hisdshdr16);
-        case HI_SDS_TYPE_32:
-            return sizeof(struct hisdshdr32);
-        case HI_SDS_TYPE_64:
-            return sizeof(struct hisdshdr64);
-    }
-    return 0;
-}
-
-char hi_sdsReqTypeAlloc(size_t string_size) {
-    if (string_size < 32)
-        return HI_SDS_TYPE_5;
-    if (string_size < 0xff)
-        return HI_SDS_TYPE_8;
-    if (string_size < 0xffff)
-        return HI_SDS_TYPE_16;
-    if (string_size < 0xffffffff)
-        return HI_SDS_TYPE_32;
-    return HI_SDS_TYPE_64;
-}
-
 static inline char hi_sdsReqType(size_t string_size) {
     if (string_size < 32)
         return HI_SDS_TYPE_5;

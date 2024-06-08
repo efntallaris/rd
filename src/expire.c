@@ -53,24 +53,11 @@
  * to the function to avoid too many gettimeofday() syscalls. */
 int activeExpireCycleTryExpire(redisDb *db, dictEntry *de, long long now) {
     long long t = dictGetSignedIntegerVal(de);
-    mstime_t expire_latency;
     if (now > t) {
         sds key = dictGetKey(de);
         robj *keyobj = createStringObject(key,sdslen(key));
-
-        propagateExpire(db,keyobj,server.lazyfree_lazy_expire);
-        latencyStartMonitor(expire_latency);
-        if (server.lazyfree_lazy_expire)
-            dbAsyncDelete(db,keyobj);
-        else
-            dbSyncDelete(db,keyobj);
-        latencyEndMonitor(expire_latency);
-        latencyAddSampleIfNeeded("expire-del",expire_latency);
-        notifyKeyspaceEvent(NOTIFY_EXPIRED,
-            "expired",keyobj,db->id);
-        signalModifiedKey(NULL, db, keyobj);
+        deleteExpiredKeyAndPropagate(db,keyobj);
         decrRefCount(keyobj);
-        server.stat_expiredkeys++;
         return 1;
     } else {
         return 0;
@@ -506,15 +493,23 @@ void expireGenericCommand(client *c, long long basetime, int unit) {
 
     if (getLongLongFromObjectOrReply(c, param, &when, NULL) != C_OK)
         return;
-    int negative_when = when < 0;
-    if (unit == UNIT_SECONDS) when *= 1000;
-    when += basetime;
-    if (((when < 0) && !negative_when) || ((when-basetime > 0) && negative_when)) {
-        /* EXPIRE allows negative numbers, but we can at least detect an
-         * overflow by either unit conversion or basetime addition. */
+
+    /* EXPIRE allows negative numbers, but we can at least detect an
+     * overflow by either unit conversion or basetime addition. */
+    if (unit == UNIT_SECONDS) {
+        if (when > LLONG_MAX / 1000 || when < LLONG_MIN / 1000) {
+            addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
+            return;
+        }
+        when *= 1000;
+    }
+
+    if (when > LLONG_MAX - basetime) {
         addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
         return;
     }
+    when += basetime;
+
     /* No key, return zero. */
     if (lookupKeyWrite(c->db,key) == NULL) {
         addReply(c,shared.czero);

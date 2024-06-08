@@ -39,6 +39,97 @@
 #include <ctype.h>
 #include <math.h>
 
+/* Globals that are added by the Lua libraries */
+static char *libraries_allow_list[] = {
+    "string",
+    "cjson",
+    "bit",
+    "cmsgpack",
+    "math",
+    "table",
+    "struct",
+    NULL,
+};
+
+/* Redis Lua API globals */
+static char *redis_api_allow_list[] = {
+    "redis",
+    "__redis__err__handler", /* error handler for eval, currently located on globals.
+                                Should move to registry. */
+    NULL,
+};
+
+/* Lua builtins */
+static char *lua_builtins_allow_list[] = {
+    "xpcall",
+    "tostring",
+    "getfenv",
+    "setmetatable",
+    "next",
+    "assert",
+    "tonumber",
+    "rawequal",
+    "collectgarbage",
+    "getmetatable",
+    "rawset",
+    "pcall",
+    "coroutine",
+    "type",
+    "_G",
+    "select",
+    "unpack",
+    "gcinfo",
+    "pairs",
+    "rawget",
+    "loadstring",
+    "ipairs",
+    "_VERSION",
+    "setfenv",
+    "load",
+    "error",
+    "print", /* should be blocked, but kept in old releases to avoid breaking change. */
+    NULL,
+};
+
+/* Lua builtins which are not documented on the Lua documentation */
+static char *lua_builtins_not_documented_allow_list[] = {
+    "newproxy",
+    NULL,
+};
+
+/* Lua builtins which are allowed on initialization but will be removed right after */
+static char *lua_builtins_removed_after_initialization_allow_list[] = {
+    "debug", /* debug will be set to nil after the error handler will be created */
+    NULL,
+};
+
+/* Those allow lists was created from the globals that was
+ * available to the user when the allow lists was first introduce.
+ * Because we do not want to break backward compatibility we keep
+ * all the globals. The allow lists will prevent us from accidentally
+ * creating unwanted globals in the future.
+ *
+ * Also notice that the allow list is only checked on start time,
+ * after that the global table is locked so not need to check anything.*/
+static char **allow_lists[] = {
+    libraries_allow_list,
+    redis_api_allow_list,
+    lua_builtins_allow_list,
+    lua_builtins_not_documented_allow_list,
+    lua_builtins_removed_after_initialization_allow_list,
+    NULL,
+};
+
+/* Deny list contains elements which we know we do not want to add to globals
+ * and there is no need to print a warning message form them. We will print a
+ * log message only if an element was added to the globals and the element is
+ * not on the allow list nor on the back list. */
+static char *deny_list[] = {
+    "dofile",
+    "loadfile",
+    NULL,
+};
+
 char *redisProtocolToLuaType_Int(lua_State *lua, char *reply);
 char *redisProtocolToLuaType_Bulk(lua_State *lua, char *reply);
 char *redisProtocolToLuaType_Status(lua_State *lua, char *reply);
@@ -129,6 +220,16 @@ void sha1hex(char *digest, char *script, size_t len) {
  */
 
 char *redisProtocolToLuaType(lua_State *lua, char* reply) {
+
+    if (!lua_checkstack(lua, 5)) {
+        /*
+         * Increase the Lua stack if needed, to make sure there is enough room
+         * to push 5 elements to the stack. On failure, exit with panic.
+         * Notice that we need, in the worst case, 5 elements because redisProtocolToLuaType_Aggregate
+         * might push 5 elements to the Lua stack.*/
+        serverPanic("lua stack limit reach when parsing redis.call reply");
+    }
+
     char *p = reply;
 
     switch(*p) {
@@ -221,6 +322,11 @@ char *redisProtocolToLuaType_Aggregate(lua_State *lua, char *reply, int atype) {
             if (atype == '%') {
                 p = redisProtocolToLuaType(lua,p);
             } else {
+                if (!lua_checkstack(lua, 1)) {
+                    /* Notice that here we need to check the stack again because the recursive
+                     * call to redisProtocolToLuaType might have use the room allocated in the stack */
+                    serverPanic("lua stack limit reach when parsing redis.call reply");
+                }
                 lua_pushboolean(lua,1);
             }
             lua_settable(lua,-3);
@@ -314,21 +420,7 @@ void luaSortArray(lua_State *lua) {
     lua_pushstring(lua,"sort");
     lua_gettable(lua,-2);       /* Stack: array, table, table.sort */
     lua_pushvalue(lua,-3);      /* Stack: array, table, table.sort, array */
-    if (lua_pcall(lua,1,0,0)) {
-        /* Stack: array, table, error */
-
-        /* We are not interested in the error, we assume that the problem is
-         * that there are 'false' elements inside the array, so we try
-         * again with a slower function but able to handle this case, that
-         * is: table.sort(table, __redis__compare_helper) */
-        lua_pop(lua,1);             /* Stack: array, table */
-        lua_pushstring(lua,"sort"); /* Stack: array, table, sort */
-        lua_gettable(lua,-2);       /* Stack: array, table, table.sort */
-        lua_pushvalue(lua,-3);      /* Stack: array, table, table.sort, array */
-        lua_getglobal(lua,"__redis__compare_helper");
-        /* Stack: array, table, table.sort, array, __redis__compare_helper */
-        lua_call(lua,2,0);
-    }
+    lua_call(lua,1,0);          /* Stack: array (sorted), table */
     /* Stack: array (sorted), table */
     lua_pop(lua,1);             /* Stack: array (sorted) */
 }
@@ -340,6 +432,17 @@ void luaSortArray(lua_State *lua) {
 /* Reply to client 'c' converting the top element in the Lua stack to a
  * Redis reply. As a side effect the element is consumed from the stack.  */
 void luaReplyToRedisReply(client *c, lua_State *lua) {
+
+    if (!lua_checkstack(lua, 4)) {
+        /* Increase the Lua stack if needed to make sure there is enough room
+         * to push 4 elements to the stack. On failure, return error.
+         * Notice that we need, in the worst case, 4 elements because returning a map might
+         * require push 4 elements to the Lua stack.*/
+        addReplyErrorFormat(c, "reached lua stack limit");
+        lua_pop(lua,1); /* pop the element from the stack */
+        return;
+    }
+
     int t = lua_type(lua,-1);
 
     switch(t) {
@@ -363,8 +466,9 @@ void luaReplyToRedisReply(client *c, lua_State *lua) {
          * field. */
 
         /* Handle error reply. */
+        /* we took care of the stack size on function start */
         lua_pushstring(lua,"err");
-        lua_gettable(lua,-2);
+        lua_rawget(lua,-2);
         t = lua_type(lua,-1);
         if (t == LUA_TSTRING) {
             addReplyErrorFormat(c,"-%s",lua_tostring(lua,-1));
@@ -375,7 +479,7 @@ void luaReplyToRedisReply(client *c, lua_State *lua) {
 
         /* Handle status reply. */
         lua_pushstring(lua,"ok");
-        lua_gettable(lua,-2);
+        lua_rawget(lua,-2);
         t = lua_type(lua,-1);
         if (t == LUA_TSTRING) {
             sds ok = sdsnew(lua_tostring(lua,-1));
@@ -389,7 +493,7 @@ void luaReplyToRedisReply(client *c, lua_State *lua) {
 
         /* Handle double reply. */
         lua_pushstring(lua,"double");
-        lua_gettable(lua,-2);
+        lua_rawget(lua,-2);
         t = lua_type(lua,-1);
         if (t == LUA_TNUMBER) {
             addReplyDouble(c,lua_tonumber(lua,-1));
@@ -400,11 +504,12 @@ void luaReplyToRedisReply(client *c, lua_State *lua) {
 
         /* Handle map reply. */
         lua_pushstring(lua,"map");
-        lua_gettable(lua,-2);
+        lua_rawget(lua,-2);
         t = lua_type(lua,-1);
         if (t == LUA_TTABLE) {
             int maplen = 0;
             void *replylen = addReplyDeferredLen(c);
+            /* we took care of the stack size on function start */
             lua_pushnil(lua); /* Use nil to start iteration. */
             while (lua_next(lua,-2)) {
                 /* Stack now: table, key, value */
@@ -422,11 +527,12 @@ void luaReplyToRedisReply(client *c, lua_State *lua) {
 
         /* Handle set reply. */
         lua_pushstring(lua,"set");
-        lua_gettable(lua,-2);
+        lua_rawget(lua,-2);
         t = lua_type(lua,-1);
         if (t == LUA_TTABLE) {
             int setlen = 0;
             void *replylen = addReplyDeferredLen(c);
+            /* we took care of the stack size on function start */
             lua_pushnil(lua); /* Use nil to start iteration. */
             while (lua_next(lua,-2)) {
                 /* Stack now: table, key, true */
@@ -446,8 +552,9 @@ void luaReplyToRedisReply(client *c, lua_State *lua) {
         void *replylen = addReplyDeferredLen(c);
         int j = 1, mbulklen = 0;
         while(1) {
+            /* we took care of the stack size on function start */
             lua_pushnumber(lua,j++);
-            lua_gettable(lua,-2);
+            lua_rawget(lua,-2);
             t = lua_type(lua,-1);
             if (t == LUA_TNIL) {
                 lua_pop(lua,1);
@@ -557,6 +664,10 @@ int luaRedisGenericCommand(lua_State *lua, int raise_error) {
         return raise_error ? luaRaiseError(lua) : 1;
     }
 
+    /* Pop all arguments from the stack, we do not need them anymore
+     * and this way we guaranty we will have room on the stack for the result. */
+    lua_pop(lua, argc);
+
     /* Setup our fake client for command execution */
     c->argv = argv;
     c->argc = argc;
@@ -655,6 +766,13 @@ int luaRedisGenericCommand(lua_State *lua, int raise_error) {
                 luaPushError(lua, aof_write_err);
                 sdsfree(aof_write_err);
             }
+            goto cleanup;
+        } else if (server.masterhost == NULL &&
+                   server.repl_min_slaves_max_lag &&
+                   server.repl_min_slaves_to_write &&
+                   server.repl_good_slaves_count < server.repl_min_slaves_to_write)
+        {
+            luaPushError(lua, shared.noreplicaserr->ptr);
             goto cleanup;
         }
     }
@@ -1040,52 +1158,120 @@ void luaLoadLibraries(lua_State *lua) {
 #endif
 }
 
-/* Remove a functions that we don't want to expose to the Redis scripting
- * environment. */
-void luaRemoveUnsupportedFunctions(lua_State *lua) {
-    lua_pushnil(lua);
-    lua_setglobal(lua,"loadfile");
-    lua_pushnil(lua);
-    lua_setglobal(lua,"dofile");
+static int luaProtectedTableError(lua_State *lua) {
+    int argc = lua_gettop(lua);
+    if (argc != 2) {
+        serverLog(LL_WARNING, "malicious code trying to call luaProtectedTableError with wrong arguments");
+        luaL_error(lua, "Wrong number of arguments to luaProtectedTableError");
+    }
+    if (!lua_isstring(lua, -1) && !lua_isnumber(lua, -1)) {
+        luaL_error(lua, "Second argument to luaProtectedTableError must be a string or number");
+    }
+    const char *variable_name = lua_tostring(lua, -1);
+    luaL_error(lua, "Script attempted to access nonexistent global variable '%s'", variable_name);
+    return 0;
 }
 
-/* This function installs metamethods in the global table _G that prevent
- * the creation of globals accidentally.
+/* Set a special metatable on the table on the top of the stack.
+ * The metatable will raise an error if the user tries to fetch
+ * an un-existing value.
  *
- * It should be the last to be called in the scripting engine initialization
- * sequence, because it may interact with creation of globals. */
-void scriptingEnableGlobalsProtection(lua_State *lua) {
-    char *s[32];
-    sds code = sdsempty();
-    int j = 0;
+ * The function assumes the Lua stack have a least enough
+ * space to push 2 element, its up to the caller to verify
+ * this before calling this function. */
+void luaSetErrorMetatable(lua_State *lua) {
+    lua_newtable(lua); /* push metatable */
+    lua_pushcfunction(lua, luaProtectedTableError); /* push get error handler */
+    lua_setfield(lua, -2, "__index");
+    lua_setmetatable(lua, -2);
+}
 
-    /* strict.lua from: http://metalua.luaforge.net/src/lib/strict.lua.html.
-     * Modified to be adapted to Redis. */
-    s[j++]="local dbg=debug\n";
-    s[j++]="local mt = {}\n";
-    s[j++]="setmetatable(_G, mt)\n";
-    s[j++]="mt.__newindex = function (t, n, v)\n";
-    s[j++]="  if dbg.getinfo(2) then\n";
-    s[j++]="    local w = dbg.getinfo(2, \"S\").what\n";
-    s[j++]="    if w ~= \"main\" and w ~= \"C\" then\n";
-    s[j++]="      error(\"Script attempted to create global variable '\"..tostring(n)..\"'\", 2)\n";
-    s[j++]="    end\n";
-    s[j++]="  end\n";
-    s[j++]="  rawset(t, n, v)\n";
-    s[j++]="end\n";
-    s[j++]="mt.__index = function (t, n)\n";
-    s[j++]="  if dbg.getinfo(2) and dbg.getinfo(2, \"S\").what ~= \"C\" then\n";
-    s[j++]="    error(\"Script attempted to access nonexistent global variable '\"..tostring(n)..\"'\", 2)\n";
-    s[j++]="  end\n";
-    s[j++]="  return rawget(t, n)\n";
-    s[j++]="end\n";
-    s[j++]="debug = nil\n";
-    s[j++]=NULL;
+/* Set the readonly flag on the table located on the top of the stack
+ * and recursively call this function on each table located on the original
+ * table.  Also, recursively call this function on the metatables.*/
+void luaSetTableProtectionRecursively(lua_State *lua) {
+    /* This protect us from a loop in case we already visited the table
+     * For example, globals has '_G' key which is pointing back to globals. */
+    if (lua_isreadonlytable(lua, -1)) {
+        return;
+    }
 
-    for (j = 0; s[j] != NULL; j++) code = sdscatlen(code,s[j],strlen(s[j]));
-    luaL_loadbuffer(lua,code,sdslen(code),"@enable_strict_lua");
-    lua_pcall(lua,0,0,0);
-    sdsfree(code);
+    /* protect the current table */
+    lua_enablereadonlytable(lua, -1, 1);
+
+    lua_checkstack(lua, 2);
+    lua_pushnil(lua); /* Use nil to start iteration. */
+    while (lua_next(lua,-2)) {
+        /* Stack now: table, key, value */
+        if (lua_istable(lua, -1)) {
+            luaSetTableProtectionRecursively(lua);
+        }
+        lua_pop(lua, 1);
+    }
+
+    /* protect the metatable if exists */
+    if (lua_getmetatable(lua, -1)) {
+        luaSetTableProtectionRecursively(lua);
+        lua_pop(lua, 1); /* pop the metatable */
+    }
+}
+
+static int luaNewIndexAllowList(lua_State *lua) {
+    int argc = lua_gettop(lua);
+    if (argc != 3) {
+        serverLog(LL_WARNING, "malicious code trying to call luaNewIndexAllowList with wrong arguments");
+        luaL_error(lua, "Wrong number of arguments to luaNewIndexAllowList");
+    }
+    if (!lua_istable(lua, -3)) {
+        luaL_error(lua, "first argument to luaNewIndexAllowList must be a table");
+    }
+    if (!lua_isstring(lua, -2) && !lua_isnumber(lua, -2)) {
+        luaL_error(lua, "Second argument to luaNewIndexAllowList must be a string or number");
+    }
+    const char *variable_name = lua_tostring(lua, -2);
+    /* check if the key is in our allow list */
+
+    char ***allow_l = allow_lists;
+    for (; *allow_l ; ++allow_l){
+        char **c = *allow_l;
+        for (; *c ; ++c) {
+            if (strcmp(*c, variable_name) == 0) {
+                break;
+            }
+        }
+        if (*c) {
+            break;
+        }
+    }
+    if (!*allow_l) {
+        /* Search the value on the back list, if its there we know that it was removed
+         * on purpose and there is no need to print a warning. */
+        char **c = deny_list;
+        for ( ; *c ; ++c) {
+            if (strcmp(*c, variable_name) == 0) {
+                break;
+            }
+        }
+        if (!*c) {
+            serverLog(LL_WARNING, "A key '%s' was added to Lua globals which is not on the globals allow list nor listed on the deny list.", variable_name);
+        }
+    } else {
+        lua_rawset(lua, -3);
+    }
+    return 0;
+}
+
+/* Set a metatable with '__newindex' function that verify that
+ * the new index appears on our globals while list.
+ *
+ * The metatable is set on the table which located on the top
+ * of the stack.
+ */
+void luaSetAllowListProtection(lua_State *lua) {
+    lua_newtable(lua); /* push metatable */
+    lua_pushcfunction(lua, luaNewIndexAllowList); /* push get error handler */
+    lua_setfield(lua, -2, "__newindex");
+    lua_setmetatable(lua, -2);
 }
 
 /* Initialize the scripting environment.
@@ -1109,8 +1295,11 @@ void scriptingInit(int setup) {
         ldbInit();
     }
 
+    lua_pushvalue(lua, LUA_GLOBALSINDEX);
+    luaSetAllowListProtection(lua);
+    lua_pop(lua, 1);
+
     luaLoadLibraries(lua);
-    luaRemoveUnsupportedFunctions(lua);
 
     /* Initialize a dictionary we use to map SHAs to scripts.
      * This is useful for replication, as we need to replicate EVALSHA
@@ -1226,24 +1415,13 @@ void scriptingInit(int setup) {
 
     lua_setglobal(lua,"math");
 
-    /* Add a helper function that we use to sort the multi bulk output of non
-     * deterministic commands, when containing 'false' elements. */
-    {
-        char *compare_func =    "function __redis__compare_helper(a,b)\n"
-                                "  if a == false then a = '' end\n"
-                                "  if b == false then b = '' end\n"
-                                "  return a<b\n"
-                                "end\n";
-        luaL_loadbuffer(lua,compare_func,strlen(compare_func),"@cmp_func_def");
-        lua_pcall(lua,0,0,0);
-    }
-
     /* Add a helper function we use for pcall error reporting.
      * Note that when the error is in the C function we want to report the
      * information about the caller, that's what makes sense from the point
      * of view of the user debugging a script. */
     {
         char *errh_func =       "local dbg = debug\n"
+                                "debug = nil\n"
                                 "function __redis__err__handler(err)\n"
                                 "  local i = dbg.getinfo(2,'nSl')\n"
                                 "  if i and i.what == 'C' then\n"
@@ -1271,10 +1449,12 @@ void scriptingInit(int setup) {
         server.lua_client->flags |= CLIENT_DENY_BLOCKING;
     }
 
-    /* Lua beginners often don't use "local", this is likely to introduce
-     * subtle bugs in their code. To prevent problems we protect accesses
-     * to global variables. */
-    scriptingEnableGlobalsProtection(lua);
+    /* Lock the global table from any changes */
+    lua_pushvalue(lua, LUA_GLOBALSINDEX);
+    luaSetErrorMetatable(lua);
+    /* Recursively lock all tables that can be reached from the global table */
+    luaSetTableProtectionRecursively(lua);
+    lua_pop(lua, 1);
 
     server.lua = lua;
 }
@@ -1305,7 +1485,9 @@ void luaSetGlobalArray(lua_State *lua, char *var, robj **elev, int elec) {
         lua_pushlstring(lua,(char*)elev[j]->ptr,sdslen(elev[j]->ptr));
         lua_rawseti(lua,-2,j+1);
     }
+    lua_enablereadonlytable(lua, LUA_GLOBALSINDEX, 0);
     lua_setglobal(lua,var);
+    lua_enablereadonlytable(lua, LUA_GLOBALSINDEX, 1);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1386,14 +1568,7 @@ sds luaCreateFunction(client *c, lua_State *lua, robj *body) {
         return dictGetKey(de);
     }
 
-    sds funcdef = sdsempty();
-    funcdef = sdscat(funcdef,"function ");
-    funcdef = sdscatlen(funcdef,funcname,42);
-    funcdef = sdscatlen(funcdef,"() ",3);
-    funcdef = sdscatlen(funcdef,body->ptr,sdslen(body->ptr));
-    funcdef = sdscatlen(funcdef,"\nend",4);
-
-    if (luaL_loadbuffer(lua,funcdef,sdslen(funcdef),"@user_script")) {
+    if (luaL_loadbuffer(lua,body->ptr,sdslen(body->ptr),"@user_script")) {
         if (c != NULL) {
             addReplyErrorFormat(c,
                 "Error compiling script (new function): %s\n",
@@ -1401,20 +1576,12 @@ sds luaCreateFunction(client *c, lua_State *lua, robj *body) {
         }
         lua_pop(lua,1);
         sdsfree(sha);
-        sdsfree(funcdef);
         return NULL;
     }
-    sdsfree(funcdef);
 
-    if (lua_pcall(lua,0,0,0)) {
-        if (c != NULL) {
-            addReplyErrorFormat(c,"Error running script (new function): %s\n",
-                lua_tostring(lua,-1));
-        }
-        lua_pop(lua,1);
-        sdsfree(sha);
-        return NULL;
-    }
+    serverAssert(lua_isfunction(lua, -1));
+
+    lua_setfield(lua, LUA_REGISTRYINDEX, funcname);
 
     /* We also save a SHA1 -> Original script map in a dictionary
      * so that we can replicate / write in the AOF all the
@@ -1542,7 +1709,7 @@ void evalGenericCommand(client *c, int evalsha) {
     lua_getglobal(lua, "__redis__err__handler");
 
     /* Try to lookup the Lua function */
-    lua_getglobal(lua, funcname);
+    lua_getfield(lua, LUA_REGISTRYINDEX, funcname);
     if (lua_isnil(lua,-1)) {
         lua_pop(lua,1); /* remove the nil from the stack */
         /* Function not defined... let's define it if we have the
@@ -1560,7 +1727,7 @@ void evalGenericCommand(client *c, int evalsha) {
             return;
         }
         /* Now the following is guaranteed to return non nil */
-        lua_getglobal(lua, funcname);
+        lua_getfield(lua, LUA_REGISTRYINDEX, funcname);
         serverAssert(!lua_isnil(lua,-1));
     }
 
@@ -2081,7 +2248,8 @@ int ldbDelBreakpoint(int line) {
 /* Expect a valid multi-bulk command in the debugging client query buffer.
  * On success the command is parsed and returned as an array of SDS strings,
  * otherwise NULL is returned and there is to read more buffer. */
-sds *ldbReplParseCommand(int *argcp) {
+sds *ldbReplParseCommand(int *argcp, char** err) {
+    static char* protocol_error = "protocol error";
     sds *argv = NULL;
     int argc = 0;
     if (sdslen(ldb.cbuf) == 0) return NULL;
@@ -2098,7 +2266,7 @@ sds *ldbReplParseCommand(int *argcp) {
     /* Seek and parse *<count>\r\n. */
     p = strchr(p,'*'); if (!p) goto protoerr;
     char *plen = p+1; /* Multi bulk len pointer. */
-    p = strstr(p,"\r\n"); if (!p) goto protoerr;
+    p = strstr(p,"\r\n"); if (!p) goto keep_reading;
     *p = '\0'; p += 2;
     *argcp = atoi(plen);
     if (*argcp <= 0 || *argcp > 1024) goto protoerr;
@@ -2107,12 +2275,16 @@ sds *ldbReplParseCommand(int *argcp) {
     argv = zmalloc(sizeof(sds)*(*argcp));
     argc = 0;
     while(argc < *argcp) {
+        /* reached the end but there should be more data to read */
+        if (*p == '\0') goto keep_reading;
+
         if (*p != '$') goto protoerr;
         plen = p+1; /* Bulk string len pointer. */
-        p = strstr(p,"\r\n"); if (!p) goto protoerr;
+        p = strstr(p,"\r\n"); if (!p) goto keep_reading;
         *p = '\0'; p += 2;
         int slen = atoi(plen); /* Length of this arg. */
         if (slen <= 0 || slen > 1024) goto protoerr;
+        if ((size_t)(p + slen + 2 - copy) > sdslen(copy) ) goto keep_reading;
         argv[argc++] = sdsnewlen(p,slen);
         p += slen; /* Skip the already parsed argument. */
         if (p[0] != '\r' || p[1] != '\n') goto protoerr;
@@ -2122,6 +2294,8 @@ sds *ldbReplParseCommand(int *argcp) {
     return argv;
 
 protoerr:
+    *err = protocol_error;
+keep_reading:
     sdsfreesplitres(argv,argc);
     sdsfree(copy);
     return NULL;
@@ -2554,6 +2728,17 @@ void ldbEval(lua_State *lua, sds *argv, int argc) {
 void ldbRedis(lua_State *lua, sds *argv, int argc) {
     int j, saved_rc = server.lua_replicate_commands;
 
+    if (!lua_checkstack(lua, argc + 1)) {
+        /* Increase the Lua stack if needed to make sure there is enough room
+         * to push 'argc + 1' elements to the stack. On failure, return error.
+         * Notice that we need, in worst case, 'argc + 1' elements because we push all the arguments
+         * given by the user (without the first argument) and we also push the 'redis' global table and
+         * 'redis.call' function so:
+         * (1 (redis table)) + (1 (redis.call function)) + (argc - 1 (all arguments without the first)) = argc + 1*/
+        ldbLogRedisReply("max lua stack reached");
+        return;
+    }
+
     lua_getglobal(lua,"redis");
     lua_pushstring(lua,"call");
     lua_gettable(lua,-2);       /* Stack: redis, redis.call */
@@ -2610,12 +2795,17 @@ void ldbMaxlen(sds *argv, int argc) {
 int ldbRepl(lua_State *lua) {
     sds *argv;
     int argc;
+    char* err = NULL;
 
     /* We continue processing commands until a command that should return
      * to the Lua interpreter is found. */
     while(1) {
-        while((argv = ldbReplParseCommand(&argc)) == NULL) {
+        while((argv = ldbReplParseCommand(&argc, &err)) == NULL) {
             char buf[1024];
+            if (err) {
+                lua_pushstring(lua, err);
+                lua_error(lua);
+            }
             int nread = connRead(ldb.conn,buf,sizeof(buf));
             if (nread <= 0) {
                 /* Make sure the script runs without user input since the
@@ -2625,6 +2815,15 @@ int ldbRepl(lua_State *lua) {
                 return C_ERR;
             }
             ldb.cbuf = sdscatlen(ldb.cbuf,buf,nread);
+            /* after 1M we will exit with an error
+             * so that the client will not blow the memory
+             */
+            if (sdslen(ldb.cbuf) > 1<<20) {
+                sdsfree(ldb.cbuf);
+                ldb.cbuf = sdsempty();
+                lua_pushstring(lua, "max client buffer reached");
+                lua_error(lua);
+            }
         }
 
         /* Flush the old buffer. */

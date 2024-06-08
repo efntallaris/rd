@@ -316,15 +316,12 @@ foreach mdl {no yes} {
                             stop_write_load $load_handle3
                             stop_write_load $load_handle4
 
-                            # Make sure that slaves and master have same
-                            # number of keys
-                            wait_for_condition 500 100 {
-                                [$master dbsize] == [[lindex $slaves 0] dbsize] &&
-                                [$master dbsize] == [[lindex $slaves 1] dbsize] &&
-                                [$master dbsize] == [[lindex $slaves 2] dbsize]
-                            } else {
-                                fail "Different number of keys between master and replica after too long time."
-                            }
+                            # Make sure no more commands processed
+                            wait_load_handlers_disconnected
+
+                            wait_for_ofs_sync $master [lindex $slaves 0]
+                            wait_for_ofs_sync $master [lindex $slaves 1]
+                            wait_for_ofs_sync $master [lindex $slaves 2]
 
                             # Check digests
                             set digest [$master debug digest]
@@ -757,7 +754,7 @@ test "diskless replication child being killed is collected" {
             # wait for the replicas to start reading the rdb
             wait_for_log_messages 0 {"*Loading DB in memory*"} $loglines 800 10
 
-            # wait to be sure the eplica is hung and the master is blocked on write
+            # wait to be sure the replica is hung and the master is blocked on write
             after 500
 
             # simulate the OOM killer or anyone else kills the child
@@ -772,6 +769,45 @@ test "diskless replication child being killed is collected" {
             }
         }
     }
+}
+
+foreach mdl {yes no} {
+    test "replication child dies when parent is killed - diskless: $mdl" {
+        # when master is killed, make sure the fork child can detect that and exit
+        start_server {tags {"repl"}} {
+            set master [srv 0 client]
+            set master_host [srv 0 host]
+            set master_port [srv 0 port]
+            set master_pid [srv 0 pid]
+            $master config set repl-diskless-sync $mdl
+            $master config set repl-diskless-sync-delay 0
+            # create keys that will take 10 seconds to save
+            $master config set rdb-key-save-delay 1000
+            $master debug populate 10000
+            start_server {} {
+                set replica [srv 0 client]
+                $replica replicaof $master_host $master_port
+
+                # wait for rdb child to start
+                wait_for_condition 5000 10 {
+                    [s -1 rdb_bgsave_in_progress] == 1
+                } else {
+                    fail "rdb child didn't start"
+                }
+                set fork_child_pid [get_child_pid -1]
+
+                # simulate the OOM killer or anyone else kills the parent
+                exec kill -9 $master_pid
+
+                # wait for the child to notice the parent died have exited
+                wait_for_condition 500 10 {
+                    [process_is_alive $fork_child_pid] == 0
+                } else {
+                    fail "rdb child didn't terminate"
+                }
+            }
+        }
+    } {} {external:skip}
 }
 
 test "diskless replication read pipe cleanup" {
@@ -903,7 +939,7 @@ test {Kill rdb child process if its dumping RDB is not useful} {
                 # Slave2 disconnect with master
                 $slave2 slaveof no one
                 # Should kill child
-                wait_for_condition 20 10 {
+                wait_for_condition 100 10 {
                     [s 0 rdb_bgsave_in_progress] eq 0
                 } else {
                     fail "can't kill rdb child"

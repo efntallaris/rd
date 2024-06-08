@@ -15,9 +15,7 @@
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
 uname_M := $(shell sh -c 'uname -m 2>/dev/null || echo not')
-#OPTIMIZATION?=-O2
-OPTIMIZATION?=-O0
-
+OPTIMIZATION?=-O2
 DEPENDENCY_TARGETS=hiredis linenoise lua hdr_histogram
 NODEPS:=clean distclean
 
@@ -33,13 +31,13 @@ ifneq (,$(findstring FreeBSD,$(uname_S)))
   STD+=-Wno-c11-extensions
 endif
 endif
-#WARN=-Wall -W -Wno-missing-field-initializers
-#WARN=-Wall -w
-WARN=-w
+WARN=-Wall -W -Wno-missing-field-initializers
 OPT=$(OPTIMIZATION)
 
-# Detect if the compiler supports C11 _Atomic
-C11_ATOMIC := $(shell sh -c 'echo "\#include <stdatomic.h>" > foo.c; \
+# Detect if the compiler supports C11 _Atomic.
+# NUMBER_SIGN_CHAR is a workaround to support both GNU Make 4.3 and older versions.
+NUMBER_SIGN_CHAR := \#
+C11_ATOMIC := $(shell sh -c 'echo "$(NUMBER_SIGN_CHAR)include <stdatomic.h>" > foo.c; \
 	$(CC) -std=c11 -c foo.c -o foo.o > /dev/null 2>&1; \
 	if [ -f foo.o ]; then echo "yes"; rm foo.o; fi; rm foo.c')
 ifeq ($(C11_ATOMIC),yes)
@@ -94,7 +92,7 @@ endif
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
-FINAL_LIBS=-lm -luv -lrdmacm -libverbs
+FINAL_LIBS=-lm
 DEBUG=-g -ggdb
 
 # Linux ARM32 needs -latomic at linking time
@@ -125,12 +123,10 @@ ifeq ($(uname_S),Darwin)
 	# must be referenced explicitly during build.
 ifeq ($(uname_M),arm64)
 	# Homebrew arm64 uses /opt/homebrew as HOMEBREW_PREFIX
-	OPENSSL_CFLAGS=-I/opt/homebrew/opt/openssl/include
-	OPENSSL_LDFLAGS=-L/opt/homebrew/opt/openssl/lib
+	OPENSSL_PREFIX?=/opt/homebrew/opt/openssl
 else
 	# Homebrew x86/ppc uses /usr/local as HOMEBREW_PREFIX
-	OPENSSL_CFLAGS=-I/usr/local/opt/openssl/include
-	OPENSSL_LDFLAGS=-L/usr/local/opt/openssl/lib
+	OPENSSL_PREFIX?=/usr/local/opt/openssl
 endif
 else
 ifeq ($(uname_S),AIX)
@@ -192,6 +188,14 @@ endif
 endif
 endif
 endif
+
+ifdef OPENSSL_PREFIX
+	OPENSSL_CFLAGS=-I$(OPENSSL_PREFIX)/include
+	OPENSSL_LDFLAGS=-L$(OPENSSL_PREFIX)/lib
+	# Also export OPENSSL_PREFIX so it ends up in deps sub-Makefiles
+	export OPENSSL_PREFIX
+endif
+
 # Include paths to dependencies
 FINAL_CFLAGS+= -I../deps/hiredis -I../deps/linenoise -I../deps/lua/src -I../deps/hdr_histogram
 
@@ -268,8 +272,7 @@ else
 endif
 
 REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
-#REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
-REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS) $(OPTIMIZATION)
+REDIS_LD=$(QUIET_LINK)$(CC) $(FINAL_LDFLAGS)
 REDIS_INSTALL=$(QUIET_INSTALL)$(INSTALL)
 
 CCCOLOR="\033[34m"
@@ -287,7 +290,7 @@ endif
 
 REDIS_SERVER_NAME=redis-server$(PROG_SUFFIX)
 REDIS_SENTINEL_NAME=redis-sentinel$(PROG_SUFFIX)
-REDIS_SERVER_OBJ=adlist.o quicklist.o ae.o anet.o dict.o robj.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o crc16.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crcspeed.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o redis-check-rdb.o redis-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o acl.o gopher.o tracking.o connection.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o rdma_buffer.o rdma_server.o rdma_client.o allocator.o
+REDIS_SERVER_OBJ=adlist.o quicklist.o ae.o anet.o dict.o server.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o cluster.o crc16.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crcspeed.o crc64.o bitops.o sentinel.o notify.o setproctitle.o blocked.o hyperloglog.o latency.o sparkline.o redis-check-rdb.o redis-check-aof.o geo.o lazyfree.o module.o evict.o expire.o geohash.o geohash_helper.o childinfo.o defrag.o siphash.o rax.o t_stream.o listpack.o localtime.o lolwut.o lolwut5.o lolwut6.o acl.o gopher.o tracking.o connection.o tls.o sha256.o timeout.o setcpuaffinity.o monotonic.o mt19937-64.o
 REDIS_CLI_NAME=redis-cli$(PROG_SUFFIX)
 REDIS_CLI_OBJ=anet.o adlist.o dict.o redis-cli.o zmalloc.o release.o ae.o crcspeed.o crc64.o siphash.o crc16.o monotonic.o cli_common.o mt19937-64.o
 REDIS_BENCHMARK_NAME=redis-benchmark$(PROG_SUFFIX)
@@ -380,12 +383,17 @@ clean:
 
 distclean: clean
 	-(cd ../deps && $(MAKE) distclean)
+	-(cd modules && $(MAKE) clean)
+	-(cd ../tests/modules && $(MAKE) clean)
 	-(rm -f .make-*)
 
 .PHONY: distclean
 
 test: $(REDIS_SERVER_NAME) $(REDIS_CHECK_AOF_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME)
 	@(cd ..; ./runtest)
+
+test-modules: $(REDIS_SERVER_NAME)
+	@(cd ..; ./runtest-moduleapi)
 
 test-sentinel: $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME)
 	@(cd ..; ./runtest-sentinel)

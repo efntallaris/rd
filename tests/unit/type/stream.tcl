@@ -172,6 +172,15 @@ start_server {
         assert_equal [r XRANGE mystream - +] {{3-0 {f v}} {4-0 {f v}} {5-0 {f v}}}
     }
 
+    test {XTRIM with MINID option, big delta from master record} {
+        r DEL mystream
+        r XADD mystream 1-0 f v
+        r XADD mystream 1641544570597-0 f v
+        r XADD mystream 1641544570597-1 f v
+        r XTRIM mystream MINID 1641544570597-0
+        assert_equal [r XRANGE mystream - +] {{1641544570597-0 {f v}} {1641544570597-1 {f v}}}
+    }
+
     test {XADD mass insertion and XLEN} {
         r DEL mystream
         r multi
@@ -197,6 +206,15 @@ start_server {
         r DEL otherstream
         catch {r XADD otherstream 0-0 k v} err
         assert {[r EXISTS otherstream] == 0}
+    }
+
+    test {XADD with LIMIT delete entries no more than limit} {
+        r del yourstream
+        for {set j 0} {$j < 3} {incr j} {
+            r XADD yourstream * xitem v
+        }
+        r XADD yourstream MAXLEN ~ 0 limit 1 * xitem v
+        assert {[r XLEN yourstream] == 4}
     }
 
     test {XRANGE COUNT works as expected} {
@@ -524,6 +542,16 @@ start_server {
             r XADD mystream * xitem v
         }
         assert_error ERR* {r XTRIM mystream MAXLEN 1 LIMIT 30}
+    }
+
+    test {XTRIM with LIMIT delete entries no more than limit} {
+        r del mystream
+        r config set stream-node-max-entries 2
+        for {set j 0} {$j < 3} {incr j} {
+            r XADD mystream * xitem v
+        }
+        assert {[r XTRIM mystream MAXLEN ~ 0 LIMIT 1] == 0}
+        assert {[r XTRIM mystream MAXLEN ~ 0 LIMIT 2] == 2}
     }
 }
 

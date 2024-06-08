@@ -593,10 +593,10 @@ void sentinelIsRunning(void) {
 
 /* Create a sentinelAddr object and return it on success.
  * On error NULL is returned and errno is set to:
- *  ENOENT: Can't resolve the hostname.
+ *  ENOENT: Can't resolve the hostname, unless accept_unresolved is non-zero.
  *  EINVAL: Invalid port number.
  */
-sentinelAddr *createSentinelAddr(char *hostname, int port) {
+sentinelAddr *createSentinelAddr(char *hostname, int port, int is_accept_unresolved) {
     char ip[NET_IP_STR_LEN];
     sentinelAddr *sa;
 
@@ -606,8 +606,14 @@ sentinelAddr *createSentinelAddr(char *hostname, int port) {
     }
     if (anetResolve(NULL,hostname,ip,sizeof(ip),
                     sentinel.resolve_hostnames ? ANET_NONE : ANET_IP_ONLY) == ANET_ERR) {
-        errno = ENOENT;
-        return NULL;
+        serverLog(LL_WARNING, "Failed to resolve hostname '%s'", hostname);
+        if (sentinel.resolve_hostnames && is_accept_unresolved) {
+            ip[0] = '\0';
+        }
+        else {
+            errno = ENOENT;
+            return NULL;
+        }
     }
     sa = zmalloc(sizeof(*sa));
     sa->hostname = sdsnew(hostname);
@@ -634,19 +640,29 @@ void releaseSentinelAddr(sentinelAddr *sa) {
     zfree(sa);
 }
 
-/* Return non-zero if two addresses are equal. */
-int sentinelAddrIsEqual(sentinelAddr *a, sentinelAddr *b) {
-    return a->port == b->port && !strcasecmp(a->ip,b->ip);
+/* Return non-zero if the two addresses are equal, either by address
+ * or by hostname if they could not have been resolved.
+ */
+int sentinelAddrOrHostnameEqual(sentinelAddr *a, sentinelAddr *b) {
+    return a->port == b->port &&
+            (!strcmp(a->ip, b->ip)  ||
+            !strcasecmp(a->hostname, b->hostname));
 }
 
 /* Return non-zero if a hostname matches an address. */
 int sentinelAddrEqualsHostname(sentinelAddr *a, char *hostname) {
     char ip[NET_IP_STR_LEN];
 
-    /* We always resolve the hostname and compare it to the address */
+    /* Try resolve the hostname and compare it to the address */
     if (anetResolve(NULL, hostname, ip, sizeof(ip),
-                    sentinel.resolve_hostnames ? ANET_NONE : ANET_IP_ONLY) == ANET_ERR)
-        return 0;
+                    sentinel.resolve_hostnames ? ANET_NONE : ANET_IP_ONLY) == ANET_ERR) {
+
+        /* If failed resolve then compare based on hostnames. That is our best effort as
+         * long as the server is unavailable for some reason. It is fine since Redis 
+         * instance cannot have multiple hostnames for a given setup */
+        return !strcasecmp(sentinel.resolve_hostnames ? a->hostname : a->ip, hostname);
+    }
+    /* Compare based on address */
     return !strcasecmp(a->ip, ip);
 }
 
@@ -1296,7 +1312,7 @@ sentinelRedisInstance *createSentinelRedisInstance(char *name, int flags, char *
     serverAssert((flags & SRI_MASTER) || master != NULL);
 
     /* Check address validity. */
-    addr = createSentinelAddr(hostname,port);
+    addr = createSentinelAddr(hostname,port,1);
     if (addr == NULL) return NULL;
 
     /* For slaves use ip/host:port as name. */
@@ -1424,7 +1440,7 @@ sentinelRedisInstance *sentinelRedisInstanceLookupSlave(
      * If that is the case, depending on configuration we either resolve
      * it and use the IP addres or fail.
      */
-    addr = createSentinelAddr(slave_addr, port);
+    addr = createSentinelAddr(slave_addr, port, 0);
     if (!addr) return NULL;
     key = announceSentinelAddrAndPort(addr);
     releaseSentinelAddr(addr);
@@ -1487,8 +1503,10 @@ sentinelRedisInstance *getSentinelRedisInstanceByAddrAndRunID(dict *instances, c
 
     serverAssert(addr || runid);   /* User must pass at least one search param. */
     if (addr != NULL) {
-        /* Resolve addr, we use the IP as a key even if a hostname is used */
-        ri_addr = createSentinelAddr(addr, port);
+        /* Try to resolve addr. If hostnames are used, we're accepting an ri_addr
+         * that contains an hostname only and can still be matched based on that.
+         */
+        ri_addr = createSentinelAddr(addr,port,1);
         if (!ri_addr) return NULL;
     }
     di = dictGetIterator(instances);
@@ -1497,8 +1515,7 @@ sentinelRedisInstance *getSentinelRedisInstanceByAddrAndRunID(dict *instances, c
 
         if (runid && !ri->runid) continue;
         if ((runid == NULL || strcmp(ri->runid, runid) == 0) &&
-            (addr == NULL || (strcmp(ri->addr->ip, ri_addr->ip) == 0 &&
-                            ri->addr->port == port)))
+            (addr == NULL || sentinelAddrOrHostnameEqual(ri->addr, ri_addr)))
         {
             instance = ri;
             break;
@@ -1629,7 +1646,7 @@ int sentinelResetMasterAndChangeAddress(sentinelRedisInstance *master, char *hos
     dictIterator *di;
     dictEntry *de;
 
-    newaddr = createSentinelAddr(hostname,port);
+    newaddr = createSentinelAddr(hostname,port,0);
     if (newaddr == NULL) return C_ERR;
 
     /* There can be only 0 or 1 slave that has the newaddr.
@@ -1642,7 +1659,7 @@ int sentinelResetMasterAndChangeAddress(sentinelRedisInstance *master, char *hos
     while((de = dictNext(di)) != NULL) {
         sentinelRedisInstance *slave = dictGetVal(de);
 
-        if (sentinelAddrIsEqual(slave->addr,newaddr)) continue;
+        if (sentinelAddrOrHostnameEqual(slave->addr,newaddr)) continue;
         slaves[numslaves++] = dupSentinelAddr(slave->addr);
     }
     dictReleaseIterator(di);
@@ -1650,7 +1667,7 @@ int sentinelResetMasterAndChangeAddress(sentinelRedisInstance *master, char *hos
     /* If we are switching to a different address, include the old address
      * as a slave as well, so that we'll be able to sense / reconfigure
      * the old master. */
-    if (!sentinelAddrIsEqual(newaddr,master->addr)) {
+    if (!sentinelAddrOrHostnameEqual(newaddr,master->addr)) {
         slaves[numslaves++] = dupSentinelAddr(master->addr);
     }
 
@@ -2199,7 +2216,7 @@ void rewriteConfigSentinelOption(struct rewriteConfigState *state) {
              * slave's address, a failover is in progress and the slave was
              * already successfully promoted. So as the address of this slave
              * we use the old master address instead. */
-            if (sentinelAddrIsEqual(slave_addr,master_addr))
+            if (sentinelAddrOrHostnameEqual(slave_addr,master_addr))
                 slave_addr = master->addr;
             line = sdscatprintf(sdsempty(),
                 "sentinel known-replica %s %s %d",
@@ -2402,7 +2419,10 @@ static int instanceLinkNegotiateTLS(redisAsyncContext *context) {
     SSL *ssl = SSL_new(redis_tls_client_ctx ? redis_tls_client_ctx : redis_tls_ctx);
     if (!ssl) return C_ERR;
 
-    if (redisInitiateSSL(&context->c, ssl) == REDIS_ERR) return C_ERR;
+    if (redisInitiateSSL(&context->c, ssl) == REDIS_ERR) {
+        SSL_free(ssl);
+        return C_ERR;
+    }
 #endif
     return C_OK;
 }
@@ -2411,6 +2431,7 @@ static int instanceLinkNegotiateTLS(redisAsyncContext *context) {
  * is disconnected. Note that link->disconnected is true even if just
  * one of the two links (commands and pub/sub) is missing. */
 void sentinelReconnectInstance(sentinelRedisInstance *ri) {
+
     if (ri->link->disconnected == 0) return;
     if (ri->addr->port == 0) return; /* port == 0 means invalid address. */
     instanceLink *link = ri->link;
@@ -2421,7 +2442,21 @@ void sentinelReconnectInstance(sentinelRedisInstance *ri) {
 
     /* Commands connection. */
     if (link->cc == NULL) {
+
+        /* It might be that the instance is disconnected because it wasn't available earlier when the instance
+         * allocated, say during failover, and therefore we failed to resolve its ip.
+         * Another scenario is that the instance restarted with new ip, and we should resolve its new ip based on
+         * its hostname */
+        if (sentinel.resolve_hostnames) {
+            sentinelAddr *tryResolveAddr = createSentinelAddr(ri->addr->hostname, ri->addr->port, 0);
+            if (tryResolveAddr != NULL) {
+                releaseSentinelAddr(ri->addr);
+                ri->addr = tryResolveAddr;
+            }
+        }
+
         link->cc = redisAsyncConnectBind(ri->addr->ip,ri->addr->port,NET_FIRST_BIND_ADDR);
+
         if (link->cc && !link->cc->err) anetCloexec(link->cc->c.fd);
         if (!link->cc) {
             sentinelEvent(LL_DEBUG,"-cmd-link-reconnection",ri,"%@ #Failed to establish connection");
@@ -3684,11 +3719,11 @@ NULL
         if ((ri = sentinelGetMasterByNameOrReplyError(c,c->argv[2])) == NULL)
             return;
         if (ri->flags & SRI_FAILOVER_IN_PROGRESS) {
-            addReplySds(c,sdsnew("-INPROG Failover already in progress\r\n"));
+            addReplyError(c,"-INPROG Failover already in progress");
             return;
         }
         if (sentinelSelectSlave(ri) == NULL) {
-            addReplySds(c,sdsnew("-NOGOODSLAVE No suitable replica to promote\r\n"));
+            addReplyError(c,"-NOGOODSLAVE No suitable replica to promote");
             return;
         }
         serverLog(LL_WARNING,"Executing user requested FAILOVER of '%s'",
@@ -3777,8 +3812,7 @@ NULL
                 e = sdscat(e, "Not enough available Sentinels to reach the"
                               " majority and authorize a failover");
             }
-            e = sdscat(e,"\r\n");
-            addReplySds(c,e);
+            addReplyErrorSds(c,e);
         }
     } else if (!strcasecmp(c->argv[1]->ptr,"set")) {
         if (c->argc < 3) goto numargserr;
@@ -3991,6 +4025,7 @@ void sentinelSetCommand(client *c) {
     int j, changes = 0;
     int badarg = 0; /* Bad argument position for error reporting. */
     char *option;
+    int redacted;
 
     if ((ri = sentinelGetMasterByNameOrReplyError(c,c->argv[2]))
         == NULL) return;
@@ -4001,6 +4036,7 @@ void sentinelSetCommand(client *c) {
         option = c->argv[j]->ptr;
         long long ll;
         int old_j = j; /* Used to know what to log as an event. */
+        redacted = 0;
 
         if (!strcasecmp(option,"down-after-milliseconds") && moreargs > 0) {
             /* down-after-millisecodns <milliseconds> */
@@ -4075,6 +4111,7 @@ void sentinelSetCommand(client *c) {
             sdsfree(ri->auth_pass);
             ri->auth_pass = strlen(value) ? sdsnew(value) : NULL;
             changes++;
+            redacted = 1;
         } else if (!strcasecmp(option,"auth-user") && moreargs > 0) {
             /* auth-user <username> */
             char *value = c->argv[++j]->ptr;
@@ -4122,7 +4159,7 @@ void sentinelSetCommand(client *c) {
         switch(numargs) {
         case 2:
             sentinelEvent(LL_WARNING,"+set",ri,"%@ %s %s",(char*)c->argv[old_j]->ptr,
-                                                          (char*)c->argv[old_j+1]->ptr);
+                                                          redacted ? "******" : (char*)c->argv[old_j+1]->ptr);
             break;
         case 3:
             sentinelEvent(LL_WARNING,"+set",ri,"%@ %s %s %s",(char*)c->argv[old_j]->ptr,
@@ -4702,6 +4739,7 @@ sentinelRedisInstance *sentinelSelectSlave(sentinelRedisInstance *master) {
     max_master_down_time += master->down_after_period * 10;
 
     di = dictGetIterator(master->slaves);
+
     while((de = dictNext(di)) != NULL) {
         sentinelRedisInstance *slave = dictGetVal(de);
         mstime_t info_validity_time;

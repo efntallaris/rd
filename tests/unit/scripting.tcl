@@ -3,6 +3,20 @@ start_server {tags {"scripting"}} {
         r eval {return 'hello'} 0
     } {hello}
 
+    test {EVAL - Return _G} {
+        r eval {return _G} 0
+    } {}
+
+    test {EVAL - Return table with a metatable that raise error} {
+        r eval {local a = {}; setmetatable(a,{__index=function() foo() end}) return a} 0
+    } {}
+
+    test {EVAL - Return table with a metatable that call redis} {
+        r eval {local a = {}; setmetatable(a,{__index=function() redis.call('set', 'x', '1') end}) return a} 0
+        # make sure x was not set
+        r get x
+    } {}
+
     test {EVAL - Lua integer -> Redis protocol type conversion} {
         r eval {return 100.5} 0
     } {100}
@@ -245,6 +259,66 @@ start_server {tags {"scripting"}} {
         } 0
     } {a b}
 
+    test {EVAL - JSON smoke test} {
+        r eval {
+            local some_map = {
+                s1="Some string",
+                n1=100,
+                a1={"Some","String","Array"},
+                nil1=nil,
+                b1=true,
+                b2=false}
+            local encoded = cjson.encode(some_map)
+            local decoded = cjson.decode(encoded)
+            assert(table.concat(some_map) == table.concat(decoded))
+
+            cjson.encode_keep_buffer(false)
+            encoded = cjson.encode(some_map)
+            decoded = cjson.decode(encoded)
+            assert(table.concat(some_map) == table.concat(decoded))
+
+            -- Table with numeric keys
+            local table1 = {one="one", [1]="one"}
+            encoded = cjson.encode(table1)
+            decoded = cjson.decode(encoded)
+            assert(decoded["one"] == table1["one"])
+            assert(decoded["1"] == table1[1])
+
+            -- Array
+            local array1 = {[1]="one", [2]="two"}
+            encoded = cjson.encode(array1)
+            decoded = cjson.decode(encoded)
+            assert(table.concat(array1) == table.concat(decoded))
+
+            -- Invalid keys
+            local invalid_map = {}
+            invalid_map[false] = "false"
+            local ok, encoded = pcall(cjson.encode, invalid_map)
+            assert(ok == false)
+
+            -- Max depth
+            cjson.encode_max_depth(1)
+            ok, encoded = pcall(cjson.encode, some_map)
+            assert(ok == false)
+
+            cjson.decode_max_depth(1)
+            ok, decoded = pcall(cjson.decode, '{"obj": {"array": [1,2,3,4]}}')
+            assert(ok == false)
+
+            -- Invalid numbers
+            ok, encoded = pcall(cjson.encode, {num1=0/0})
+            assert(ok == false)
+            cjson.encode_invalid_numbers(true)
+            ok, encoded = pcall(cjson.encode, {num1=0/0})
+            assert(ok == true)
+
+            -- Restore defaults
+            cjson.decode_max_depth(1000)
+            cjson.encode_max_depth(1000)
+            cjson.encode_invalid_numbers(false)
+        } 0
+    }
+
     test {EVAL - cmsgpack can pack double?} {
         r eval {local encoded = cmsgpack.pack(0.1)
                 local h = ""
@@ -264,6 +338,68 @@ start_server {tags {"scripting"}} {
                 return h
         } 0
     } {d3ffffff0000000000}
+
+    test {EVAL - cmsgpack pack/unpack smoke test} {
+        r eval {
+                local str_lt_32 = string.rep("x", 30)
+                local str_lt_255 = string.rep("x", 250)
+                local str_lt_65535 = string.rep("x", 65530)
+                local str_long = string.rep("x", 100000)
+                local array_lt_15 = {1, 2, 3, 4, 5}
+                local array_lt_65535 = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+                local array_big = {}
+                for i=1, 100000 do
+                    array_big[i] = i
+                end
+                local map_lt_15 = {a=1, b=2}
+                local map_big = {}
+                for i=1, 100000 do
+                    map_big[tostring(i)] = i
+                end
+                local some_map = {
+                    s1=str_lt_32,
+                    s2=str_lt_255,
+                    s3=str_lt_65535,
+                    s4=str_long,
+                    d1=0.1,
+                    i1=1,
+                    i2=250,
+                    i3=65530,
+                    i4=100000,
+                    i5=2^40,
+                    i6=-1,
+                    i7=-120,
+                    i8=-32000,
+                    i9=-100000,
+                    i10=-3147483648,
+                    a1=array_lt_15,
+                    a2=array_lt_65535,
+                    a3=array_big,
+                    m1=map_lt_15,
+                    m2=map_big,
+                    b1=false,
+                    b2=true,
+                    n=nil
+                }
+                local encoded = cmsgpack.pack(some_map)
+                local decoded = cmsgpack.unpack(encoded)
+                assert(table.concat(some_map) == table.concat(decoded))
+                local offset, decoded_one = cmsgpack.unpack_one(encoded, 0)
+                assert(table.concat(some_map) == table.concat(decoded_one))
+                assert(offset == -1)
+
+                local encoded_multiple = cmsgpack.pack(str_lt_32, str_lt_255, str_lt_65535, str_long)
+                local offset, obj = cmsgpack.unpack_limit(encoded_multiple, 1, 0)
+                assert(obj == str_lt_32)
+                offset, obj = cmsgpack.unpack_limit(encoded_multiple, 1, offset)
+                assert(obj == str_lt_255)
+                offset, obj = cmsgpack.unpack_limit(encoded_multiple, 1, offset)
+                assert(obj == str_lt_65535)
+                offset, obj = cmsgpack.unpack_limit(encoded_multiple, 1, offset)
+                assert(obj == str_long)
+                assert(offset == -1)
+        } 0
+    }
 
     test {EVAL - cmsgpack can pack and unpack circular references?} {
         r eval {local a = {x=nil,y=5}
@@ -390,7 +526,7 @@ start_server {tags {"scripting"}} {
     test {Globals protection setting an undeclared global*} {
         catch {r eval {a=10} 0} e
         set e
-    } {*ERR*attempted to create global*}
+    } {ERR*Attempt to modify a readonly table*}
 
     test {Test an example script DECR_IF_GT} {
         set decr_if_gt {
@@ -435,6 +571,7 @@ start_server {tags {"scripting"}} {
     }
 
     test {EVAL does not leak in the Lua stack} {
+        r script flush ;# reset Lua VM
         r set x 0
         # Use a non blocking client to speedup the loop.
         set rd [redis_deferring_client]
@@ -595,6 +732,132 @@ start_server {tags {"scripting"}} {
         set res [r eval {redis.setresp(2); return redis.call('hgetall', KEYS[1])} 1 hash]
         assert_equal $res $expected_list
     }
+
+    test "Try trick global protection 1" {
+        catch {
+            r eval {
+                setmetatable(_G, {})
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick global protection 2" {
+        catch {
+            r eval {
+                local g = getmetatable(_G)
+                g.__index = {}
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick global protection 3" {
+        catch {
+            r eval {
+                redis = function() return 1 end
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick global protection 4" {
+        catch {
+            r eval {
+                _G = {}
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick readonly table on redis table" {
+        catch {
+            r eval {
+                redis.call = function() return 1 end
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick readonly table on json table" {
+        catch {
+            r eval {
+                cjson.encode = function() return 1 end
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick readonly table on cmsgpack table" {
+        catch {
+            r eval {
+                cmsgpack.pack = function() return 1 end
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Try trick readonly table on bit table" {
+        catch {
+            r eval {
+                bit.lshift = function() return 1 end
+            } 0
+        } e
+        set _ $e
+    } {*Attempt to modify a readonly table*}
+
+    test "Test loadfile are not available" {
+        catch {
+            r eval {
+                loadfile('some file')
+            } 0
+        } e
+        set _ $e
+    } {*Script attempted to access nonexistent global variable 'loadfile'*}
+
+    test "Test dofile are not available" {
+        catch {
+            r eval {
+                dofile('some file')
+            } 0
+        } e
+        set _ $e
+    } {*Script attempted to access nonexistent global variable 'dofile'*}
+
+    test "Test print is available to avoid breaking change" {
+        catch {
+            r eval {
+                print('some data')
+            } 0
+        } e
+        set _ $e
+    } {}
+
+    test {Script return recursive object} {
+        r readraw 1
+        set res [r eval {local a = {}; local b = {a}; a[1] = b; return a} 0]
+        # drain the response
+        while {true} {
+            if {$res == "-ERR reached lua stack limit"} {
+                break
+            }
+            assert_equal $res "*1"
+            set res [r read]
+        }
+        r readraw 0
+        # make sure the connection is still valid
+        assert_equal [r ping] {PONG}
+    }
+
+    test {Script check unpack with massive arguments} {
+        r eval {
+            local a = {}
+            for i=1,7999 do
+                a[i] = 1
+            end 
+            return redis.call("lpush", "l", unpack(a))
+        } 0
+    } {7999}
 }
 
 # Start a new server since the last test in this stanza will kill the
@@ -922,4 +1185,19 @@ start_server {tags {"scripting"}} {
     r script debug sync
     r eval {return 'hello'} 0
     r eval {return 'hello'} 0
+}
+
+start_server {tags {"scripting needs:debug external:skip"}} {
+    test {Test scripting debug protocol parsing} {
+        r script debug sync
+        r eval {return 'hello'} 0
+        catch {r 'hello\0world'} e
+        assert_match {*Unknown Redis Lua debugger command*} $e
+        catch {r 'hello\0'} e
+        assert_match {*Unknown Redis Lua debugger command*} $e
+        catch {r '\0hello'} e
+        assert_match {*Unknown Redis Lua debugger command*} $e
+        catch {r '\0hello\0'} e
+        assert_match {*Unknown Redis Lua debugger command*} $e
+    }
 }

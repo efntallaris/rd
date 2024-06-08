@@ -123,6 +123,21 @@ robj *createStringObject(const char *ptr, size_t len) {
         return createRawStringObject(ptr,len);
 }
 
+/* Same as CreateRawStringObject, can return NULL if allocation fails */
+robj *tryCreateRawStringObject(const char *ptr, size_t len) {
+    sds str = sdstrynewlen(ptr,len);
+    if (!str) return NULL;
+    return createObject(OBJ_STRING, str);
+}
+
+/* Same as createStringObject, can return NULL if allocation fails */
+robj *tryCreateStringObject(const char *ptr, size_t len) {
+    if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
+        return createEmbeddedStringObject(ptr,len);
+    else
+        return tryCreateRawStringObject(ptr,len);
+}
+
 /* Create a string object from a long long value. When possible returns a
  * shared integer object, or at least an integer encoded one.
  *
@@ -415,7 +430,7 @@ void trimStringObjectIfNeeded(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW &&
         sdsavail(o->ptr) > sdslen(o->ptr)/10)
     {
-        o->ptr = sdsRemoveFreeSpace(o->ptr);
+        o->ptr = sdsRemoveFreeSpace(o->ptr, 0);
     }
 }
 
@@ -881,7 +896,7 @@ size_t objectComputeSize(robj *o, size_t sample_size) {
         }
     } else if (o->type == OBJ_STREAM) {
         stream *s = o->ptr;
-        asize = sizeof(*o);
+        asize = sizeof(*o)+sizeof(*s);
         asize += streamRadixTreeMemoryUsage(s->rax);
 
         /* Now we have to add the listpacks. The last listpack is often non
@@ -894,7 +909,8 @@ size_t objectComputeSize(robj *o, size_t sample_size) {
         size_t lpsize = 0, samples = 0;
         while(samples < sample_size && raxNext(&ri)) {
             unsigned char *lp = ri.data;
-            lpsize += lpBytes(lp);
+            /* Use the allocated size, since we overprovision the node initially. */
+            lpsize += zmalloc_size(lp);
             samples++;
         }
         if (s->rax->numele <= samples) {
@@ -906,7 +922,8 @@ size_t objectComputeSize(robj *o, size_t sample_size) {
              * if there are a few elements in the radix tree. */
             raxSeek(&ri,"$",NULL,0);
             raxNext(&ri);
-            asize += lpBytes(ri.data);
+            /* Use the allocated size, since we overprovision the node initially. */
+            asize += zmalloc_size(ri.data);
         }
         raxStop(&ri);
 
@@ -1231,8 +1248,7 @@ robj *objectCommandLookup(client *c, robj *key) {
 
 robj *objectCommandLookupOrReply(client *c, robj *key, robj *reply) {
     robj *o = objectCommandLookup(c,key);
-
-    if (!o) addReply(c, reply);
+    if (!o) SentReplyOnKeyMiss(c, reply);
     return o;
 }
 

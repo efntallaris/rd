@@ -21,15 +21,9 @@ start_server {tags {"repl network"}} {
             stop_bg_complex_data $load_handle0
             stop_bg_complex_data $load_handle1
             stop_bg_complex_data $load_handle2
-            set retry 10
-            while {$retry && ([$master debug digest] ne [$slave debug digest])}\
-            {
-                after 1000
-                incr retry -1
-            }
-            assert {[$master dbsize] > 0}
-
-            if {[$master debug digest] ne [$slave debug digest]} {
+            wait_for_condition 100 100 {
+                [$master debug digest] == [$slave debug digest]
+            } else {
                 set csv1 [csvdump r]
                 set csv2 [csvdump {r -1}]
                 set fd [open /tmp/repldump1.txt w]
@@ -38,10 +32,9 @@ start_server {tags {"repl network"}} {
                 set fd [open /tmp/repldump2.txt w]
                 puts -nonewline $fd $csv2
                 close $fd
-                puts "Master - Replica inconsistency"
-                puts "Run diff -u against /tmp/repldump*.txt for more info"
+                fail "Master - Replica inconsistency, Run diff -u against /tmp/repldump*.txt for more info"
             }
-            assert_equal [r debug digest] [r -1 debug digest]
+            assert {[$master dbsize] > 0}
         }
     }
 }
@@ -65,28 +58,41 @@ start_server {tags {"repl"}} {
         test {With min-slaves-to-write (1,3): master should be writable} {
             $master config set min-slaves-max-lag 3
             $master config set min-slaves-to-write 1
-            $master set foo bar
-        } {OK}
+            assert_equal OK [$master set foo 123]
+            assert_equal OK [$master eval "return redis.call('set','foo',12345)" 0]
+        }
 
         test {With min-slaves-to-write (2,3): master should not be writable} {
             $master config set min-slaves-max-lag 3
             $master config set min-slaves-to-write 2
-            catch {$master set foo bar} e
-            set e
-        } {NOREPLICAS*}
+            assert_error "*NOREPLICAS*" {$master set foo bar}
+            assert_error "*NOREPLICAS*" {$master eval "redis.call('set','foo','bar')" 0}
+        }
+
+        test {With not enough good slaves, read in Lua script is still accepted} {
+            $master config set min-slaves-max-lag 3
+            $master config set min-slaves-to-write 1
+            $master eval "redis.call('set','foo','bar')" 0
+
+            $master config set min-slaves-to-write 2
+            $master eval "return redis.call('get','foo')" 0
+        } {bar}
 
         test {With min-slaves-to-write: master not writable with lagged slave} {
             $master config set min-slaves-max-lag 2
             $master config set min-slaves-to-write 1
-            assert {[$master set foo bar] eq {OK}}
+            assert_equal OK [$master set foo 123]
+            assert_equal OK [$master eval "return redis.call('set','foo',12345)" 0]
+            # Killing a slave to make it become a lagged slave.
             exec kill -SIGSTOP [srv 0 pid]
+            # Waiting for slave kill.
             wait_for_condition 100 100 {
-                [catch {$master set foo bar}] != 0
+                [catch {$master set foo 123}] != 0
             } else {
                 fail "Master didn't become readonly"
             }
-            catch {$master set foo bar} err
-            assert_match {NOREPLICAS*} $err
+            assert_error "*NOREPLICAS*" {$master set foo 123}
+            assert_error "*NOREPLICAS*" {$master eval "return redis.call('set','foo',12345)" 0}
             exec kill -SIGCONT [srv 0 pid]
         }
     }

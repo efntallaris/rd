@@ -87,6 +87,11 @@ typedef struct bkinfo {
  * flag is set client query buffer is not longer processed, but accumulated,
  * and will be processed when the client is unblocked. */
 void blockClient(client *c, int btype) {
+    /* Master client should never be blocked unless pause or module */
+    serverAssert(!(c->flags & CLIENT_MASTER &&
+                   btype != BLOCKED_MODULE &&
+                   btype != BLOCKED_PAUSE));
+
     c->flags |= CLIENT_BLOCKED;
     c->btype = btype;
     server.blocked_clients++;
@@ -289,6 +294,8 @@ void serveClientsBlockedOnListKey(robj *o, readyList *rl) {
                  * call. */
                 if (dstkey) incrRefCount(dstkey);
 
+                client *old_client = server.current_client;
+                server.current_client = receiver;
                 monotime replyTimer;
                 elapsedStart(&replyTimer);
                 if (serveClientBlockedOnList(receiver,
@@ -301,6 +308,8 @@ void serveClientsBlockedOnListKey(robj *o, readyList *rl) {
                 }
                 updateStatsOnUnblock(receiver, 0, elapsedUs(replyTimer));
                 unblockClient(receiver);
+                afterCommand(receiver);
+                server.current_client = old_client;
 
                 if (dstkey) decrRefCount(dstkey);
                 decrRefCount(value);
@@ -344,11 +353,15 @@ void serveClientsBlockedOnSortedSetKey(robj *o, readyList *rl) {
             int where = (receiver->lastcmd &&
                          receiver->lastcmd->proc == bzpopminCommand)
                          ? ZSET_MIN : ZSET_MAX;
+            client *old_client = server.current_client;
+            server.current_client = receiver;
             monotime replyTimer;
             elapsedStart(&replyTimer);
             genericZpopCommand(receiver,&rl->key,1,where,1,NULL);
             updateStatsOnUnblock(receiver, 0, elapsedUs(replyTimer));
             unblockClient(receiver);
+            afterCommand(receiver);
+            server.current_client = old_client;
             zcard--;
 
             /* Replicate the command. */
@@ -438,6 +451,8 @@ void serveClientsBlockedOnStreamKey(robj *o, readyList *rl) {
                     }
                 }
 
+                client *old_client = server.current_client;
+                server.current_client = receiver;
                 monotime replyTimer;
                 elapsedStart(&replyTimer);
                 /* Emit the two elements sub-array consisting of
@@ -466,6 +481,8 @@ void serveClientsBlockedOnStreamKey(robj *o, readyList *rl) {
                  * valid, so we must do the setup above before
                  * this call. */
                 unblockClient(receiver);
+                afterCommand(receiver);
+                server.current_client = old_client;
             }
         }
     }
@@ -510,12 +527,16 @@ void serveClientsBlockedOnKeyByModule(readyList *rl) {
              * different modules with different triggers to consider if a key
              * is ready or not. This means we can't exit the loop but need
              * to continue after the first failure. */
+            client *old_client = server.current_client;
+            server.current_client = receiver;
             monotime replyTimer;
             elapsedStart(&replyTimer);
             if (!moduleTryServeClientBlockedOnKey(receiver, rl->key)) continue;
             updateStatsOnUnblock(receiver, 0, elapsedUs(replyTimer));
 
             moduleUnblockClient(receiver);
+            afterCommand(receiver);
+            server.current_client = old_client;
         }
     }
 }

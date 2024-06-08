@@ -263,9 +263,20 @@
  * to stay there to signal that a full scan is needed to get the number of
  * items inside the ziplist. */
 #define ZIPLIST_INCR_LENGTH(zl,incr) { \
-    if (ZIPLIST_LENGTH(zl) < UINT16_MAX) \
+    if (intrev16ifbe(ZIPLIST_LENGTH(zl)) < UINT16_MAX) \
         ZIPLIST_LENGTH(zl) = intrev16ifbe(intrev16ifbe(ZIPLIST_LENGTH(zl))+incr); \
 }
+
+/* Don't let ziplists grow over 1GB in any case, don't wanna risk overflow in
+ * zlbytes*/
+#define ZIPLIST_MAX_SAFETY_SIZE (1<<30)
+int ziplistSafeToAdd(unsigned char* zl, size_t add) {
+    size_t len = zl? ziplistBlobLen(zl): 0;
+    if (len + add > ZIPLIST_MAX_SAFETY_SIZE)
+        return 0;
+    return 1;
+}
+
 
 /* We use this function to receive information about a ziplist entry.
  * Note that this is not how the data is actually encoded, is just what we
@@ -405,10 +416,10 @@ unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, uns
             (len) = (((ptr)[0] & 0x3f) << 8) | (ptr)[1];                       \
         } else if ((encoding) == ZIP_STR_32B) {                                \
             (lensize) = 5;                                                     \
-            (len) = ((ptr)[1] << 24) |                                         \
-                    ((ptr)[2] << 16) |                                         \
-                    ((ptr)[3] <<  8) |                                         \
-                    ((ptr)[4]);                                                \
+            (len) = ((uint32_t)(ptr)[1] << 24) |                               \
+                    ((uint32_t)(ptr)[2] << 16) |                               \
+                    ((uint32_t)(ptr)[3] <<  8) |                               \
+                    ((uint32_t)(ptr)[4]);                                      \
         } else {                                                               \
             (lensize) = 0; /* bad encoding, should be covered by a previous */ \
             (len) = 0;     /* ZIP_ASSERT_ENCODING / zipEncodingLenSize, or  */ \
@@ -546,7 +557,7 @@ void zipSaveInteger(unsigned char *p, int64_t value, unsigned char encoding) {
         memcpy(p,&i16,sizeof(i16));
         memrev16ifbe(p);
     } else if (encoding == ZIP_INT_24B) {
-        i32 = value<<8;
+        i32 = ((uint64_t)value)<<8;
         memrev32ifbe(&i32);
         memcpy(p,((uint8_t*)&i32)+1,sizeof(i32)-sizeof(uint8_t));
     } else if (encoding == ZIP_INT_32B) {
@@ -709,7 +720,8 @@ unsigned char *ziplistNew(void) {
 }
 
 /* Resize the ziplist. */
-unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
+unsigned char *ziplistResize(unsigned char *zl, size_t len) {
+    assert(len < UINT32_MAX);
     zl = zrealloc(zl,len);
     ZIPLIST_BYTES(zl) = intrev32ifbe(len);
     zl[len-1] = ZIP_END;
@@ -1070,6 +1082,9 @@ unsigned char *ziplistMerge(unsigned char **first, unsigned char **second) {
     /* Combined zl length should be limited within UINT16_MAX */
     zllength = zllength < UINT16_MAX ? zllength : UINT16_MAX;
 
+    /* larger values can't be stored into ZIPLIST_BYTES */
+    assert(zlbytes < UINT32_MAX);
+
     /* Save offset positions before we start ripping memory apart. */
     size_t first_offset = intrev32ifbe(ZIPLIST_TAIL_OFFSET(*first));
     size_t second_offset = intrev32ifbe(ZIPLIST_TAIL_OFFSET(*second));
@@ -1145,6 +1160,8 @@ unsigned char *ziplistIndex(unsigned char *zl, int index) {
             /* No need for "safe" check: when going backwards, we know the header
              * we're parsing is in the range, we just need to assert (below) that
              * the size we take doesn't cause p to go outside the allocation. */
+            ZIP_DECODE_PREVLENSIZE(p, prevlensize);
+            assert(p + prevlensize < zl + zlbytes - ZIPLIST_END_SIZE);
             ZIP_DECODE_PREVLEN(p, prevlensize, prevlen);
             while (prevlen > 0 && index--) {
                 p -= prevlen;
@@ -1522,8 +1539,12 @@ int ziplistValidateIntegrity(unsigned char *zl, size_t size, int deep,
         count++;
     }
 
+    /* Make sure 'p' really does point to the end of the ziplist. */
+    if (p != zl + bytes - ZIPLIST_END_SIZE)
+        return 0;
+
     /* Make sure the <zltail> entry really do point to the start of the last entry. */
-    if (prev != ZIPLIST_ENTRY_TAIL(zl))
+    if (prev != NULL && prev != ZIPLIST_ENTRY_TAIL(zl))
         return 0;
 
     /* Check that the count in the header is correct */

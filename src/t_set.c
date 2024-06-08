@@ -66,7 +66,10 @@ int setTypeAdd(robj *subject, sds value) {
             if (success) {
                 /* Convert to regular set when the intset contains
                  * too many entries. */
-                if (intsetLen(subject->ptr) > server.set_max_intset_entries)
+                size_t max_entries = server.set_max_intset_entries;
+                /* limit to 1G entries due to intset internals. */
+                if (max_entries >= 1<<30) max_entries = 1<<30;
+                if (intsetLen(subject->ptr) > max_entries)
                     setTypeConvert(subject,OBJ_ENCODING_HT);
                 return 1;
             }
@@ -392,12 +395,12 @@ void smoveCommand(client *c) {
     }
 
     signalModifiedKey(c,c->db,c->argv[1]);
-    signalModifiedKey(c,c->db,c->argv[2]);
     server.dirty++;
 
     /* An extra key has changed when ele was successfully added to dstset */
     if (setTypeAdd(dstset,ele->ptr)) {
         server.dirty++;
+        signalModifiedKey(c,c->db,c->argv[2]);
         notifyKeyspaceEvent(NOTIFY_SET,"sadd",c->argv[2],c->db->id);
     }
     addReply(c,shared.cone);
@@ -664,7 +667,7 @@ void srandmemberWithCountCommand(client *c) {
 
     dict *d;
 
-    if (getLongFromObjectOrReply(c,c->argv[2],&l,NULL) != C_OK) return;
+    if (getRangeLongFromObjectOrReply(c,c->argv[2],-LONG_MAX,LONG_MAX,&l,NULL) != C_OK) return;
     if (l >= 0) {
         count = (unsigned long) l;
     } else {
@@ -698,6 +701,8 @@ void srandmemberWithCountCommand(client *c) {
             } else {
                 addReplyBulkCBuffer(c,ele,sdslen(ele));
             }
+            if (c->flags & CLIENT_CLOSE_ASAP)
+                break;
         }
         return;
     }
@@ -858,25 +863,17 @@ void sinterGenericCommand(client *c, robj **setkeys,
     int64_t intobj;
     void *replylen = NULL;
     unsigned long j, cardinality = 0;
-    int encoding;
+    int encoding, empty = 0;
 
     for (j = 0; j < setnum; j++) {
         robj *setobj = dstkey ?
             lookupKeyWrite(c->db,setkeys[j]) :
             lookupKeyRead(c->db,setkeys[j]);
         if (!setobj) {
-            zfree(sets);
-            if (dstkey) {
-                if (dbDelete(c->db,dstkey)) {
-                    signalModifiedKey(c,c->db,dstkey);
-                    notifyKeyspaceEvent(NOTIFY_GENERIC,"del",dstkey,c->db->id);
-                    server.dirty++;
-                }
-                addReply(c,shared.czero);
-            } else {
-                addReply(c,shared.emptyset[c->resp]);
-            }
-            return;
+            /* A NULL is considered an empty set */
+            empty += 1;
+            sets[j] = NULL;
+            continue;
         }
         if (checkType(c,setobj,OBJ_SET)) {
             zfree(sets);
@@ -884,6 +881,24 @@ void sinterGenericCommand(client *c, robj **setkeys,
         }
         sets[j] = setobj;
     }
+
+    /* Set intersection with an empty set always results in an empty set.
+     * Return ASAP if there is an empty set. */
+    if (empty > 0) {
+        zfree(sets);
+        if (dstkey) {
+            if (dbDelete(c->db,dstkey)) {
+                signalModifiedKey(c,c->db,dstkey);
+                notifyKeyspaceEvent(NOTIFY_GENERIC,"del",dstkey,c->db->id);
+                server.dirty++;
+            }
+            addReply(c,shared.czero);
+        } else {
+            addReply(c,shared.emptyset[c->resp]);
+        }
+        return;
+    }
+
     /* Sort sets from the smallest to largest, this will improve our
      * algorithm's performance */
     qsort(sets,setnum,sizeof(robj*),qsortCompareSetsByCardinality);
@@ -977,10 +992,12 @@ void sinterGenericCommand(client *c, robj **setkeys,
     zfree(sets);
 }
 
+/* SINTER key [key ...] */
 void sinterCommand(client *c) {
     sinterGenericCommand(c,c->argv+1,c->argc-1,NULL);
 }
 
+/* SINTERSTORE destination key [key ...] */
 void sinterstoreCommand(client *c) {
     sinterGenericCommand(c,c->argv+2,c->argc-2,c->argv[1]);
 }
@@ -1150,18 +1167,22 @@ void sunionDiffGenericCommand(client *c, robj **setkeys, int setnum,
     zfree(sets);
 }
 
+/* SUNION key [key ...] */
 void sunionCommand(client *c) {
     sunionDiffGenericCommand(c,c->argv+1,c->argc-1,NULL,SET_OP_UNION);
 }
 
+/* SUNIONSTORE destination key [key ...] */
 void sunionstoreCommand(client *c) {
     sunionDiffGenericCommand(c,c->argv+2,c->argc-2,c->argv[1],SET_OP_UNION);
 }
 
+/* SDIFF key [key ...] */
 void sdiffCommand(client *c) {
     sunionDiffGenericCommand(c,c->argv+1,c->argc-1,NULL,SET_OP_DIFF);
 }
 
+/* SDIFFSTORE destination key [key ...] */
 void sdiffstoreCommand(client *c) {
     sunionDiffGenericCommand(c,c->argv+2,c->argc-2,c->argv[1],SET_OP_DIFF);
 }

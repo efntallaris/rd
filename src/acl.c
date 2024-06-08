@@ -1284,7 +1284,14 @@ void ACLKillPubsubClientsIfNeeded(user *u, list *upcoming) {
     listNode *ln, *lpn;
     robj *o;
     int kill = 0;
-    
+
+    /* If any of the original rule has the all-channels permission, but the new
+     * one doesn't (verifed by the caller), then the new list is not a strict
+     * superset of the original, and the next loop can be skipped. */
+    if (u->flags & USER_FLAG_ALLCHANNELS) {
+        kill = 1;
+    }
+
     /* Nothing to kill when the upcoming are a literal super set of the original
      * permissions. */
     listRewind(u->channels,&li);
@@ -1892,6 +1899,12 @@ void addACLLogEntry(client *c, int reason, int argpos, sds username) {
 void aclCommand(client *c) {
     char *sub = c->argv[1]->ptr;
     if (!strcasecmp(sub,"setuser") && c->argc >= 3) {
+        /* Initially redact all of the arguments to not leak any information
+         * about the user. */
+        for (int j = 2; j < c->argc; j++) {
+            redactClientCommandArgument(c, j);
+        }
+
         sds username = c->argv[2]->ptr;
         /* Check username validity. */
         if (ACLStringHasSpaces(username,sdslen(username))) {
@@ -1907,12 +1920,6 @@ void aclCommand(client *c) {
         user *tempu = ACLCreateUnlinkedUser();
         user *u = ACLGetUserByName(username,sdslen(username));
         if (u) ACLCopyUser(tempu, u);
-
-        /* Initially redact all of the arguments to not leak any information
-         * about the user. */
-        for (int j = 2; j < c->argc; j++) {
-            redactClientCommandArgument(c, j);
-        }
 
         for (int j = 3; j < c->argc; j++) {
             if (ACLSetUser(tempu,c->argv[j]->ptr,sdslen(c->argv[j]->ptr)) != C_OK) {

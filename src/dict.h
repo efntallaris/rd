@@ -83,7 +83,6 @@ typedef struct dict {
     dictht ht[2];
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
     int16_t pauserehash; /* If >0 rehashing is paused (<0 indicates coding error) */
-    int isBig;
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
@@ -96,18 +95,14 @@ typedef struct dictIterator {
     int table, safe;
     dictEntry *entry, *nextEntry;
     /* unsafe iterator fingerprint for misuse detection. */
-    long long fingerprint;
+    unsigned long long fingerprint;
 } dictIterator;
 
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
 /* This is the initial size of every hash table */
-//#define DICT_HT_INITIAL_SIZE 16777216 
-//#define DICT_HT_INITIAL_SIZE 8388608
-#define DICT_HT_INITIAL_SIZE 4 
-#define DICT_HT_BIG_INITIAL_SIZE 16777216 
-//#define DICT_HT_INITIAL_SIZE 1048576
+#define DICT_HT_INITIAL_SIZE     4
 
 /* ------------------------------- Macros ------------------------------------*/
 #define dictFreeVal(d, entry) \
@@ -165,9 +160,14 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 #define randomULong() random()
 #endif
 
+typedef enum {
+    DICT_RESIZE_ENABLE,
+    DICT_RESIZE_AVOID,
+    DICT_RESIZE_FORBID,
+} dictResizeEnable;
+
 /* API */
 dict *dictCreate(dictType *type, void *privDataPtr);
-dict *dictCreateBig(dictType *type, void *privDataPtr);
 int dictExpand(dict *d, unsigned long size);
 int dictTryExpand(dict *d, unsigned long size);
 int dictAdd(dict *d, void *key, void *val);
@@ -192,8 +192,7 @@ void dictGetStats(char *buf, size_t bufsize, dict *d);
 uint64_t dictGenHashFunction(const void *key, int len);
 uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len);
 void dictEmpty(dict *d, void(callback)(void*));
-void dictEnableResize(void);
-void dictDisableResize(void);
+void dictSetResizeEnabled(dictResizeEnable enable);
 int dictRehash(dict *d, int n);
 int dictRehashMilliseconds(dict *d, int ms);
 void dictSetHashFunctionSeed(uint8_t *seed);
@@ -201,7 +200,6 @@ uint8_t *dictGetHashFunctionSeed(void);
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, dictScanBucketFunction *bucketfn, void *privdata);
 uint64_t dictGetHash(dict *d, const void *key);
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
-void dictInitLocks();
 
 /* Hash table types */
 extern dictType dictTypeHeapStringCopyKey;

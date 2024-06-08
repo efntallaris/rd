@@ -126,13 +126,52 @@ start_server {
     
     test {R/LPOP with the optional count argument} {
         assert_equal 7 [r lpush listcount aa bb cc dd ee ff gg]
-        assert_equal {} [r lpop listcount 0]
         assert_equal {gg} [r lpop listcount 1]
         assert_equal {ff ee} [r lpop listcount 2]
         assert_equal {aa bb} [r rpop listcount 2]
         assert_equal {cc} [r rpop listcount 1]
         assert_equal {dd} [r rpop listcount 123]
         assert_error "*ERR*range*" {r lpop forbarqaz -123}
+    }
+
+    proc verify_resp_response {resp response resp2_response resp3_response} {
+        if {$resp == 2} {
+            assert_equal $response $resp2_response
+        } elseif {$resp == 3} {
+            assert_equal $response $resp3_response
+        }
+    }
+
+    foreach resp {3 2} {
+        r hello $resp
+
+        # Make sure we can distinguish between an empty array and a null response
+        r readraw 1
+
+        test "LPOP/RPOP with the count 0 returns an empty array in RESP$resp" {
+            r lpush listcount zero
+            assert_equal {*0} [r lpop listcount 0]
+            assert_equal {*0} [r rpop listcount 0]
+        }
+
+        test "LPOP/RPOP against non existing key in RESP$resp" {
+            r del non_existing_key
+
+            verify_resp_response $resp [r lpop non_existing_key] {$-1} {_}
+            verify_resp_response $resp [r rpop non_existing_key] {$-1} {_}
+        }
+
+        test "LPOP/RPOP with <count> against non existing key in RESP$resp" {
+            r del non_existing_key
+
+            verify_resp_response $resp [r lpop non_existing_key 0] {*-1} {_}
+            verify_resp_response $resp [r lpop non_existing_key 1] {*-1} {_}
+
+            verify_resp_response $resp [r rpop non_existing_key 0] {*-1} {_}
+            verify_resp_response $resp [r rpop non_existing_key 1] {*-1} {_}
+        }
+
+        r readraw 0
     }
 
     test {Variadic RPUSH/LPUSH} {

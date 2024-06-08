@@ -231,8 +231,6 @@ hisds hi_sdscatsds(hisds s, const hisds t);
 hisds hi_sdscpylen(hisds s, const char *t, size_t len);
 hisds hi_sdscpy(hisds s, const char *t);
 
-int hi_sdsHdrSizeAlloc(char type);
-char hi_sdsReqTypeAlloc(size_t string_size);
 hisds hi_sdscatvprintf(hisds s, const char *fmt, va_list ap);
 #ifdef __GNUC__
 hisds hi_sdscatprintf(hisds s, const char *fmt, ...)

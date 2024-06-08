@@ -467,6 +467,8 @@ void debugCommand(client *c) {
 "    Return the size of different Redis core C structures.",
 "ZIPLIST <key>",
 "    Show low level info about the ziplist encoding of <key>.",
+"PAUSE-CRON <0|1>",
+"    Stop periodic cron job processing.",
 NULL
         };
         addReplyHelp(c, help);
@@ -721,7 +723,7 @@ NULL
         } else if (!strcasecmp(name,"double")) {
             addReplyDouble(c,3.14159265359);
         } else if (!strcasecmp(name,"bignum")) {
-            addReplyProto(c,"(1234567999999999999999999999999999999\r\n",40);
+            addReplyBigNum(c,"1234567999999999999999999999999999999",37);
         } else if (!strcasecmp(name,"null")) {
             addReplyNull(c);
         } else if (!strcasecmp(name,"array")) {
@@ -737,18 +739,27 @@ NULL
                 addReplyBool(c, j == 1);
             }
         } else if (!strcasecmp(name,"attrib")) {
-            addReplyAttributeLen(c,1);
-            addReplyBulkCString(c,"key-popularity");
-            addReplyArrayLen(c,2);
-            addReplyBulkCString(c,"key:123");
-            addReplyLongLong(c,90);
+            if (c->resp >= 3) {
+                addReplyAttributeLen(c,1);
+                addReplyBulkCString(c,"key-popularity");
+                addReplyArrayLen(c,2);
+                addReplyBulkCString(c,"key:123");
+                addReplyLongLong(c,90);
+            }
             /* Attributes are not real replies, so a well formed reply should
              * also have a normal reply type after the attribute. */
             addReplyBulkCString(c,"Some real reply following the attribute");
         } else if (!strcasecmp(name,"push")) {
+            if (c->resp < 3) {
+                addReplyError(c,"RESP2 is not supported by this command");
+                return;
+            }
+            uint64_t old_flags = c->flags;
+            c->flags |= CLIENT_PUSHING;
             addReplyPushLen(c,2);
             addReplyBulkCString(c,"server-cpu-usage");
             addReplyLongLong(c,42);
+            if (!(old_flags & CLIENT_PUSHING)) c->flags &= ~CLIENT_PUSHING;
             /* Push replies are not synchronous replies, so we emit also a
              * normal reply in order for blocking clients just discarding the
              * push reply, to actually consume the reply and continue. */
@@ -885,6 +896,9 @@ NULL
         mallctl_string(c, c->argv+2, c->argc-2);
         return;
 #endif
+    } else if (!strcasecmp(c->argv[1]->ptr,"pause-cron") && c->argc == 3) {
+        server.pause_cron = atoi(c->argv[2]->ptr);
+        addReply(c,shared.ok);
     } else {
         addReplySubcommandSyntaxError(c);
         return;
@@ -1017,61 +1031,75 @@ void bugReportStart(void) {
 }
 
 #ifdef HAVE_BACKTRACE
-static void *getMcontextEip(ucontext_t *uc) {
-#if defined(__APPLE__) && !defined(MAC_OS_X_VERSION_10_6)
+
+/* Returns the current eip and set it to the given new value (if its not NULL) */
+static void* getAndSetMcontextEip(ucontext_t *uc, void *eip) {
+#define GET_SET_RETURN(target_var, new_val) do {\
+    void *old_val = (void*)target_var; \
+    if (new_val) { \
+        void **temp = (void**)&target_var; \
+        *temp = new_val; \
+    } \
+    return old_val; \
+} while(0)
+#if defined(__APPLE__) && !defined(MAC_OS_10_6_DETECTED)
     /* OSX < 10.6 */
     #if defined(__x86_64__)
-    return (void*) uc->uc_mcontext->__ss.__rip;
+    GET_SET_RETURN(uc->uc_mcontext->__ss.__rip, eip);
     #elif defined(__i386__)
-    return (void*) uc->uc_mcontext->__ss.__eip;
+    GET_SET_RETURN(uc->uc_mcontext->__ss.__eip, eip);
     #else
-    return (void*) uc->uc_mcontext->__ss.__srr0;
+    GET_SET_RETURN(uc->uc_mcontext->__ss.__srr0, eip);
     #endif
-#elif defined(__APPLE__) && defined(MAC_OS_X_VERSION_10_6)
+#elif defined(__APPLE__) && defined(MAC_OS_10_6_DETECTED)
     /* OSX >= 10.6 */
     #if defined(_STRUCT_X86_THREAD_STATE64) && !defined(__i386__)
-    return (void*) uc->uc_mcontext->__ss.__rip;
+    GET_SET_RETURN(uc->uc_mcontext->__ss.__rip, eip);
     #elif defined(__i386__)
-    return (void*) uc->uc_mcontext->__ss.__eip;
+    GET_SET_RETURN(uc->uc_mcontext->__ss.__eip, eip);
     #else
     /* OSX ARM64 */
-    return (void*) arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+    void *old_val = (void*)arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+    if (eip) {
+        arm_thread_state64_set_pc_fptr(uc->uc_mcontext->__ss, eip);
+    }
+    return old_val;
     #endif
 #elif defined(__linux__)
     /* Linux */
     #if defined(__i386__) || ((defined(__X86_64__) || defined(__x86_64__)) && defined(__ILP32__))
-    return (void*) uc->uc_mcontext.gregs[14]; /* Linux 32 */
+    GET_SET_RETURN(uc->uc_mcontext.gregs[14], eip);
     #elif defined(__X86_64__) || defined(__x86_64__)
-    return (void*) uc->uc_mcontext.gregs[16]; /* Linux 64 */
+    GET_SET_RETURN(uc->uc_mcontext.gregs[16], eip);
     #elif defined(__ia64__) /* Linux IA64 */
-    return (void*) uc->uc_mcontext.sc_ip;
+    GET_SET_RETURN(uc->uc_mcontext.sc_ip, eip);
     #elif defined(__arm__) /* Linux ARM */
-    return (void*) uc->uc_mcontext.arm_pc;
+    GET_SET_RETURN(uc->uc_mcontext.arm_pc, eip);
     #elif defined(__aarch64__) /* Linux AArch64 */
-    return (void*) uc->uc_mcontext.pc;
+    GET_SET_RETURN(uc->uc_mcontext.pc, eip);
     #endif
 #elif defined(__FreeBSD__)
     /* FreeBSD */
     #if defined(__i386__)
-    return (void*) uc->uc_mcontext.mc_eip;
+    GET_SET_RETURN(uc->uc_mcontext.mc_eip, eip);
     #elif defined(__x86_64__)
-    return (void*) uc->uc_mcontext.mc_rip;
+    GET_SET_RETURN(uc->uc_mcontext.mc_rip, eip);
     #endif
 #elif defined(__OpenBSD__)
     /* OpenBSD */
     #if defined(__i386__)
-    return (void*) uc->sc_eip;
+    GET_SET_RETURN(uc->sc_eip, eip);
     #elif defined(__x86_64__)
-    return (void*) uc->sc_rip;
+    GET_SET_RETURN(uc->sc_rip, eip);
     #endif
 #elif defined(__NetBSD__)
     #if defined(__i386__)
-    return (void*) uc->uc_mcontext.__gregs[_REG_EIP];
+    GET_SET_RETURN(uc->uc_mcontext.__gregs[_REG_EIP], eip);
     #elif defined(__x86_64__)
-    return (void*) uc->uc_mcontext.__gregs[_REG_RIP];
+    GET_SET_RETURN(uc->uc_mcontext.__gregs[_REG_RIP], eip);
     #endif
 #elif defined(__DragonFly__)
-    return (void*) uc->uc_mcontext.mc_rip;
+    GET_SET_RETURN(uc->uc_mcontext.mc_rip, eip);
 #else
     return NULL;
 #endif
@@ -1095,7 +1123,7 @@ void logRegisters(ucontext_t *uc) {
     serverLog(LL_WARNING|LL_RAW, "\n------ REGISTERS ------\n");
 
 /* OSX */
-#if defined(__APPLE__) && defined(MAC_OS_X_VERSION_10_6)
+#if defined(__APPLE__) && defined(MAC_OS_10_6_DETECTED)
   /* OSX AMD64 */
     #if defined(_STRUCT_X86_THREAD_STATE64) && !defined(__i386__)
     serverLog(LL_WARNING,
@@ -1798,6 +1826,10 @@ void dumpCodeAroundEIP(void *eip) {
     }
 }
 
+void invalidFunctionWasCalled() {}
+
+typedef void (*invalidFunctionWasCalledType)();
+
 void sigsegvHandler(int sig, siginfo_t *info, void *secret) {
     UNUSED(secret);
     UNUSED(info);
@@ -1809,19 +1841,36 @@ void sigsegvHandler(int sig, siginfo_t *info, void *secret) {
         serverLog(LL_WARNING,
         "Accessing address: %p", (void*)info->si_addr);
     }
-    if (info->si_code <= SI_USER && info->si_pid != -1) {
+    if (info->si_code == SI_USER && info->si_pid != -1) {
         serverLog(LL_WARNING, "Killed by PID: %ld, UID: %d", (long) info->si_pid, info->si_uid);
     }
 
 #ifdef HAVE_BACKTRACE
     ucontext_t *uc = (ucontext_t*) secret;
-    void *eip = getMcontextEip(uc);
+    void *eip = getAndSetMcontextEip(uc, NULL);
     if (eip != NULL) {
         serverLog(LL_WARNING,
         "Crashed running the instruction at: %p", eip);
     }
 
-    logStackTrace(getMcontextEip(uc), 1);
+    if (eip == info->si_addr) {
+        /* When eip matches the bad address, it's an indication that we crashed when calling a non-mapped
+         * function pointer. In that case the call to backtrace will crash trying to access that address and we
+         * won't get a crash report logged. Set it to a valid point to avoid that crash. */
+
+        /* This trick allow to avoid compiler warning */
+        void *ptr;
+        invalidFunctionWasCalledType *ptr_ptr = (invalidFunctionWasCalledType*)&ptr;
+        *ptr_ptr = invalidFunctionWasCalled;
+        getAndSetMcontextEip(uc, ptr);
+    }
+
+    logStackTrace(eip, 1);
+
+    if (eip == info->si_addr) {
+        /* Restore old eip */
+        getAndSetMcontextEip(uc, eip);
+    }
 
     logRegisters(uc);
 #endif
@@ -1857,7 +1906,9 @@ void bugReportEnd(int killViaSignal, int sig) {
 "\n=== REDIS BUG REPORT END. Make sure to include from START to END. ===\n\n"
 "       Please report the crash by opening an issue on github:\n\n"
 "           http://github.com/redis/redis/issues\n\n"
+"  If a Redis module was involved, please open in the module's repo instead.\n\n"
 "  Suspect RAM error? Use redis-server --test-memory to verify it.\n\n"
+"  Some other issues could be detected by redis-server --check-system\n"
 );
 
     /* free(messages); Don't call free() with possibly corrupted memory. */
@@ -1916,7 +1967,7 @@ void watchdogSignalHandler(int sig, siginfo_t *info, void *secret) {
 
     serverLogFromHandler(LL_WARNING,"\n--- WATCHDOG TIMER EXPIRED ---");
 #ifdef HAVE_BACKTRACE
-    logStackTrace(getMcontextEip(uc), 1);
+    logStackTrace(getAndSetMcontextEip(uc, NULL), 1);
 #else
     serverLogFromHandler(LL_WARNING,"Sorry: no support for backtrace().");
 #endif
