@@ -38,7 +38,6 @@ public class ClientThread implements Runnable {
   private double targetOpsPerMs;
 
   private int opsdone;
-  private int tryagain;
   private int threadid;
   private int threadcount;
   private Object workloadstate;
@@ -64,7 +63,6 @@ public class ClientThread implements Runnable {
     this.workload = workload;
     this.opcount = opcount;
     opsdone = 0;
-    tryagain = 0;
     if (targetperthreadperms > 0) {
       targetOpsPerMs = targetperthreadperms;
       targetOpsTickNs = (long) (1000000 / targetOpsPerMs);
@@ -85,10 +83,6 @@ public class ClientThread implements Runnable {
 
   public int getOpsDone() {
     return opsdone;
-  }
-
-  public int getTryAgain() {
-    return tryagain;
   }
 
   @Override
@@ -125,7 +119,6 @@ public class ClientThread implements Runnable {
 
         while (((opcount == 0) || (opsdone < opcount)) && !workload.isStopRequested()) {
 
-	try{
           if (!workload.doTransaction(db, workloadstate)) {
             break;
           }
@@ -133,22 +126,6 @@ public class ClientThread implements Runnable {
           opsdone++;
 
           throttleNanos(startTimeNanos);
-	}catch (Exception e){
-                if (e.getMessage().contains("B cannot be cast to class java.util.List")){
-                        System.out.println("CANNOT BE CAST");
-
-                }
-                else if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
-                        tryagain++;
-                } else {
-                        //System.out.println("Jedis Data Exception occurred: " + e.getMessage());
-                        System.out.println(e);
-                        e.printStackTrace();
-                        throw e;
-
-                }
-
-	 }
         }
       } else {
         long startTimeNanos = System.nanoTime();

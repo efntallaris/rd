@@ -194,11 +194,10 @@ public class MongoDbClient extends DB {
 
       url = OptionsSupport.updateUrl(url, props);
 
-      if (!url.startsWith("mongodb://") && !url.startsWith("mongodb+srv://")) {
+      if (!url.startsWith("mongodb://")) {
         System.err.println("ERROR: Invalid URL: '" + url
             + "'. Must be of the form "
-            + "'mongodb://<host1>:<port1>,<host2>:<port2>/database?options' "
-            + "or 'mongodb+srv://<host>/database?options'. "
+            + "'mongodb://<host1>:<port1>,<host2>:<port2>/database?options'. "
             + "http://docs.mongodb.org/manual/reference/connection-string/");
         System.exit(1);
       }

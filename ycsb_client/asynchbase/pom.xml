@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-Copyright (c) 2016, 2020 YCSB contributors. All rights reserved.
+Copyright (c) 2016 YCSB contributors. All rights reserved.
 Licensed under the Apache License, Version 2.0 (the "License"); you
 may not use this file except in compliance with the License. You
 may obtain a copy of the License at
@@ -18,7 +18,7 @@ LICENSE file.
   <parent>
     <groupId>site.ycsb</groupId>
     <artifactId>binding-parent</artifactId>
-    <version>0.18.0-SNAPSHOT</version>
+    <version>0.17.0</version>
     <relativePath>../binding-parent/</relativePath>
   </parent>
 
@@ -32,34 +32,12 @@ LICENSE file.
   </properties>
 
   <dependencies>
-    <!-- We switch out moving everything to slf4j in asynchbase
-         because the facade of log4j it provides doesn't work
-         with the internal access hbase minicluster does.
-      -->
     <dependency>
       <groupId>org.hbase</groupId>
       <artifactId>asynchbase</artifactId>
       <version>${asynchbase.version}</version>
-      <exclusions>
-        <exclusion>
-          <groupId>org.slf4j</groupId>
-          <artifactId>log4j-over-slf4j</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
     
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-log4j12</artifactId>
-      <version>1.7.25</version>
-    </dependency>
-
-    <dependency>
-      <groupId>log4j</groupId>
-      <artifactId>log4j</artifactId>
-      <version>1.2.17</version>
-    </dependency>
-
     <dependency>
       <groupId>site.ycsb</groupId>
       <artifactId>core</artifactId>
@@ -72,6 +50,14 @@ LICENSE file.
       <artifactId>zookeeper</artifactId>
       <version>3.4.5</version>
       <exclusions>
+        <exclusion>
+          <groupId>log4j</groupId>
+          <artifactId>log4j</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>slf4j-log4j12</artifactId>
+        </exclusion>
         <exclusion>
           <groupId>jline</groupId>
           <artifactId>jline</artifactId>
@@ -96,18 +82,43 @@ LICENSE file.
     
     <dependency>
       <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase-shaded-testing-util</artifactId>
-      <version>${hbase1.version}</version>
+      <artifactId>hbase-testing-util</artifactId>
+      <version>${hbase10.version}</version>
       <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>jdk.tools</groupId>
+          <artifactId>jdk.tools</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     
     <dependency>
       <groupId>org.apache.hbase</groupId>
-      <artifactId>hbase-shaded-client</artifactId>
-      <version>${hbase1.version}</version>
+      <artifactId>hbase-client</artifactId>
+      <version>${hbase10.version}</version>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>jdk.tools</groupId>
+          <artifactId>jdk.tools</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    
+    <dependency>
+      <groupId>log4j</groupId>
+      <artifactId>log4j</artifactId>
+      <version>1.2.17</version>
       <scope>test</scope>
     </dependency>
     
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>log4j-over-slf4j</artifactId>
+      <version>1.7.7</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

@@ -239,7 +239,7 @@ public final class Client {
 
       exporter.write("OVERALL", "RunTime(ms)", runtime);
       double throughput = 1000.0 * (opcount) / (runtime);
-      exporter.write("OVERALL", "Throughput(ops/sec)[STRATOS]", throughput);
+      exporter.write("OVERALL", "Throughput(ops/sec)", throughput);
 
       final Map<String, Long[]> gcs = Utils.getGCStatst();
       long totalGCCount = 0;
@@ -418,7 +418,7 @@ public final class Client {
           opcount = Integer.parseInt(props.getProperty(RECORD_COUNT_PROPERTY, DEFAULT_RECORD_COUNT));
         }
       }
-      if (threadcount > opcount && opcount > 0){
+      if (threadcount > opcount){
         threadcount = opcount;
         System.out.println("Warning: the threadcount is bigger than recordcount, the threadcount will be recordcount!");
       }

@@ -1,5 +1,5 @@
 <!-- 
-Copyright (c) 2012 - 2020 YCSB contributors. All rights reserved.
+Copyright (c) 2012 - 2015 YCSB contributors. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you
 may not use this file except in compliance with the License. You
@@ -21,7 +21,7 @@ LICENSE file.
   <parent>
     <groupId>site.ycsb</groupId>
     <artifactId>root</artifactId>
-    <version>0.18.0-SNAPSHOT</version>
+    <version>0.17.0</version>
   </parent>
 
   <artifactId>ycsb</artifactId>
@@ -41,7 +41,17 @@ LICENSE file.
     </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
-      <artifactId>accumulo1.9-binding</artifactId>
+      <artifactId>accumulo1.6-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>accumulo1.7-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>accumulo1.8-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -59,11 +69,11 @@ LICENSE file.
       <artifactId>asynchbase-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!--<dependency>
+    <dependency>
       <groupId>site.ycsb</groupId>
       <artifactId>cassandra-binding</artifactId>
       <version>${project.version}</version>
-    </dependency> -->
+    </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
       <artifactId>cloudspanner-binding</artifactId>
@@ -99,7 +109,7 @@ LICENSE file.
       <artifactId>dynamodb-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- <dependency>
+    <dependency>
       <groupId>site.ycsb</groupId>
       <artifactId>elasticsearch-binding</artifactId>
       <version>${project.version}</version>
@@ -108,7 +118,7 @@ LICENSE file.
       <groupId>site.ycsb</groupId>
       <artifactId>elasticsearch5-binding</artifactId>
       <version>${project.version}</version>
-    </dependency> -->
+    </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
       <artifactId>foundationdb-binding</artifactId>
@@ -136,12 +146,32 @@ LICENSE file.
     </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
-      <artifactId>hbase1-binding</artifactId>
+      <artifactId>hbase098-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
-      <artifactId>hbase2-binding</artifactId>
+      <artifactId>hbase10-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>hbase12-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>hbase14-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>hbase20-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>hypertable-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -231,17 +261,12 @@ LICENSE file.
     </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
-      <artifactId>seaweedfs-binding</artifactId>
+      <artifactId>solr-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>site.ycsb</groupId>
-      <artifactId>scylla-binding</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>site.ycsb</groupId>
-      <artifactId>solr7-binding</artifactId>
+      <artifactId>solr6-binding</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -254,16 +279,18 @@ LICENSE file.
         <artifactId>tablestore-binding</artifactId>
         <version>${project.version}</version>
     </dependency>
+<!--
+    <dependency>
+      <groupId>site.ycsb</groupId>
+      <artifactId>voldemort-binding</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+-->
     <dependency>
        <groupId>site.ycsb</groupId>
        <artifactId>voltdb-binding</artifactId>
        <version>${project.version}</version>
      </dependency>
-    <dependency>
-      <groupId>site.ycsb</groupId>
-      <artifactId>zookeeper-binding</artifactId>
-      <version>${project.version}</version>
-    </dependency>
 
   </dependencies>
   <build>

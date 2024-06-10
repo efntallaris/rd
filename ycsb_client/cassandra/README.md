@@ -68,8 +68,9 @@ For keyspace `ycsb`, table `usertable`:
 * `cassandra.readconsistencylevel`
 * `cassandra.writeconsistencylevel`
 
-  * Default value is `QUORUM`
+  * Default value is `ONE`
   - Consistency level for reads and writes, respectively. See the [DataStax documentation](http://docs.datastax.com/en/cassandra/2.0/cassandra/dml/dml_config_consistency_c.html) for details.
+  * *Note that the default setting does not provide durability in the face of node failure. Changing this setting will affect observed performance.* See also `replication_factor`, above.
 
 * `cassandra.maxconnections`
 * `cassandra.coreconnections`

@@ -34,9 +34,9 @@ Getting Started
 1. Download the [latest release of YCSB](https://github.com/brianfrankcooper/YCSB/releases/latest):
 
     ```sh
-    curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.17.0/ycsb-0.17.0.tar.gz
-    tar xfvz ycsb-0.17.0.tar.gz
-    cd ycsb-0.17.0
+    curl -O --location https://github.com/brianfrankcooper/YCSB/releases/download/0.15.0/ycsb-0.15.0.tar.gz
+    tar xfvz ycsb-0.15.0.tar.gz
+    cd ycsb-0.15.0
     ```
     
 2. Set up a database to benchmark. There is a README file under each binding 
@@ -67,19 +67,14 @@ Getting Started
 
 Building from source
 --------------------
-Build Redis binding
-```sh
-mvn -pl site.ycsb:redis-binding -am clean package -DskipTests
-```
-We support the optional data logging to binary file for the Redis driver. To enable data logging set the parameter:
-```sh
--p "redis.logfile=<data file>"
-```
-If file already exists, YCSB will overwrite it.
-Each YCSB worker thread writes on a separate data log file. The name of each log file appends the threadid property.
 
-An example of a running command for loading the target Redis database:
-```sh
-./bin/ycsb load redis -p "redis.host=<ip>" -p "redis.port=6379" -p "redis.cluster=true" -p "redis.logfile=./data.log" -P workloads/workloada -s -p status.interval=2
-```
+YCSB requires the use of Maven 3; if you use Maven 2, you may see [errors
+such as these](https://github.com/brianfrankcooper/YCSB/issues/406).
 
+To build the full distribution, with all database bindings:
+
+    mvn clean package
+
+To build a single database binding:
+
+    mvn -pl mongodb-binding -am clean package

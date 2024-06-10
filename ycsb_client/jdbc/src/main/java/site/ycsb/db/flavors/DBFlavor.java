@@ -65,6 +65,5 @@ public abstract class DBFlavor {
   /**
    * Create and return a SQL statement for scanning data.
    */
-  public abstract String createScanStatement(StatementType scanType, String key,
-                                             boolean sqlserverScans, boolean sqlansiScans);
+  public abstract String createScanStatement(StatementType scanType, String key, boolean sqlserver);
 }
