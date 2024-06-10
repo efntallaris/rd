@@ -25,7 +25,7 @@ for redis_instance in "${!redis_ycsb_instances[@]}"; do
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 		cd $YCSB_DIR_BIN
 
-		sudo ./ycsb.sh run redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=1 -s  -p \measurementtype=timeseries -p redis.timeout=10000 -threads 90 >> ${YCSB_LOG_FILENAME}_${info[0]} 2>&1 &
+		sudo ./ycsb.sh run redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -p status.interval=1 -s  -p \measurementtype=timeseries -p redis.timeout=10000 -threads 300 >> ${YCSB_LOG_FILENAME}_${info[0]} 2>&1 &
 EOF
 2>&1)
     echo "$tko"
