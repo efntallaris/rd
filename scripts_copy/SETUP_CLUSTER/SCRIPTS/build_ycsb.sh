@@ -16,7 +16,12 @@ sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
 
 
 cd ${YCSB_DIR}/distribution/target
-sudo tar -xvf ycsb-0.18.0-SNAPSHOT.tar.gz --directory ${YCSB_INTERMEDIATE_FOLDER}
+TAR_GZ_FILE=$(ls *.tar.gz | head -n 1)
+if [ -z "$TAR_GZ_FILE" ]; then
+	  echo "No tar.gz file found in ${YCSB_DIR}/distribution/target"
+	    exit 1
+fi
+sudo tar -xvf "$TAR_GZ_FILE" --directory ${YCSB_INTERMEDIATE_FOLDER}
 
 # Check if the directory exists
 if [ -d "$YCSB_BIN" ]; then
