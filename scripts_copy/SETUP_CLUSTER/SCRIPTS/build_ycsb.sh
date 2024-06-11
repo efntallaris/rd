@@ -11,8 +11,8 @@ sudo rm -rf ${YCSB_INTERMEDIATE_FOLDER}
 sudo mkdir -p ${YCSB_INTERMEDIATE_FOLDER}
 
 cd ${YCSB_DIR}
-#sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
-sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip -pl site.ycsb:redis-binding -am clean package
+sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
+# sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip -pl site.ycsb:redis-binding -am clean package
 
 
 cd ${YCSB_DIR}/distribution/target
