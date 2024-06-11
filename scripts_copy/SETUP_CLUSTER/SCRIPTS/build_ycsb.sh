@@ -32,4 +32,12 @@ else
     mkdir -p "$YCSB_BIN"
 fi
 
-sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-0.18.0-SNAPSHOT/*  ${YCSB_BIN}
+FIRST_FOLDER=$(find ${YCSB_INTERMEDIATE_FOLDER} -mindepth 1 -maxdepth 1 -type d | head -n 1)
+# Check if a folder was found
+if [ -z "$FIRST_FOLDER" ]; then
+	  echo "No folder found under ${YCSB_INTERMEDIATE_FOLDER}"
+	    exit 1
+fi
+
+#sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-0.18.0-SNAPSHOT/*  ${YCSB_BIN}
+sudo cp -rf "${FIRST_FOLDER}/"* "${YCSB_BIN}"
