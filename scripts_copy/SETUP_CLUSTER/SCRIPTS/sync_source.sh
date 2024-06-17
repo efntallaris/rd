@@ -9,15 +9,12 @@ for redis_instance in "${!instances[@]}"; do
     for i in "${!nodeInstance[@]}"; do
         IFS="|" read -r -a info <<< "${nodeInstance[i]}"
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
-sudo rm -rf /root/rd/src
-sudo rm -rf /root/rd/scripts_copy
-sudo rm -rf /root/rd/workloads
-cd /tmp
-rm -rf rd
-git clone https://github.com/efntallaris/rd
-cp -rf rd/scripts_copy /root/rd/scripts_copy
-cp -rf rd/src /root/rd/src
-cp -rf rd/workloads /root/rd/workloads
+cd /root/rd
+git stash
+git pull origin spill_over_buffers_multiple_rounds
+git checkout -b spill_over_buffers_multiple_rounds
+cd /root/rd/scripts_copy
+./install_preqs.sh
 EOF
 2>&1)
     done
