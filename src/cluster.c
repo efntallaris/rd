@@ -6282,7 +6282,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 1366;
+	int chunk_size = 683;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -6707,7 +6707,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 			{
 
-				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 				//serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%s", spill_over_slot);
 				//sds slotString = unsignedLongToSDS(intSlot);	
 				prevSlot = intSlot;
@@ -6832,7 +6832,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					unsigned int intSlot = atoi(args[j]);
 					traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfo5050");
 				}
-				unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+				unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
+				pthread_mutex_lock(&server.spill_over_phase_lock);
+				server.migration_spill_over_phase_number++;
+				pthread_mutex_unlock(&server.spill_over_phase_lock);
 				traverse_print_slot_blocks_filename(spillOverSlot, "/tmp/slotInfoSpillOver5050");
 			}
 
