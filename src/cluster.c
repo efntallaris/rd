@@ -6441,8 +6441,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		}
 
-		unsigned int prevSlot = atoi(args[start]);
-		unsigned int currentSlot = atoi(args[start]);
+		unsigned int prevSlot = start;
+		unsigned int currentSlot = end;
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d", end-start, SPLIT_SLOTS);
@@ -7022,12 +7022,10 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 						// 		&allocator_value);
 						//with copy stop
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
-						total_keys_added++;
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
 					}
-					if(total_keys_added % 10 == 0){
-						//usleep(10);
-					}
+					//should be added inside if
+					total_keys_added++;
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
