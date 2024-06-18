@@ -6594,7 +6594,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 		{
-			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 			//unsigned int intSlot = 20000;
 			char **slots;
 			int number_of_blocks;
@@ -6616,7 +6616,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		{
 
 			int buffer_index = 0;
-			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16386);
+			unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 			serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 			sds slotString = unsignedLongToSDS(intSlot);	
 
@@ -6662,7 +6662,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
 			int current_buffer_index = 0;
 			{
-				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, 16385);
+				unsigned long intSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 				serverLog(LL_WARNING, "STRATOS SPILL OVER SLOT IS:%d", intSlot);
 				sds slotString = unsignedLongToSDS(intSlot);
 				//unsigned int intSlot = 20000;
