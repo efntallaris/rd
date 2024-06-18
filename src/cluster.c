@@ -6817,6 +6817,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					clusterAddSlot(recipientNode,intSlot);
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					server.cluster->importing_slots_from[intSlot] = NULL;
+
+					unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
+					pthread_mutex_lock(&server.spill_over_phase_lock);
+					server.migration_spill_over_phase_number++;
+					server.migration_spill_over_phase_activated[intSlot] = 0;
+					pthread_mutex_unlock(&server.spill_over_phase_lock);
+
 					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 				}
 				if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
@@ -6832,10 +6839,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					unsigned int intSlot = atoi(args[j]);
 					traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfo5050");
 				}
-				unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
-				pthread_mutex_lock(&server.spill_over_phase_lock);
-				server.migration_spill_over_phase_number++;
-				pthread_mutex_unlock(&server.spill_over_phase_lock);
 				traverse_print_slot_blocks_filename(spillOverSlot, "/tmp/slotInfoSpillOver5050");
 			}
 
