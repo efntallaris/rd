@@ -6839,6 +6839,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					unsigned int intSlot = atoi(args[j]);
 					traverse_print_slot_blocks_filename(intSlot, "/tmp/slotInfo5050");
 				}
+				unsigned long spillOverSlot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 				traverse_print_slot_blocks_filename(spillOverSlot, "/tmp/slotInfoSpillOver5050");
 			}
 
