@@ -13,6 +13,6 @@ cluster-node-timeout 9000
 cluster-require-full-coverage no
 bind 0.0.0.0
 appendonly no
+save ""
 logfile ${LOG_FILENAME}
-
 EOT
