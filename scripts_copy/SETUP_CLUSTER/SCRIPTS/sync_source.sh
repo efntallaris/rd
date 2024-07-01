@@ -11,8 +11,8 @@ for redis_instance in "${!instances[@]}"; do
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 cd /root/rd
 git stash
-git pull origin spill_over_buffers_multiple_rounds
-git checkout -b spill_over_buffers_multiple_rounds
+git pull origin blocking_version
+git checkout -b blocking_version
 cd /root/rd/scripts_copy
 ./install_preqs.sh
 EOF
