@@ -1465,6 +1465,28 @@ void serverLogRaw(int level, const char *msg) {
 	if (server.syslog_enabled) syslog(syslogLevelMap[level], "%s", msg);
 }
 
+
+sds unsignedLongToSDS(unsigned long number) {
+	char buf[21]; // Longest unsigned long decimal representation is 20 characters
+	snprintf(buf, sizeof(buf), "%lu", number);
+	return sdsnew(buf);
+}
+
+unsigned long getSpillOverSlot(const char *ipAddress, unsigned long number) {
+	// Find the position of the last '.' in the IP address
+	const char *lastDot = strrchr(ipAddress, '.');
+
+	// Extract the last number from the IP address
+	int lastNumber = atoi(lastDot + 1);
+	pthread_mutex_lock(&server.spill_over_phase_lock);
+	lastNumber += server.migration_spill_over_phase_number;
+	pthread_mutex_unlock(&server.spill_over_phase_lock);
+
+	// Add the last number to the given number
+	return number + lastNumber;
+}
+
+
 /* Like serverLogRaw() but with printf-alike support. This is the function that
  * is used across the code. The raw version is only used in order to dump
  * the INFO output on crash. */

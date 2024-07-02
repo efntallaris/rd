@@ -11,8 +11,8 @@
 //#define BLOCK_SIZE_BYTES 3 * 1024 *1024//1024//192//4000000//256//224//1024//256
 //3.5 mb
 // #define BLOCK_SIZE_BYTES 4089446
-#define BLOCK_SIZE_BYTES 4 * 1024 *1024//1024//192//4000000//256//224//1024//256
-
+// #define BLOCK_SIZE_BYTES 3984588 //1024//192//4000000//256//224//1024//256
+#define BLOCK_SIZE_BYTES 4194304
 typedef struct allocated_block alloc_bloc_t;
 typedef struct r_allocator r_allocator_t;
 
@@ -101,6 +101,7 @@ segment_iterator_t * create_iterator_for_slot(int slot);
 
 /////////// DEBUG
 void traverse_print_slot_blocks(int slot);
+void traverse_print_slot_blocks_filename(int slot, const char *filename);
 void print_block_buffer(void *buffer_start);
 void freelist_print(int slot);
 // void freelist_print_debug(int slot);

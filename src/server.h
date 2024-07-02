@@ -685,6 +685,8 @@ typedef struct RedisModuleDigest {
 #define OBJ_FIRST_SPECIAL_REFCOUNT OBJ_STATIC_REFCOUNT
 /* STRATOS OLD ROBJ WAS HERE */
 
+#define SPILL_OVER_START_SLOT 16386
+
 /* The a string name for an object's type as listed above
  * Native types are checked against the OBJ_STRING, OBJ_LIST, OBJ_* defines,
  * and Module types have their registered name returned. */
@@ -1281,8 +1283,11 @@ struct redisServer {
     rax *migrated_keys;
     //pthread_rwlock_t ownership_mutex;
     int migration_ownership_locked[16385];
+    int migration_spill_over_phase_activated[16385];
     int migration_ownership_changed[16385];
     int migrateActive;
+    pthread_mutex_t spill_over_phase_lock;
+    int migration_spill_over_phase_number;
 
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
@@ -2281,6 +2286,8 @@ void preventCommandAOF(client *c);
 void preventCommandReplication(client *c);
 void slowlogPushCurrentCommand(client *c, struct redisCommand *cmd, ustime_t duration);
 int prepareForShutdown(int flags);
+unsigned long getSpillOverSlot(const char *ipAddress, unsigned long number);
+sds unsignedLongToSDS(unsigned long number);
 #ifdef __GNUC__
 void _serverLog(int level, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));

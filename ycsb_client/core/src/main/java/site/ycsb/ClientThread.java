@@ -123,33 +123,35 @@ public class ClientThread implements Runnable {
       if (dotransactions) {
         long startTimeNanos = System.nanoTime();
 
-        while (((opcount == 0) || (opsdone < opcount)) && !workload.isStopRequested()) {
+	while (((opcount == 0) || (opsdone < opcount)) && !workload.isStopRequested()) {
+	    try {
+		if (!workload.doTransaction(db, workloadstate)) {
+		    break;
+		}
 
-	try{
-          if (!workload.doTransaction(db, workloadstate)) {
-            break;
-          }
+		opsdone++;
 
-          opsdone++;
-
-          throttleNanos(startTimeNanos);
-	}catch (Exception e){
-                if (e.getMessage().contains("B cannot be cast to class java.util.List")){
-                        System.out.println("CANNOT BE CAST");
-
-                }
-                else if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
-                        tryagain++;
-                } else {
-                        //System.out.println("Jedis Data Exception occurred: " + e.getMessage());
-                        System.out.println(e);
-                        e.printStackTrace();
-                        throw e;
-
-                }
-
-	 }
-        }
+		throttleNanos(startTimeNanos);
+	    } catch (Exception e) {
+		if (e.getMessage().contains("B cannot be cast to class java.util.List")) {
+		    System.out.println("CANNOT BE CAST");
+		} else if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
+		    tryagain++;
+		    try {
+			//Thread.sleep(0, 250000); // Sleep for 0.5 milliseconds (500,000 nanoseconds)
+			Thread.sleep(0, 1000); // Sleep for 0.25 microseconds (250 nanoseconds)
+		    } catch (InterruptedException ie) {
+			Thread.currentThread().interrupt(); // Restore the interrupted status
+			throw new RuntimeException(ie);
+		    }
+		} else {
+		    // System.out.println("Jedis Data Exception occurred: " + e.getMessage());
+		    System.out.println(e);
+		    e.printStackTrace();
+		    throw e;
+		}
+	    }
+	}
       } else {
         long startTimeNanos = System.nanoTime();
 

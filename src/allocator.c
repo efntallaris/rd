@@ -113,7 +113,7 @@ typedef unsigned long long u_llong;
 #define NEXT_FREEP(bp) ( *(void **)bp )
 #define PREV_FREEP(bp) ( *(void **)(bp + DSIZE) )
 
-#define SLOTS 16384
+#define SLOTS 20000
 #define ENTRY_HEADER_SIZE WSIZE //this is 4 bytes used to store the size of the sub-fields in the segment
 #define KEY_META_SIZE sizeof(robj)
 #define VAL_META_SIZE sizeof(robj)
@@ -789,6 +789,49 @@ void r_allocator_free_world()
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
 /* * * * * * * * DEBUG FUNCTIONS * * * * * * * * * */
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
+void print_full_kv_segment_filename(void *ptr, FILE *file)
+{
+    fprintf(file, "(%u)", GET_SIZE(HDRP(ptr)));
+    fprintf(file, "|");
+
+    fprintf(file, "%zu,", KEY_META_SIZE);
+    ptr += KEY_META_SIZE;
+
+    fprintf(file, "%zu,", VAL_META_SIZE);
+    ptr += VAL_META_SIZE;
+
+    size_t key_size = 0;
+    memcpy(&key_size, ptr, ENTRY_HEADER_SIZE);
+    fprintf(file, "%zu:", key_size);
+    ptr += ENTRY_HEADER_SIZE; 
+    char *key = (char *) malloc(key_size + 1);
+    if (!key) {
+        perror("Failed to allocate memory for key");
+        return;
+    }
+    memcpy(key, ptr, key_size);
+    key[key_size] = '\0';
+    fprintf(file, "%s,", key);
+    ptr += key_size;
+    free(key);
+
+    size_t val_size = 0;
+    memcpy(&val_size, ptr, ENTRY_HEADER_SIZE);
+    fprintf(file, "%zu:", val_size);
+    ptr += ENTRY_HEADER_SIZE; 
+    char *val = (char *) malloc(val_size + 1);
+    if (!val) {
+        perror("Failed to allocate memory for value");
+        return;
+    }
+    memcpy(val, ptr, val_size);
+    val[val_size] = '\0';
+    fprintf(file, "%s", val);
+    ptr += val_size;
+    free(val);
+
+    fprintf(file, "|");
+}
 
 
 // print segment that contains K-V
@@ -841,6 +884,13 @@ void print_full_kv_segment(void *ptr)
     printf("|");
 }
 
+void print_empty_kv_segment_filename(void *ptr, FILE *file)
+{
+    // Implementation for printing empty KV segments
+    // For now, let's assume it just prints a placeholder text
+    fprintf(file, "Empty KV Segment");
+}
+
 void print_empty_kv_segment(void *ptr)
 {
     size_t segment_size = GET_SIZE(HDRP(ptr));
@@ -867,6 +917,63 @@ alloc_bloc_t * get_block_from_ptr(int slot, void *ptr)
 }
 
 // DEBUG
+
+
+void traverse_print_slot_blocks_filename(int slot, const char *filename)
+{
+    size_t total_used_bytes = 0;
+    unsigned long long total_segments = 0;
+    size_t slots_bytes_free = 0;
+    FILE *file = fopen(filename, "a");
+    if (!file) {
+        perror("Failed to open file");
+        return;
+    }
+
+    fprintf(file, "%s:%d %s() DEBUG print blocks for slot %d\n", __FILE__, __LINE__, __func__, slot);
+    alloc_bloc_t *slot_head = r_allocator.slot_blocks[slot];
+    if (slot_head == NULL) {
+        fprintf(file, "%s:%d %s() slot %d has no allocated block\n", __FILE__, __LINE__, __func__, slot);
+        fclose(file);
+        return;
+    }
+
+    alloc_bloc_t *cur_block = slot_head;
+    while (cur_block != NULL) {
+
+
+        char *ptr = WSIZE + cur_block->block_start + WSIZE;
+        while (GET_SIZE(HDRP(ptr))) {
+            if (GET_ALLOC(HDRP(ptr))) {
+		total_used_bytes += 1112;
+		total_segments += 1;
+                // print_full_kv_segment_filename(ptr, file);
+            } else {
+                // print_empty_kv_segment_filename(ptr, file);
+            }
+            ptr = NEXT_SEGMENT(ptr);
+            // fprintf(file, "\n");
+        }
+	// fprintf(file, "Bytes (u:%zu/f:%zu) Segments (u:%zu/f:%zu)\n", 
+ //                cur_block->bytes_total_in_use, cur_block->bytes_free,
+ //                cur_block->segments_used, cur_block->bytes_free);
+	slots_bytes_free = 3984588;
+        cur_block = cur_block->next;
+    }
+    float total_blocks = (float)total_used_bytes / slots_bytes_free;
+    // Calculate the fractional part of the last block
+    float fractional_part = total_blocks - (size_t)total_blocks;
+
+    // Calculate the remaining free bytes in the last block
+    size_t remaining_free_bytes = (size_t)((1.0f - fractional_part) * slots_bytes_free);
+
+    fprintf(file, "Total Blocks:%f, Total Segments:%zu, Last Slot unused bytes:%zu. Actual bytes free per block:%zu, total bytes of slot:%zu\n", total_blocks, total_segments, remaining_free_bytes, slots_bytes_free, total_used_bytes);
+    fprintf(file, "\n");
+
+    fclose(file);
+}
+
+
 void traverse_print_slot_blocks(int slot)
 {
     printf("%s:%d %s() DEBUG print blocks for slot %d\n", __FILE__, __LINE__, __func__, slot);
