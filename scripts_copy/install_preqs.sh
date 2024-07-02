@@ -48,8 +48,8 @@ sudo ./loadibmodules.sh
 cd ../deps
 
 # Execute the script
-chmod +x update-jemalloc.sh
-/bin/sh update-jemalloc.sh
+#chmod +x update-jemalloc.sh
+#/bin/sh update-jemalloc.sh
 
 cd jemalloc
 /bin/sh autogen.sh
