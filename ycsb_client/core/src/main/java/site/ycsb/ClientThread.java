@@ -138,7 +138,7 @@ public class ClientThread implements Runnable {
 		} else if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
 		    tryagain++;
 		    try {
-			Thread.sleep(0, 250000); // Sleep for 0.5 milliseconds (500,000 nanoseconds)
+			Thread.sleep(0, 100000); // Sleep for 0.5 milliseconds (500,000 nanoseconds)
 		    } catch (InterruptedException ie) {
 			Thread.currentThread().interrupt(); // Restore the interrupted status
 			throw new RuntimeException(ie);
