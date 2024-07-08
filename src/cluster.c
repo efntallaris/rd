@@ -7014,13 +7014,18 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
+
+			long long unsigned total_lookupKeyWrite_time = 0;
+			long long unsigned total_dbAddNoCopy_time = 0;
+			int lookupKeyWrite_count = 0;
+			int dbAddNoCopy_count = 0;
+			struct timespec start, end;
+
 			// Variables to accumulate times
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
 
 			    int slotInt = j;
 			    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-
-			    //serverLog(LL_WARNING, "Time to create iterator for slot %lu: %lld ns\n", j, create_iterator_duration);
 
 			    robj *key_meta, *val_meta;
 			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
@@ -7028,24 +7033,34 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
 				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
 
+				clock_gettime(CLOCK_MONOTONIC, &start);
 				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+				    clock_gettime(CLOCK_MONOTONIC, &end);
+				    total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+				    lookupKeyWrite_count++;
+
+				    clock_gettime(CLOCK_MONOTONIC, &start);
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-				    //serverLog(LL_WARNING, "Time to add key for slot %lu: %lld ns\n", j, add_duration);
+				    clock_gettime(CLOCK_MONOTONIC, &end);
+				    total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+				    dbAddNoCopy_count++;
 				} else {
-
+				    clock_gettime(CLOCK_MONOTONIC, &end);
+				    total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+				    lookupKeyWrite_count++;
 				}
-
-
-				//serverLog(LL_WARNING, "Time to process key-value for slot %lu: %lld ns\n", j, processing_duration);
 			    }
 
 			    r_allocator_lock_slot_blocks(slotInt);
-			    //serverLog(LL_WARNING, "Total time for slot %lu: %lld ns\n", j, slot_duration);
 			}
 
-
-
 			// dictDisableMigration();
+			// Calculate average times
+			double avg_lookupKeyWrite_time = (double)total_lookupKeyWrite_time / lookupKeyWrite_count;
+			double avg_dbAddNoCopy_time = (double)total_dbAddNoCopy_time / dbAddNoCopy_count;
+
+			serverLog(LL_WARNING, "Average time for lookupKeyWrite: %f ns\n", avg_lookupKeyWrite_time);
+			serverLog(LL_WARNING, "Average time for dbAddNoCopy: %f ns\n", avg_dbAddNoCopy_time);
 
 
 			if(strcmp("LAST", item->message)==0){
