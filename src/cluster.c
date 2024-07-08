@@ -7056,10 +7056,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				    total_add_time += add_duration;
 				    //serverLog(LL_WARNING, "Time to add key for slot %lu: %lld ns\n", j, add_duration);
 				} else {
-				    long long end_lookup_time = current_time_ns();
-				    long long lookup_duration = end_lookup_time - start_lookup_time;
-				    total_lookup_time += lookup_duration;
-				    //serverLog(LL_WARNING, "Time to lookup key for slot %lu: %lld ns\n", j, lookup_duration);
+
 				}
 
 				total_keys++;
@@ -7083,6 +7080,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			    //serverLog(LL_WARNING, "Total time for slot %lu: %lld ns\n", j, slot_duration);
 			}
 
+			serverLog(LL_WARNING, "HERE");
 			// Calculate and log averages
 			long long avg_create_iterator_time = total_create_iterator_time / total_slots;
 			long long avg_iterate_time = total_iterate_time / total_slots;
@@ -7094,7 +7092,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			serverLog(LL_WARNING, "Average time to create iterator: %lld ns\n", avg_create_iterator_time);
 			serverLog(LL_WARNING, "Average time to iterate over slot: %lld ns\n", avg_iterate_time);
 			serverLog(LL_WARNING, "Average time to process key-value: %lld ns\n", avg_processing_time);
-			serverLog(LL_WARNING, "Average time to lookup key: %lld ns\n", avg_lookup_time);
+			//serverLog(LL_WARNING, "Average time to lookup key: %lld ns\n", avg_lookup_time);
 			serverLog(LL_WARNING, "Average time to add key: %lld ns\n", avg_add_time);
 			serverLog(LL_WARNING, "Average total time per slot: %lld ns\n", avg_slot_time);
 
