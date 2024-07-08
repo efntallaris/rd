@@ -7015,86 +7015,34 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
 			// Variables to accumulate times
-			long long total_create_iterator_time = 0;
-			long long total_iterate_time = 0;
-			long long total_processing_time = 0;
-			long long total_lookup_time = 0;
-			long long total_add_time = 0;
-			long long total_slot_time = 0;
-			long unsigned int total_slots = 0;
-			long unsigned int total_keys = 0;
-
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
-			    long long start_slot_time = current_time_ns();
 
 			    int slotInt = j;
-			    long long start_create_iterator_time = current_time_ns();
 			    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			    long long end_create_iterator_time = current_time_ns();
-			    long long create_iterator_duration = end_create_iterator_time - start_create_iterator_time;
-			    total_create_iterator_time += create_iterator_duration;
 
 			    //serverLog(LL_WARNING, "Time to create iterator for slot %lu: %lld ns\n", j, create_iterator_duration);
 
 			    robj *key_meta, *val_meta;
-			    long long start_iterate_time = current_time_ns();
 			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				long long start_processing_time = current_time_ns();
 
 				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
 				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
 
-				long long start_lookup_time = current_time_ns();
 				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-				    long long end_lookup_time = current_time_ns();
-				    long long lookup_duration = end_lookup_time - start_lookup_time;
-				    total_lookup_time += lookup_duration;
-				    long long start_add_time = current_time_ns();
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-				    long long end_add_time = current_time_ns();
-				    long long add_duration = end_add_time - start_add_time;
-				    total_add_time += add_duration;
 				    //serverLog(LL_WARNING, "Time to add key for slot %lu: %lld ns\n", j, add_duration);
 				} else {
 
 				}
 
-				total_keys++;
 
-				long long end_processing_time = current_time_ns();
-				long long processing_duration = end_processing_time - start_processing_time;
-				total_processing_time += processing_duration;
 				//serverLog(LL_WARNING, "Time to process key-value for slot %lu: %lld ns\n", j, processing_duration);
 			    }
-			    long long end_iterate_time = current_time_ns();
-			    long long iterate_duration = end_iterate_time - start_iterate_time;
-			    total_iterate_time += iterate_duration;
-			    //serverLog(LL_WARNING, "Time to iterate over slot %lu: %lld ns\n", j, iterate_duration);
 
 			    r_allocator_lock_slot_blocks(slotInt);
-
-			    long long end_slot_time = current_time_ns();
-			    long long slot_duration = end_slot_time - start_slot_time;
-			    total_slot_time += slot_duration;
-			    total_slots++;
 			    //serverLog(LL_WARNING, "Total time for slot %lu: %lld ns\n", j, slot_duration);
 			}
 
-			serverLog(LL_WARNING, "HERE");
-			// Calculate and log averages
-			long long avg_create_iterator_time = total_create_iterator_time / total_slots;
-			long long avg_iterate_time = total_iterate_time / total_slots;
-			long long avg_processing_time = total_processing_time / total_keys;
-			long long avg_lookup_time = total_lookup_time / total_keys;
-			long long avg_add_time = total_add_time / total_keys;
-			long long avg_slot_time = total_slot_time / total_slots;
-
-			serverLog(LL_WARNING, "Average time to create iterator: %lld ns\n", avg_create_iterator_time);
-			serverLog(LL_WARNING, "Average time to iterate over slot: %lld ns\n", avg_iterate_time);
-			serverLog(LL_WARNING, "Average time to process key-value: %lld ns\n", avg_processing_time);
-			//serverLog(LL_WARNING, "Average time to lookup key: %lld ns\n", avg_lookup_time);
-			serverLog(LL_WARNING, "Average time to add key: %lld ns\n", avg_add_time);
-			serverLog(LL_WARNING, "Average total time per slot: %lld ns\n", avg_slot_time);
 
 
 			// dictDisableMigration();
