@@ -7023,7 +7023,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
 					}else{
-						serverLog(LL_WARNING, "STRATOS KEY EXISTS %s", key_meta->ptr);
+						//serverLog(LL_WARNING, "STRATOS KEY EXISTS %s", key_meta->ptr);
 					}
 					//should be added inside if
 					total_keys_added++;
