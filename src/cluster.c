@@ -7034,7 +7034,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			    long long create_iterator_duration = end_create_iterator_time - start_create_iterator_time;
 			    total_create_iterator_time += create_iterator_duration;
 
-			    serverLog(LL_WARNING, "Time to create iterator for slot %lu: %lld ns\n", j, create_iterator_duration);
+			    //serverLog(LL_WARNING, "Time to create iterator for slot %lu: %lld ns\n", j, create_iterator_duration);
 
 			    robj *key_meta, *val_meta;
 			    long long start_iterate_time = current_time_ns();
