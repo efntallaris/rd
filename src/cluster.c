@@ -7041,7 +7041,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				    //lookupKeyWrite_count++;
 
 				    //clock_gettime(CLOCK_MONOTONIC, &start);
-				    //dbAddNoCopy(item->c->db, key_meta, val_meta);
+				    dbAddNoCopy(item->c->db, key_meta, val_meta);
 				    //clock_gettime(CLOCK_MONOTONIC, &end);
 				    //total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 				    //dbAddNoCopy_count++;
