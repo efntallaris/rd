@@ -122,7 +122,7 @@ void dictInitLocks(){
 			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
 			fclose(log_file);
 		}
-		unsigned long numLocks = 70000000;
+		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
@@ -149,7 +149,7 @@ dict *dictCreate(dictType *type,
 			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
 			fclose(log_file);
 		}
-		unsigned long numLocks = 70000000;
+		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
@@ -177,7 +177,7 @@ dict *dictCreateBig(dictType *type,
 			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
 			fclose(log_file);
 		}
-		unsigned long numLocks = 70000000;
+		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
