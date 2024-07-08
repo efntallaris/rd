@@ -7022,6 +7022,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			struct timespec start, end;
 
 			// Variables to accumulate times
+			serverLog(LL_WARNING, "STARTED ITERATING SLOTS");
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
 
 			    int slotInt = j;
@@ -7053,6 +7054,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			    r_allocator_lock_slot_blocks(slotInt);
 			}
+			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			// dictDisableMigration();
 			// Calculate average times
