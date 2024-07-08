@@ -7018,7 +7018,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
 					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
 					//if key does not exist then add it to dictionary, else ignore
-					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
+					//if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
 						//with copy start
 						// int allocated_block = 0;
 						// robj *allocator_value;
@@ -7035,7 +7035,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 						//with copy stop
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
-					}
+					//}
 					//should be added inside if
 					total_keys_added++;
 				}
