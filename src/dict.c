@@ -46,7 +46,7 @@
 #include "dict.h"
 #include "zmalloc.h"
 #include "redisassert.h"
-
+#include <time.h>
 // Migration variables
 static FILE *log_file;
 static int migration_activated = 0;
