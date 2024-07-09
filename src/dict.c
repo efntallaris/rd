@@ -50,7 +50,6 @@
 // Migration variables
 static FILE *log_file;
 static int migration_activated = 0;
-static pthread_mutex_t* general_dict_lock; 
 static pthread_mutex_t* migration_dict_locks; 
 static dict *target_db;
 
@@ -117,11 +116,7 @@ void dictInitLocks(){
 	fprintf(log_file, "INITIALIZING LOCKS\n");
 	fclose(log_file);
 	if(migration_dict_locks == NULL){
-		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
-			log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-			fclose(log_file);
-		}
+		
 		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
@@ -144,11 +139,7 @@ dict *dictCreate(dictType *type,
 	dict *d = zmalloc(sizeof(*d));
 
 	if(migration_dict_locks == NULL){
-		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
-			log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-			fclose(log_file);
-		}
+
 		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
@@ -172,11 +163,7 @@ dict *dictCreateBig(dictType *type,
 	dict *d = zmalloc(sizeof(*d));
 
 	if(migration_dict_locks == NULL){
-		if (pthread_mutex_init(&general_dict_lock, NULL) != 0) {
-			log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-			fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-			fclose(log_file);
-		}
+
 		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
@@ -323,10 +310,6 @@ int dictRehash(dict *d, int n) {
 	if (!dictIsRehashing(d)){
 		return 0;
 	}
-	
-	if(migration_activated){
-		return 0;
-	}
 
 	while(n-- && d->ht[0].used != 0) {
 		dictEntry *de, *nextde;
@@ -356,19 +339,15 @@ int dictRehash(dict *d, int n) {
 			pthread_mutex_lock(&migration_dict_locks[h]);
 			de->next = d->ht[1].table[h];
 			d->ht[1].table[h] = de;
-			//pthread_mutex_lock(&general_dict_lock);
 			d->ht[0].used--;
 			d->ht[1].used++;
-			//pthread_mutex_unlock(&general_dict_lock);
 			de = nextde;
 			pthread_mutex_unlock(&migration_dict_locks[h]);
 		}
 		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
 		d->ht[0].table[d->rehashidx] = NULL;
 		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
-		//pthread_mutex_lock(&general_dict_lock);
 		d->rehashidx++;
-		//pthread_mutex_unlock(&general_dict_lock);
 	}
 
 	/* Check if we already rehashed the whole table... */
