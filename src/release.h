@@ -1,3 +1,3 @@
-#define REDIS_GIT_SHA1 "a91a6cae"
-#define REDIS_GIT_DIRTY "28"
-#define REDIS_BUILD_ID "redis0.entall-211314.streamstore-pg0.utah.cloudlab.us-1720543825"
+#define REDIS_GIT_SHA1 "77def695"
+#define REDIS_GIT_DIRTY "0"
+#define REDIS_BUILD_ID "redis0.entall-211314.streamstore-pg0.utah.cloudlab.us-1720544947"

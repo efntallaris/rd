@@ -6928,7 +6928,6 @@ void *rdmaDoneSlotsThread(void *arg) {
 		dbAddNoCopy(c->db, key_meta, val_meta);
 		total_keys_added++;
 
-		clock_gettime(CLOCK_MONOTONIC, &while_end);
 	    }
 
 	}
@@ -6966,6 +6965,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	pthread_mutex_unlock(&(server.generic_migration_mutex));
 
 	//TODO CLEAN STRUCTURES
+	dictDisableMigration();
 	serverLog(LL_WARNING, "STRATOS STOPPED (SLOTS) PATCHING AND ADDING TO DB");
 
 	// ENABLE REHASHING
