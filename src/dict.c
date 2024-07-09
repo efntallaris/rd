@@ -455,32 +455,38 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	dictEntry *entry;
 	dictht *ht;
 
-	if (dictIsRehashing(d)) _dictRehashStep(d);
+	//if (dictIsRehashing(d)) _dictRehashStep(d);
 
 	/* Get the index of the new element, or -1 if
 	 * the element already exists. */
+	struct timespec start, end;
+	clock_gettime(CLOCK_MONOTONIC, &start);
 	if ((index = _dictKeyIndex(d, key, dictHashKey(d,key), existing)) == -1)
 		return NULL;
 
+	clock_gettime(CLOCK_MONOTONIC, &end);
+
+
+	double time_taken = (end.tv_sec - start.tv_sec) * 1e9; 
+	time_taken = (time_taken + (end.tv_nsec - start.tv_nsec)) * 1e-9; 
 	/* Allocate the memory and store the new entry.
 	 * Insert the element in top, with the assumption that in a database
 	 * system it is more likely that recently added entries are accessed
 	 * more frequently. */
-	ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
+	//ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
+	ht = &d->ht[0];
 	entry = zmalloc(sizeof(*entry));
 	pthread_mutex_lock(&migration_dict_locks[index]);
 	entry->next = ht->table[index];
 	ht->table[index] = entry;
-	//pthread_mutex_lock(&general_dict_lock);
 	ht->used++;
-	//pthread_mutex_unlock(&general_dict_lock);
 
-//	char buffer1[4096];
-//	dictGetStats(buffer1,	sizeof(buffer1),d);
-//	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "HT : %s\n", buffer1);
-//	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
-//	fclose(log_file);
+	char buffer1[4096];
+	dictGetStats(buffer1,	sizeof(buffer1),d);
+	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+	// fprintf(log_file, "HT : %s\n", buffer1);
+	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
+	fclose(log_file);
 
 //	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
 //	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
