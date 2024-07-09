@@ -328,8 +328,8 @@ int dictRehash(dict *d, int n) {
 				return 1;
 			}
 		}
-		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
-		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
 		de = d->ht[0].table[d->rehashidx];
 		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
 		/* Move all the keys in this bucket from the old to the new hash HT */
@@ -361,6 +361,9 @@ int dictRehash(dict *d, int n) {
 		d->rehashidx = -1;
 		return 0;
 	}
+	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+	fprintf(log_file, " 1 REHASH\n", n.sizemask, n.size);
+	fclose(log_file);
 
 	/* More to rehash... */
 	return 1;
