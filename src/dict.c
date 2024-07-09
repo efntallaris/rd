@@ -256,9 +256,9 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 	n.size = realsize;
 	n.sizemask = realsize-1;
 
-//	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "SIZEMASK : %ld, SIZE:%ld\n", n.sizemask, n.size);
-//	fclose(log_file);
+	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+	fprintf(log_file, "SIZEMASK : %ld, SIZE:%ld\n", n.sizemask, n.size);
+	fclose(log_file);
 
 	if (malloc_failed) {
 		n.table = ztrycalloc(realsize*sizeof(dictEntry*));
