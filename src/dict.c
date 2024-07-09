@@ -473,16 +473,16 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	 * Insert the element in top, with the assumption that in a database
 	 * system it is more likely that recently added entries are accessed
 	 * more frequently. */
-	//ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-	ht = &d->ht[0];
+	ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
+	// ht = &d->ht[0];
 	entry = zmalloc(sizeof(*entry));
 	pthread_mutex_lock(&migration_dict_locks[index]);
 	entry->next = ht->table[index];
 	ht->table[index] = entry;
 	ht->used++;
 
-	char buffer1[4096];
-	dictGetStats(buffer1,	sizeof(buffer1),d);
+	// char buffer1[4096];
+	// dictGetStats(buffer1,	sizeof(buffer1),d);
 	//log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
 	// fprintf(log_file, "HT : %s\n", buffer1);
 	//fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
