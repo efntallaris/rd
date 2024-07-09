@@ -479,12 +479,12 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	ht->table[index] = entry;
 	ht->used++;
 
-	char buffer1[4096];
-	dictGetStats(buffer1,	sizeof(buffer1),d);
-	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-	fprintf(log_file, "HT : %s\n", buffer1);
-	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
-	fclose(log_file);
+	// char buffer1[4096];
+	// dictGetStats(buffer1,	sizeof(buffer1),d);
+	// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+	// fprintf(log_file, "HT : %s\n", buffer1);
+	// fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
+	// fclose(log_file);
 
 //	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
 //	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
