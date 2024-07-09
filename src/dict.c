@@ -307,7 +307,9 @@ int dictTryExpand(dict *d, unsigned long size) {
 int dictRehash(dict *d, int n) {
 
 	int empty_visits = n*10; /* Max number of empty buckets to visit. */
-	return 0;
+	if(d->isBig){
+		return 0;
+	}
 	if (!dictIsRehashing(d)){
 		return 0;
 	}
