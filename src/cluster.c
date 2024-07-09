@@ -7012,9 +7012,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			// Variables to accumulate times
 			serverLog(LL_WARNING, "STARTED ITERATING SLOTS");
 
-			long unsigned int total_lookupKeyWrite_time = 0;
-			long unsigned int lookupKeyWrite_count = 0;
-
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
 				int slotInt = j;
 				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
