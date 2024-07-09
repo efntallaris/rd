@@ -6211,7 +6211,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	if(recipientNode == NULL) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
-	dictEnableMigration();
+	//dictEnableMigration();
 
 	if(strcmp(myself->ip, "10.10.1.1") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 20 SECONDS");
@@ -6892,7 +6892,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	//    serverLog(LL_WARNING, "STRATOS DISABLING REHASHING");
 	//    dictDisableResize();
 	//    server.activerehashing = 0;
-	dictEnableMigration();
+	//dictEnableMigration();
 	//
 	serverLog(LL_WARNING, "STRATOS STARTED (SLOTS) PATCHING AND ADDING TO DB");
 	// Nanosleep args
@@ -6965,7 +6965,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	pthread_mutex_unlock(&(server.generic_migration_mutex));
 
 	//TODO CLEAN STRUCTURES
-	dictDisableMigration();
+	//dictDisableMigration();
 	serverLog(LL_WARNING, "STRATOS STOPPED (SLOTS) PATCHING AND ADDING TO DB");
 
 	// ENABLE REHASHING
@@ -7044,7 +7044,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			}
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
-			// dictDisableMigration();
+			dictDisableMigration();
 			// Calculate average times
 			double avg_lookupKeyWrite_time = (double)total_lookupKeyWrite_time / lookupKeyWrite_count;
 			double avg_dbAddNoCopy_time = (double)total_dbAddNoCopy_time / dbAddNoCopy_count;
