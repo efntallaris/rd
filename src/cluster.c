@@ -6911,12 +6911,8 @@ void *rdmaDoneSlotsThread(void *arg) {
 
 	rdmaCachedConnection *cs =  rdmaGetConnection(c);
 
-	struct timespec start, end, loop_start, loop_end;
-
-	clock_gettime(CLOCK_MONOTONIC, &start);
 
 	for (long unsigned int j = 2; j < number_of_arguments; j++) {
-	    clock_gettime(CLOCK_MONOTONIC, &loop_start);
 
 	    int slotInt = atoi(args[j]);
 	    active_slots[j-2] = slotInt;
@@ -6925,10 +6921,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 	    robj *key_meta, *val_meta;
 
-	    clock_gettime(CLOCK_MONOTONIC, &loop_start);
 	    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-		struct timespec while_start, while_end;
-		clock_gettime(CLOCK_MONOTONIC, &while_start);
 
 		key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
 		val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
@@ -6936,13 +6929,8 @@ void *rdmaDoneSlotsThread(void *arg) {
 		total_keys_added++;
 
 		clock_gettime(CLOCK_MONOTONIC, &while_end);
-		double while_time_spent = (while_end.tv_sec - while_start.tv_sec) + (while_end.tv_nsec - while_start.tv_nsec) / (double)BILLION;
-		serverLog(LL_WARNING, "Time spent in while loop iteration for slot %d: %f seconds\n", slotInt, while_time_spent);
 	    }
 
-	    clock_gettime(CLOCK_MONOTONIC, &loop_end);
-	    double loop_time_spent = (loop_end.tv_sec - loop_start.tv_sec) + (loop_end.tv_nsec - loop_start.tv_nsec) / (double)BILLION;
-	    serverLog(LL_WARNING, "Time spent in for loop iteration for slot %d: %f seconds\n", slotInt, loop_time_spent);
 	}
 
 	serverLog(LL_WARNING, "STRATOS PATCHING AND ADDING DONE");
@@ -7040,10 +7028,10 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				    //total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 				    //lookupKeyWrite_count++;
 
-				    //clock_gettime(CLOCK_MONOTONIC, &start);
+				    clock_gettime(CLOCK_MONOTONIC, &start);
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-				    //clock_gettime(CLOCK_MONOTONIC, &end);
-				    //total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
+				    clock_gettime(CLOCK_MONOTONIC, &end);
+				    total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 				    //dbAddNoCopy_count++;
 				} else {
 				    //clock_gettime(CLOCK_MONOTONIC, &end);
@@ -7061,7 +7049,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			double avg_lookupKeyWrite_time = (double)total_lookupKeyWrite_time / lookupKeyWrite_count;
 			double avg_dbAddNoCopy_time = (double)total_dbAddNoCopy_time / dbAddNoCopy_count;
 
-			serverLog(LL_WARNING, "Average time for lookupKeyWrite: %f ns\n", avg_lookupKeyWrite_time);
+			serverLog(LL_WARNING, "Total dbAddNoCopyTime lookupKeyWrite: %f ns\n", total_dbAddNoCopy_time);
 			serverLog(LL_WARNING, "Average time for dbAddNoCopy: %f ns\n", avg_dbAddNoCopy_time);
 
 
