@@ -7023,21 +7023,21 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
 
 				//clock_gettime(CLOCK_MONOTONIC, &start);
+				clock_gettime(CLOCK_MONOTONIC, &start);
 				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
 				    //clock_gettime(CLOCK_MONOTONIC, &end);
 				    //total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 				    //lookupKeyWrite_count++;
 
-				    clock_gettime(CLOCK_MONOTONIC, &start);
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-				    clock_gettime(CLOCK_MONOTONIC, &end);
-				    total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 				    //dbAddNoCopy_count++;
 				} else {
 				    //clock_gettime(CLOCK_MONOTONIC, &end);
 				    //total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 				    //lookupKeyWrite_count++;
 				}
+				clock_gettime(CLOCK_MONOTONIC, &end);
+				total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
 			    }
 
 			    r_allocator_lock_slot_blocks(slotInt);
