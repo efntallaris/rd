@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 1365;
+	int chunk_size = 1366;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -6524,16 +6524,16 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		{
 			prevSlot = start;
 			currentSlot = end;
-	
+
 			rio rdmaDoneBatchCmd;
 			rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
 			serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
 			serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
-	
+
 			serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
 			serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
 			serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
-	
+
 			buf = rdmaDoneBatchCmd.io.buffer.ptr;
 			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000);
 			if(nwritten != (int) sdslen(buf)) {
@@ -6914,21 +6914,21 @@ void *rdmaDoneSlotsThread(void *arg) {
 
 	for (long unsigned int j = 2; j < number_of_arguments; j++) {
 
-	    int slotInt = atoi(args[j]);
-	    active_slots[j-2] = slotInt;
+		int slotInt = atoi(args[j]);
+		active_slots[j-2] = slotInt;
 
-	    r_allocator_lock_slot_blocks(slotInt);
-	    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-	    robj *key_meta, *val_meta;
+		r_allocator_lock_slot_blocks(slotInt);
+		segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+		robj *key_meta, *val_meta;
 
-	    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+		while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
 
-		key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-		val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-		dbAddNoCopy(c->db, key_meta, val_meta);
-		total_keys_added++;
+			key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+			val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+			dbAddNoCopy(c->db, key_meta, val_meta);
+			total_keys_added++;
 
-	    }
+		}
 
 	}
 
@@ -6977,9 +6977,9 @@ void *rdmaDoneSlotsThread(void *arg) {
 }
 
 long long current_time_ns() {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000000000LL + ts.tv_nsec;
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
@@ -7011,46 +7011,48 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			// Variables to accumulate times
 			serverLog(LL_WARNING, "STARTED ITERATING SLOTS");
+
+			long unsigned int total_lookupKeyWrite_time = 0;
+			long unsigned int lookupKeyWrite_count = 0;
+
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
+				int slotInt = j;
+				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 
-			    int slotInt = j;
-			    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+				robj *key_meta, *val_meta;
+				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+					key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
+					val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
 
-			    robj *key_meta, *val_meta;
-			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+					struct timespec start_lookup, end_lookup, start_add, end_add;
+					clock_gettime(CLOCK_MONOTONIC, &start_lookup);
+					if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+						clock_gettime(CLOCK_MONOTONIC, &end_lookup);
+						total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
+						lookupKeyWrite_count++;
 
-				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+						clock_gettime(CLOCK_MONOTONIC, &start_add);
+						dbAddNoCopy(item->c->db, key_meta, val_meta);
+						clock_gettime(CLOCK_MONOTONIC, &end_add);
+						total_dbAddNoCopy_time += BILLION * (end_add.tv_sec - start_add.tv_sec) + end_add.tv_nsec - start_add.tv_nsec;
+					} else {
 
-				//clock_gettime(CLOCK_MONOTONIC, &start);
-				clock_gettime(CLOCK_MONOTONIC, &start);
-				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-				    //clock_gettime(CLOCK_MONOTONIC, &end);
-				    //total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-				    //lookupKeyWrite_count++;
-
-				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-				    //dbAddNoCopy_count++;
-				} else {
-				    //clock_gettime(CLOCK_MONOTONIC, &end);
-				    //total_lookupKeyWrite_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-				    //lookupKeyWrite_count++;
+					}
+					clock_gettime(CLOCK_MONOTONIC, &end_lookup);
+					total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
+					lookupKeyWrite_count++;
 				}
-				clock_gettime(CLOCK_MONOTONIC, &end);
-				total_dbAddNoCopy_time += BILLION * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec;
-			    }
 
-			    r_allocator_lock_slot_blocks(slotInt);
+				r_allocator_lock_slot_blocks(slotInt);
 			}
+
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			dictDisableMigration();
-			// Calculate average times
-			double avg_lookupKeyWrite_time = (double)total_lookupKeyWrite_time / lookupKeyWrite_count;
-			double avg_dbAddNoCopy_time = (double)total_dbAddNoCopy_time / dbAddNoCopy_count;
 
-			serverLog(LL_WARNING, "Total dbAddNoCopyTime lookupKeyWrite: %f ns\n", total_dbAddNoCopy_time);
-			serverLog(LL_WARNING, "Average time for dbAddNoCopy: %f ns\n", avg_dbAddNoCopy_time);
+			serverLog(LL_WARNING, "Total dbAddNoCopy time: %f ns\n", total_dbAddNoCopy_time);
+			serverLog(LL_WARNING, "Total lookupKeyWrite time: %f ns\n", total_lookupKeyWrite_time);
+			serverLog(LL_WARNING, "lookupKeyWrite count: %lu\n", lookupKeyWrite_count);
 
 
 			if(strcmp("LAST", item->message)==0){
