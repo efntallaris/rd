@@ -455,7 +455,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	dictEntry *entry;
 	dictht *ht;
 
-	//if (dictIsRehashing(d)) _dictRehashStep(d);
+	if (dictIsRehashing(d)) _dictRehashStep(d);
 
 	/* Get the index of the new element, or -1 if
 	 * the element already exists. */
