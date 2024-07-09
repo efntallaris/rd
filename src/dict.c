@@ -362,7 +362,7 @@ int dictRehash(dict *d, int n) {
 		return 0;
 	}
 	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-	fprintf(log_file, " 1 REHASH\n", n.sizemask, n.size);
+	fprintf(log_file, " 1 REHASH\n");
 	fclose(log_file);
 
 	/* More to rehash... */
