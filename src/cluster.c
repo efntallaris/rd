@@ -6326,6 +6326,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			slots_number_of_blocks[i] = 0;
 			all_slots[i] = NULL;
 		}
+		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d", atoi(args[start]), atoi(args[end]));
 
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
@@ -6342,17 +6343,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			slot_is_for_migration[j-7] = 1;
 			total_number_of_remote_buffers += number_of_blocks;
 		}
-
-//		for(int j=start; j<end;j++){
-//			    unsigned int intSlot = atoi(args[j]);
-//			    segment_iterator_t *iter = create_iterator_for_slot(intSlot);
-//			    robj *key_meta, *val_meta;
-//			    while (iter->getNext(intSlot, &key_meta, &val_meta) != NULL) {
-//				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
-//				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
-//				serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
-//			    }
-//		}
 
 		int buffer_index = 0;
 		struct rdma_buffer_info **rdma_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_buffers  * sizeof(struct rdma_buffer_info *));
