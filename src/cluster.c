@@ -6933,12 +6933,10 @@ void *rdmaDoneSlotsThread(void *arg) {
 		robj *key_meta, *val_meta;
 
 		while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-
 			key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
 			val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
 			dbAddNoCopy(c->db, key_meta, val_meta);
 			total_keys_added++;
-
 		}
 
 	}
@@ -7046,7 +7044,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
 				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
 				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
-				serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
+				//serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
 
 				struct timespec start_lookup, end_lookup, start_add, end_add;
 				clock_gettime(CLOCK_MONOTONIC, &start_lookup);
