@@ -7039,16 +7039,16 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				struct timespec start_lookup, end_lookup, start_add, end_add;
 				//clock_gettime(CLOCK_MONOTONIC, &start_lookup);
 
-				//if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
 				    clock_gettime(CLOCK_MONOTONIC, &start_add);
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
 				    clock_gettime(CLOCK_MONOTONIC, &end_add);
 				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
-				//}
+				}
 
 				//clock_gettime(CLOCK_MONOTONIC, &end_lookup);
 				//total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
-				//lookupKeyWrite_count++;
+				lookupKeyWrite_count++;
 			    }
 
 			    clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
@@ -7066,13 +7066,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			serverLog(LL_WARNING, "total_dbAddNoCopy_time: %lld ns", total_dbAddNoCopy_time);
 			serverLog(LL_WARNING, "total_lookupKeyWrite_time: %lld ns", total_lookupKeyWrite_time);
 			serverLog(LL_WARNING, "lookupKeyWrite_count: %d", lookupKeyWrite_count);
-			dictDisableMigration();
-
 			serverLog(LL_WARNING, "Total time for for loop: %lu ns", total_for_loop_time);
 			serverLog(LL_WARNING, "Total time for while loop: %lu ns", total_while_loop_time);
-			serverLog(LL_WARNING, "Total dbAddNoCopy time: %f ns\n", total_dbAddNoCopy_time);
-			//serverLog(LL_WARNING, "Total lookupKeyWrite time: %f ns\n", total_lookupKeyWrite_time);
-			serverLog(LL_WARNING, "lookupKeyWrite count: %lu\n", lookupKeyWrite_count);
+			dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
