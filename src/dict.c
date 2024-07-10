@@ -463,7 +463,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	double time_taken = (end.tv_sec - start.tv_sec) * 1e9; 
 	time_taken = (time_taken + (end.tv_nsec - start.tv_nsec)) * 1e-9; 
 	if(migration_activated){
-		fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
+		//fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
 
 	}
 	// char buffer1[4096];
