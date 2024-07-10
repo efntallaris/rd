@@ -7035,6 +7035,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
 				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
 				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+				serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
 
 				struct timespec start_lookup, end_lookup, start_add, end_add;
 				clock_gettime(CLOCK_MONOTONIC, &start_lookup);
@@ -7063,6 +7064,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			// For debugging purposes
+			serverLog(LL_WARNING, "Last Slot:%d", lastSlot);
 			serverLog(LL_WARNING, "total_dbAddNoCopy_time: %lld ns", total_dbAddNoCopy_time);
 			serverLog(LL_WARNING, "total_lookupKeyWrite_time: %lld ns", total_lookupKeyWrite_time);
 			serverLog(LL_WARNING, "lookupKeyWrite_count: %d", lookupKeyWrite_count);
