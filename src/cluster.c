@@ -7039,12 +7039,12 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				struct timespec start_lookup, end_lookup, start_add, end_add;
 				clock_gettime(CLOCK_MONOTONIC, &start_lookup);
 
-				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+				//if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
 				    clock_gettime(CLOCK_MONOTONIC, &start_add);
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
 				    clock_gettime(CLOCK_MONOTONIC, &end_add);
 				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
-				}
+				//}
 
 				clock_gettime(CLOCK_MONOTONIC, &end_lookup);
 				total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
@@ -7063,7 +7063,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			// For debugging purposes
-			serverLog(LL_WARNING, "Last Slot:%d", lastSlot);
 			serverLog(LL_WARNING, "total_dbAddNoCopy_time: %lld ns", total_dbAddNoCopy_time);
 			serverLog(LL_WARNING, "total_lookupKeyWrite_time: %lld ns", total_lookupKeyWrite_time);
 			serverLog(LL_WARNING, "lookupKeyWrite_count: %d", lookupKeyWrite_count);
