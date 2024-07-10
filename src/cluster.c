@@ -7005,6 +7005,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			long long unsigned total_lookupKeyWrite_time = 0;
 			long long unsigned total_dbAddNoCopy_time = 0;
+			long unsigned int total_for_loop_time = 0;
+			long unsigned int total_while_loop_time = 0;
+
 			int lookupKeyWrite_count = 0;
 			int dbAddNoCopy_count = 0;
 			struct timespec start, end;
@@ -7012,41 +7015,55 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			// Variables to accumulate times
 			serverLog(LL_WARNING, "STARTED ITERATING SLOTS");
 
+			struct timespec start_for_loop, end_for_loop;
+			clock_gettime(CLOCK_MONOTONIC, &start_for_loop);
+
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
-				int slotInt = j;
-				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+			    int slotInt = j;
+			    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 
-				robj *key_meta, *val_meta;
-				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-					key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
-					val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+			    robj *key_meta, *val_meta;
+			    struct timespec start_while_loop, end_while_loop;
+			    clock_gettime(CLOCK_MONOTONIC, &start_while_loop);
 
-					struct timespec start_lookup, end_lookup, start_add, end_add;
-					clock_gettime(CLOCK_MONOTONIC, &start_lookup);
-					if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-						clock_gettime(CLOCK_MONOTONIC, &end_lookup);
-						total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
-						lookupKeyWrite_count++;
+			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
+				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
 
-						clock_gettime(CLOCK_MONOTONIC, &start_add);
-						dbAddNoCopy(item->c->db, key_meta, val_meta);
-						clock_gettime(CLOCK_MONOTONIC, &end_add);
-						total_dbAddNoCopy_time += BILLION * (end_add.tv_sec - start_add.tv_sec) + end_add.tv_nsec - start_add.tv_nsec;
-					} else {
+				struct timespec start_lookup, end_lookup, start_add, end_add;
+				clock_gettime(CLOCK_MONOTONIC, &start_lookup);
+				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+				    clock_gettime(CLOCK_MONOTONIC, &end_lookup);
+				    total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
+				    lookupKeyWrite_count++;
 
-					}
-					clock_gettime(CLOCK_MONOTONIC, &end_lookup);
-					total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
-					lookupKeyWrite_count++;
+				    clock_gettime(CLOCK_MONOTONIC, &start_add);
+				    dbAddNoCopy(item->c->db, key_meta, val_meta);
+				    clock_gettime(CLOCK_MONOTONIC, &end_add);
+				    total_dbAddNoCopy_time += BILLION * (end_add.tv_sec - start_add.tv_sec) + end_add.tv_nsec - start_add.tv_nsec;
+				} else {
+				    // This part is empty in your provided code
 				}
+				clock_gettime(CLOCK_MONOTONIC, &end_lookup);
+				total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
+				lookupKeyWrite_count++;
+			    }
 
-				r_allocator_lock_slot_blocks(slotInt);
+			    clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
+			    total_while_loop_time += BILLION * (end_while_loop.tv_sec - start_while_loop.tv_sec) + end_while_loop.tv_nsec - start_while_loop.tv_nsec;
+
+			    r_allocator_lock_slot_blocks(slotInt);
 			}
+
+			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
+			total_for_loop_time += BILLION * (end_for_loop.tv_sec - start_for_loop.tv_sec) + end_for_loop.tv_nsec - start_for_loop.tv_nsec;
 
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			dictDisableMigration();
 
+			serverLog(LL_WARNING, "Total time for for loop: %lu ns", total_for_loop_time);
+			serverLog(LL_WARNING, "Total time for while loop: %lu ns", total_while_loop_time);
 			serverLog(LL_WARNING, "Total dbAddNoCopy time: %f ns\n", total_dbAddNoCopy_time);
 			serverLog(LL_WARNING, "Total lookupKeyWrite time: %f ns\n", total_lookupKeyWrite_time);
 			serverLog(LL_WARNING, "lookupKeyWrite count: %lu\n", lookupKeyWrite_count);
