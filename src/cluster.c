@@ -7036,7 +7036,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
 				//serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
 
-				//struct timespec start_lookup, end_lookup, start_add, end_add;
+				struct timespec start_lookup, end_lookup, start_add, end_add;
 				//clock_gettime(CLOCK_MONOTONIC, &start_lookup);
 
 				//if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
