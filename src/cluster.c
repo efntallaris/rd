@@ -6326,7 +6326,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			slots_number_of_blocks[i] = 0;
 			all_slots[i] = NULL;
 		}
-		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d", atoi(args[start]), atoi(args[end]));
+		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d", atoi(args[start]), atoi(args[end-1]));
 
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
