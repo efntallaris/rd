@@ -6982,6 +6982,12 @@ long long current_time_ns() {
 	return ts.tv_sec * 1000000000LL + ts.tv_nsec;
 }
 
+
+long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
+    return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
+}
+
+
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
 
@@ -7032,34 +7038,34 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 				struct timespec start_lookup, end_lookup, start_add, end_add;
 				clock_gettime(CLOCK_MONOTONIC, &start_lookup);
-				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-				    clock_gettime(CLOCK_MONOTONIC, &end_lookup);
-				    total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
-				    lookupKeyWrite_count++;
 
+				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
 				    clock_gettime(CLOCK_MONOTONIC, &start_add);
 				    dbAddNoCopy(item->c->db, key_meta, val_meta);
 				    clock_gettime(CLOCK_MONOTONIC, &end_add);
-				    total_dbAddNoCopy_time += BILLION * (end_add.tv_sec - start_add.tv_sec) + end_add.tv_nsec - start_add.tv_nsec;
-				} else {
-				    // This part is empty in your provided code
+				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
 				}
+
 				clock_gettime(CLOCK_MONOTONIC, &end_lookup);
-				total_lookupKeyWrite_time += BILLION * (end_lookup.tv_sec - start_lookup.tv_sec) + end_lookup.tv_nsec - start_lookup.tv_nsec;
+				total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
 				lookupKeyWrite_count++;
 			    }
 
 			    clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
-			    total_while_loop_time += BILLION * (end_while_loop.tv_sec - start_while_loop.tv_sec) + end_while_loop.tv_nsec - start_while_loop.tv_nsec;
+			    total_while_loop_time += elapsed_time_ns(&start_while_loop, &end_while_loop);
 
 			    r_allocator_lock_slot_blocks(slotInt);
 			}
 
 			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
-			total_for_loop_time += BILLION * (end_for_loop.tv_sec - start_for_loop.tv_sec) + end_for_loop.tv_nsec - start_for_loop.tv_nsec;
+			total_for_loop_time += elapsed_time_ns(&start_for_loop, &end_for_loop);
 
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
+			// For debugging purposes
+			serverLog(LL_WARNING, "total_dbAddNoCopy_time: %lld ns", total_dbAddNoCopy_time);
+			serverLog(LL_WARNING, "total_lookupKeyWrite_time: %lld ns", total_lookupKeyWrite_time);
+			serverLog(LL_WARNING, "lookupKeyWrite_count: %d", lookupKeyWrite_count);
 			dictDisableMigration();
 
 			serverLog(LL_WARNING, "Total time for for loop: %lu ns", total_for_loop_time);
