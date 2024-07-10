@@ -6523,8 +6523,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		// }
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
 		{
-			prevSlot = start;
-			currentSlot = end;
+			prevSlot = atoi(args[start]);
+			currentSlot = atoi(args[end-1]);
 
 			rio rdmaDoneBatchCmd;
 			rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
