@@ -7039,12 +7039,12 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				struct timespec start_lookup, end_lookup, start_add, end_add;
 				//clock_gettime(CLOCK_MONOTONIC, &start_lookup);
 
-				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-				    clock_gettime(CLOCK_MONOTONIC, &start_add);
-				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-				    clock_gettime(CLOCK_MONOTONIC, &end_add);
-				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
-				}
+//				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+//				    clock_gettime(CLOCK_MONOTONIC, &start_add);
+//				    dbAddNoCopy(item->c->db, key_meta, val_meta);
+//				    clock_gettime(CLOCK_MONOTONIC, &end_add);
+//				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
+//				}
 
 				//clock_gettime(CLOCK_MONOTONIC, &end_lookup);
 				//total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
