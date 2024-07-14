@@ -6983,7 +6983,7 @@ long long current_time_ns() {
 
 
 long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
-    return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
+	return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
 }
 
 
@@ -7024,42 +7024,48 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			clock_gettime(CLOCK_MONOTONIC, &start_for_loop);
 
 			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
-			    int slotInt = j;
-			    segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+				int slotInt = j;
+				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 
-			    robj *key_meta, *val_meta;
-			    struct timespec start_while_loop, end_while_loop;
-			    clock_gettime(CLOCK_MONOTONIC, &start_while_loop);
+				robj *key_meta, *val_meta;
+				struct timespec start_while_loop, end_while_loop;
+				clock_gettime(CLOCK_MONOTONIC, &start_while_loop);
 
-			    while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
-				//serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
+				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+					key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
+					val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+					//serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
 
-				struct timespec start_lookup, end_lookup, start_add, end_add;
-				//clock_gettime(CLOCK_MONOTONIC, &start_lookup);
+					struct timespec start_lookup, end_lookup, start_add, end_add;
+					//clock_gettime(CLOCK_MONOTONIC, &start_lookup);
 
-//				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-//				    clock_gettime(CLOCK_MONOTONIC, &start_add);
-//				    dbAddNoCopy(item->c->db, key_meta, val_meta);
-//				    clock_gettime(CLOCK_MONOTONIC, &end_add);
-//				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
-//				}
+					//				if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+					//				    clock_gettime(CLOCK_MONOTONIC, &start_add);
+					//				    dbAddNoCopy(item->c->db, key_meta, val_meta);
+					//				    clock_gettime(CLOCK_MONOTONIC, &end_add);
+					//				    total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
+					//				}
 
-				//clock_gettime(CLOCK_MONOTONIC, &end_lookup);
-				//total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
-				lookupKeyWrite_count++;
-			    }
+					//clock_gettime(CLOCK_MONOTONIC, &end_lookup);
+					//total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
 
-			    clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
-			    total_while_loop_time += elapsed_time_ns(&start_while_loop, &end_while_loop);
+					lookupKeyWrite_count++;
+				}
 
-			    r_allocator_lock_slot_blocks(slotInt);
+				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
+				total_while_loop_time += elapsed_time_ns(&start_while_loop, &end_while_loop);
+
+				r_allocator_lock_slot_blocks(slotInt);
 			}
 
 			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
 			total_for_loop_time += elapsed_time_ns(&start_for_loop, &end_for_loop);
 
+			struct timespec req, rem;
+			req.tv_sec = 3;
+			req.tv_nsec = (rand() % 1000) * 1000000L; // Random milliseconds to nanoseconds
+
+			nanosleep(&req, &rem);
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			// For debugging purposes
