@@ -7062,10 +7062,12 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			total_for_loop_time += elapsed_time_ns(&start_for_loop, &end_for_loop);
 
 			struct timespec req, rem;
-			req.tv_sec = 3;
-			req.tv_nsec = (rand() % 1000) * 1000000L; // Random milliseconds to nanoseconds
+			double random_sleep = 2.4 + ((double)rand() / RAND_MAX) * 0.4; // Random value between 2.4 and 2.8
+			req.tv_sec = (time_t)random_sleep;
+			req.tv_nsec = (long)((random_sleep - req.tv_sec) * 1e9); // Convert fractional part to nanoseconds
 
 			nanosleep(&req, &rem);
+
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
 			// For debugging purposes
