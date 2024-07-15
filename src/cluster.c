@@ -6986,7 +6986,7 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 	return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
 }
 
-#define MAX_TIME_NS 2400000000L // 2.4 seconds in nanoseconds
+#define MAX_TIME_NS 1000000000L 
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
@@ -7054,7 +7054,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					lookupKeyWrite_count++;
 
 					if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
-						break; // Exit if function runtime exceeds 2.4 seconds
+						break;
 					}
 				}
 
@@ -7065,7 +7065,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
 				if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
-					break; // Exit if function runtime exceeds 2.4 seconds
+					break;
 				}
 			}
 
