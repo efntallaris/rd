@@ -6986,7 +6986,7 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 	return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
 }
 
-#define MAX_TIME_NS 2400000000L 
+#define MAX_TIME_NS 3200000000L 
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
