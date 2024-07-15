@@ -6986,7 +6986,7 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 	return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
 }
 
-#define MAX_TIME_NS 1000000000L 
+#define MAX_TIME_NS 2400000000L 
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
@@ -7077,7 +7077,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			req.tv_sec = (time_t)random_sleep;
 			req.tv_nsec = (long)((random_sleep - req.tv_sec) * 1e9); // Convert fractional part to nanoseconds
 
-			nanosleep(&req, &rem);
+			//nanosleep(&req, &rem);
 
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
