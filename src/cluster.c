@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 1366;
+	int chunk_size = 342;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -6986,7 +6986,8 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 	return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
 }
 
-#define MAX_TIME_NS 3200000000L 
+//#define MAX_TIME_NS 3200000000L 
+#defined MAX_TIME_NS 800000000
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
@@ -7072,12 +7073,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
 			total_for_loop_time += elapsed_time_ns(&start_for_loop, &end_for_loop);
 
-			struct timespec req, rem;
-			double random_sleep = 2.4 + ((double)rand() / RAND_MAX) * 0.4; // Random value between 2.4 and 2.8
-			req.tv_sec = (time_t)random_sleep;
-			req.tv_nsec = (long)((random_sleep - req.tv_sec) * 1e9); // Convert fractional part to nanoseconds
-
-			//nanosleep(&req, &rem);
 
 			serverLog(LL_WARNING, "STOPPED ITERATING SLOTS");
 
