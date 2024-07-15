@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 683;
+	int chunk_size = 455;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -6987,7 +6987,8 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 }
 
 //#define MAX_TIME_NS 3200000000L 
-#define MAX_TIME_NS 1600000000L 
+//#define MAX_TIME_NS 1600000000L 
+#defined MAX_TIME_NS 1066666666L
 //#define MAX_TIME_NS 750000000L
 
 
