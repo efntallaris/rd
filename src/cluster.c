@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 455;
+	int chunk_size = 683;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -6326,7 +6326,21 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			slots_number_of_blocks[i] = 0;
 			all_slots[i] = NULL;
 		}
-		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d", atoi(args[start]), atoi(args[end-1]));
+		//serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d", atoi(args[start]), atoi(args[end-1]));
+		int number_of_keys_in_slots = 0;
+
+		for(int j=start; j<end; j++) {
+			int slotInt = atoi(args[j]);
+			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+			robj *key_meta, *val_meta;
+
+			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+				number_of_keys_in_slots++;
+			}
+		}
+		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d number_of_keys:%d", atoi(args[start]), atoi(args[end-1]), number_of_keys);
 
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
@@ -6987,8 +7001,8 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 }
 
 //#define MAX_TIME_NS 3200000000L 
-//#define MAX_TIME_NS 1600000000L 
-#define MAX_TIME_NS 1066666666L
+#define MAX_TIME_NS 1600000000L 
+//#define MAX_TIME_NS 1066666666L
 //#define MAX_TIME_NS 750000000L
 
 
