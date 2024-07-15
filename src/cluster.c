@@ -7071,9 +7071,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 					lookupKeyWrite_count++;
 
-					if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
-						break;
-					}
+					//if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
+						//break;
+					//}
 				}
 
 				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
@@ -7082,9 +7082,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				r_allocator_lock_slot_blocks(slotInt);
 
 				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
-				if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
-					break;
-				}
+				//if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
+					//break;
+				//}
 			}
 
 			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
