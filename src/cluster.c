@@ -6988,7 +6988,7 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 
 //#define MAX_TIME_NS 3200000000L 
 //#define MAX_TIME_NS 1600000000L 
-#defined MAX_TIME_NS 1066666666L
+#define MAX_TIME_NS 1066666666L
 //#define MAX_TIME_NS 750000000L
 
 
