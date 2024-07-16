@@ -7087,7 +7087,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 //				}
 //			}
 			    // Sleep for 0.8 milliseconds (800,000 nanoseconds)
-			if (lastSlot - firstSlot > 300) {
+			if (lastSlot - firstSlot > 100) {
 				    struct timespec req = {0, 1100000000}; // 0 seconds and 900,000,000 nanoseconds = 900 milliseconds
 				        nanosleep(&req, NULL);
 			}
