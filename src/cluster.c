@@ -6329,18 +6329,18 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		//serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d", atoi(args[start]), atoi(args[end-1]));
 		int number_of_keys_in_slots = 0;
 
-		for(int j=start; j<end; j++) {
-			int slotInt = atoi(args[j]);
-			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			robj *key_meta, *val_meta;
-
-			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-				number_of_keys_in_slots++;
-			}
-		}
-		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d number_of_keys:%d", atoi(args[start]), atoi(args[end-1]), number_of_keys_in_slots);
+//		for(int j=start; j<end; j++) {
+//			int slotInt = atoi(args[j]);
+//			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//			robj *key_meta, *val_meta;
+//
+//			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//				number_of_keys_in_slots++;
+//			}
+//		}
+		serverLog(LL_WARNING, "STRATOS TRANSFERRING SLOTS RANGE %d-%d number_of_keys:%d", atoi(args[start]), atoi(args[end-1]));
 
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
