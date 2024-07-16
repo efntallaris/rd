@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 1366;
+	int chunk_size = 341;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -7043,49 +7043,52 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			clock_gettime(CLOCK_MONOTONIC, &start_for_loop);
 
 
-			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
-				int slotInt = j;
-				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-
-				robj *key_meta, *val_meta;
-				struct timespec start_while_loop, end_while_loop;
-				clock_gettime(CLOCK_MONOTONIC, &start_while_loop);
-
-				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-					key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
-					val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
-					//serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
-
-					struct timespec start_lookup, end_lookup, start_add, end_add;
-					clock_gettime(CLOCK_MONOTONIC, &start_lookup);
-
-					if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-					     clock_gettime(CLOCK_MONOTONIC, &start_add);
-					     dbAddNoCopy(item->c->db, key_meta, val_meta);
-					     clock_gettime(CLOCK_MONOTONIC, &end_add);
-					     total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
-					}
-
-					clock_gettime(CLOCK_MONOTONIC, &end_lookup);
-					total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
-
-					lookupKeyWrite_count++;
-
-					if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
-						break;
-					}
-				}
-
-				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
-				total_while_loop_time += elapsed_time_ns(&start_while_loop, &end_while_loop);
-
-				r_allocator_lock_slot_blocks(slotInt);
-
-				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
-				if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
-					break;
-				}
-			}
+//			for (long unsigned int j = firstSlot; j <= lastSlot; j++) {
+//				int slotInt = j;
+//				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//
+//				robj *key_meta, *val_meta;
+//				struct timespec start_while_loop, end_while_loop;
+//				clock_gettime(CLOCK_MONOTONIC, &start_while_loop);
+//
+//				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//					key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
+//					val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+//					//serverLog(LL_WARNING, "STRATOS KEY IS:%s", key_meta->ptr);
+//
+//					struct timespec start_lookup, end_lookup, start_add, end_add;
+//					clock_gettime(CLOCK_MONOTONIC, &start_lookup);
+//
+//					if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+//					     clock_gettime(CLOCK_MONOTONIC, &start_add);
+//					     dbAddNoCopy(item->c->db, key_meta, val_meta);
+//					     clock_gettime(CLOCK_MONOTONIC, &end_add);
+//					     total_dbAddNoCopy_time += elapsed_time_ns(&start_add, &end_add);
+//					}
+//
+//					clock_gettime(CLOCK_MONOTONIC, &end_lookup);
+//					total_lookupKeyWrite_time += elapsed_time_ns(&start_lookup, &end_lookup);
+//
+//					lookupKeyWrite_count++;
+//
+//					if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
+//						break;
+//					}
+//				}
+//
+//				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
+//				total_while_loop_time += elapsed_time_ns(&start_while_loop, &end_while_loop);
+//
+//				r_allocator_lock_slot_blocks(slotInt);
+//
+//				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
+//				if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
+//					break;
+//				}
+//			}
+			    // Sleep for 0.8 milliseconds (800,000 nanoseconds)
+			 struct timespec req = {0, 800000}; // 0 seconds, 800,000 nanoseconds
+			 nanosleep(&req, NULL);
 
 			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
 			total_for_loop_time += elapsed_time_ns(&start_for_loop, &end_for_loop);
