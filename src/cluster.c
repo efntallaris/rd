@@ -7087,6 +7087,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 //				}
 //			}
 			    // Sleep for 0.8 milliseconds (800,000 nanoseconds)
+			 serverLog(LL_WARNING, "STRATOS %d slots", lastSlot - firstSlot);
 			 if(lastSlot - firstSlot > 300){
 				 struct timespec req = {0, 800000000}; // 0 seconds, 800,000,000 nanoseconds (800 milliseconds);
 				 nanosleep(&req, NULL);
