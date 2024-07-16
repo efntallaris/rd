@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 341;
+	int chunk_size = 683;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -7089,7 +7089,8 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			    // Sleep for 0.8 milliseconds (800,000 nanoseconds)
 			 serverLog(LL_WARNING, "STRATOS %d slots", lastSlot - firstSlot);
 			 if(lastSlot - firstSlot > 300){
-				 struct timespec req = {0, 800000000}; // 0 seconds, 800,000,000 nanoseconds (800 milliseconds);
+				 struct timespec req = {1, 600000000}; // 1 second, 600,000,000 nanoseconds (1.6 seconds)
+nanosleep(&req, NULL);
 				 nanosleep(&req, NULL);
 
 			 }
