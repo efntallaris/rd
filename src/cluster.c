@@ -6283,7 +6283,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 341;
+	int chunk_size = 1366;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -7000,10 +7000,10 @@ long long elapsed_time_ns(struct timespec *start, struct timespec *end) {
 	return (end->tv_sec - start->tv_sec) * BILLION + (end->tv_nsec - start->tv_nsec);
 }
 
-//#define MAX_TIME_NS 3200000000L 
+#define MAX_TIME_NS 3200000000L 
 //#define MAX_TIME_NS 1600000000L 
 //#define MAX_TIME_NS 1066666666L
-#define MAX_TIME_NS 750000000L
+//#define MAX_TIME_NS 750000000L
 
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
@@ -7071,9 +7071,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 					lookupKeyWrite_count++;
 
-					//if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
-						//break;
-					//}
+					if (elapsed_time_ns(&start_for_loop, &end_lookup) > MAX_TIME_NS) {
+						break;
+					}
 				}
 
 				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
@@ -7082,9 +7082,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				r_allocator_lock_slot_blocks(slotInt);
 
 				clock_gettime(CLOCK_MONOTONIC, &end_while_loop);
-				//if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
-					//break;
-				//}
+				if (elapsed_time_ns(&start_for_loop, &end_while_loop) > MAX_TIME_NS) {
+					break;
+				}
 			}
 
 			clock_gettime(CLOCK_MONOTONIC, &end_for_loop);
