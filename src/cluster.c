@@ -6554,10 +6554,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 
-
-		unsigned int intSlot = atoi(args[j]);
-		sds slotString = args[j];
-		r_allocator_lock_slot_blocks(intSlot);
+		unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
+		unsigned int intSlot = spill_over_slot;
+		char slotBuff[100];
+		sprintf(slotBuff, "%d", spill_over_slot);
+		sds slotString = sdsnew(slotBuff);
 		char **slots;
 		int number_of_blocks;
 		slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
@@ -6577,9 +6578,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			for(int j=start; j<end; j++) {
 				unsigned int intSlot = atoi(args[j]);
 				sds slotString = args[j];
-				int number_of_blocks = slots_number_of_rest_blocks[j-7];
-				char **slots = all_rest_slots[j-7];
-				for(int i=slots_number_of_blocks[j-7]; i<(slots_number_of_blocks[j-7] + slots_number_of_rest_blocks[j-7]); i++) {
+				int number_of_blocks = slots_number_of_rest_blocks[0];
+				char **slots = all_rest_slots[0];
+				for(int i=0; i<slots_number_of_blocks[0]; i++) {
 					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
 					total_rest_blocks_allocated++;
 					buffer_index++;
@@ -6619,7 +6620,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT");
 
-			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 			char ***all_rest_slots = (char ***) malloc(5000 * sizeof(char **));
 			int slots_number_of_rest_blocks[5000];
 			int total_number_of_remote_rest_buffers = 0;
