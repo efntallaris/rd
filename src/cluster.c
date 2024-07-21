@@ -6555,19 +6555,15 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-		for(int j=start; j<end; j++) {
-			unsigned int intSlot = atoi(args[j]);
-			sds slotString = args[j];
-			r_allocator_lock_slot_blocks(intSlot);
-			char **slots;
-			int number_of_blocks;
-			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-			int blocksDiff = number_of_blocks - slots_number_of_blocks[j-7];
-			all_rest_slots[j-7] = slots;
-			slots_number_of_rest_blocks[j-7] = blocksDiff;
-			total_number_of_remote_rest_buffers += blocksDiff;
-			total_number_of_active_slots++;
-		}
+		unsigned int intSlot = atoi(args[j]);
+		sds slotString = args[j];
+		r_allocator_lock_slot_blocks(intSlot);
+		char **slots;
+		int number_of_blocks;
+		slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
+		all_rest_slots[0] = slots;
+		slots_number_of_rest_blocks[0] = number_of_blocks;
+
 		serverLog(LL_WARNING, "STRATOS TOTAL NUMBER OF REMOTE REST BUFFERS:%d", total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
