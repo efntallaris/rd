@@ -6648,7 +6648,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-			if(total_number_of_remote_rest_buffers){
+			serverLog(LL_WARNING, "STRATOS remote_restbuffers %d", total_number_of_remote_rest_buffers);
+			if(total_number_of_remote_rest_buffers > 0){
 				char slotBuff[100];
 				sprintf(slotBuff, "%d", spill_over_slot);
 				sds slotString = sdsnew(slotBuff);
