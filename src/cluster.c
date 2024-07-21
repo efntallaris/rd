@@ -6483,73 +6483,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
 			}
 			struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+			usleep(1460);
 
-//			int ret = server.rdma_client->buffer_ops.wait_for_send_completion_non_blocking(server.rdma_client);
-//			if(ret > 0){
-//				currentSlot = prevSlot + SPLIT_SLOTS;
-//				rio rdmaDoneBatchCmd;
-//				rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
-//				serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
-//				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
-//
-//				serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
-//				serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
-//				if(total_acks == awaiting_acks){
-//					serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
-//				}else{
-//					serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTERMEDIATE", 12));
-//				}
-//				serverLog(LL_WARNING, "STRATOS AWAITING ACKS:%d, %d", awaiting_acks, total_acks);
-//				serverLog(LL_WARNING, "STRATOS RECEIVED COMPLETION");
-//
-//				buf = rdmaDoneBatchCmd.io.buffer.ptr;
-//				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
-//				if(nwritten != (int) sdslen(buf)) {
-//					serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
-//				}
-//				prevSlot += SPLIT_SLOTS;
-//				total_acks++;
-//
-//
-//			}
-
-			//EXPERIMENTAL LINE TO BE CHANGED FROM SCRIPT
-
-			//	usleep(3600);
-			//	usleep(1800);
 		}
-//		int number_of_received_acks = total_acks;
-//		for(int i=0;i<awaiting_acks - number_of_received_acks + 1;i++){
-//			struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
-//			if(_completion->status != 0) {
-//				serverLog(LL_WARNING, "STRATOS ERROR STATUS:%d", _completion->status);
-//			}
-//			currentSlot = prevSlot + SPLIT_SLOTS;
-//			rio rdmaDoneBatchCmd;
-//			rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
-//			serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
-//			serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
-//
-//			serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
-//			serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
-//
-//			serverLog(LL_WARNING, "STRATOS WAITING_ACKS:%d, total_acks:%d", awaiting_acks, total_acks);
-//			if(total_acks == awaiting_acks){
-//				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
-//			}else{
-//				serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTERMEDIATE", 12));
-//			}
-//
-//			buf = rdmaDoneBatchCmd.io.buffer.ptr;
-//			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 10000);
-//			if(nwritten != (int) sdslen(buf)) {
-//				serverLog(LL_WARNING, "STRATOS THIS SHOULD NOT HAPPEN!");
-//			}
-//			serverLog(LL_WARNING, "STRATOS RANGE %d-%d", prevSlot, currentSlot);
-//			prevSlot += SPLIT_SLOTS;
-//			total_acks++;
-//
-//		}
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
 		prevSlot = atoi(args[start]);
 		currentSlot = atoi(args[end-1]);
@@ -6740,7 +6676,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					wrs_rest[current_buffer_index-1].send_flags = IBV_SEND_SIGNALED;
 
 				}
-				serverLog(LL_WARNING, "STRATOS QP IS:%d, rdma_buffres[0]->id->qp", rdma_rest_buffers[0]->id->qp);
 				serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS");
 				for(int i=prev_current_buffer_index+1; i<current_buffer_index; i++) {
 					struct ibv_send_wr bad_wr;
@@ -6751,8 +6686,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 				}
 				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
+			
 				prevSlot = atoi(args[chunk_start]);
 				currentSlot = atoi(args[chunk_end-1]);
+				serverLog(LL_WARNING, "STRATOS START SPILL OVER BACKPATCHING FOR SLOTS RANGE [%d-%d]", prevSlot, currentSlot);
 
 				rio rdmaDoneBatchCmd;
 				rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
@@ -6970,21 +6907,19 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		// CHANGE OWNERSHIP STOP
 		
 		// LOG START
-		// unsigned int number_of_kvs[16385];
-		// unsigned int spill_over_number_of_kvs[16385];
-		for(int j=start; j<end; j++) {
-			unsigned int _all_keys = 0;
-			unsigned int slotInt = atoi(args[j]);
-			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			robj *key_meta, *val_meta;
-			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-				_all_keys++;
-			}
-			spill_over_number_of_kvs[j] = _all_keys - number_of_kvs[j];
-			serverLog(LL_WARNING, "STRATOS number of keys for slot %d:%ld, number of rest keys:%ld", j, number_of_kvs[j], spill_over_number_of_kvs[j]);
-		}
+//		for(int j=start; j<end; j++) {
+//			unsigned int _all_keys = 0;
+//			unsigned int slotInt = atoi(args[j]);
+//			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//			robj *key_meta, *val_meta;
+//			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//				_all_keys++;
+//			}
+//			spill_over_number_of_kvs[j] = _all_keys - number_of_kvs[j];
+//			serverLog(LL_WARNING, "STRATOS number of keys for slot %d:%ld, number of rest keys:%ld", j, number_of_kvs[j], spill_over_number_of_kvs[j]);
+//		}
 		// LOG END
 
 	}
@@ -6994,9 +6929,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
 			break;
 		}
-
-		//serverLog(LL_WARNING, "BUFF:%s", buff);
-
 
 	}
 
