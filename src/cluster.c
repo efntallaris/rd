@@ -7131,6 +7131,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					//if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						total_keys_added++;
+						if(lastSlot - firstSlot < 200){
+							serverLog(LL_WARNING, "STRATOS adding key %s", key_meta->ptr);
+						}
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
 					//}
 					if(total_keys_added % 10 == 0){
