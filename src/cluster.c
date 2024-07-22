@@ -6304,9 +6304,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			server.cluster->importing_slots_from[slotInt] = recipientNode;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
 
-			pthread_mutex_lock(&(server.lock_slots[slotInt]));
+			pthread_mutex_lock(&server.lock_slots[slotInt]);
 			server.migration_spill_over_phase_activated[slotInt] = 1;
-			pthread_mutex_unlock(&(server.lock_slots[slotInt]));
+			pthread_mutex_unlock(&server.lock_slots[slotInt]);
 
 		}
 
@@ -6558,6 +6558,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 
+		for(int j=start; j<end; j++) {
+			unsigned int intSlot = atoi(args[j]);
+			sds slotString = args[j];
+			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+			server.migration_ownership_locked[intSlot] = 1;
+			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+		}
+
 		unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 		unsigned int intSlot = spill_over_slot;
 		char slotBuff[100];
@@ -6569,7 +6577,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		all_rest_slots[0] = slots;
 		slots_number_of_rest_blocks[0] = number_of_blocks;
 
-		serverLog(LL_WARNING, "STRATOS TOTAL NUMBER OF REMOTE REST BUFFERS:%d", total_number_of_remote_rest_buffers);
+		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
 			for(int j=start; j<end; j++) {
@@ -6856,9 +6864,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				server.cluster->importing_slots_from[intSlot] = NULL;
 				pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 
-				pthread_mutex_lock(&(server.lock_slots[intSlot]));
+				pthread_mutex_lock(&server.lock_slots[intSlot]);
 				server.migration_spill_over_phase_activated[intSlot] = 0;
-				pthread_mutex_unlock(&(server.lock_slots[intSlot]));
+				pthread_mutex_unlock(&server.lock_slots[intSlot]);
 			}
 			if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 				serverLog(LL_WARNING,
