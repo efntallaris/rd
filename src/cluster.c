@@ -7121,6 +7121,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
+				serverLog(LL_WARNING, "STRATOS IM HERE");
 				int slotInt = j;
 				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 				robj *key_meta, *val_meta;
@@ -7131,9 +7132,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					//if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						total_keys_added++;
-						if(lastSlot - firstSlot < 200){
-							serverLog(LL_WARNING, "STRATOS adding key %s", key_meta->ptr);
-						}
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
 					//}
 					if(total_keys_added % 10 == 0){
