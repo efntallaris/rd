@@ -6798,7 +6798,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				serverAssertWithInfo(c,NULL,rioWriteBulkString(&unlockCmdRecipient, "NODE", 4));
 				serverAssertWithInfo(c,NULL,rioWriteBulkString(&unlockCmdRecipient, recipientNode->name, CLUSTER_NAMELEN));
 
-				serverLog(LL_WARNING, "PREPARED COMMAND FOR SLOTS RANGE[%s - %s ]for recipientNode: %s", args[start], args[end-1], recipientNode->name);
+				serverLog(LL_WARNING, "PREPARED COMMAND FOR SLOTS RANGE[%s - %s]for recipientNode: %s", args[start], args[end-1], recipientNode->name);
 
 				dictIterator *di;
 				dictEntry *de;
@@ -6957,26 +6957,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			// CHANGE OWNERSHIP STOP
 
 		}
-
-
-
-
-		// LOG START
-		//		for(int j=start; j<end; j++) {
-		//			unsigned int _all_keys = 0;
-		//			unsigned int slotInt = atoi(args[j]);
-		//			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-		//			robj *key_meta, *val_meta;
-		//			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-		//				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-		//				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-		//				_all_keys++;
-		//			}
-		//			spill_over_number_of_kvs[j] = _all_keys - number_of_kvs[j];
-		//			serverLog(LL_WARNING, "STRATOS number of keys for slot %d:%ld, number of rest keys:%ld", j, number_of_kvs[j], spill_over_number_of_kvs[j]);
-		//		}
-		// LOG END
-
 	}
 	for(int i=0;i<100;i++){
 		char buff[1024];
@@ -7148,11 +7128,11 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
 					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
 					//if key does not exist then add it to dictionary, else ignore
-					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
+					//if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						total_keys_added++;
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
-					}
+					//}
 					if(total_keys_added % 10 == 0){
 						//usleep(10);
 					}
