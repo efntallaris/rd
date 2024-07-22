@@ -6588,29 +6588,25 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 			buffer_index = 0;
 			rdma_rest_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
-			for(int j=start; j<end; j++) {
-				unsigned int intSlot = atoi(args[j]);
-				sds slotString = args[j];
-				int number_of_blocks = slots_number_of_rest_blocks[0];
-				char **slots = all_rest_slots[0];
-				for(int i=0; i<slots_number_of_blocks[0]; i++) {
-					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
-					total_rest_blocks_allocated++;
-					buffer_index++;
-				}
-				//Prepare the rpc
-				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
 
-				char intBuff[100];
-				sprintf(intBuff, "%d", number_of_blocks);
-				sds sdsTotalBlocks = sdsnew(intBuff);
-
-				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
-
-				active_slots[number_of_active_slots] = (long long) intSlot;
-				number_of_active_slots++;
-
+			char **slots = all_rest_slots[0];
+			for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
+				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+				total_rest_blocks_allocated++;
+				buffer_index++;
 			}
+			//Prepare the rpc
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
+
+			char intBuff[100];
+			sprintf(intBuff, "%d", total_number_of_remote_rest_buffers);
+			sds sdsTotalBlocks = sdsnew(intBuff);
+
+			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
+
+			active_slots[number_of_active_slots] = (long long) intSlot;
+			number_of_active_slots++;
+
 			nwritten = 0;
 
 			rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
@@ -6652,10 +6648,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				slots_number_of_rest_blocks[0] = number_of_blocks;
 				total_number_of_remote_rest_buffers = number_of_blocks;
 			}
+
 			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
-
-
 
 			serverLog(LL_WARNING, "STRATOS remote_restbuffers %d", total_number_of_remote_rest_buffers);
 			if(total_number_of_remote_rest_buffers > 0){
