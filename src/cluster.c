@@ -6302,6 +6302,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
 			server.cluster->migrating_slots_to[slotInt] = recipientNode;
 			server.cluster->importing_slots_from[slotInt] = recipientNode;
+			server.migration_spill_over_phase_activated[slotInt] = 1;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
 
 		}
@@ -6329,24 +6330,24 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 		// LOG START
-		unsigned int number_of_kvs[16385];
-		unsigned int spill_over_number_of_kvs[16385];
-		for(int i=0;i<16385;i++){
-			number_of_kvs[i] = 0;
-			spill_over_number_of_kvs[i] = 0;
-		}
-		for(int j=start; j<end; j++) {
-			unsigned int slotInt = atoi(args[j]);
-			r_allocator_lock_slot_blocks(slotInt);
-			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			robj *key_meta, *val_meta;
-			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-				number_of_kvs[slotInt]++;
-			}
-
-		}
+//		unsigned int number_of_kvs[16385];
+//		unsigned int spill_over_number_of_kvs[16385];
+//		for(int i=0;i<16385;i++){
+//			number_of_kvs[i] = 0;
+//			spill_over_number_of_kvs[i] = 0;
+//		}
+//		for(int j=start; j<end; j++) {
+//			unsigned int slotInt = atoi(args[j]);
+//			r_allocator_lock_slot_blocks(slotInt);
+//			segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//			robj *key_meta, *val_meta;
+//			while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//				key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//				val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//				number_of_kvs[slotInt]++;
+//			}
+//
+//		}
 		// LOG END
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
@@ -6846,6 +6847,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				clusterNode *recipientNode = server.cluster->importing_slots_from[intSlot];
 				server.migration_ownership_changed[intSlot] = 1;
 				server.migration_ownership_locked[intSlot] = 0;
+				server.migration_spill_over_phase_activated[intSlot] = 0;
 				clusterDelSlot(intSlot);
 				clusterAddSlot(recipientNode,intSlot);
 				server.cluster->importing_slots_from[intSlot] = NULL;
