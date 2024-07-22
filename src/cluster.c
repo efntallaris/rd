@@ -6302,8 +6302,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
 			server.cluster->migrating_slots_to[slotInt] = recipientNode;
 			server.cluster->importing_slots_from[slotInt] = recipientNode;
-			server.migration_spill_over_phase_activated[slotInt] = 1;
 			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
+
+			pthread_mutex_lock(&(server.lock_slots[slotInt]));
+			server.migration_spill_over_phase_activated[slotInt] = 1;
+			pthread_mutex_unlock(&(server.lock_slots[slotInt]));
 
 		}
 
@@ -6847,12 +6850,15 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				clusterNode *recipientNode = server.cluster->importing_slots_from[intSlot];
 				server.migration_ownership_changed[intSlot] = 1;
 				server.migration_ownership_locked[intSlot] = 0;
-				server.migration_spill_over_phase_activated[intSlot] = 0;
 				clusterDelSlot(intSlot);
 				clusterAddSlot(recipientNode,intSlot);
 				server.cluster->importing_slots_from[intSlot] = NULL;
 				server.cluster->importing_slots_from[intSlot] = NULL;
 				pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+
+				pthread_mutex_lock(&(server.lock_slots[intSlot]));
+				server.migration_spill_over_phase_activated[intSlot] = 0;
+				pthread_mutex_unlock(&(server.lock_slots[intSlot]));
 			}
 			if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 				serverLog(LL_WARNING,
