@@ -6548,7 +6548,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		int total_number_of_active_slots = 0;
 		rio prepareRestBlocksCmd;
 		rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
-		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + (2*number_of_slots)));
+		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + 2));
 		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
 		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
 
