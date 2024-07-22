@@ -6729,8 +6729,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 
 				unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
-				prevSlot = atoi(spill_over_slot);
-				currentSlot = atoi(spill_over_slot);
+				prevSlot = spill_over_slot;
+				currentSlot = spill_over_slot;
 				serverLog(LL_WARNING, "STRATOS START SPILL OVER BACKPATCHING FOR SLOTS RANGE [%d-%d]", prevSlot, currentSlot);
 
 				rio rdmaDoneRestBatchCmd;
