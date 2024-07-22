@@ -7121,7 +7121,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
-				serverLog(LL_WARNING, "STRATOS IM HERE");
+				//serverLog(LL_WARNING, "STRATOS IM HERE");
 				int slotInt = j;
 				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 				robj *key_meta, *val_meta;
