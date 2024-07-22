@@ -6576,6 +6576,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
 		all_rest_slots[0] = slots;
 		slots_number_of_rest_blocks[0] = number_of_blocks;
+		total_number_of_remote_rest_buffers = number_of_blocks;
 
 		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
