@@ -6871,6 +6871,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					server.migration_spill_over_phase_activated[intSlot] = 0;
 					pthread_mutex_unlock(&server.lock_slots[intSlot]);
 				}
+
 				if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 					serverLog(LL_WARNING,
 							"configEpoch updated after importing slot");
@@ -6879,7 +6880,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
 						CLUSTER_TODO_UPDATE_STATE|
 						CLUSTER_TODO_FSYNC_CONFIG);
-
 
 
 			}else{
@@ -6968,6 +6968,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
 			// CHANGE OWNERSHIP STOP
+			// change spill over phase number so spill over slot changes
+			pthread_mutex_lock(&server.spill_over_phase_lock);
+			server.migration_spill_over_phase_number++;
+			pthread_mutex_unlock(&server.spill_over_phase_lock);
+
 
 		}
 	}
