@@ -6640,7 +6640,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			//			serverLog(LL_WARNING, "STRATOS RECIP SIDE REST LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
 			//
 
-			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT");
+			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT:%d", spill_over_slot);
 
 			char ***all_rest_slots = (char ***) malloc(5000 * sizeof(char **));
 			int slots_number_of_rest_blocks[5000];
@@ -6653,7 +6653,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			{
 				unsigned int intSlot = spill_over_slot;
-				r_allocator_lock_slot_blocks(intSlot);
+				//r_allocator_lock_slot_blocks(intSlot);
 				char **slots;
 				int number_of_blocks;
 				slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
