@@ -7132,6 +7132,26 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
+			if(firstSlot > 16385){
+
+			{
+				for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+
+					int slotInt = j;
+					int total_keys_added = 0;
+					segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+					robj *key_meta, *val_meta;
+					while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+						total_keys_added++;
+					}
+					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, total_keys_added);
+				}
+			}
+
+
+			}
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
