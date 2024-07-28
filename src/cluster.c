@@ -7117,6 +7117,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 	int i=0;
 	int total_keys_added = 0;
+	int total_keys_exist_and_not_added = 0;
 	serverLog(LL_WARNING, "STRATOS STARTED BATCH THREAD");
 	while(true){
 		if (!isQueueEmpty(&queue)) {
@@ -7132,26 +7133,26 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
-			if(firstSlot > 16385){
-
-			{
-				for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
-
-					int slotInt = j;
-					int total_keys_added = 0;
-					segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-					robj *key_meta, *val_meta;
-					while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-						total_keys_added++;
-					}
-					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, total_keys_added);
-				}
-			}
-
-
-			}
+//			if(firstSlot > 16385){
+//
+//			{
+//				for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+//
+//					int slotInt = j;
+//					int total_keys_added = 0;
+//					segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//					robj *key_meta, *val_meta;
+//					while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//						total_keys_added++;
+//					}
+//					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, total_keys_added);
+//				}
+//			}
+//
+//
+//			}
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
@@ -7166,6 +7167,9 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						total_keys_added++;
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
+					}else{
+						total_keys_exist_and_not_added++;
+
 					}
 					if(total_keys_added % 10 == 0){
 						//usleep(10);
@@ -7183,7 +7187,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 				char ackRDMADoneReply[1024];
 				connPeerToString(conn, ip, NET_IP_STR_LEN, &port);
-				serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d", total_keys_added);
+				serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED", total_keys_added, total_keys_exist_and_not_added);
 
 				// SEND RDMA DONE ACK TO DONOR, TO NOTIFY THAT RDMA DONE THREAD IS DONE
 				clusterNode *nodeDonor = clusterLookupNodeByIP(ip);
