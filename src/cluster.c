@@ -7187,7 +7187,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 				char ackRDMADoneReply[1024];
 				connPeerToString(conn, ip, NET_IP_STR_LEN, &port);
-				serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED", total_keys_added, total_keys_exist_and_not_added);
+				serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED:%d", total_keys_added, total_keys_exist_and_not_added);
 
 				// SEND RDMA DONE ACK TO DONOR, TO NOTIFY THAT RDMA DONE THREAD IS DONE
 				clusterNode *nodeDonor = clusterLookupNodeByIP(ip);
