@@ -6581,18 +6581,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
-			{
-
-				int total_keys_added = 0;
-				segment_iterator_t *iter = create_iterator_for_slot(spill_over_slot);
-				robj *key_meta, *val_meta;
-				while (iter->getNext(spill_over_slot, &key_meta, &val_meta) != NULL) {
-					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-					total_keys_added++;
-				}
-				serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d", total_keys_added);
-			}
 
 			for(int j=start; j<end; j++) {
 				unsigned int intSlot = atoi(args[j]);
@@ -6743,6 +6731,19 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 				}
 				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
+
+				{
+
+					int total_keys_added = 0;
+					segment_iterator_t *iter = create_iterator_for_slot(spill_over_slot);
+					robj *key_meta, *val_meta;
+					while (iter->getNext(spill_over_slot, &key_meta, &val_meta) != NULL) {
+						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+						total_keys_added++;
+					}
+					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d", total_keys_added);
+				}
 
 				prevSlot = spill_over_slot;
 				currentSlot = spill_over_slot;
@@ -7140,21 +7141,21 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			if(firstSlot > 16385){
 
-			{
-				for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+				{
+					for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
-					int slotInt = j;
-					int total_keys_added = 0;
-					segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-					robj *key_meta, *val_meta;
-					while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-						total_keys_added++;
+						int slotInt = j;
+						int total_keys_added = 0;
+						segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+						robj *key_meta, *val_meta;
+						while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+							key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+							val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+							total_keys_added++;
+						}
+						serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, total_keys_added);
 					}
-					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, total_keys_added);
 				}
-			}
 
 
 			}
