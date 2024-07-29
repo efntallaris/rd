@@ -6573,7 +6573,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		char **rest_slots;
 		int number_of_blocks;
-		r_allocator_lock_slot_blocks(spill_over_slot);
+		//r_allocator_lock_slot_blocks(spill_over_slot);
 		rest_slots = r_allocator_get_block_buffers_for_slot(spill_over_slot, &number_of_blocks);
 		all_rest_slots = rest_slots;
 		slots_number_of_rest_blocks = number_of_blocks;
@@ -6617,6 +6617,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
 			int total_slots_transferred = 0;
+			total_number_of_remote_rest_buffers = 0;
 
 			if(total_number_of_remote_rest_buffers > 0){
 
