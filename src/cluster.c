@@ -6629,11 +6629,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			//
 
 			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT:%d", spill_over_slot);
-			for(int i=0; i<5000; i++) {
-				slots_number_of_rest_blocks[i] = 0;
-				all_rest_slots[i] = NULL;
-			}
-
 
 			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
