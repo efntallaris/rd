@@ -6653,7 +6653,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			{
 				unsigned int intSlot = spill_over_slot;
-				//r_allocator_lock_slot_blocks(intSlot);
 				char **slots;
 				int number_of_blocks;
 				slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
@@ -6732,8 +6731,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					current_buffer_index++;
 				}
 
-				serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS");
+				serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS:%d", current_buffer_index);
 				for(int i=0; i<current_buffer_index; i++) {
+					serverLog(LL_WARNING, "STRATOS SENDING REST BUFFER:%d", i);
 					struct ibv_send_wr bad_wr;
 					if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
 						serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
@@ -6743,7 +6743,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				}
 				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 
-				unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 				prevSlot = spill_over_slot;
 				currentSlot = spill_over_slot;
 				serverLog(LL_WARNING, "STRATOS START SPILL OVER BACKPATCHING FOR SLOTS RANGE [%d-%d]", prevSlot, currentSlot);
