@@ -6290,7 +6290,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			end = number_of_arguments;
 		}
 
-		serverLog(LL_WARNING, "STRATOS PROCESSING SLOT RANGE [%d-%d]", args[start], args[end-1]);
+		serverLog(LL_WARNING, "STRATOS PROCESSING SLOT RANGE [%s-%s]", args[start], args[end-1]);
 		for(int j=start; j<end; j++) {
 			int slotInt = atoi(args[j]);
 			sds slotString = args[j];
