@@ -6659,6 +6659,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				all_rest_slots[0] = slots;
 				slots_number_of_rest_blocks[0] = number_of_blocks;
 				total_number_of_remote_rest_buffers = number_of_blocks;
+				serverLog(LL_WARNING, "STRATOS IN FUNCTION spill_over_slot:%d, number_of_rest_blocks:%d, total_number_of_remote_rest_buffers:%d", spill_over_slot, slots_number_of_rest_blocks[0], number_of_blocks);
 			}
 
 			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
