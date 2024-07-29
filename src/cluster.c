@@ -6290,6 +6290,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			end = number_of_arguments;
 		}
 
+		serverLog(LL_WARNING, "STRATOS PROCESSING SLOT RANGE [%d-%d]", args[start], args[end-1]);
 		for(int j=start; j<end; j++) {
 			int slotInt = atoi(args[j]);
 			sds slotString = args[j];
@@ -7101,20 +7102,20 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
-			if(firstSlot > 16385){
-					int inner_rest_keys=0;
-					for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
-						int slotInt = j;
-						segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-						robj *key_meta, *val_meta;
-						while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-							key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-							val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-							inner_rest_keys++;
-						}
-						serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, inner_rest_keys);
-					}
-			}
+//			if(firstSlot > 16385){
+//					int inner_rest_keys=0;
+//					for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+//						int slotInt = j;
+//						segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+//						robj *key_meta, *val_meta;
+//						while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+//							key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//							val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//							inner_rest_keys++;
+//						}
+//						serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, inner_rest_keys);
+//					}
+//			}
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
