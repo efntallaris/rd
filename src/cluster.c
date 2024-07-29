@@ -6712,7 +6712,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				int current_buffer_index = 0;
 
 				char **slots = all_rest_slots[0];
-				for(int i=0; i<slots_number_of_blocks[0]; i++) {
+				for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
 					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
 					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
 					// PREPARE SGE STOP
