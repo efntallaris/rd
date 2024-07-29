@@ -6657,31 +6657,31 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000000) <=0) {
 					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
 				}
-				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
-				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
-				/* PREPARE WORK REQUEST AND SEND IT START*/
-				int current_buffer_index = 0;
-
-				for(int i=0; i<slots_number_of_rest_blocks; i++) {
-					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
-					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
-					// PREPARE SGE STOP
-					sges_rest[current_buffer_index].addr = (uint64_t)(uintptr_t) rest_slots[i];
-					sges_rest[current_buffer_index].length = (uint32_t)BLOCK_SIZE_BYTES;
-					sges_rest[current_buffer_index].lkey = rdma_rest_buffers[current_buffer_index]->mr->lkey;
-					// PREPARE SGE STOP
-					// PREPARE WR START
-					wrs_rest[current_buffer_index].wr_id = current_buffer_index;
-					wrs_rest[current_buffer_index].sg_list = &(sges_rest[current_buffer_index]);
-					wrs_rest[current_buffer_index].next = NULL;
-					wrs_rest[current_buffer_index].num_sge = 1;
-					wrs_rest[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
-					wrs_rest[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
-					wrs_rest[current_buffer_index].wr.rdma.remote_addr = all_remote_rest_data[current_buffer_index].ptr;
-					wrs_rest[current_buffer_index].wr.rdma.rkey = all_remote_rest_data[current_buffer_index].rkey;
-					current_buffer_index++;
-				}
-
+//				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
+//				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
+//				/* PREPARE WORK REQUEST AND SEND IT START*/
+//				int current_buffer_index = 0;
+//
+//				for(int i=0; i<slots_number_of_rest_blocks; i++) {
+//					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
+//					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
+//					// PREPARE SGE STOP
+//					sges_rest[current_buffer_index].addr = (uint64_t)(uintptr_t) rest_slots[i];
+//					sges_rest[current_buffer_index].length = (uint32_t)BLOCK_SIZE_BYTES;
+//					sges_rest[current_buffer_index].lkey = rdma_rest_buffers[current_buffer_index]->mr->lkey;
+//					// PREPARE SGE STOP
+//					// PREPARE WR START
+//					wrs_rest[current_buffer_index].wr_id = current_buffer_index;
+//					wrs_rest[current_buffer_index].sg_list = &(sges_rest[current_buffer_index]);
+//					wrs_rest[current_buffer_index].next = NULL;
+//					wrs_rest[current_buffer_index].num_sge = 1;
+//					wrs_rest[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
+//					wrs_rest[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+//					wrs_rest[current_buffer_index].wr.rdma.remote_addr = all_remote_rest_data[current_buffer_index].ptr;
+//					wrs_rest[current_buffer_index].wr.rdma.rkey = all_remote_rest_data[current_buffer_index].rkey;
+//					current_buffer_index++;
+//				}
+//
 //				serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS:%d", current_buffer_index);
 //				for(int i=0; i<current_buffer_index; i++) {
 //					//serverLog(LL_WARNING, "STRATOS SENDING REST BUFFER:%d", i);
