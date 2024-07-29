@@ -6567,21 +6567,21 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		}
 
 		unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
-		unsigned int intSlot = spill_over_slot;
 		char slotBuff[100];
 		sprintf(slotBuff, "%d", spill_over_slot);
 		sds slotString = sdsnew(slotBuff);
-		char **slots;
+		char **rest_slots;
 		int number_of_blocks;
-		slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-		all_rest_slots[0] = slots;
+		r_allocator_lock_slot_blocks(spill_over_slot);
+		rest_slots = r_allocator_get_block_buffers_for_slot(spill_over_slot, &number_of_blocks);
+		all_rest_slots[0] = rest_slots;
 		slots_number_of_rest_blocks[0] = number_of_blocks;
 		total_number_of_remote_rest_buffers = number_of_blocks;
 
 		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
-			char **slots = all_rest_slots[0];
+			char **rest_slots = all_rest_slots[0];
 
 			for(int j=start; j<end; j++) {
 				unsigned int intSlot = atoi(args[j]);
@@ -6592,7 +6592,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			rdma_rest_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
 
 			for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
-				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) rest_slots[i], BLOCK_SIZE_BYTES, 10);
 				total_rest_blocks_allocated++;
 				buffer_index++;
 			}
@@ -6605,28 +6605,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 			serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
 
-			active_slots[number_of_active_slots] = (long long) intSlot;
-			number_of_active_slots++;
-
 			nwritten = 0;
 
 			rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
 			memset(all_remote_rest_data, 0, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
 			memset(remote_keys, 0, 1024);
-			//			buf = prepareRestBlocksCmd.io.buffer.ptr;
-			//			nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
-			//			// 1 readline for the reply and one for the +OK ack
-			//			serverLog(LL_WARNING, "STRATOS DONOR number of REST buffers %ld", total_number_of_remote_rest_buffers);
-			//			if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
-			//				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
-			//			}
-			//
-			//			if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000000) <=0) {
-			//				serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
-			//			}
-			//			serverLog(LL_WARNING, "STRATOS RECIP SIDE REST FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
-			//			serverLog(LL_WARNING, "STRATOS RECIP SIDE REST LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
-			//
 
 			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT:%d", spill_over_slot);
 
@@ -6634,7 +6617,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
 			int total_slots_transferred = 0;
 
-			serverLog(LL_WARNING, "STRATOS remote_restbuffers %d", total_number_of_remote_rest_buffers);
 			if(total_number_of_remote_rest_buffers > 0){
 
 				for(int j=start; j<end; j++) {
@@ -6649,7 +6631,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				sprintf(slotBuff, "%d", spill_over_slot);
 				sds slotString = sdsnew(slotBuff);
 				for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
-					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
+					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) rest_slots[i], BLOCK_SIZE_BYTES, 10);
 					total_rest_blocks_allocated++;
 					buffer_index++;
 				}
@@ -6683,7 +6665,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
 					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
 					// PREPARE SGE STOP
-					sges_rest[current_buffer_index].addr = (uint64_t)(uintptr_t) slots[i];
+					sges_rest[current_buffer_index].addr = (uint64_t)(uintptr_t) rest_slots[i];
 					sges_rest[current_buffer_index].length = (uint32_t)BLOCK_SIZE_BYTES;
 					sges_rest[current_buffer_index].lkey = rdma_rest_buffers[current_buffer_index]->mr->lkey;
 					// PREPARE SGE STOP
@@ -6701,7 +6683,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 				serverLog(LL_WARNING, "STRATOS START SENDING REST BUFFERS:%d", current_buffer_index);
 				for(int i=0; i<current_buffer_index; i++) {
-					serverLog(LL_WARNING, "STRATOS SENDING REST BUFFER:%d", i);
+					//serverLog(LL_WARNING, "STRATOS SENDING REST BUFFER:%d", i);
 					struct ibv_send_wr bad_wr;
 					if(ibv_post_send(rdma_rest_buffers[0]->id->qp, &(wrs_rest[i]), &bad_wr)!=0) {
 						serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
@@ -7102,6 +7084,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 	int i=0;
 	int total_keys_added = 0;
+	int total_rest_keys_added =0;
 	int total_keys_exist_and_not_added = 0;
 	serverLog(LL_WARNING, "STRATOS STARTED BATCH THREAD");
 	while(true){
@@ -7119,24 +7102,18 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
 			if(firstSlot > 16385){
-
-				{
+					int inner_rest_keys=0;
 					for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
-
 						int slotInt = j;
-						int total_keys_added = 0;
 						segment_iterator_t *iter = create_iterator_for_slot(slotInt);
 						robj *key_meta, *val_meta;
 						while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
 							key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
 							val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-							total_keys_added++;
+							inner_rest_keys++;
 						}
-						serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, total_keys_added);
+						serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, inner_rest_keys);
 					}
-				}
-
-
 			}
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
