@@ -6581,6 +6581,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
+			char **slots = all_rest_slots[0];
 
 			for(int j=start; j<end; j++) {
 				unsigned int intSlot = atoi(args[j]);
@@ -6590,7 +6591,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			buffer_index = 0;
 			rdma_rest_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
 
-			char **slots = all_rest_slots[0];
 			for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
 				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
 				total_rest_blocks_allocated++;
@@ -6629,29 +6629,15 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			//
 
 			serverLog(LL_WARNING, "STRATOS START PREPARING REST BUFFERS SLOT:%d", spill_over_slot);
-
-			char ***all_rest_slots = (char ***) malloc(5000 * sizeof(char **));
-			int slots_number_of_rest_blocks[5000];
-			int total_number_of_remote_rest_buffers = 0;
-			int total_slots_transferred = 0;
 			for(int i=0; i<5000; i++) {
 				slots_number_of_rest_blocks[i] = 0;
 				all_rest_slots[i] = NULL;
 			}
 
-			{
-				unsigned int intSlot = spill_over_slot;
-				char **slots;
-				int number_of_blocks;
-				slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-				all_rest_slots[0] = slots;
-				slots_number_of_rest_blocks[0] = number_of_blocks;
-				total_number_of_remote_rest_buffers = number_of_blocks;
-				serverLog(LL_WARNING, "STRATOS IN FUNCTION spill_over_slot:%d, number_of_rest_blocks:%d, total_number_of_remote_rest_buffers:%d", spill_over_slot, slots_number_of_rest_blocks[0], number_of_blocks);
-			}
 
 			struct ibv_sge sges_rest[total_number_of_remote_rest_buffers];
 			struct ibv_send_wr wrs_rest[total_number_of_remote_rest_buffers];
+			int total_slots_transferred = 0;
 
 			serverLog(LL_WARNING, "STRATOS remote_restbuffers %d", total_number_of_remote_rest_buffers);
 			if(total_number_of_remote_rest_buffers > 0){
@@ -6668,7 +6654,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				sprintf(slotBuff, "%d", spill_over_slot);
 				sds slotString = sdsnew(slotBuff);
 				for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
-					char **slots = all_rest_slots[0];
 					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) slots[i], BLOCK_SIZE_BYTES, 10);
 					total_rest_blocks_allocated++;
 					buffer_index++;
@@ -6699,7 +6684,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				/* PREPARE WORK REQUEST AND SEND IT START*/
 				int current_buffer_index = 0;
 
-				char **slots = all_rest_slots[0];
 				for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
 					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
 					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
