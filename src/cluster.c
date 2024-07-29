@@ -6540,22 +6540,21 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			SPLIT_SLOTS = end-start;
 		}
 
-		char ***all_rest_slots = (char ***) malloc(5000 * sizeof(char **));
+		char ***all_rest_slots = (char ***) malloc(sizeof(char **));
 		struct rdma_buffer_info **rdma_rest_buffers;
-		int slots_number_of_rest_blocks[5000];
+		int slots_number_of_rest_blocks;
 		int total_number_of_remote_rest_buffers = 0;
 		int total_rest_blocks_allocated = 0;
 		int total_number_of_active_slots = 0;
+		slots_number_of_rest_blocks = 0;
+		all_rest_slots = NULL;
+
 		rio prepareRestBlocksCmd;
 		rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
 		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + 2));
 		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
 		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
 
-		for(int i=0; i<5000; i++) {
-			slots_number_of_rest_blocks[i] = 0;
-			all_rest_slots[i] = NULL;
-		}
 
 
 		for(int j=start; j<end; j++) {
@@ -6570,18 +6569,19 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		char slotBuff[100];
 		sprintf(slotBuff, "%d", spill_over_slot);
 		sds slotString = sdsnew(slotBuff);
+
 		char **rest_slots;
 		int number_of_blocks;
 		r_allocator_lock_slot_blocks(spill_over_slot);
 		rest_slots = r_allocator_get_block_buffers_for_slot(spill_over_slot, &number_of_blocks);
-		all_rest_slots[0] = rest_slots;
-		slots_number_of_rest_blocks[0] = number_of_blocks;
+		all_rest_slots = rest_slots;
+		slots_number_of_rest_blocks = number_of_blocks;
 		total_number_of_remote_rest_buffers = number_of_blocks;
 
 		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
 
-			char **rest_slots = all_rest_slots[0];
+			char **rest_slots = all_rest_slots;
 
 			for(int j=start; j<end; j++) {
 				unsigned int intSlot = atoi(args[j]);
@@ -6591,7 +6591,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			buffer_index = 0;
 			rdma_rest_buffers = (struct rdma_buffer_info **) malloc(total_number_of_remote_rest_buffers  * sizeof(struct rdma_buffer_info *));
 
-			for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
+			for(int i=0; i<slots_number_of_rest_blocks; i++) {
 				rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) rest_slots[i], BLOCK_SIZE_BYTES, 10);
 				total_rest_blocks_allocated++;
 				buffer_index++;
@@ -6630,14 +6630,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				char slotBuff[100];
 				sprintf(slotBuff, "%d", spill_over_slot);
 				sds slotString = sdsnew(slotBuff);
-				for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
+				for(int i=0; i<slots_number_of_rest_blocks; i++) {
 					rdma_rest_buffers[buffer_index] = init_rdma_buffer(server.rdma_client->id, (char *) rest_slots[i], BLOCK_SIZE_BYTES, 10);
 					total_rest_blocks_allocated++;
 					buffer_index++;
 				}
 				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
 				char intBuff[100];
-				sprintf(intBuff, "%d", slots_number_of_rest_blocks[0]);
+				sprintf(intBuff, "%d", slots_number_of_rest_blocks);
 				sds sdsTotalBlocks = sdsnew(intBuff);
 				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
 				nwritten = 0;
@@ -6661,7 +6661,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				/* PREPARE WORK REQUEST AND SEND IT START*/
 				int current_buffer_index = 0;
 
-				for(int i=0; i<slots_number_of_rest_blocks[0]; i++) {
+				for(int i=0; i<slots_number_of_rest_blocks; i++) {
 					memset(&(sges_rest[current_buffer_index]), 0, sizeof(struct ibv_sge));
 					memset(&(wrs_rest[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
 					// PREPARE SGE STOP
