@@ -6291,7 +6291,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 683;
+	int chunk_size = 1366;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -6689,19 +6689,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				}
 				serverLog(LL_WARNING, "STRATOS REST BUFFERS TRANSFERRED");
 
-				{
-
-					int total_keys_added = 0;
-					segment_iterator_t *iter = create_iterator_for_slot(spill_over_slot);
-					robj *key_meta, *val_meta;
-					while (iter->getNext(spill_over_slot, &key_meta, &val_meta) != NULL) {
-						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-						total_keys_added++;
-					}
-					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d", total_keys_added);
-				}
-
 				prevSlot = spill_over_slot;
 				currentSlot = spill_over_slot;
 				serverLog(LL_WARNING, "STRATOS START SPILL OVER BACKPATCHING FOR SLOTS RANGE [%d-%d]", prevSlot, currentSlot);
@@ -6843,11 +6830,27 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 				gettimeofday(&tv_ownership_change_end, NULL);
 
+				serverLog(LL_WARNING, "STRATOS STATS FOR SLOT RANGE [%s-%s]", args[start], args[end-1]);
+
+//				{
+//
+//					int total_keys_added = 0;
+//					segment_iterator_t *iter = create_iterator_for_slot(spill_over_slot);
+//					robj *key_meta, *val_meta;
+//					while (iter->getNext(spill_over_slot, &key_meta, &val_meta) != NULL) {
+//						key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+//						val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+//						total_keys_added++;
+//					}
+//					serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d", total_keys_added);
+//				}
+
 				printTimevalInMilliseconds(&tv_register_duration_start, &tv_register_duration_end, "REGISTRATION");
 				printTimevalInMilliseconds(&tv_transfer_duration_start, &tv_transfer_duration_end, "TRANSFER");
 				printTimevalInMilliseconds(&tv_backpatching_start, &tv_backpatching_end, "BACKPATCHING");
 				printTimevalInMilliseconds(&tv_spill_over_phase_start, &tv_spill_over_phase_end, "SPILL_OVER");
 				printTimevalInMilliseconds(&tv_ownership_change_start, &tv_ownership_change_end, "OWNERSHIP_TRANSFER");
+
 				for(int i=0;i<100;i++){
 					char buff[1024];
 					if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
