@@ -6636,29 +6636,29 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					total_rest_blocks_allocated++;
 					buffer_index++;
 				}
-				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
-				char intBuff[100];
-				sprintf(intBuff, "%d", slots_number_of_rest_blocks);
-				sds sdsTotalBlocks = sdsnew(intBuff);
-				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
-				nwritten = 0;
-
-				rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
-				memset(all_remote_rest_data, 0, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
-				memset(remote_keys, 0, 1024);
-				buf = prepareRestBlocksCmd.io.buffer.ptr;
-				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
-				// 1 readline for the reply and one for the +OK ack
-				serverLog(LL_WARNING, "STRATOS DONOR number of REST buffers %ld", total_number_of_remote_rest_buffers);
-				if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
-					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
-				}
-
-				if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000000) <=0) {
-					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
-				}
-				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
-				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
+//				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
+//				char intBuff[100];
+//				sprintf(intBuff, "%d", slots_number_of_rest_blocks);
+//				sds sdsTotalBlocks = sdsnew(intBuff);
+//				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, sdsTotalBlocks, sdslen(sdsTotalBlocks)));
+//				nwritten = 0;
+//
+//				rdmaRemoteBufferInfo *all_remote_rest_data = (rdmaRemoteBufferInfo *) zmalloc(total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
+//				memset(all_remote_rest_data, 0, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo));
+//				memset(remote_keys, 0, 1024);
+//				buf = prepareRestBlocksCmd.io.buffer.ptr;
+//				nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+//				// 1 readline for the reply and one for the +OK ack
+//				serverLog(LL_WARNING, "STRATOS DONOR number of REST buffers %ld", total_number_of_remote_rest_buffers);
+//				if(connSyncReadLine(cs->conn, remote_keys, 1024, 10000) <=0) {
+//					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncReadLine %s", strerror(errno));
+//				}
+//
+//				if(connSyncRead(cs->conn, (char *) all_remote_rest_data, total_number_of_remote_rest_buffers * sizeof(rdmaRemoteBufferInfo), 10000000) <=0) {
+//					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
+//				}
+//				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_rest_data[0].ptr, all_remote_rest_data[0].rkey);
+//				serverLog(LL_WARNING, "STRATOS RECIP SIDE REST LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_rest_buffers-1, (void *)all_remote_rest_data[total_number_of_remote_rest_buffers-1].ptr, all_remote_rest_data[total_number_of_remote_rest_buffers-1].rkey);
 //				/* PREPARE WORK REQUEST AND SEND IT START*/
 //				int current_buffer_index = 0;
 //
