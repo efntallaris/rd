@@ -6499,7 +6499,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
 			}
 			struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
-			usleep(1460);
+			//usleep(1460);
 
 		}
 		gettimeofday(&tv_transfer_duration_end, NULL);
