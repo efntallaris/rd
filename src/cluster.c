@@ -6550,11 +6550,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		slots_number_of_rest_blocks = 0;
 		all_rest_slots = NULL;
 
-		rio prepareRestBlocksCmd;
-		rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
-		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + 2));
-		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
-		serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
 
 
 
@@ -6581,7 +6576,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		serverLog(LL_WARNING, "STRATOS SPILL_OVER_SLOT:%d TOTAL NUMBER OF REMOTE REST BUFFERS:%d", spill_over_slot, total_number_of_remote_rest_buffers);
 		if(total_number_of_remote_rest_buffers){
-
 			char **rest_slots = all_rest_slots;
 
 			for(int j=start; j<end; j++) {
@@ -6615,6 +6609,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					total_rest_blocks_allocated++;
 					buffer_index++;
 				}
+
+				rio prepareRestBlocksCmd;
+				rioInitWithBuffer(&prepareRestBlocksCmd,sdsempty());
+				serverAssertWithInfo(c,NULL,rioWriteBulkCount(&prepareRestBlocksCmd, '*', 2 + 2));
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd,"registerRDMABlockSlots", 22));
+				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, "SLOTS", 5));
 				serverAssertWithInfo(c,NULL,rioWriteBulkString(&prepareRestBlocksCmd, slotString, sdslen(slotString)));
 				char intBuff[100];
 				sprintf(intBuff, "%d", slots_number_of_rest_blocks);
