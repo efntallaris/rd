@@ -89,7 +89,7 @@ sds representClusterNodeFlags(sds ci, uint16_t flags);
 uint64_t clusterGetMaxEpoch(void);
 int clusterBumpConfigEpochWithoutConsensus(void);
 void moduleCallClusterReceivers(const char *sender_id, uint64_t module_id, uint8_t type, const unsigned char *payload, uint32_t len);
-void printTimevalInMilliseconds(struct timeval *tv_start, struct timeval *tv_end, char *timerName);
+//void printTimevalInMilliseconds(struct timeval *tv_start, struct timeval *tv_end, char *timerName);
 
 rdmaCachedConnection* rdmaGetConnection(client *c);
 #define RCVBUF_INIT_LEN 1024
@@ -6173,6 +6173,13 @@ void stopUnlockingSlotsExperimetnalCommand(client *c) {
 }
 
 
+void printTimevalInMilliseconds(struct timeval *tv_start, struct timeval *tv_end, const char *timerName) {
+    long seconds = tv_end->tv_sec - tv_start->tv_sec;
+    long microseconds = tv_end->tv_usec - tv_start->tv_usec;
+    long milliseconds = (seconds * 1000) + (microseconds / 1000);
+    serverLog(LL_WARNING,"STRATOS %s duration(ms): %ld", timerName, milliseconds);
+}
+
 //Thread that is handlind the migration on donor side
 pthread_t migrateThread;
 
@@ -6232,8 +6239,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		//sleep(400);
 	}
 
+	struct timeval tv_total_migration_start, tv_total_migration_end;
 
 	serverLog(LL_WARNING, "STRATOS STARTED MIGRATION ON DONOR SIDE");
+	gettimeofday(&tv_total_migration_start, NULL);
 
 
 	// does rdma connection exists in cache? if not initiate new one
@@ -6284,6 +6293,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	int chunk_size = 683;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
+		// TIMERS START
+		struct timeval tv_register_duration_start, tv_register_duration_end;
+		struct timeval tv_transfer_duration_start, tv_transfer_duration_end;
+		struct timeval tv_backpatching_start, tv_backpatching_end;
+		struct timeval tv_spill_over_phase_start, tv_spill_over_phase_end;
+		struct timeval tv_ownership_change_start, tv_ownership_change_end;
+		// TIMERS START
+
 
 		int end = start + chunk_size;
 		if (end > number_of_arguments) {
@@ -6313,6 +6330,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		serverLog(LL_WARNING, "STRATOS IMPORTING AND MIGRATING STATE SET");
 		serverLog(LL_WARNING, "STRATOS START REGISTERING RDMA BLOCKS");
+		gettimeofday(&tv_register_duration_start, NULL);
 		//		// REGISTER MEMORY REGIONS AND PREPARE WORK REQUEST AT MIGRATE PATH START
 		int total_number_of_remote_buffers = 0;
 		int number_of_slots = end - start;
@@ -6416,20 +6434,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG READING connSyncRead %s", strerror(errno));
 		}
 
-		//		sdsfree(prepareBlocksCmd.io.buffer.ptr);
-		//		serverLog(LL_WARNING, "STRATOS  DONOR number of buffers %ld", total_number_of_remote_buffers);
-		//		/* DONOR SIDE DEBUG BUFFERS START */
-		//		//    serverLogHexDump(LL_WARNING, "STRATOS ALL REMOTE BUFFERS SERVER SIDE", (char *) all_remote_data, total_number_of_remote_buffers * sizeof(rdmaRemoteBufferInfo));
-		//		//
-		//		//    for(int i=0; i<total_number_of_remote_buffers; i++) {
-		//		//        serverLog(LL_WARNING, "STRATOS SENDER SIDE BUFFER POINTER AT %d is %p - key:%d", i, all_remote_data[i].ptr, all_remote_data[i].rkey);
-		//		//    }
-		//
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_data[0].ptr, all_remote_data[0].rkey);
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_buffers-1, (void *)all_remote_data[total_number_of_remote_buffers-1].ptr, all_remote_data[total_number_of_remote_buffers-1].rkey);
 		int SPLIT_SLOTS = 200;
 
+		gettimeofday(&tv_register_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS START PREPARING BUFFERS SLOT");
+		gettimeofday(&tv_transfer_duration_start, NULL);
 		/* PREPARE WORK REQUEST AND SEND IT START*/
 		struct ibv_sge sges[total_number_of_remote_buffers];
 		struct ibv_send_wr wrs[total_number_of_remote_buffers];
@@ -6491,7 +6502,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			usleep(1460);
 
 		}
+		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
+		gettimeofday(&tv_backpatching_start, NULL);
 		prevSlot = atoi(args[start]);
 		currentSlot = atoi(args[end-1]);
 
@@ -6523,8 +6536,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			}
 			pthread_mutex_unlock(&server.generic_migration_mutex);
 		}
+		gettimeofday(&tv_backpatching_end, NULL);
 		serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
 
+		serverLog(LL_WARNING, "STRATOS STARTING SPILL OVER PHASE");
+		gettimeofday(&tv_spill_over_phase_start, NULL);
 		//SPILL OVER BLOCKS START
 		for(int i=0;i<100;i++){
 			char buff[1024];
@@ -6721,6 +6737,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					pthread_mutex_unlock(&(server.generic_migration_mutex));
 				}
 
+
+				gettimeofday(&tv_spill_over_phase_end, NULL);
+				serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK FOR REST BUFFERS");
+				//SPILL OVER BLOCKS STOP
+				//
 				for(int i=0;i<100;i++){
 					char buff[1024];
 					if(connSyncReadLine(cs->conn, buff, 1024, 10) <=0) {
@@ -6728,13 +6749,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 						break;
 					}
 				}
-
-				serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK FOR REST BUFFERS");
-				//SPILL OVER BLOCKS STOP
-				//
 				//
 
 				serverLog(LL_WARNING, "STRATOS START OWNERSHIP");
+				gettimeofday(&tv_ownership_change_start, NULL);
 
 				// CHANGE OWNERSHIP START
 				cs = migrateGetSocketOtherParams(c, args[3], args[4], args[3], args[4], 10000);
@@ -6823,7 +6841,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 						CLUSTER_TODO_UPDATE_STATE|
 						CLUSTER_TODO_FSYNC_CONFIG);
 
+				gettimeofday(&tv_ownership_change_end, NULL);
 
+				printTimevalInMilliseconds(&tv_register_duration_start, &tv_register_duration_end, "REGISTRATION");
+				printTimevalInMilliseconds(&tv_transfer_duration_start, &tv_transfer_duration_end, "TRANSFER");
+				printTimevalInMilliseconds(&tv_backpatching_start, &tv_backpatching_end, "BACKPATCHING");
+				printTimevalInMilliseconds(&tv_spill_over_phase_start, &tv_spill_over_phase_end, "SPILL_OVER");
+				printTimevalInMilliseconds(&tv_ownership_change_start, &tv_ownership_change_end, "OWNERSHIP_TRANSFER");
 				for(int i=0;i<100;i++){
 					char buff[1024];
 					if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
@@ -6940,6 +6964,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
+	gettimeofday(&tv_total_migration_end, NULL);
+	printTimevalInMilliseconds(&tv_total_migration_start, &tv_total_migration_end, "MIGRATION_DURATION");
 	serverLog(LL_WARNING, "STRATOS ENDED MIGRATION ON DONOR SIDE");
 	//SOS TODO CLEAN ARGUMETNS TAKEN FROM migrateRDMASlots Command
 	return;
@@ -7872,10 +7898,10 @@ void rdmaDoneAckCommand(client *c) {
 	addReply(c, shared.ok);
 }
 
-void printTimevalInMilliseconds(struct timeval *tv_start, struct timeval *tv_end, char *timerName) {
-	char output[50];
-	long seconds = (tv_end->tv_sec - tv_start->tv_sec);
-	long micros = ((seconds * 1000000) + tv_end->tv_usec) - (tv_start->tv_usec);
-	snprintf(output, 50, "%ld", micros);
-	serverLog(LL_WARNING, "STRATOS TOTAL TIME: %s WALL-CLOCK: %s time \n", output, timerName);
-}
+//void printTimevalInMilliseconds(struct timeval *tv_start, struct timeval *tv_end, char *timerName) {
+//	char output[50];
+//	long seconds = (tv_end->tv_sec - tv_start->tv_sec);
+//	long micros = ((seconds * 1000000) + tv_end->tv_usec) - (tv_start->tv_usec);
+//	snprintf(output, 50, "%ld", micros);
+//	serverLog(LL_WARNING, "STRATOS TOTAL TIME: %s WALL-CLOCK: %s time \n", output, timerName);
+//}
