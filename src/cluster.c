@@ -7161,7 +7161,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
-			serverLog(LL_WARNING, "STRATOS SLOT RANGE [%d-%d] TOTAL_KEYS_PER_RANGE:%d",item->first_slot, item->last_slot, total_keys_per_range, total_keys_per_range);
+			serverLog(LL_WARNING, "STRATOS SLOT RANGE [%d-%d] TOTAL_KEYS_PER_RANGE:%d",firstSlot, lastSlot, total_keys_per_range);
 			// dictDisableMigration();
 
 
