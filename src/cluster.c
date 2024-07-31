@@ -6291,7 +6291,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 341;
+	int chunk_size = 342;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -7114,6 +7114,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			int firstSlot;
 			int lastSlot;
+			int total_keys_per_range = 0;
 			serverLog(LL_WARNING, "STRATOS FIRST SLOT IS :%s", item->first_slot);
 			serverLog(LL_WARNING, "STRATOS LAST SLOT IS :%s", item->last_slot);
 			serverLog(LL_WARNING, "STRATOS TAG  IS :%s", item->message);
@@ -7148,6 +7149,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
 						dbAddNoCopy(item->c->db, key_meta, val_meta);
 						total_keys_added++;
+						total_keys_per_range++;
 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
 					}else{
 						total_keys_exist_and_not_added++;
@@ -7159,6 +7161,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
+			serverLog(LL_WARNING, "STRATOS SLOT RANGE [%d-%d] TOTAL_KEYS_PER_RANGE:%d",item->first_slot, item->last_slot, total_keys_per_range, total_keys_per_range);
 			// dictDisableMigration();
 
 
