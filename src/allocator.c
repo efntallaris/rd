@@ -113,7 +113,7 @@ typedef unsigned long long u_llong;
 #define NEXT_FREEP(bp) ( *(void **)bp )
 #define PREV_FREEP(bp) ( *(void **)(bp + DSIZE) )
 
-#define SLOTS 20000
+#define SLOTS 30000
 #define ENTRY_HEADER_SIZE WSIZE //this is 4 bytes used to store the size of the sub-fields in the segment
 #define KEY_META_SIZE sizeof(robj)
 #define VAL_META_SIZE sizeof(robj)
