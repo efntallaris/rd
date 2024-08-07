@@ -6850,6 +6850,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				printTimevalInMilliseconds(&tv_backpatching_start, &tv_backpatching_end, "BACKPATCHING");
 				printTimevalInMilliseconds(&tv_spill_over_phase_start, &tv_spill_over_phase_end, "SPILL_OVER");
 				printTimevalInMilliseconds(&tv_ownership_change_start, &tv_ownership_change_end, "OWNERSHIP_TRANSFER");
+				pthread_mutex_lock(&server.generic_migration_mutex);
+				serverLog(LL_WARNING, "STRATOS TRY AGAINS:%d", server.try_agains);
+				pthread_mutex_unlock(&server.generic_migration_mutex);
 
 				for(int i=0;i<100;i++){
 					char buff[1024];
@@ -6934,6 +6937,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+
+					pthread_mutex_lock(&server.generic_migration_mutex);
+					server.try_agains=0;
+					pthread_mutex_unlock(&server.generic_migration_mutex);
 				}
 				if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 					serverLog(LL_WARNING,
@@ -7654,6 +7661,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 			if(server.migration_ownership_locked[slot] == 1){
 				addReplyError(c,"-TRYAGAIN  Key is migrating");
 				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				pthread_mutex_lock(&server.generic_migration_mutex);
+				server.try_agains++;
+				pthread_mutex_unlock(&server.generic_migration_mutex);
 				return myself;
 			}
 			if(server.migration_ownership_changed[slot] == 1) {
@@ -7694,6 +7704,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 		}else{
 			addReplyError(c,"-TRYAGAIN  Key is migrating");
+			pthread_mutex_lock(&server.generic_migration_mutex);
+			server.try_agains++;
+			pthread_mutex_unlock(&server.generic_migration_mutex);
 			return myself;
 		}
 
