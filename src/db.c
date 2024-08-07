@@ -332,7 +332,7 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		
 		//LOCK AND UNLOCK UNTIL A SHADOWWRITE IS DONE or OWNERSHIP CHANGED
 		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
-		pthread_mutex_lock(&(server.lock_slots[hashSlot]));
+		pthread_mutex_lock(&server.lock_slots[hashSlot]);
 		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
 			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
 			//serverLog(LL_WARNING, "STRATOS ADDING TO SPILL OVER SLOT %d", spill_over_slot);
@@ -367,7 +367,7 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) _key->ptr, (char *)allocator_key + allocator_key->data_offset + 8);
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) _value->ptr, (char *)allocator_value + allocator_value->data_offset + 8);
 		dbAddNoCopy(db, allocator_key, allocator_value);
-		pthread_mutex_unlock(&(server.lock_slots[hashSlot]));
+		pthread_mutex_unlock(&server.lock_slots[hashSlot]);
 
 		//pthread_mutex_unlock(&(server.general_db_lock));
 		// STRATOS 1 WITH ALLOCATOR STOP//
