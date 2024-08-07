@@ -11,6 +11,9 @@ for redis_instance in "${!instances[@]}"; do
         tko=$(sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 cd /root/rd
 git pull origin blocking_version
+git checkout -b blocking_version
+cd /root/rd/scripts_copy
+./install_preqs.sh
 EOF
 2>&1)
     done
