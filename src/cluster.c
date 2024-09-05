@@ -6539,9 +6539,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		gettimeofday(&tv_backpatching_end, NULL);
 		serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
 
-		serverLog(LL_WARNING, "STRATOS STARTING SPILL OVER PHASE");
-		gettimeofday(&tv_spill_over_phase_start, NULL);
-		//SPILL OVER BLOCKS START
+
 		for(int i=0;i<100;i++){
 			char buff[1024];
 			if(connSyncReadLine(cs->conn, buff, 1024, 100) <=0) {
@@ -6553,6 +6551,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 		}
+
+		serverLog(LL_WARNING, "STRATOS STARTING SPILL OVER PHASE");
+		gettimeofday(&tv_spill_over_phase_start, NULL);
+		//SPILL OVER BLOCKS START
 		if(SPLIT_SLOTS > end-start){
 			SPLIT_SLOTS = end-start;
 		}
