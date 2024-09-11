@@ -6854,6 +6854,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				printTimevalInMilliseconds(&tv_ownership_change_start, &tv_ownership_change_end, "OWNERSHIP_TRANSFER");
 				pthread_mutex_lock(&server.generic_migration_mutex);
 				serverLog(LL_WARNING, "STRATOS TRY AGAINS:%d", server.try_agains);
+				serverLog(LL_WARNING, "STRATOS TOTAL KEYS:%d", dictSize(server.key_stats));
 				pthread_mutex_unlock(&server.generic_migration_mutex);
 
 				for(int i=0;i<100;i++){
@@ -7661,6 +7662,23 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_locked[slot] == 1){
+
+				/* CAN BE DELETED START */
+				robj *thiskey = ms->commands[0].argv[0];
+				char *key = (char*)thiskey->ptr;
+
+				// Look up the key in the dictionary
+				long *counter = dictFetchValue(server.key_stats, key);
+				if (counter == NULL) {
+				    // If the key is not in the dictionary, add it with a counter of 1
+				    long init_value = 1;
+				    dictAdd(server.try_agains, sdsnew(key), &init_value);
+				} else {
+				    // If the key exists, increment the counter
+				    (*counter)++;
+				}
+				/* CAN BE DELETED STOP */
+
 				addReplyError(c,"-TRYAGAIN  Key is migrating");
 				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 				pthread_mutex_lock(&server.generic_migration_mutex);
@@ -7705,6 +7723,23 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 		}else{
+
+			/* CAN BE DELETED START */
+			robj *thiskey = ms->commands[0].argv[0];
+			char *key = (char*)thiskey->ptr;
+
+			// Look up the key in the dictionary
+			long *counter = dictFetchValue(server.try_agains, key);
+			if (counter == NULL) {
+			    // If the key is not in the dictionary, add it with a counter of 1
+			    long init_value = 1;
+			    dictAdd(server.key_stats, sdsnew(key), &init_value);
+			} else {
+			    // If the key exists, increment the counter
+			    (*counter)++;
+			}
+			/* CAN BE DELETED STOP */
+
 			addReplyError(c,"-TRYAGAIN  Key is migrating");
 			pthread_mutex_lock(&server.generic_migration_mutex);
 			server.try_agains++;

@@ -3017,6 +3017,7 @@ void initServerConfig(void) {
 	server.migrate_cached_sockets = dictCreate(&migrateCacheDictType,NULL);
 	server.rdma_cached_connections = dictCreate(&migrateCacheDictType,NULL);
 	server.slot_buffers = dictCreate(&migrateCacheDictType,NULL);
+	server.key_stats = dictCreateBig(&migrateCacheDictType,NULL); 
 	server.clientBuffersLastIndex = 0;
 	server.next_client_id = 1; /* Client IDs, start from 1 .*/
 	server.loading_process_events_interval_bytes = (1024*1024*2);
