@@ -106,7 +106,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 //#define DICT_HT_INITIAL_SIZE 16777216 
 //#define DICT_HT_INITIAL_SIZE 8388608
 #define DICT_HT_INITIAL_SIZE 4
-#define DICT_HT_BIG_INITIAL_SIZE 4 
+#define DICT_HT_BIG_INITIAL_SIZE 268435456 
 //#define DICT_HT_INITIAL_SIZE 1048576
 
 /* ------------------------------- Macros ------------------------------------*/
