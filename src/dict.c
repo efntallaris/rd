@@ -307,9 +307,9 @@ int dictTryExpand(dict *d, unsigned long size) {
 int dictRehash(dict *d, int n) {
 
 	int empty_visits = n*10; /* Max number of empty buckets to visit. */
-	if(d->isBig){
-		return 0;
-	}
+//	if(d->isBig){
+//		return 0;
+//	}
 	if (!dictIsRehashing(d)){
 		return 0;
 	}
@@ -1147,20 +1147,20 @@ static int _dictExpandIfNeeded(dict *d)
 	if (dictIsRehashing(d)) return DICT_OK;
 
 	/* If the hash table is empty expand it to the initial size. */
-	if( d->ht[0].size == 0 && d->isBig){
-		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-		fprintf(log_file, "INITIALIZING BIG HT\n");
-		fclose(log_file);
-		return dictExpand(d, DICT_HT_BIG_INITIAL_SIZE);
-
-	}
-	if( d->ht[0].size == 0 && d->isBig == 0){
-		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-		fprintf(log_file, "INITIALIZING SMALL HT\n");
-		fclose(log_file);
-		return dictExpand(d, DICT_HT_INITIAL_SIZE);
-
-	}
+//	if( d->ht[0].size == 0 && d->isBig){
+//		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+//		fprintf(log_file, "INITIALIZING BIG HT\n");
+//		fclose(log_file);
+//		return dictExpand(d, DICT_HT_BIG_INITIAL_SIZE);
+//
+//	}
+//	if( d->ht[0].size == 0 && d->isBig == 0){
+//		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+//		fprintf(log_file, "INITIALIZING SMALL HT\n");
+//		fclose(log_file);
+//		return dictExpand(d, DICT_HT_INITIAL_SIZE);
+//
+//	}
 	//if (d->ht[0].size == 0) return dictExpand(d, DICT_HT_INITIAL_SIZE);
 
 	/* If we reached the 1:1 ratio, and we are allowed to resize the hash
