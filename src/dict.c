@@ -1147,21 +1147,7 @@ static int _dictExpandIfNeeded(dict *d)
 	if (dictIsRehashing(d)) return DICT_OK;
 
 	/* If the hash table is empty expand it to the initial size. */
-//	if( d->ht[0].size == 0 && d->isBig){
-//		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-//		fprintf(log_file, "INITIALIZING BIG HT\n");
-//		fclose(log_file);
-//		return dictExpand(d, DICT_HT_BIG_INITIAL_SIZE);
-//
-//	}
-//	if( d->ht[0].size == 0 && d->isBig == 0){
-//		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-//		fprintf(log_file, "INITIALIZING SMALL HT\n");
-//		fclose(log_file);
-//		return dictExpand(d, DICT_HT_INITIAL_SIZE);
-//
-//	}
-	//if (d->ht[0].size == 0) return dictExpand(d, DICT_HT_INITIAL_SIZE);
+	if (d->ht[0].size == 0) return dictExpand(d, DICT_HT_INITIAL_SIZE);
 
 	/* If we reached the 1:1 ratio, and we are allowed to resize the hash
 	 * table (global setting) or we should avoid it but the ratio between
