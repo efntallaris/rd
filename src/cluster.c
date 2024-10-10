@@ -1014,14 +1014,14 @@ void clusterDelNode(clusterNode *delnode) {
 	/* 1) Mark slots as unassigned. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
 
-		//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (server.cluster->importing_slots_from[j] == delnode)
 			server.cluster->importing_slots_from[j] = NULL;
 		if (server.cluster->migrating_slots_to[j] == delnode)
 			server.cluster->migrating_slots_to[j] = NULL;
 		if (server.cluster->slots[j] == delnode)
 			clusterDelSlot(j);
-		//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* 2) Remove failure reports. */
@@ -1704,12 +1704,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 	}
 
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (bitmapTestBit(slots,j)) {
 			sender_slots++;
 			/* The slot is already bound to the sender of this message. */
 			if (server.cluster->slots[j] == sender){
-				//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 
@@ -1718,7 +1718,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 			 * and the migrating side slot was already closed and is advertising
 			 * a new config. We still want the slot to be closed manually). */
 			if (server.cluster->importing_slots_from[j]){
-				//pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
 				continue;
 			}
 			/* We rebind the slot to the new node claiming it if:
@@ -1751,7 +1751,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
 						CLUSTER_TODO_FSYNC_CONFIG);
 			}
 		}
-		//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 
 	/* After updating the slots configuration, don't do any actual change
@@ -2149,11 +2149,11 @@ int clusterProcessPacket(clusterLink *link) {
 			int j;
 
 			for (j = 0; j < CLUSTER_SLOTS; j++) {
-				//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+				pthread_mutex_lock(&server.ownership_lock_slots[j]);
 				if (bitmapTestBit(hdr->myslots,j)) {
 					if (server.cluster->slots[j] == sender ||
 							server.cluster->slots[j] == NULL){ 
-						//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+						pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 						continue;
 					}
 					if (server.cluster->slots[j]->configEpoch >
@@ -2169,11 +2169,11 @@ int clusterProcessPacket(clusterLink *link) {
 						/* TODO: instead of exiting the loop send every other
 						 * UPDATE packet for other nodes that are the new owner
 						 * of sender's slots. */
-						//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+						pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 						break;
 					}
 				}
-				//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			}
 		}
 
@@ -3028,15 +3028,15 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 	 * slots that is >= the one of the masters currently serving the same
 	 * slots in the current configuration. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (bitmapTestBit(claimed_slots, j) == 0){
-			//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue;
 		}
 		if (server.cluster->slots[j] == NULL ||
 				server.cluster->slots[j]->configEpoch <= requestConfigEpoch)
 		{
-			//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue;
 		}
 		/* If we reached this point we found a slot that in our current slots
@@ -3048,7 +3048,7 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 				node->name, j,
 				(unsigned long long) server.cluster->slots[j]->configEpoch,
 				(unsigned long long) requestConfigEpoch);
-		//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 		return;
 	}
 
@@ -4030,15 +4030,15 @@ void clusterUpdateState(void) {
 	/* Check if all the slots are covered. */
 	if (server.cluster_require_full_coverage) {
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
-			//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+			pthread_mutex_lock(&server.ownership_lock_slots[j]);
 			if (server.cluster->slots[j] == NULL ||
 					server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL))
 			{
 				new_state = CLUSTER_FAIL;
-				//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				break;
 			}
-			//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 		}
 	}
 
@@ -4146,9 +4146,9 @@ int verifyClusterConfigWithData(void) {
 	/* Check that all the slots we see populated memory have a corresponding
 	 * entry in the cluster table. Otherwise fix the table. */
 	for (j = 0; j < CLUSTER_SLOTS; j++) {
-		//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+		pthread_mutex_lock(&server.ownership_lock_slots[j]);
 		if (!countKeysInSlot(j)){
-			//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 			continue; /* No keys in this slot. */
 		}
 		/* Check if we are assigned to this slot or if we are importing it.
@@ -4156,7 +4156,7 @@ int verifyClusterConfigWithData(void) {
 		 * sense. */
 		if (server.cluster->slots[j] == myself ||
 				server.cluster->importing_slots_from[j] != NULL){
-			//pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);	
 			continue;
 		}
 		/* If we are here data and cluster config don't agree, and we have
@@ -4175,7 +4175,7 @@ int verifyClusterConfigWithData(void) {
 					"Setting it to importing state.",j);
 			server.cluster->importing_slots_from[j] = server.cluster->slots[j];
 		}
-		//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 	}
 	if (update_config) clusterSaveConfigOrDie(1);
 	return C_OK;
@@ -4329,16 +4329,16 @@ void clusterGenNodesSlotsInfo(int filter) {
 	int start = -1;
 
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		//pthread_mutex_lock(&server.ownership_lock_slots[i]);
+		pthread_mutex_lock(&server.ownership_lock_slots[i]);
 		/* Find start node and slot id. */
 		if (n == NULL) {
 			if (i == CLUSTER_SLOTS){ 
-				//pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
-			//pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 			continue;
 		}
 
@@ -4354,13 +4354,13 @@ void clusterGenNodesSlotsInfo(int filter) {
 				}
 			}
 			if (i == CLUSTER_SLOTS){ 
-				//pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 				break;
 			}
 			n = server.cluster->slots[i];
 			start = i;
 		}
-		//pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 }
 
@@ -4495,7 +4495,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 	void *slot_replylen = addReplyDeferredLen(c);
 	// serverLog(LL_WARNING, "CLUSTER SLOTS");
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		//pthread_mutex_lock(&server.ownership_lock_slots[i]);
+		pthread_mutex_lock(&server.ownership_lock_slots[i]);
 	}
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
 		/* Find start node and slot id. */
@@ -4527,7 +4527,7 @@ void clusterReplyMultiBulkSlots(client * c) {
 
 	}
 	for (int i = 0; i <= CLUSTER_SLOTS; i++) {
-		//pthread_mutex_unlock(&server.ownership_lock_slots[i]);
+		pthread_mutex_unlock(&server.ownership_lock_slots[i]);
 	}
 	setDeferredArrayLen(c, slot_replylen, num_masters);
 }
@@ -4747,13 +4747,13 @@ void clusterCommand(client *c) {
 			}
 			/* If this hash slot was served by 'myself' before to switch
 			 * make sure there are no longer local keys for this hash slot. */
-			//pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 			if (server.cluster->slots[slot] == myself && n != myself) {
 				if (countKeysInSlot(slot) != 0) {
 					addReplyErrorFormat(c,
 							"Can't assign hashslot %d to a different node "
 							"while I still hold keys for this hash slot.", slot);
-					//pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					return;
 				}
 			}
@@ -4790,7 +4790,7 @@ void clusterCommand(client *c) {
 				 * soon as possible. */
 				clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
 			}
-			//pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		} else {
 			addReplyError(c,
 					"Invalid CLUSTER SETSLOT action or number of arguments. Try CLUSTER HELP");
@@ -4819,13 +4819,13 @@ void clusterCommand(client *c) {
 		for(int j = 2; j<c->argc - 2; j++) {
 			int slot;
 			slot = atoi(c->argv[j]->ptr);
-			//pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 			clusterDelSlot(slot);
 			clusterAddSlot(n,slot);
 			server.cluster->importing_slots_from[slot] = NULL;
 			server.cluster->importing_slots_from[slot] = NULL;
 			server.cluster->slots[slot] = n;
-			//pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 		}
 
 		if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
@@ -4855,11 +4855,11 @@ void clusterCommand(client *c) {
 		int j;
 
 		for (j = 0; j < CLUSTER_SLOTS; j++) {
-			//pthread_mutex_lock(&server.ownership_lock_slots[j]);
+			pthread_mutex_lock(&server.ownership_lock_slots[j]);
 			clusterNode *n = server.cluster->slots[j];
 
 			if (n == NULL){
-				//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 				continue;
 			}
 			slots_assigned++;
@@ -4870,7 +4870,7 @@ void clusterCommand(client *c) {
 			} else {
 				slots_ok++;
 			}
-			//pthread_mutex_unlock(&server.ownership_lock_slots[j]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[j]);
 
 		}
 
@@ -6317,14 +6317,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			rio lockCmdRecipient;
 			rioInitWithBuffer(&lockCmdRecipient,sdsempty());
 
-			//pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
+			pthread_mutex_lock(&server.ownership_lock_slots[slotInt]);
 			server.cluster->migrating_slots_to[slotInt] = recipientNode;
 			server.cluster->importing_slots_from[slotInt] = recipientNode;
-			//pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[slotInt]);
 
-			//pthread_mutex_lock(&server.lock_slots[slotInt]);
+			pthread_mutex_lock(&server.lock_slots[slotInt]);
 			server.migration_spill_over_phase_activated[slotInt] = 1;
-			//pthread_mutex_unlock(&server.lock_slots[slotInt]);
+			pthread_mutex_unlock(&server.lock_slots[slotInt]);
 
 		}
 
@@ -6374,12 +6374,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
 			sds slotString = args[j];
-			//pthread_mutex_lock(&(server.lock_slots[intSlot]));
+			pthread_mutex_lock(&(server.lock_slots[intSlot]));
 			r_allocator_lock_slot_blocks(intSlot);
 			char **slots;
 			int number_of_blocks;
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-			//pthread_mutex_unlock(&(server.lock_slots[intSlot]));
+			pthread_mutex_unlock(&(server.lock_slots[intSlot]));
 			all_slots[j-7] = slots;
 			slots_number_of_blocks[j-7] = number_of_blocks;
 			slot_is_for_migration[j-7] = 1;
@@ -6528,13 +6528,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
 
 		while(1) {
-			//pthread_mutex_lock(&server.generic_migration_mutex);
+			pthread_mutex_lock(&server.generic_migration_mutex);
 			if(server.rdmaDoneAck==1) {
 				server.rdmaDoneAck=0;
-				//pthread_mutex_unlock(&server.generic_migration_mutex);
+				pthread_mutex_unlock(&server.generic_migration_mutex);
 				break;
 			}
-			//pthread_mutex_unlock(&server.generic_migration_mutex);
+			pthread_mutex_unlock(&server.generic_migration_mutex);
 		}
 		gettimeofday(&tv_backpatching_end, NULL);
 		serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
@@ -6574,9 +6574,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
 			sds slotString = args[j];
-			//pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+			pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 			server.migration_ownership_locked[intSlot] = 1;
-			//pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+			pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 		}
 
 		unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
@@ -6614,9 +6614,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				for(int j=start; j<end; j++) {
 					unsigned int intSlot = atoi(args[j]);
 					sds slotString = args[j];
-					//pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+					pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 					server.migration_ownership_locked[intSlot] = 1;
-					//pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 					total_slots_transferred++;
 				}
 				char slotBuff[100];
@@ -6717,13 +6717,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 				while(1) {
-					//pthread_mutex_lock(&(server.generic_migration_mutex));
+					pthread_mutex_lock(&(server.generic_migration_mutex));
 					if(server.rdmaDoneAck==1) {
 						server.rdmaDoneAck=0;
-						//pthread_mutex_unlock(&(server.generic_migration_mutex));
+						pthread_mutex_unlock(&(server.generic_migration_mutex));
 						break;
 					}
-					//pthread_mutex_unlock(&(server.generic_migration_mutex));
+					pthread_mutex_unlock(&(server.generic_migration_mutex));
 				}
 
 
@@ -6806,7 +6806,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				for(int j=start; j<end; j++) {
 					unsigned int intSlot = atoi(args[j]);
 					// serverLog(LL_WARNING, "STRATOS CHANGING SLOT %d", intSlot);
-					//pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+					pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 					clusterNode *recipientNode = server.cluster->importing_slots_from[intSlot];
 					server.migration_ownership_changed[intSlot] = 1;
 					server.migration_ownership_locked[intSlot] = 0;
@@ -6814,11 +6814,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					clusterAddSlot(recipientNode,intSlot);
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					server.cluster->importing_slots_from[intSlot] = NULL;
-					//pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 
-					//pthread_mutex_lock(&server.lock_slots[intSlot]);
+					pthread_mutex_lock(&server.lock_slots[intSlot]);
 					server.migration_spill_over_phase_activated[intSlot] = 0;
-					//pthread_mutex_unlock(&server.lock_slots[intSlot]);
+					pthread_mutex_unlock(&server.lock_slots[intSlot]);
 				}
 
 				if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
@@ -6852,10 +6852,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				printTimevalInMilliseconds(&tv_backpatching_start, &tv_backpatching_end, "BACKPATCHING");
 				printTimevalInMilliseconds(&tv_spill_over_phase_start, &tv_spill_over_phase_end, "SPILL_OVER");
 				printTimevalInMilliseconds(&tv_ownership_change_start, &tv_ownership_change_end, "OWNERSHIP_TRANSFER");
-				//pthread_mutex_lock(&server.generic_migration_mutex);
+				pthread_mutex_lock(&server.generic_migration_mutex);
 				serverLog(LL_WARNING, "STRATOS TRY AGAINS:%d", server.try_agains);
 				serverLog(LL_WARNING, "STRATOS TOTAL KEYS:%d", dictSize(server.key_stats));
-				//pthread_mutex_unlock(&server.generic_migration_mutex);
+				pthread_mutex_unlock(&server.generic_migration_mutex);
 
 				for(int i=0;i<100;i++){
 					char buff[1024];
@@ -6931,7 +6931,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				for(int j=start; j<end; j++) {
 					unsigned int intSlot = atoi(args[j]);
 					// serverLog(LL_WARNING, "STRATOS CHANGING SLOT %d", intSlot);
-					//pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
+					pthread_mutex_lock(&server.ownership_lock_slots[intSlot]);
 					clusterNode *recipientNode = server.cluster->importing_slots_from[intSlot];
 					server.migration_ownership_changed[intSlot] = 1;
 					server.migration_ownership_locked[intSlot] = 0;
@@ -6939,11 +6939,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 					clusterAddSlot(recipientNode,intSlot);
 					server.cluster->importing_slots_from[intSlot] = NULL;
 					server.cluster->importing_slots_from[intSlot] = NULL;
-					//pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
+					pthread_mutex_unlock(&server.ownership_lock_slots[intSlot]);
 
-					//pthread_mutex_lock(&server.generic_migration_mutex);
+					pthread_mutex_lock(&server.generic_migration_mutex);
 					server.try_agains=0;
-					//pthread_mutex_unlock(&server.generic_migration_mutex);
+					pthread_mutex_unlock(&server.generic_migration_mutex);
 				}
 				if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
 					serverLog(LL_WARNING,
@@ -6959,9 +6959,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			serverLog(LL_WARNING, "STRATOS , OWNERSHIP CHANGE DONE, ALL THE NODES KNOW ABOUT RECIPIENT");
 			// CHANGE OWNERSHIP STOP
 			// change spill over phase number so spill over slot changes
-			//pthread_mutex_lock(&server.spill_over_phase_lock);
+			pthread_mutex_lock(&server.spill_over_phase_lock);
 			server.migration_spill_over_phase_number++;
-			//pthread_mutex_unlock(&server.spill_over_phase_lock);
+			pthread_mutex_unlock(&server.spill_over_phase_lock);
 
 
 		}
@@ -7093,9 +7093,9 @@ void *rdmaDoneSlotsThread(void *arg) {
 	}
 	connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
 
-	//pthread_mutex_lock(&(server.generic_migration_mutex));
+	pthread_mutex_lock(&(server.generic_migration_mutex));
 	server.migration_active = 0;
-	//pthread_mutex_unlock(&(server.generic_migration_mutex));
+	pthread_mutex_unlock(&(server.generic_migration_mutex));
 
 	//TODO CLEAN STRUCTURES
 	serverLog(LL_WARNING, "STRATOS STOPPED (SLOTS) PATCHING AND ADDING TO DB");
@@ -7498,9 +7498,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				 * and node. */
 				firstkey = thiskey;
 				slot = thisslot;
-				//pthread_mutex_lock(&server.ownership_lock_slots[slot]);
+				pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 				n = server.cluster->slots[slot];
-				//pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 
 				/* Error: If a slot is not served, we are in "cluster down"
 				 * state. However the state is yet to be updated, so this was
@@ -7604,16 +7604,152 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 	int read_command = (c->cmd->flags & CMD_READONLY) ||
 		(c->cmd->proc == execCommand && (c->mstate.cmd_flags & CMD_READONLY));
 	// serverLog(LL_WARNING, "STRATOS %d haha %d", migrating_slot, importing_slot);
+	if(migrating_slot || importing_slot){
+		// serverLog(LL_WARNING, "STRATOS %d haha %d", migrating_slot, importing_slot);
+
+	}
 	if(c->flags & CLIENT_ASKING || cmd->flags & CMD_ASKING){
 		serverLog(LL_WARNING, "STRATOS ASKING RECEIVED");
 	}
 	if(!write_command){
-		return myself;
-	}
-	if(write_command){
-		return myself;
+		// serverLog(LL_WARNING, "IM HERE READ");
+		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
+
+			if(server.migration_ownership_changed[slot] == 1) {
+				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
+
+				server.migration_ownership_changed[slot] = 0;
+				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+				if(error_code) {
+					*error_code = CLUSTER_REDIR_MOVED;
+				}
+				if(recipientNode != NULL) {
+					clusterDelSlot(slot);
+					clusterAddSlot(recipientNode,slot);
+					server.cluster->migrating_slots_to[slot] = NULL;
+					server.cluster->importing_slots_from[slot] = NULL;
+					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+						serverLog(LL_WARNING,
+								"configEpoch updated after importing slot");
+					}
+					clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+							CLUSTER_TODO_UPDATE_STATE|
+							CLUSTER_TODO_FSYNC_CONFIG);
+
+
+					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+					return recipientNode;
+
+				}else{
+					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
+				}
+
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			}else{
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				return myself;
+			}
+
+
+
+		}else{
+			return myself;
+		}
 
 	}
+	if(write_command){
+		// serverLog(LL_WARNING, "IM HERE WRITE");
+		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
+			if(server.migration_ownership_locked[slot] == 1){
+
+				/* CAN BE DELETED START */
+				robj *thiskey = ms->commands[0].argv[0];
+				char *key = (char*)thiskey->ptr;
+
+				// Look up the key in the dictionary
+				long *counter = dictFetchValue(server.key_stats, key);
+				if (counter == NULL) {
+				    // If the key is not in the dictionary, add it with a counter of 1
+				    long init_value = 1;
+				    dictAdd(server.try_agains, sdsnew(key), &init_value);
+				} else {
+				    // If the key exists, increment the counter
+				    (*counter)++;
+				}
+				/* CAN BE DELETED STOP */
+
+				addReplyError(c,"-TRYAGAIN  Key is migrating");
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				pthread_mutex_lock(&server.generic_migration_mutex);
+				server.try_agains++;
+				pthread_mutex_unlock(&server.generic_migration_mutex);
+				return myself;
+			}
+			if(server.migration_ownership_changed[slot] == 1) {
+				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
+				server.migration_ownership_changed[slot] = 0;
+				clusterNode *recipientNode = server.cluster->migrating_slots_to[slot];
+				if(error_code) {
+					*error_code = CLUSTER_REDIR_MOVED;
+				}
+				if(recipientNode != NULL) {
+					// serverLog(LL_WARNING, "STRATOS CHANGING OWNERSHIP TO recipientNode %s", recipientNode->name);
+					clusterDelSlot(slot);
+					clusterAddSlot(recipientNode,slot);
+					server.cluster->migrating_slots_to[slot] = NULL;
+					server.cluster->importing_slots_from[slot] = NULL;
+					if (clusterBumpConfigEpochWithoutConsensus() == C_OK) {
+						serverLog(LL_WARNING,
+								"configEpoch updated after importing slot");
+					}
+					clusterBroadcastPong(CLUSTER_BROADCAST_ALL);
+					clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
+							CLUSTER_TODO_UPDATE_STATE|
+							CLUSTER_TODO_FSYNC_CONFIG);
+					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+					return recipientNode;
+					// return myself;
+				}else{
+					serverLog(LL_WARNING, "STRATOS RECIPIENT NODE NOT FOUND?");
+				}
+
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+			}else{
+				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
+				return myself;
+			}
+
+
+
+		}else{
+
+			/* CAN BE DELETED START */
+			robj *thiskey = ms->commands[0].argv[0];
+			char *key = (char*)thiskey->ptr;
+
+			// Look up the key in the dictionary
+			long *counter = dictFetchValue(server.try_agains, key);
+			if (counter == NULL) {
+			    // If the key is not in the dictionary, add it with a counter of 1
+			    long init_value = 1;
+			    dictAdd(server.key_stats, sdsnew(key), &init_value);
+			} else {
+			    // If the key exists, increment the counter
+			    (*counter)++;
+			}
+			/* CAN BE DELETED STOP */
+
+			addReplyError(c,"-TRYAGAIN  Key is migrating");
+			pthread_mutex_lock(&server.generic_migration_mutex);
+			server.try_agains++;
+			pthread_mutex_unlock(&server.generic_migration_mutex);
+			return myself;
+		}
+
+	}
+
+
 
 
 	if(migrating_slot) {
@@ -7741,9 +7877,9 @@ int clusterRedirectBlockedClientIfNeeded(client *c) {
 		if ((de = dictNext(di)) != NULL) {
 			robj *key = dictGetKey(de);
 			int slot = keyHashSlot((char*)key->ptr, sdslen(key->ptr));
-			//pthread_mutex_lock(&(server.ownership_lock_slots[slot]));
+			pthread_mutex_lock(&(server.ownership_lock_slots[slot]));
 			clusterNode *node = server.cluster->slots[slot];
-			//pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+			pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
 
 			/* if the client is read-only and attempting to access key that our
 			 * replica can handle, allow it. */
@@ -7812,9 +7948,9 @@ void shadowWriteCommand(client *c) {
 }
 
 void rdmaDoneAckCommand(client *c) {
-	//pthread_mutex_lock(&(server.generic_migration_mutex));
+	pthread_mutex_lock(&(server.generic_migration_mutex));
 	server.rdmaDoneAck = 1;
-	//pthread_mutex_unlock((pthread_mutex_t *) &server.generic_migration_mutex);
+	pthread_mutex_unlock((pthread_mutex_t *) &server.generic_migration_mutex);
 	addReply(c, shared.ok);
 }
 
@@ -7825,3 +7961,4 @@ void rdmaDoneAckCommand(client *c) {
 //	snprintf(output, 50, "%ld", micros);
 //	serverLog(LL_WARNING, "STRATOS TOTAL TIME: %s WALL-CLOCK: %s time \n", output, timerName);
 //}
+
