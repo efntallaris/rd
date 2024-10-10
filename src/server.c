@@ -1479,9 +1479,9 @@ unsigned long getSpillOverSlot(const char *ipAddress, unsigned long number) {
 	// Extract the last number from the IP address
 	int lastNumber = atoi(lastDot + 1);
 	int window = lastNumber * 10;
-	pthread_mutex_lock(&server.spill_over_phase_lock);
+	//pthread_mutex_lock(&server.spill_over_phase_lock);
 	window += server.migration_spill_over_phase_number;
-	pthread_mutex_unlock(&server.spill_over_phase_lock);
+	//pthread_mutex_unlock(&server.spill_over_phase_lock);
 
 	// Add the last number to the given number
 	return number + window;

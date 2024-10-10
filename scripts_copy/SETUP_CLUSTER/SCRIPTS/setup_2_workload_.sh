@@ -34,23 +34,23 @@ done
 
 
 sleep 10 
-for redis_instance in "${!redis_migrate_instances[@]}"; do
-        IFS=',' read -r -a nodeInstance <<< "${redis_migrate_instances[$redis_instance]}"
-	IFS="|" read -r -a info <<< "${nodeInstance[0]}"
-	cd ${LOCAL_SETUP_DIR}/bin
-	migrateNodeID=$(./redis-cli -c -h ${info[1]} -p ${info[2]} CLUSTER MYID)
-	tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard ${MASTER_HOST}:${MASTER_PORT} --cluster-timeout 1200 &
-	sleep 4 
-	echo "4095" >> ${COMMAND_PIPE}
-	sleep 1
-	echo ${migrateNodeID} >> ${COMMAND_PIPE}
-	sleep 1
-	echo "all" >> ${COMMAND_PIPE}
-	sleep 1
-	echo "yes" >> ${COMMAND_PIPE}
-	sleep 1
-done
-
+#for redis_instance in "${!redis_migrate_instances[@]}"; do
+#        IFS=',' read -r -a nodeInstance <<< "${redis_migrate_instances[$redis_instance]}"
+#	IFS="|" read -r -a info <<< "${nodeInstance[0]}"
+#	cd ${LOCAL_SETUP_DIR}/bin
+#	migrateNodeID=$(./redis-cli -c -h ${info[1]} -p ${info[2]} CLUSTER MYID)
+#	tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard ${MASTER_HOST}:${MASTER_PORT} --cluster-timeout 1200 &
+#	sleep 4 
+#	echo "4095" >> ${COMMAND_PIPE}
+#	sleep 1
+#	echo ${migrateNodeID} >> ${COMMAND_PIPE}
+#	sleep 1
+#	echo "all" >> ${COMMAND_PIPE}
+#	sleep 1
+#	echo "yes" >> ${COMMAND_PIPE}
+#	sleep 1
+#done
+#
 
 
 

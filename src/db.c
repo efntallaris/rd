@@ -184,9 +184,9 @@ static void SentReplyOnKeyMiss(client *c, robj *reply) {
 }
 robj *lookupKeyReadOrReply(client *c, robj *key, robj *reply) {
 	int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
-	pthread_mutex_lock(&(server.lock_slots[hashSlot]));
+	//pthread_mutex_lock(&(server.lock_slots[hashSlot]));
 	robj *o = lookupKeyRead(c->db, key);
-	pthread_mutex_unlock(&(server.lock_slots[hashSlot]));
+	//pthread_mutex_unlock(&(server.lock_slots[hashSlot]));
 	if (!o) SentReplyOnKeyMiss(c, reply);
 	return o;
 }
@@ -318,45 +318,16 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		robj *allocator_key;
 		
 		int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
-		// if(strcmp(server.cluster->myself->ip, "10.10.1.4") == 0){
-		// // 	if(hashSlot >= 5461 && hashSlot <= 6661){
-		// // 		serverLog(LL_WARNING, "STRATOS 5461 - 6661");
-		// // 	}
-		// 	// if(hashSlot >= 0 && hashSlot <= 1363){
-		// 	//  	serverLog(LL_WARNING, "STRATOS 0 - 1363");
-		// 	// }
-		// // 	if(hashSlot >= 10923 && hashSlot <= 12123){
-		// // 		serverLog(LL_WARNING, "STRATOS 10923 - 12123");
-		// // 	}
-		// }
 		
-		//LOCK AND UNLOCK UNTIL A SHADOWWRITE IS DONE or OWNERSHIP CHANGED
-		//IF OWNERSHIP IS CHANGED DISCARD THE REQUEST AND RETURN TRY AGAIN TO CLIENT, CLIENT THEN WILL BE REDIRECTED TO RECIPIENT
-		pthread_mutex_lock(&server.lock_slots[hashSlot]);
-		if(server.migration_spill_over_phase_activated[hashSlot] == 1){
-			unsigned long spill_over_slot = getSpillOverSlot(server.cluster->myself->ip, SPILL_OVER_START_SLOT);
-			//serverLog(LL_WARNING, "STRATOS ADDING TO SPILL OVER SLOT %d", spill_over_slot);
-			r_allocator_insert_kv(spill_over_slot,
-					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
-					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
-					key, sizeof(robj),
-					val, sizeof(robj),
-					&allocated_block,
-					&allocator_key,
-					&allocator_value);
-		}else{
-			r_allocator_insert_kv(hashSlot,
-					(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
-					(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
-					key, sizeof(robj),
-					val, sizeof(robj),
-					&allocated_block,
-					&allocator_key,
-					&allocator_value);
+		r_allocator_insert_kv(hashSlot,
+				(char *)key->ptr-8, sdslen(key->ptr)+ 8 + 1,
+				(char *)val->ptr-8, sdslen(val->ptr)+ 8 + 1,
+				key, sizeof(robj),
+				val, sizeof(robj),
+				&allocated_block,
+				&allocator_key,
+				&allocator_value);
 
-
-		}
-		//ALLOCATOR DEBUG START
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) key->ptr, (char *)allocator_key + allocator_key->data_offset + 8);
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) valueTemp, (char *)allocator_value + allocator_key->data_offset + 8);
 		///serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE:%d", server.db[0].dict->ht[0].size);
@@ -367,9 +338,6 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) _key->ptr, (char *)allocator_key + allocator_key->data_offset + 8);
 		//serverLog(LL_WARNING, "STRATOS PTR IS %s, and from the allocator is: %s", (char *) _value->ptr, (char *)allocator_value + allocator_value->data_offset + 8);
 		dbAddNoCopy(db, allocator_key, allocator_value);
-		pthread_mutex_unlock(&server.lock_slots[hashSlot]);
-
-		//pthread_mutex_unlock(&(server.general_db_lock));
 		// STRATOS 1 WITH ALLOCATOR STOP//
 	} else {
 //		//pthread_mutex_unlock(&(server.general_db_lock));

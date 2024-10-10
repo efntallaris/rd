@@ -298,40 +298,40 @@ int prepareClientToWrite(client *c) {
  * Returns C_ERR if the buffer is full, or the reply list is not empty,
  * in which case the reply must be added to the reply list. */
 int _addReplyToBuffer(client *c, const char *s, size_t len) {
-    pthread_mutex_lock(&(server.socket_mutex));
+    //pthread_mutex_lock(&(server.socket_mutex));
     size_t available = sizeof(c->buf)-c->bufpos;
 
     if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
-    	    pthread_mutex_unlock(&(server.socket_mutex));
+    	    //pthread_mutex_unlock(&(server.socket_mutex));
 	    return C_OK;
     }
 
     /* If there already are entries in the reply list, we cannot
      * add anything more to the static buffer. */
     if (listLength(c->reply) > 0){
-    	    pthread_mutex_unlock(&(server.socket_mutex));
+    	    //pthread_mutex_unlock(&(server.socket_mutex));
 	    return C_ERR;
     }
 
 
     /* Check that the buffer has enough space available for this string. */
     if (len > available){
-    	    pthread_mutex_unlock(&(server.socket_mutex));
+    	    //pthread_mutex_unlock(&(server.socket_mutex));
 	    return C_ERR;
     }
 
     memcpy(c->buf+c->bufpos,s,len);
     c->bufpos+=len;
-    pthread_mutex_unlock(&(server.socket_mutex));
+    //pthread_mutex_unlock(&(server.socket_mutex));
     return C_OK;
 }
 
 /* Adds the reply to the reply linked list.
  * Note: some edits to this function need to be relayed to AddReplyFromClient. */
 void _addReplyProtoToList(client *c, const char *s, size_t len) {
-    pthread_mutex_lock(&(server.socket_mutex));
+    //pthread_mutex_lock(&(server.socket_mutex));
     if (c->flags & CLIENT_CLOSE_AFTER_REPLY) {
-    	    pthread_mutex_unlock(&(server.socket_mutex));
+    	    //pthread_mutex_unlock(&(server.socket_mutex));
 	    
 	    return;
     }
@@ -368,7 +368,7 @@ void _addReplyProtoToList(client *c, const char *s, size_t len) {
 
         closeClientOnOutputBufferLimitReached(c, 1);
     }
-    pthread_mutex_unlock(&(server.socket_mutex));
+    //pthread_mutex_unlock(&(server.socket_mutex));
 }
 
 /* -----------------------------------------------------------------------------
@@ -421,7 +421,7 @@ void addReplySds(client *c, sds s) {
  * in the list of objects. */
 void addReplyProto(client *c, const char *s, size_t len) {
     if (prepareClientToWrite(c) != C_OK){
-    	    pthread_mutex_unlock(&(server.socket_mutex));
+    	    //pthread_mutex_unlock(&(server.socket_mutex));
 	    return;
     }
     if (_addReplyToBuffer(c,s,len) != C_OK)
