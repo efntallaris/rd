@@ -11,11 +11,11 @@ sudo rm -rf ${YCSB_INTERMEDIATE_FOLDER}
 sudo mkdir -p ${YCSB_INTERMEDIATE_FOLDER}
 
 cd ${YCSB_DIR}
-sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
+sudo mvn -pl redis -am clean install -T 9 -DskipTests -Dcheckstyle.skip
 
 
-cd ${YCSB_DIR}/distribution/target
-sudo tar -xvf ycsb-0.18.0-SNAPSHOT.tar.gz --directory ${YCSB_INTERMEDIATE_FOLDER}
+cd ${YCSB_DIR}/redis/target
+sudo tar -xvf ycsb-redis-binding-0.18.0-SNAPSHOT.tar.gz --directory ${YCSB_INTERMEDIATE_FOLDER}
 
 # Check if the directory exists
 if [ -d "$YCSB_BIN" ]; then
@@ -26,4 +26,4 @@ else
     mkdir -p "$YCSB_BIN"
 fi
 
-sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-0.18.0-SNAPSHOT/*  ${YCSB_BIN}
+sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-redis-binding-0.18.0-SNAPSHOT/*  ${YCSB_BIN}
