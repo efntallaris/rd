@@ -58,7 +58,7 @@ sleep 10
 cd ${LOCAL_SETUP_DIR}/bin
 first_migration_instance_details=${redis_migrate_instances["redis-4"]}
 IFS='|' read -ra ADDR <<< "$first_migration_instance_details"
-p=${ADDR[1]}
+ip=${ADDR[1]}
 port=${ADDR[2]}
 migrateNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)	
 first_instance_details=${redis_master_instances["redis-0"]}
