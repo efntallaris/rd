@@ -2009,42 +2009,42 @@ long long getInstantaneousMetric(int metric) {
  *
  * The function always returns 0 as it never terminates the client. */
 int clientsCronResizeQueryBuffer(client *c) {
-	size_t querybuf_size = sdsAllocSize(c->querybuf);
-	time_t idletime = server.unixtime - c->lastinteraction;
+	// size_t querybuf_size = sdsAllocSize(c->querybuf);
+	// time_t idletime = server.unixtime - c->lastinteraction;
 
-	/* There are two conditions to resize the query buffer:
-	 * 1) Query buffer is > BIG_ARG and too big for latest peak.
-	 * 2) Query buffer is > BIG_ARG and client is idle. */
-	if (querybuf_size > PROTO_MBULK_BIG_ARG &&
-			((querybuf_size/(c->querybuf_peak+1)) > 2 ||
-			 idletime > 2))
-	{
-		/* Only resize the query buffer if it is actually wasting
-		 * at least a few kbytes. */
-		if (sdsavail(c->querybuf) > 1024*4) {
-			//c->querybuf = sdsRemoveFreeSpace(c->querybuf);
-		}
-	}
-	/* Reset the peak again to capture the peak memory usage in the next
-	 * cycle. */
-	c->querybuf_peak = 0;
+	// /* There are two conditions to resize the query buffer:
+	//  * 1) Query buffer is > BIG_ARG and too big for latest peak.
+	//  * 2) Query buffer is > BIG_ARG and client is idle. */
+	// if (querybuf_size > PROTO_MBULK_BIG_ARG &&
+	// 		((querybuf_size/(c->querybuf_peak+1)) > 2 ||
+	// 		 idletime > 2))
+	// {
+	// 	/* Only resize the query buffer if it is actually wasting
+	// 	 * at least a few kbytes. */
+	// 	if (sdsavail(c->querybuf) > 1024*4) {
+	// 		//c->querybuf = sdsRemoveFreeSpace(c->querybuf);
+	// 	}
+	// }
+	// /* Reset the peak again to capture the peak memory usage in the next
+	//  * cycle. */
+	// c->querybuf_peak = 0;
 
-	/* Clients representing masters also use a "pending query buffer" that
-	 * is the yet not applied part of the stream we are reading. Such buffer
-	 * also needs resizing from time to time, otherwise after a very large
-	 * transfer (a huge value or a big MIGRATE operation) it will keep using
-	 * a lot of memory. */
-	if (c->flags & CLIENT_MASTER) {
-		/* There are two conditions to resize the pending query buffer:
-		 * 1) Pending Query buffer is > LIMIT_PENDING_QUERYBUF.
-		 * 2) Used length is smaller than pending_querybuf_size/2 */
-		size_t pending_querybuf_size = sdsAllocSize(c->pending_querybuf);
-		if(pending_querybuf_size > LIMIT_PENDING_QUERYBUF &&
-				sdslen(c->pending_querybuf) < (pending_querybuf_size/2))
-		{
-			//c->pending_querybuf = sdsRemoveFreeSpace(c->pending_querybuf);
-		}
-	}
+	// /* Clients representing masters also use a "pending query buffer" that
+	//  * is the yet not applied part of the stream we are reading. Such buffer
+	//  * also needs resizing from time to time, otherwise after a very large
+	//  * transfer (a huge value or a big MIGRATE operation) it will keep using
+	//  * a lot of memory. */
+	// if (c->flags & CLIENT_MASTER) {
+	// 	/* There are two conditions to resize the pending query buffer:
+	// 	 * 1) Pending Query buffer is > LIMIT_PENDING_QUERYBUF.
+	// 	 * 2) Used length is smaller than pending_querybuf_size/2 */
+	// 	size_t pending_querybuf_size = sdsAllocSize(c->pending_querybuf);
+	// 	if(pending_querybuf_size > LIMIT_PENDING_QUERYBUF &&
+	// 			sdslen(c->pending_querybuf) < (pending_querybuf_size/2))
+	// 	{
+	// 		//c->pending_querybuf = sdsRemoveFreeSpace(c->pending_querybuf);
+	// 	}
+	// }
 	return 0;
 }
 
