@@ -41,7 +41,7 @@ for redis_instance in "${!redis_migrate_instances[@]}"; do
 	migrateNodeID=$(./redis-cli -c -h ${info[1]} -p ${info[2]} CLUSTER MYID)
 	tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard ${MASTER_HOST}:${MASTER_PORT} --cluster-timeout 1200 &
 	sleep 4 
-	echo "4095" >> ${COMMAND_PIPE}
+	echo "2732" >> ${COMMAND_PIPE}
 	sleep 1
 	echo ${migrateNodeID} >> ${COMMAND_PIPE}
 	sleep 1
