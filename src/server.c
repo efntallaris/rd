@@ -2176,10 +2176,10 @@ void clientsCron(void) {
 		 * The protocol is that they return non-zero if the client was
 		 * terminated. */
 		if (clientsCronHandleTimeout(c,now)) continue;
-		if (clientsCronResizeQueryBuffer(c)) continue;
-		if (clientsCronTrackExpansiveClients(c, curr_peak_mem_usage_slot)) continue;
-		if (clientsCronTrackClientsMemUsage(c)) continue;
-		if (closeClientOnOutputBufferLimitReached(c, 0)) continue;
+		// if (clientsCronResizeQueryBuffer(c)) continue;
+		// if (clientsCronTrackExpansiveClients(c, curr_peak_mem_usage_slot)) continue;
+		// if (clientsCronTrackClientsMemUsage(c)) continue;
+		// if (closeClientOnOutputBufferLimitReached(c, 0)) continue;
 	}
 }
 
