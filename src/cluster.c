@@ -6291,7 +6291,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 
-	int chunk_size = 4098;
+	int chunk_size = 3000;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
