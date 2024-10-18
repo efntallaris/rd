@@ -2022,7 +2022,7 @@ int clientsCronResizeQueryBuffer(client *c) {
 		/* Only resize the query buffer if it is actually wasting
 		 * at least a few kbytes. */
 		if (sdsavail(c->querybuf) > 1024*4) {
-			c->querybuf = sdsRemoveFreeSpace(c->querybuf);
+			//c->querybuf = sdsRemoveFreeSpace(c->querybuf);
 		}
 	}
 	/* Reset the peak again to capture the peak memory usage in the next
@@ -2042,7 +2042,7 @@ int clientsCronResizeQueryBuffer(client *c) {
 		if(pending_querybuf_size > LIMIT_PENDING_QUERYBUF &&
 				sdslen(c->pending_querybuf) < (pending_querybuf_size/2))
 		{
-			c->pending_querybuf = sdsRemoveFreeSpace(c->pending_querybuf);
+			//c->pending_querybuf = sdsRemoveFreeSpace(c->pending_querybuf);
 		}
 	}
 	return 0;
