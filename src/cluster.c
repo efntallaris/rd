@@ -6328,6 +6328,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			pthread_mutex_unlock(&server.lock_slots[slotInt]);
 
 		}
+		while(1){}
 
 		serverLog(LL_WARNING, "STRATOS IMPORTING AND MIGRATING STATE SET");
 		serverLog(LL_WARNING, "STRATOS START REGISTERING RDMA BLOCKS");
