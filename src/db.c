@@ -184,9 +184,9 @@ static void SentReplyOnKeyMiss(client *c, robj *reply) {
 }
 robj *lookupKeyReadOrReply(client *c, robj *key, robj *reply) {
 	int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
-	pthread_mutex_lock(&(server.lock_slots[hashSlot]));
+	pthread_mutex_lock(&server.lock_slots[hashSlot]);
 	robj *o = lookupKeyRead(c->db, key);
-	pthread_mutex_unlock(&(server.lock_slots[hashSlot]));
+	pthread_mutex_unlock(&server.lock_slots[hashSlot]);
 	if (!o) SentReplyOnKeyMiss(c, reply);
 	return o;
 }
@@ -372,10 +372,10 @@ void genericSetKey(client *c, redisDb *db, robj *key, robj *val, int keepttl, in
 		//pthread_mutex_unlock(&(server.general_db_lock));
 		// STRATOS 1 WITH ALLOCATOR STOP//
 	} else {
-//		//pthread_mutex_unlock(&(server.general_db_lock));
-//		//pthread_mutex_lock(&(server.general_db_lock));
+//		//pthread_mutex_unlock(&server.general_db_lock);
+//		//pthread_mutex_lock(&server.general_db_lock);
 //		//dbOverwrite(db,key,val);
-//		//pthread_mutex_unlock(&(server.general_db_lock));
+//		//pthread_mutex_unlock(&server.general_db_lock);
 //		//
 //		//
 //		int allocated_block = 0;
