@@ -7843,9 +7843,9 @@ int clusterRedirectBlockedClientIfNeeded(client *c) {
 		if ((de = dictNext(di)) != NULL) {
 			robj *key = dictGetKey(de);
 			int slot = keyHashSlot((char*)key->ptr, sdslen(key->ptr));
-			pthread_mutex_lock(&(server.ownership_lock_slots[slot]));
+			pthread_mutex_lock(&server.ownership_lock_slots[slot]);
 			clusterNode *node = server.cluster->slots[slot];
-			pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+			pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 
 			/* if the client is read-only and attempting to access key that our
 			 * replica can handle, allow it. */
