@@ -6375,12 +6375,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
 			sds slotString = args[j];
-			pthread_mutex_lock(&(server.lock_slots[intSlot]));
+			pthread_mutex_lock(&server.lock_slots[intSlot]);
 			r_allocator_lock_slot_blocks(intSlot);
 			char **slots;
 			int number_of_blocks;
 			slots = r_allocator_get_block_buffers_for_slot(intSlot, &number_of_blocks);
-			pthread_mutex_unlock(&(server.lock_slots[intSlot]));
+			pthread_mutex_unlock(&server.lock_slots[intSlot]);
 			all_slots[j-7] = slots;
 			slots_number_of_blocks[j-7] = number_of_blocks;
 			slot_is_for_migration[j-7] = 1;
@@ -6718,13 +6718,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 
 				while(1) {
-					pthread_mutex_lock(&(server.generic_migration_mutex));
+					pthread_mutex_lock(&server.generic_migration_mutex);
 					if(server.rdmaDoneAck==1) {
 						server.rdmaDoneAck=0;
-						pthread_mutex_unlock(&(server.generic_migration_mutex));
+						pthread_mutex_unlock(&server.generic_migration_mutex);
 						break;
 					}
-					pthread_mutex_unlock(&(server.generic_migration_mutex));
+					pthread_mutex_unlock(&server.generic_migration_mutex);
 				}
 
 
@@ -7093,9 +7093,9 @@ void *rdmaDoneSlotsThread(void *arg) {
 	}
 	connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
 
-	pthread_mutex_lock(&(server.generic_migration_mutex));
+	pthread_mutex_lock(&server.generic_migration_mutex);
 	server.migration_active = 0;
-	pthread_mutex_unlock(&(server.generic_migration_mutex));
+	pthread_mutex_unlock(&server.generic_migration_mutex);
 
 	//TODO CLEAN STRUCTURES
 	serverLog(LL_WARNING, "STRATOS STOPPED (SLOTS) PATCHING AND ADDING TO DB");
@@ -7914,9 +7914,9 @@ void shadowWriteCommand(client *c) {
 }
 
 void rdmaDoneAckCommand(client *c) {
-	pthread_mutex_lock(&(server.generic_migration_mutex));
+	pthread_mutex_lock(&server.generic_migration_mutex);
 	server.rdmaDoneAck = 1;
-	pthread_mutex_unlock((pthread_mutex_t *) &server.generic_migration_mutex);
+	pthread_mutex_unlock(&server.generic_migration_mutex);
 	addReply(c, shared.ok);
 }
 
