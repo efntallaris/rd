@@ -49,7 +49,6 @@
 
 // Migration variables
 static FILE *log_file;
-static int migration_activated = 0;
 static pthread_mutex_t* general_dict_lock; 
 static pthread_mutex_t* migration_dict_locks; 
 static dict *target_db;
@@ -1210,15 +1209,6 @@ void dictEmpty(dict *d, void(callback)(void*)) {
 	_dictClear(d,&d->ht[1],callback);
 	d->rehashidx = -1;
 	d->pauserehash = 0;
-}
-
-
-void dictEnableMigration(void) {
-	migration_activated = 1;
-}
-
-void dictDisableMigration(void) {
-	migration_activated = 0;
 }
 
 void dictEnableResize(void) {
