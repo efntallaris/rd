@@ -7025,7 +7025,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 	//    serverLog(LL_WARNING, "STRATOS DISABLING REHASHING");
 	//    dictDisableResize();
 	//    server.activerehashing = 0;
-	dictEnableMigration();
+	// dictEnableMigration();
 	//
 	serverLog(LL_WARNING, "STRATOS STARTED (SLOTS) PATCHING AND ADDING TO DB");
 	// Nanosleep args
@@ -7122,7 +7122,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 	while(true){
 		if (!isQueueEmpty(&queue)) {
 			MessageData* item = (MessageData*)dequeue(&queue);
-			dictEnableMigration();
+			// dictEnableMigration();
 
 			int firstSlot;
 			int lastSlot;
