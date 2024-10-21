@@ -48,7 +48,6 @@
 #include "redisassert.h"
 #include <time.h>
 // Migration variables
-static FILE *log_file;
 static pthread_mutex_t* migration_dict_locks; 
 static dict *target_db;
 
@@ -111,18 +110,18 @@ static void _dictReset(dictht *ht)
 
 
 void dictInitLocks(){
-	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-	fprintf(log_file, "INITIALIZING LOCKS\n");
-	fclose(log_file);
+	// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+	// fprintf(log_file, "INITIALIZING LOCKS\n");
+	// fclose(log_file);
 	if(migration_dict_locks == NULL){
 		
 		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
-				log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-				fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-				fclose(log_file);
+				// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+				// fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
+				// fclose(log_file);
 			}
 		}
 
@@ -143,9 +142,9 @@ dict *dictCreate(dictType *type,
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
-				log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-				fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-				fclose(log_file);
+				// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+				// fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
+				// fclose(log_file);
 			}
 		}
 
@@ -167,9 +166,9 @@ dict *dictCreateBig(dictType *type,
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
-				log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-				fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
-				fclose(log_file);
+				// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+				// fprintf(log_file, "WRONG INITIALIZING LOCK on index: %ld\n", index);
+				// fclose(log_file);
 			}
 		}
 
@@ -255,9 +254,9 @@ int _dictExpand(dict *d, unsigned long size, int* malloc_failed)
 	n.size = realsize;
 	n.sizemask = realsize-1;
 
-	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-	fprintf(log_file, "SIZEMASK : %ld, SIZE:%ld\n", n.sizemask, n.size);
-	fclose(log_file);
+	// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+	// fprintf(log_file, "SIZEMASK : %ld, SIZE:%ld\n", n.sizemask, n.size);
+	// fclose(log_file);
 
 	if (malloc_failed) {
 		n.table = ztrycalloc(realsize*sizeof(dictEntry*));
@@ -1149,16 +1148,16 @@ static int _dictExpandIfNeeded(dict *d)
 
 	/* If the hash table is empty expand it to the initial size. */
 	if( d->ht[0].size == 0 && d->isBig){
-		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-		fprintf(log_file, "INITIALIZING BIG HT\n");
-		fclose(log_file);
+		// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+		// fprintf(log_file, "INITIALIZING BIG HT\n");
+		// fclose(log_file);
 		return dictExpand(d, DICT_HT_BIG_INITIAL_SIZE);
 
 	}
 	if( d->ht[0].size == 0 && d->isBig == 0){
-		log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-		fprintf(log_file, "INITIALIZING SMALL HT\n");
-		fclose(log_file);
+		// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
+		// fprintf(log_file, "INITIALIZING SMALL HT\n");
+		// fclose(log_file);
 		return dictExpand(d, DICT_HT_INITIAL_SIZE);
 
 	}
