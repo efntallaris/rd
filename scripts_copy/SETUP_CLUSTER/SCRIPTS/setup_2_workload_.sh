@@ -33,7 +33,7 @@ EOF
 done
 
 
-sleep 20 
+sleep 40 
 # for redis_instance in "${!redis_migrate_instances[@]}"; do
 #         IFS=',' read -r -a nodeInstance <<< "${redis_migrate_instances[$redis_instance]}"
 # 	IFS="|" read -r -a info <<< "${nodeInstance[0]}"
