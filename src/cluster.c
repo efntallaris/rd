@@ -6192,7 +6192,7 @@ struct threadArgs {
 
 // Thread code that it is handling the RDMA Migration//
 void *migrateRDMASlotsCommandThread(void *arg) {
-
+	while(1){}
 
 	char buffer[4096];
 	dictGetStats(buffer,	sizeof(buffer),	server.db[0].dict);
@@ -6217,7 +6217,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	if(recipientNode == NULL) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
-	while(1){}
+
 	dictEnableMigration();
 
 	if(strcmp(myself->ip, "10.10.1.1") == 0) {
