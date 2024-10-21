@@ -6962,7 +6962,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 	while(true){
 		if (!isQueueEmpty(&queue)) {
 			MessageData* item = (MessageData*)dequeue(&queue);
-			dictEnableMigration();
+
 
 			int firstSlot;
 			int lastSlot;
@@ -6993,7 +6993,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 				}
 				r_allocator_lock_slot_blocks(slotInt);
 			}
-			dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
