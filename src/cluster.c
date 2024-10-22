@@ -6217,7 +6217,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS recipient Node is null");
 	}
 
-	dictEnableMigration();
+
 
 	if(strcmp(myself->ip, "10.10.1.1") == 0) {
 		serverLog(LL_WARNING, "STRATOS SLEEPING FOR 20 SECONDS");
