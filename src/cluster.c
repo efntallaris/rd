@@ -7640,7 +7640,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
-					serverLog(LL_WARNING, "STRATOS REPLYING WITH MOVED FLAG");
+					// serverLog(LL_WARNING, "STRATOS REPLYING WITH MOVED FLAG");
 					return recipientNode;
 
 				}else{
