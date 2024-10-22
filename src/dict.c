@@ -218,9 +218,10 @@ int dictResize(dict *d)
 	minimal = d->ht[0].used;
 
 	if(d->isBig){
-		if (minimal < DICT_HT_BIG_INITIAL_SIZE){
-			minimal = DICT_HT_BIG_INITIAL_SIZE;
-		}
+		return DICT_OK;
+		// if (minimal < DICT_HT_BIG_INITIAL_SIZE){
+		// 	minimal = DICT_HT_BIG_INITIAL_SIZE;
+		// }
 
 	}else{
 		if (minimal < DICT_HT_INITIAL_SIZE){
