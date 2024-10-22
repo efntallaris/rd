@@ -6192,7 +6192,6 @@ struct threadArgs {
 
 // Thread code that it is handling the RDMA Migration//
 void *migrateRDMASlotsCommandThread(void *arg) {
-	while(1){}
 
 	char buffer[4096];
 	dictGetStats(buffer,	sizeof(buffer),	server.db[0].dict);
