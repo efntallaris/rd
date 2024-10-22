@@ -6494,15 +6494,32 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
-
-		for(int i=0; i<total_number_of_remote_buffers; i++) {
-			struct ibv_send_wr bad_wr;
-			if(ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr)!=0) {
-				serverLog(LL_WARNING, "IBV_POST_SEND ERROR:%d, %s", i, strerror(errno));
-			}
-			struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
-			usleep(1650);
-
+		#define THROTTLE_WINDOW_MS 1.688  // Desired time window in milliseconds
+		for (int i = 0; i < total_number_of_remote_buffers; i++) {
+		    struct ibv_send_wr bad_wr;
+		    struct timespec start, end;
+		    
+		    // Record the start time
+		    clock_gettime(CLOCK_MONOTONIC, &start);
+		    
+		    // Post the RDMA send request
+		    if (ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr) != 0) {
+		        serverLog(LL_WARNING, "IBV_POST_SEND ERROR: %d, %s", i, strerror(errno));
+		    }
+		
+		    // Wait for completion of the send operation
+		    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+		    
+		    // Record the end time (after completion)
+		    clock_gettime(CLOCK_MONOTONIC, &end);
+		    
+		    // Calculate the elapsed time in milliseconds
+		    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
+		
+		    // If the elapsed time is less than the throttle window, sleep for the remaining time
+		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
+		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		    }
 		}
 		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
