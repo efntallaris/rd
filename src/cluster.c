@@ -6612,7 +6612,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			int total_slots_transferred = 0;
 
 			if(total_number_of_remote_rest_buffers > 0){
-
+ 
 				for(int j=start; j<end; j++) {
 					unsigned int intSlot = atoi(args[j]);
 					sds slotString = args[j];
@@ -7639,7 +7639,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 							CLUSTER_TODO_FSYNC_CONFIG);
 
 
-					pthread_mutex_unlock(&(server.ownership_lock_slots[slot]));
+					pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 					return recipientNode;
 
 				}else{
