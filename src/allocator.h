@@ -13,7 +13,7 @@
 // #define BLOCK_SIZE_BYTES 4089446
 // #define BLOCK_SIZE_BYTES 3984588 //1024//192//4000000//256//224//1024//256
 // #define BLOCK_SIZE_BYTES 4194304
-#define BLOCK_SIZE_BYTES 3145728
+#define BLOCK_SIZE_BYTES 1048576
 typedef struct allocated_block alloc_bloc_t;
 typedef struct r_allocator r_allocator_t;
 
