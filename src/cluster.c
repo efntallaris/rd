@@ -6211,6 +6211,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	migrateCachedSocket *targetSocket;
 	targetSocket = migrateGetSocketOtherParams(c, args[3], args[4], args[3], args[4], 10000);
 
+	serverLog(LL_WARNING, "STRATOS BLOCK SIZE IN BYTES:%ld", BLOCK_SIZE_BYTES);
 	// GET RECIPIENT ID
 	clusterNode *recipientNode = clusterLookupNodeByIP(args[3]);
 	if(recipientNode == NULL) {
