@@ -114,6 +114,10 @@ static void clientSetDefaultAuth(client *c) {
 }
 
 client *createClient(connection *conn) {
+    if(read_query_mutex == NULL){
+	pthread_mutex_init(&read_query_mutex, NULL);
+    }
+	
     client *c = zmalloc(sizeof(client));
 
     /* passing NULL as conn it is possible to create a non connected client.
