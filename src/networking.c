@@ -2165,7 +2165,7 @@ void processInputBuffer(client *c) {
 }
 
 void readQueryFromClient(connection *conn) {
-    pthread_mutex_lock(&server.socket_mutex);
+    // pthread_mutex_lock(&server.socket_mutex);
     client *c = connGetPrivateData(conn);
     int nread, readlen;
     size_t qblen;
@@ -2173,7 +2173,7 @@ void readQueryFromClient(connection *conn) {
     /* Check if we want to read from the client later when exiting from
      * the event loop. This is the case if threaded I/O is enabled. */
     if (postponeClientRead(c)){
-	    pthread_mutex_unlock(&server.socket_mutex);
+	    // pthread_mutex_unlock(&server.socket_mutex);
 	    return;
     }
     /* Update total number of reads on server */
@@ -2207,13 +2207,13 @@ void readQueryFromClient(connection *conn) {
         } else {
             serverLog(LL_VERBOSE, "Reading from client: %s",connGetLastError(c->conn));
             freeClientAsync(c);
-	    pthread_mutex_unlock(&server.socket_mutex);
+	    // pthread_mutex_unlock(&server.socket_mutex);
             return;
         }
     } else if (nread == 0) {
         serverLog(LL_VERBOSE, "Client closed connection");
         freeClientAsync(c);
-	pthread_mutex_unlock(&server.socket_mutex);
+	// pthread_mutex_unlock(&server.socket_mutex);
         return;
     } else if (c->flags & CLIENT_MASTER) {
         /* Append the query buffer to the pending (not applied) buffer
@@ -2235,7 +2235,7 @@ void readQueryFromClient(connection *conn) {
         sdsfree(ci);
         sdsfree(bytes);
         freeClientAsync(c);
-	pthread_mutex_unlock(&server.socket_mutex);
+	// pthread_mutex_unlock(&server.socket_mutex);
         return;
     }
 
@@ -2243,7 +2243,7 @@ void readQueryFromClient(connection *conn) {
      * in case to check if there is a full command to execute. */
     //serverLog(LL_WARNING, "STRATOS IN READQUERYFROMCLIENT");
     processInputBuffer(c);
-    pthread_mutex_unlock(&server.socket_mutex);
+    // pthread_mutex_unlock(&server.socket_mutex);
 }
 
 void getClientsMaxBuffers(unsigned long *longest_output_list,
