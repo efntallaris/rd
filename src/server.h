@@ -1277,6 +1277,7 @@ struct redisServer {
     pthread_mutex_t general_db_lock;
     pthread_mutex_t generic_migration_mutex;
     pthread_mutex_t socket_mutex;
+    pthread_mutex_t general_socket_mutex;
     pthread_mutex_t lock_slots[16385];
     pthread_mutex_t ownership_lock_slots[16385];
     int pending_migration_writes[16385];
