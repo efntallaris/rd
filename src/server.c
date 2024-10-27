@@ -3037,24 +3037,25 @@ void initServerConfig(void) {
 		server.migration_ownership_changed[i] = 0;
 
 	}
-	if(0 != (errno = pthread_mutex_init(&(server.socket_mutex), NULL))){
+	if(0 != (errno = pthread_mutex_init(&server.socket_mutex, NULL))){
 		serverLog(LL_WARNING, "STRATOS LOCK INIT ERROR");
 	}
-	if(0 != (errno = pthread_mutex_init(&(server.general_db_lock), NULL))){
+	if(0 != (errno = pthread_mutex_init(&server.general_socket_mutex, NULL))){
+		serverLog(LL_WARNING, "STRATOS LOCK INIT ERROR");
+	}
+	if(0 != (errno = pthread_mutex_init(&server.socket_mutex, NULL))){
+		serverLog(LL_WARNING, "STRATOS LOCK INIT ERROR");
+	}
+	if(0 != (errno = pthread_mutex_init(&server.general_db_lock, NULL))){
 		serverLog(LL_WARNING, "STRATOS LOCK INIT ERROR");
 	}
 
 
-	if(0 != (errno = pthread_mutex_init(&(server.generic_migration_mutex), NULL))){
+	if(0 != (errno = pthread_mutex_init(&server.generic_migration_mutex, NULL))){
 		serverLog(LL_WARNING, "STRATOS LOCK INIT ERROR");
 	}
 	server.migrated_keys = raxNew();
 
-
-
-	//    if(0 != (errno = pthread_rwlock_init(&(server.ownership_mutex), NULL))){
-	//	    serverLog(LL_WARNING, "STRATOS LOCK INIT ERROR");
-	//    }
 
 
 	appendServerSaveParams(60*60,1);  /* save after 1 hour and 1 change */
