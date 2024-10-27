@@ -1,4 +1,4 @@
-#!/bin/bash
+ #!/bin/bash
 
 # DONT ADD / at the end of the filepath or dir
 MAIN_DIR="/root/rd"
@@ -20,7 +20,7 @@ REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
 
-EXPERIMENT_NAME="3MB_BLOCK_NO_SLEEP_5_GROUPS"
+EXPERIMENT_NAME="2MB_BLOCK_NO_SLEEP_1_GROUP"
 
 #	MASTER NODES 	#
 declare -A redis_master_instances 
