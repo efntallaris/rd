@@ -161,7 +161,7 @@ typedef long long ustime_t; /* microsecond time type. */
 #define REDIS_AUTOSYNC_BYTES (1024*1024*32) /* fdatasync every 32MB */
 
 // #define LIMIT_PENDING_QUERYBUF (4024*1024*1024) /* 4GB */
-#define LIMIT_PENDING_QUERYBUF (12L * 1024 * 1024 * 1024) /* 12GB */
+#define LIMIT_PENDING_QUERYBUF (16 * 1024 * 1024 * 1024) /* 12MB */
 
 /* When configuring the server eventloop, we setup it so that the total number
  * of file descriptors we can handle are server.maxclients + RESERVED_FDS +
