@@ -7368,6 +7368,8 @@ void registerRDMABlockSlotsCommand(client *c) {
 
 
 	addReplyBulkCBuffer(c, (char *)remote_buffers, total_remote_buffers * sizeof(rdmaRemoteBufferInfo));
+	serverLog(LL_WARNING, "STRATOS SIZE OF BUFFER %.2f MB\n", (total_remote_buffers * sizeof(rdmaRemoteBufferInfo)) / (1024.0 * 1024.0));
+
 	serverLog(LL_WARNING, "STRATOS STOPPED REGISTERING SLOT BLOCKS ON SERVER SIDE");
 	serverLog(LL_WARNING, "STRATOS RECIP number of buffers %d", total_remote_buffers);
 	//serverLog(LL_WARNING, "STRATOS TOTAL EXECUTION TIME OF allocate_new_empty_blocks: %ld micros", get_empty_blocks_alloc_exec_time());
