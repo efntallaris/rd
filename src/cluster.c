@@ -6496,7 +6496,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
-		#define THROTTLE_WINDOW_MS 0.42  // Desired time window in milliseconds
+		#define THROTTLE_WINDOW_MS 0.93  // Desired time window in milliseconds
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
 		    struct timespec start, end;
@@ -6519,9 +6519,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
 		
 		    // If the elapsed time is less than the throttle window, sleep for the remaining time
-		    // if (elapsed_ms < THROTTLE_WINDOW_MS) {
-		    //     usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
-		    // }
+		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
+		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		    }
 		}
 		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
