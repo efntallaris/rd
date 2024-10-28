@@ -6294,7 +6294,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	// int chunk_size = 3000;
 	// int chunk_size = 547;
-	int chunk_size = 2732;
+	int chunk_size = 547;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -6500,7 +6500,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
-		#define THROTTLE_WINDOW_MS 1.68  // Desired time window in milliseconds
+		#define THROTTLE_WINDOW_MS 0.42  // Desired time window in milliseconds
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
 		    struct timespec start, end;
@@ -6515,7 +6515,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			
 		    if(should_wait_for_block[i] == 1){
 			    // Wait for completion of the send operation
-			    serverLog(LL_WARNING, "STRATOS WAITING FOR %d", i);
+			    // serverLog(LL_WARNING, "STRATOS WAITING FOR %d", i);
 			    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 		    }
 		    
@@ -6528,9 +6528,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
 		
 		    // If the elapsed time is less than the throttle window, sleep for the remaining time
-		    // if (elapsed_ms < THROTTLE_WINDOW_MS) {
-		    //     usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
-		    // }
+		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
+		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		    }
 		}
 		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
