@@ -6448,7 +6448,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		/* PREPARE WORK REQUEST AND SEND IT START*/
 		struct ibv_sge sges[total_number_of_remote_buffers];
 		struct ibv_send_wr wrs[total_number_of_remote_buffers];
-
+		int should_wait_for_block[total_number_of_remote_buffers];
+		
 		int current_buffer_index = 0;
 		for(int j=start; j<end; j++) {
 			unsigned int intSlot = atoi(args[j]);
@@ -6457,6 +6458,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			//serverLog(LL_WARNING, "STRATOS NUMBER OF BLOCKS FOR SLOT:%s is %d", slotString, number_of_blocks);
 			char **slots = all_slots[j-7];
 			for(int i=0; i<number_of_blocks; i++) {
+				should_wait_for_block[current_buffer_index] = 0;
 				memset(&(sges[current_buffer_index]), 0, sizeof(struct ibv_sge));
 				memset(&(wrs[current_buffer_index]), 0, sizeof(struct ibv_send_wr));
 				// PREPARE SGE STOP
@@ -6471,7 +6473,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs[current_buffer_index].num_sge = 1;
 				wrs[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
 				if(intSlot % SPLIT_SLOTS == 0){
-					serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+					// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+					should_wait_for_block[current_buffer_index] = 1;
 					wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 
 				}
@@ -6508,7 +6511,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    if (ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr) != 0) {
 		        serverLog(LL_WARNING, "IBV_POST_SEND ERROR: %d, %s", i, strerror(errno));
 		    }
-		    if(i%SPLIT_SLOTS == 0){
+		    if(should_wait_for_block[i] == 1){
 			    // Wait for completion of the send operation
 			    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 		    }
