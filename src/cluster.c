@@ -6496,7 +6496,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
-		#define THROTTLE_WINDOW_MS 1.26  // Desired time window in milliseconds
+		#define THROTTLE_WINDOW_MS 1.40  // Desired time window in milliseconds
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
 		    struct timespec start, end;
