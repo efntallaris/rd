@@ -6519,9 +6519,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
 		
 		    // If the elapsed time is less than the throttle window, sleep for the remaining time
-		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
-		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
-		    }
+		    // if (elapsed_ms < THROTTLE_WINDOW_MS) {
+		    //     usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		    // }
 		}
 		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
