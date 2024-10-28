@@ -6440,7 +6440,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_data[0].ptr, all_remote_data[0].rkey);
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_buffers-1, (void *)all_remote_data[total_number_of_remote_buffers-1].ptr, all_remote_data[total_number_of_remote_buffers-1].rkey);
-		int SPLIT_SLOTS = 200;
+		int SPLIT_SLOTS = 400;
 
 		gettimeofday(&tv_register_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS START PREPARING BUFFERS SLOT");
@@ -6471,11 +6471,11 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs[current_buffer_index].num_sge = 1;
 				wrs[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
 				if(intSlot % SPLIT_SLOTS == 0){
-					//serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
-					// wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+					serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+					wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 
 				}
-				wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+				// wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 				wrs[current_buffer_index].wr.rdma.remote_addr = all_remote_data[current_buffer_index].ptr;
 				wrs[current_buffer_index].wr.rdma.rkey = all_remote_data[current_buffer_index].rkey;
 				current_buffer_index++;
@@ -6508,9 +6508,12 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    if (ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr) != 0) {
 		        serverLog(LL_WARNING, "IBV_POST_SEND ERROR: %d, %s", i, strerror(errno));
 		    }
-		
-		    // Wait for completion of the send operation
-		    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+		    if(i%SPLIT_SLOTS == 0){
+			    // Wait for completion of the send operation
+			    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+		    }
+		    
+		    
 		    
 		    // Record the end time (after completion)
 		    clock_gettime(CLOCK_MONOTONIC, &end);
@@ -6519,9 +6522,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1000000.0;
 		
 		    // If the elapsed time is less than the throttle window, sleep for the remaining time
-		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
-		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
-		    }
+		    // if (elapsed_ms < THROTTLE_WINDOW_MS) {
+		    //     usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		    // }
 		}
 		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
