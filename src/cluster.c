@@ -6472,13 +6472,14 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs[current_buffer_index].next = NULL;
 				wrs[current_buffer_index].num_sge = 1;
 				wrs[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
-				if(intSlot % SPLIT_SLOTS == 0){
-					// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
-					should_wait_for_block[current_buffer_index] = 1;
-					wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+				// if(intSlot % SPLIT_SLOTS == 0){
+				// 	// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+				// 	should_wait_for_block[current_buffer_index] = 1;
+				// 	wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 
-				}
-				// wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+				// }
+				should_wait_for_block[current_buffer_index] = 1;
+				wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 				wrs[current_buffer_index].wr.rdma.remote_addr = all_remote_data[current_buffer_index].ptr;
 				wrs[current_buffer_index].wr.rdma.rkey = all_remote_data[current_buffer_index].rkey;
 				current_buffer_index++;
