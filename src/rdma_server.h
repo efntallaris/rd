@@ -9,15 +9,15 @@
 #include "zmalloc.h"
 #define MAX_CONNECTIONS 0
 /* Capacity of the completion queue (CQ) */
-#define CQ_CAPACITY (21800)
+#define CQ_CAPACITY (4096)
 /* MAX SGE capacity */
 #define MAX_SGE (1)
 /* MAX work requests */
-#define MAX_WR (21800)
+#define MAX_WR (4096)
 
-#define MAX_SEND_WR (21800);
+#define MAX_SEND_WR (4096);
 #define MAX_SEND_SGE (1);
-#define MAX_RECV_WR (21800);
+#define MAX_RECV_WR (4096);
 #define MAX_RECV_SGE (1);
 
 
