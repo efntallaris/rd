@@ -14,7 +14,7 @@
 /* MAX SGE capacity */
 #define MAX_SGE (1)
 /* MAX work requests */
-#define MAX_WR (4096)
+#define MAX_WR (21800)
 
 #define MAX_SEND_WR (21800);
 #define MAX_SEND_SGE (1);
