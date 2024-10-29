@@ -17,12 +17,11 @@ for redis_instance in "${!redis_master_instances[@]}"; do
 	    ulimit -n 65535
             sudo rm -rf ${info[3]}
             cd "${REDIS_SRC_DIR}"
-            sudo make PREFIX="${LOCAL_SETUP_DIR}" install
+	    sudo make CFLAGS="-g -O0" PREFIX="${LOCAL_SETUP_DIR}" install
             cd "${REDIS_MAIN_SCRIPT_DIR}/HELP_SCRIPTS"
             /bin/sh create_conf.sh ${info[3]} ${info[2]} "${REDIS_LOG_DIR}/${info[0]}__"
             cd "${LOCAL_SETUP_DIR}/bin"
             sudo ./redis-server ${info[3]}
-
 	    ps aux | grep redis-server
 EOF
 2>&1)
