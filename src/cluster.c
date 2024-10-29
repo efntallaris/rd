@@ -6478,7 +6478,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				// 	wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 
 				// }
-				should_wait_for_block[current_buffer_index] = 1;
 				wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 				wrs[current_buffer_index].wr.rdma.remote_addr = all_remote_data[current_buffer_index].ptr;
 				wrs[current_buffer_index].wr.rdma.rkey = all_remote_data[current_buffer_index].rkey;
@@ -6513,14 +6512,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		        serverLog(LL_WARNING, "IBV_POST_SEND ERROR: %d, %s", i, strerror(errno));
 		    }
 			
-		    if(should_wait_for_block[i] == 1){
-			    // Wait for completion of the send operation
-			    // serverLog(LL_WARNING, "STRATOS WAITING FOR %d", i);
-			    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
-		    }
-		    
-		    
-		    
+
+		    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+		        
 		    // Record the end time (after completion)
 		    clock_gettime(CLOCK_MONOTONIC, &end);
 		    
