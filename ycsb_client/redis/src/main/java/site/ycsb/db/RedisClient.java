@@ -105,48 +105,7 @@ public class RedisClient extends DB {
     if (clusterEnabled) {
       Set<HostAndPort> jedisClusterNodes = new HashSet<>();
       jedisClusterNodes.add(new HostAndPort(host, port));
-      GenericObjectPoolConfig config = new GenericObjectPoolConfig();
-      jedis = new JedisCluster(jedisClusterNodes, 100000, 100000, 300, config);
-
-
-      //LETUCE
-      io.lettuce.core.RedisURI redisURI = new io.lettuce.core.RedisURI(host, port, Duration.ofSeconds(60));
-      io.lettuce.core.resource.ClientResources clientResources = io.lettuce.core.resource
-           .ClientResources
-           .builder()
-           .ioThreadPoolSize(60)
-           .computationThreadPoolSize(60)
-           .build();
-
-      redisClusterClient = io.lettuce.core.cluster.RedisClusterClient.create(clientResources, redisURI);
-      io.lettuce.core.cluster.ClusterTopologyRefreshOptions topologyRefreshOptions = io.lettuce.core.cluster
-           .ClusterTopologyRefreshOptions
-           .builder()
-           .enableAllAdaptiveRefreshTriggers()
-           .dynamicRefreshSources(true)
-           .enablePeriodicRefresh()
-           .refreshPeriod(Duration.ofSeconds(1))
-           .build();
-
-      io.lettuce.core.cluster.ClusterClientOptions clusterOptions = io.lettuce.core.cluster
-           .ClusterClientOptions
-           .builder()
-           .maxRedirects(15)
-           .topologyRefreshOptions(topologyRefreshOptions)
-           .build();
-      redisClusterClient.setOptions(clusterOptions);
-      io.lettuce.core.cluster.api.StatefulRedisClusterConnection<String, String> connection = 
-           redisClusterClient.connect();
-      redisClusterClient.reloadPartitions();
-      jedis2 = connection.sync();
-      io.lettuce.core.cluster.models.partitions.Partitions clusterPartitions = connection.getPartitions();
-
-      // prepare key value writer
-      //
-      String datalogFileName = props.getProperty(WRITE_FILE_PROPERTY);
-      initDataLogger(datalogFileName);
-      /*System.out.println(connection.getResources().ioThreadPoolSize());
-      System.out.println(clusterPartitions.toString());*/
+      jedis = new JedisCluster(jedisClusterNodes);
     } else {
       String redisTimeout = props.getProperty(TIMEOUT_PROPERTY);
       if (redisTimeout != null){
@@ -210,16 +169,16 @@ public class RedisClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    Object value = jedis2.get(key);
-    // String value = jedis.get(key);
-    return Status.OK;
-    // if(value != null){
-    //   return Status.OK;
-    // }
+    //Object value = jedis2.get(key);
+    String value = jedis.get(key);
+    //return Status.OK;
+    if(value != null){
+       return Status.OK;
+    }
     // if (isDataLogEnabled) {
     //   logData(key, "");
     // }
-    // return Status.ERROR;
+    return Status.ERROR;
   }
 
   @Override
@@ -230,7 +189,7 @@ public class RedisClient extends DB {
       valueAllColumns += entry.getKey()+"_"+entry.getValue();
     }
 
-    jedis2.set(key, valueAllColumns);
+    jedis.set(key, valueAllColumns);
     return Status.OK;
 
  //    String resultSet = jedis2.set(key, valueAllColumns);
