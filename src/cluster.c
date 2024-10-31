@@ -7700,7 +7700,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 				pthread_mutex_lock(&server.generic_migration_mutex);
 				server.try_agains++;
 				pthread_mutex_unlock(&server.generic_migration_mutex);
-				return myself;
+				return NULL;
 			}
 			if(server.migration_ownership_changed[slot] == 1) {
 				// serverLog(LL_WARNING, "STRATOS CHECKING READ FOR SLOT %d -> %d", slot, server.migration_ownership_changed[slot]);
@@ -7744,7 +7744,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 			pthread_mutex_lock(&server.generic_migration_mutex);
 			server.try_agains++;
 			pthread_mutex_unlock(&server.generic_migration_mutex);
-			return myself;
+			return NULL;
 		}
 
 	}
