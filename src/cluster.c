@@ -7695,6 +7695,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_locked[slot] == 1){
 				addReplyError(c,"-TRYAGAIN  Key is migrating");
+				serverLog(LL_WARNING,"STRATOS TRYAGAIN");
 				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 				pthread_mutex_lock(&server.generic_migration_mutex);
 				server.try_agains++;
@@ -7739,6 +7740,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 		}else{
 			addReplyError(c,"-TRYAGAIN  Key is migrating");
+			serverLog(LL_WARNING,"STRATOS TRYAGAIN");
 			pthread_mutex_lock(&server.generic_migration_mutex);
 			server.try_agains++;
 			pthread_mutex_unlock(&server.generic_migration_mutex);
