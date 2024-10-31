@@ -7694,7 +7694,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 		// serverLog(LL_WARNING, "IM HERE WRITE");
 		if(pthread_mutex_trylock(&server.ownership_lock_slots[slot]) == 0){
 			if(server.migration_ownership_locked[slot] == 1){
-				addReplyError(c,"-TRYAGAIN  Key is migrating");
+				if(error_code) {
+					*error_code = CLUSTER_REDIR_TRYAGAIN;
+				}
 				serverLog(LL_WARNING,"STRATOS TRYAGAIN");
 				pthread_mutex_unlock(&server.ownership_lock_slots[slot]);
 				pthread_mutex_lock(&server.generic_migration_mutex);
@@ -7739,7 +7741,9 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
 
 
 		}else{
-			addReplyError(c,"-TRYAGAIN  Key is migrating");
+			if(error_code) {
+					*error_code = CLUSTER_REDIR_TRYAGAIN;
+			}
 			serverLog(LL_WARNING,"STRATOS TRYAGAIN");
 			pthread_mutex_lock(&server.generic_migration_mutex);
 			server.try_agains++;
@@ -7824,11 +7828,12 @@ void clusterRedirectClient(client *c, clusterNode *n, int hashslot, int error_co
 		addReplyError(c,"-CLUSTERDOWN The cluster is down and only accepts read commands");
 	} else if (error_code == CLUSTER_REDIR_DOWN_UNBOUND) {
 		addReplyError(c,"-CLUSTERDOWN Hash slot not served");
-		//	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
-		//		addReplyError(c,"-TRYAGAIN  Key is migrating");
-} else if (error_code == CLUSTER_REDIR_MOVED ||
-		error_code == CLUSTER_REDIR_ASK)
-{
+	}else if (error_code == CLUSTER_REDIR_TRYAGAIN){
+		serverLog(LL_WARNING, "STRATOS KEY IS MIGRATING FLAG ENABLED");
+		addReplyError(c,"-TRYAGAIN  Key is migrating");
+	} else if (error_code == CLUSTER_REDIR_MOVED ||
+			error_code == CLUSTER_REDIR_ASK)
+	{
 	/* Redirect to IP:port. Include plaintext port if cluster is TLS but
 	 * client is non-TLS. */
 	int use_pport = (server.tls_cluster &&
