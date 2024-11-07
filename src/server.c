@@ -2009,8 +2009,6 @@ long long getInstantaneousMetric(int metric) {
  *
  * The function always returns 0 as it never terminates the client. */
 int clientsCronResizeQueryBuffer(client *c) {
-	//todo change this later
-	return 0;
 	size_t querybuf_size = sdsAllocSize(c->querybuf);
 	time_t idletime = server.unixtime - c->lastinteraction;
 
