@@ -20,7 +20,7 @@ REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
 
-EXPERIMENT_NAME="512kb_block"
+EXPERIMENT_NAME="512kb_block_new"
 
 #	MASTER NODES 	#
 declare -A redis_master_instances 
