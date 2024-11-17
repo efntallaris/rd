@@ -11,17 +11,11 @@ sudo rm -rf ${YCSB_INTERMEDIATE_FOLDER}
 sudo mkdir -p ${YCSB_INTERMEDIATE_FOLDER}
 
 cd ${YCSB_DIR}
-sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
-# sudo mvn clean install -T 8 -DskipTests -Dcheckstyle.skip -pl site.ycsb:redis-binding -am clean package
+sudo mvn -pl redis -am clean install -T 9 -DskipTests -Dcheckstyle.skip
 
 
-cd ${YCSB_DIR}/distribution/target
-TAR_GZ_FILE=$(ls *.tar.gz | head -n 1)
-if [ -z "$TAR_GZ_FILE" ]; then
-	  echo "No tar.gz file found in ${YCSB_DIR}/distribution/target"
-	    exit 1
-fi
-sudo tar -xvf "$TAR_GZ_FILE" --directory ${YCSB_INTERMEDIATE_FOLDER}
+cd ${YCSB_DIR}/redis/target
+sudo tar -xvf ycsb-redis-binding-0.18.0-SNAPSHOT.tar.gz --directory ${YCSB_INTERMEDIATE_FOLDER}
 
 # Check if the directory exists
 if [ -d "$YCSB_BIN" ]; then
@@ -32,12 +26,4 @@ else
     mkdir -p "$YCSB_BIN"
 fi
 
-FIRST_FOLDER=$(find ${YCSB_INTERMEDIATE_FOLDER} -mindepth 1 -maxdepth 1 -type d | head -n 1)
-# Check if a folder was found
-if [ -z "$FIRST_FOLDER" ]; then
-	  echo "No folder found under ${YCSB_INTERMEDIATE_FOLDER}"
-	    exit 1
-fi
-
-#sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-0.18.0-SNAPSHOT/*  ${YCSB_BIN}
-sudo cp -rf "${FIRST_FOLDER}/"* "${YCSB_BIN}"
+sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-redis-binding-0.18.0-SNAPSHOT/*  ${YCSB_BIN}
