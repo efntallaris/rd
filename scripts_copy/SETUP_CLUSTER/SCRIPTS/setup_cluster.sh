@@ -55,7 +55,7 @@ tko=$(
     sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} <<-EOF
 	cd "${REDIS_MAIN_SCRIPT_DIR}/"
 	chmod +x build_ycsb.sh
-	sudo ./build_ycsb ${YCSB_SRC_DIR} ${YCSB_DIR}
+	sudo ./build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
 	cd ${YCSB_DIR}/bin
 	echo "running loading phase for workload ${REDIS_WORKLOAD}"
 	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads 50
