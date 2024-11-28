@@ -1,4 +1,4 @@
- #!/bin/bash
+#!/bin/bash
 
 # DONT ADD / at the end of the filepath or dir
 MAIN_DIR="/root/rd"
@@ -20,10 +20,10 @@ REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
 
-EXPERIMENT_NAME="768kb_block_new"
+EXPERIMENT_NAME="1MB_BLOCK_NEW"
 
 #	MASTER NODES 	#
-declare -A redis_master_instances 
+declare -A redis_master_instances
 redis_master_instances["redis-0"]="redis0|10.10.1.1|8000|/root/node01.conf"
 redis_master_instances["redis-1"]="redis1|10.10.1.2|8000|/root/node02.conf"
 redis_master_instances["redis-2"]="redis2|10.10.1.3|8000|/root/node03.conf"
@@ -51,7 +51,6 @@ redis_ycsb_instances["ycsb-0"]="ycsb0|10.10.1.5"
 # redis_ycsb_instances["ycsb-6"]="ycsb2|10.10.1.12"
 # redis_ycsb_instances["ycsb-7"]="ycsb2|10.10.1.13"
 
-
 declare -A instances
 instances["redis-0"]="redis0|10.10.1.1"
 instances["redis-1"]="redis1|10.10.1.2"
@@ -69,7 +68,6 @@ instances["redis-7"]="redis3|10.10.1.8"
 # instances["ycsb5"]="ycsb1|10.10.1.14"
 # instances["ycsb6"]="ycsb1|10.10.1.15"
 # instances["ycsb7"]="ycsb1|10.10.1.16"
-
 
 LOCAL_SETUP_DIR="/root/rd/redis_bin"
 
