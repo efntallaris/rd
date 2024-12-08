@@ -25,4 +25,4 @@ else
   mkdir -p "$YCSB_BIN"
 fi
 
-sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-redis-binding-0.18.0/* ${YCSB_BIN}
+sudo cp -rf ${YCSB_INTERMEDIATE_FOLDER}/ycsb-redis-binding-0.18.0-SNAPSHOT/* ${YCSB_BIN}
