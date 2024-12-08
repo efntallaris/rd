@@ -6294,7 +6294,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	// int chunk_size = 3000;
 	// int chunk_size = 547;
-	int chunk_size = 683;
+	int chunk_size = 2732;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -6499,7 +6499,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
-		#define THROTTLE_WINDOW_MS 0.40  // Desired time window in milliseconds
+		#define THROTTLE_WINDOW_MS 0.44  // Desired time window in milliseconds
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
 		    struct timespec start, end;
