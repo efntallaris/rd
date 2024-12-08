@@ -14,7 +14,7 @@ cd ${YCSB_DIR}
 sudo mvn -pl site.ycsb:redis-binding -am clean install -T 9 -DskipTests -Dcheckstyle.skip
 
 cd ${YCSB_DIR}/redis/target
-sudo tar -xvf ycsb-redis-binding-0.18.0.tar.gz --directory ${YCSB_INTERMEDIATE_FOLDER}
+sudo tar -xvf ycsb-redis-binding-0.18.0-SNAPSHOT.tar.gz --directory ${YCSB_INTERMEDIATE_FOLDER}
 
 # Check if the directory exists
 if [ -d "$YCSB_BIN" ]; then
