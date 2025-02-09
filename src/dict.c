@@ -486,6 +486,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	long index;
 	dictEntry *entry;
 	dictht *ht;
+  struct timespec lock_start;
 
 	if (dictIsRehashing(d)) _dictRehashStep(d);
 
@@ -505,6 +506,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	entry = zmalloc(sizeof(*entry));
 	//pthread_mutex_lock(&migration_dict_locks[index]);
 	acquire_lock_with_stats(index);
+  clock_gettime(CLOCK_MONOTONIC, &lock_start);
 	entry->next = ht->table[index];
 	ht->table[index] = entry;
 	ht->used++;
@@ -833,7 +835,6 @@ void dictReleaseIterator(dictIterator *iter)
 dictEntry *dictGetRandomKey(dict *d)
 {
 	dictEntry *he, *orighe;
-  struct timespec lock_start;
 	unsigned long h;
 	int listlen, listele;
   struct timespec lock_start;
