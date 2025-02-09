@@ -227,7 +227,7 @@ int _dictInitBig(dict *d, dictType *type,
 	d->privdata = privDataPtr;
 	d->rehashidx = -1;
 	d->pauserehash = 0;
-	d->isBig = 1;
+	d->isBig = 0;
 	return DICT_OK;
 }
 
@@ -259,9 +259,6 @@ int dictResize(dict *d)
 
 	if(d->isBig){
 		return DICT_OK;
-		// if (minimal < DICT_HT_BIG_INITIAL_SIZE){
-		// 	minimal = DICT_HT_BIG_INITIAL_SIZE;
-		// }
 
 	}else{
 		if (minimal < DICT_HT_INITIAL_SIZE){
