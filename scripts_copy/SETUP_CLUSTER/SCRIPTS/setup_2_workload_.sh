@@ -35,27 +35,27 @@ done
 sleep 20
 
 #SINGLE DONOR SINGLE RECIPIENT START
-cd ${LOCAL_SETUP_DIR}/bin
-first_migration_instance_details=${redis_migrate_instances["redis-4"]}
-IFS='|' read -ra ADDR <<<"$first_migration_instance_details"
-ip=${ADDR[1]}
-port=${ADDR[2]}
-migrateNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)
-first_instance_details=${redis_master_instances["redis-0"]}
-# Extract IP and Port
-IFS='|' read -ra ADDR <<<"$first_instance_details"
-ip=${ADDR[1]}
-port=${ADDR[2]}
-sourceNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)
-tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard ${MASTER_HOST}:${MASTER_PORT} --cluster-timeout 1200 &
-sleep 4
-echo "2732" >>${COMMAND_PIPE}
-sleep 1
-echo ${migrateNodeID} >>${COMMAND_PIPE}
-sleep 1
-echo ${sourceNodeID} >>${COMMAND_PIPE}
-sleep 1
-echo "done" >>${COMMAND_PIPE}
-sleep 1
-echo "yes" >>${COMMAND_PIPE}
-sleep 1
+#cd ${LOCAL_SETUP_DIR}/bin
+#first_migration_instance_details=${redis_migrate_instances["redis-4"]}
+#IFS='|' read -ra ADDR <<<"$first_migration_instance_details"
+#ip=${ADDR[1]}
+#port=${ADDR[2]}
+#migrateNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)
+#first_instance_details=${redis_master_instances["redis-0"]}
+## Extract IP and Port
+#IFS='|' read -ra ADDR <<<"$first_instance_details"
+#ip=${ADDR[1]}
+#port=${ADDR[2]}
+#sourceNodeID=$(./redis-cli -c -h ${ip} -p ${port} CLUSTER MYID)
+#tail -f ${COMMAND_PIPE} | ./redis-cli --cluster reshard ${MASTER_HOST}:${MASTER_PORT} --cluster-timeout 1200 &
+#sleep 4
+#echo "2732" >>${COMMAND_PIPE}
+#sleep 1
+#echo ${migrateNodeID} >>${COMMAND_PIPE}
+#sleep 1
+#echo ${sourceNodeID} >>${COMMAND_PIPE}
+#sleep 1
+#echo "done" >>${COMMAND_PIPE}
+#sleep 1
+#echo "yes" >>${COMMAND_PIPE}
+#sleep 1
