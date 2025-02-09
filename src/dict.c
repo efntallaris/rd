@@ -1560,4 +1560,16 @@ int dictTest(int argc, char **argv, int accurate) {
 	dictRelease(dict);
 	return 0;
 }
+
+void printLockStats() {
+    for (unsigned long i = 0; i < 268435456; i++) {
+        if (lock_stats[i].lock_count > 0) {
+            printf("Lock %lu: Acquired %lu times, Contentions %lu, "
+                   "Total wait time %.2f ms, Total hold time %.2f ms\n",
+                   i, lock_stats[i].lock_count, lock_stats[i].contention_count,
+                   lock_stats[i].total_wait_time_ns / 1e6,
+                   lock_stats[i].total_hold_time_ns / 1e6);
+        }
+    }
+}
 #endif
