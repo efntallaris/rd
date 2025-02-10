@@ -6561,17 +6561,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 			pthread_mutex_unlock(&server.generic_migration_mutex);
 		}
 
-		serverLog(LL_WARNING, "STRATOS RECEIVED FIRST ACK");
-		while(1) {
-			pthread_mutex_lock(&server.generic_migration_mutex);
-			if(server.rdmaDoneAck==1) {
-				server.rdmaDoneAck=0;
-				pthread_mutex_unlock(&server.generic_migration_mutex);
-				break;
-			}
-			pthread_mutex_unlock(&server.generic_migration_mutex);
-		}
-		serverLog(LL_WARNING, "STRATOS RECEIVED SECOND ACK");
 		gettimeofday(&tv_backpatching_end, NULL);
 		serverLog(LL_WARNING, "STRATOS RECEIVED RDMA DONE ACK");
 
@@ -7189,7 +7178,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
         if(firstSlot == lastSlot && thread_id!=0){
 			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT %s", item->first_slot);
-          continue;
+          break;
         }
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
