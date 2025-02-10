@@ -7145,7 +7145,9 @@ typedef struct ThreadData {
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
-  int thread_id = *((int *) arg);
+  ThreadData *thread_data = (ThreadData *) arg;
+  int thread_id = thread_data->thread_id;
+  int total_threads = thread_data->total_threads;
 	int i=0;
 	int total_keys_added = 0;
 	int total_rest_keys_added =0;
@@ -7248,8 +7250,8 @@ void rdmaDoneBatchCommand(client *c) {
 		initializeQueue(&queue);
     ThreadData thread_data1 = {0, 2};
     ThreadData thread_data2 = {1, 2};
-		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, NULL);
-		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, NULL);
+		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, thread_data1);
+		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, thread_data2);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
 	}
