@@ -7250,8 +7250,8 @@ void rdmaDoneBatchCommand(client *c) {
 		initializeQueue(&queue);
     ThreadData thread_data1 = {0, 2};
     ThreadData thread_data2 = {1, 2};
-		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, thread_data1);
-		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, thread_data2);
+		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
+		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, &thread_data2);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
 	}
