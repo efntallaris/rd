@@ -7169,8 +7169,13 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+
         if (j % total_threads != thread_id) {
                 continue;
+        }
+
+        if(firstSlot == lastSlot && thread_id!=0){
+          continue;
         }
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
