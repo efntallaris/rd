@@ -74,6 +74,15 @@ static int _dictInitBig(dict *ht, dictType *type, void *privDataPtr);
 
 static uint8_t dict_hash_function_seed[16];
 
+typedef struct {
+    unsigned long contention_count;   // Times a thread had to wait for a lock
+    unsigned long lock_count;         // Times the lock was acquired
+    unsigned long long total_wait_time_ns;  // Total time spent waiting for locks
+    unsigned long long total_hold_time_ns;  // Total time locks were held
+} LockStats;
+
+static LockStats *lock_stats;
+
 void dictSetHashFunctionSeed(uint8_t *seed) {
 	memcpy(dict_hash_function_seed,seed,sizeof(dict_hash_function_seed));
 }
@@ -117,6 +126,7 @@ void dictInitLocks(){
 		
 		unsigned long numLocks = 268435456;
 		migration_dict_locks = (pthread_mutex_t *) zmalloc(numLocks * sizeof(pthread_mutex_t));
+    lock_stats = (LockStats *) zcalloc(numLocks * sizeof(LockStats));
 		for (unsigned long i = 0; i < numLocks; i++) {
 			if (pthread_mutex_init(&migration_dict_locks[i], NULL) != 0) {
 				// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
@@ -127,6 +137,36 @@ void dictInitLocks(){
 
 
 	}
+}
+
+
+static inline void acquire_lock_with_stats(unsigned long index) {
+    struct timespec start, end;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    if (pthread_mutex_trylock(&migration_dict_locks[index]) != 0) {
+        // Lock was not immediately available; track contention
+        lock_stats[index].contention_count++;
+        //pthread_mutex_lock(&migration_dict_locks[index]);
+        acquire_lock_with_stats(index);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    // Update wait time statistics
+    unsigned long long wait_time_ns = (end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec);
+    lock_stats[index].total_wait_time_ns += wait_time_ns;
+    lock_stats[index].lock_count++;
+}
+
+static inline void release_lock_with_stats(unsigned long index, struct timespec *start) {
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    // Update lock hold time statistics
+    unsigned long long hold_time_ns = (end.tv_sec - start->tv_sec) * 1e9 + (end.tv_nsec - start->tv_nsec);
+    lock_stats[index].total_hold_time_ns += hold_time_ns;
+
+    pthread_mutex_unlock(&migration_dict_locks[index]);
 }
 
 /* Create a new hash table */
@@ -219,9 +259,6 @@ int dictResize(dict *d)
 
 	if(d->isBig){
 		return DICT_OK;
-		// if (minimal < DICT_HT_BIG_INITIAL_SIZE){
-		// 	minimal = DICT_HT_BIG_INITIAL_SIZE;
-		// }
 
 	}else{
 		if (minimal < DICT_HT_INITIAL_SIZE){
@@ -315,22 +352,26 @@ int dictRehash(dict *d, int n) {
 
 	while(n-- && d->ht[0].used != 0) {
 		dictEntry *de, *nextde;
+    struct timespec lock_start;
 
 		/* Note that rehashidx can't overflow as we are sure there are more
 		 * elements because ht[0].used != 0 */
-		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		acquire_lock_with_stats(d->rehashidx);
+    clock_gettime(CLOCK_MONOTONIC, &lock_start);
+
 		assert(d->ht[0].size > (unsigned long)d->rehashidx);
 		while(d->ht[0].table[d->rehashidx] == NULL) {
-			pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+			//pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+      release_lock_with_stats(d->rehashidx, &lock_start);
 			d->rehashidx++;
 			if (--empty_visits == 0){
 				return 1;
 			}
 		}
-		//pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
-		//pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
 		de = d->ht[0].table[d->rehashidx];
-		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+    release_lock_with_stats(d->rehashidx, &lock_start);
 		/* Move all the keys in this bucket from the old to the new hash HT */
 		while(de) {
 			uint64_t h;
@@ -338,17 +379,23 @@ int dictRehash(dict *d, int n) {
 			nextde = de->next;
 			/* Get the index in the new hash table */
 			h = dictHashKey(d, de->key) & d->ht[1].sizemask;
-			pthread_mutex_lock(&migration_dict_locks[h]);
+			//pthread_mutex_lock(&migration_dict_locks[h]);
+		  acquire_lock_with_stats(h);
+      clock_gettime(CLOCK_MONOTONIC, &lock_start);
 			de->next = d->ht[1].table[h];
 			d->ht[1].table[h] = de;
 			d->ht[0].used--;
 			d->ht[1].used++;
 			de = nextde;
-			pthread_mutex_unlock(&migration_dict_locks[h]);
+			//pthread_mutex_unlock(&migration_dict_locks[h]);
+      release_lock_with_stats(d->rehashidx, &lock_start);
 		}
-		pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_lock(&migration_dict_locks[d->rehashidx]);
+		acquire_lock_with_stats(d->rehashidx);
+    clock_gettime(CLOCK_MONOTONIC, &lock_start);
 		d->ht[0].table[d->rehashidx] = NULL;
-		pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+		//pthread_mutex_unlock(&migration_dict_locks[d->rehashidx]);
+    release_lock_with_stats(d->rehashidx, &lock_start);
 		d->rehashidx++;
 	}
 
@@ -436,6 +483,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	long index;
 	dictEntry *entry;
 	dictht *ht;
+  struct timespec lock_start;
 
 	if (dictIsRehashing(d)) _dictRehashStep(d);
 
@@ -453,7 +501,9 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
 	// ht = &d->ht[0];
 	entry = zmalloc(sizeof(*entry));
-	pthread_mutex_lock(&migration_dict_locks[index]);
+	//pthread_mutex_lock(&migration_dict_locks[index]);
+	acquire_lock_with_stats(index);
+  clock_gettime(CLOCK_MONOTONIC, &lock_start);
 	entry->next = ht->table[index];
 	ht->table[index] = entry;
 	ht->used++;
@@ -462,27 +512,10 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
 	double time_taken = (end.tv_sec - start.tv_sec) * 1e9; 
 	time_taken = (time_taken + (end.tv_nsec - start.tv_nsec)) * 1e-9; 
 
-	// char buffer1[4096];
-	// dictGetStats(buffer1,	sizeof(buffer1),d);
-	// log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-	// fprintf(log_file, "HT : %s\n", buffer1);
-	// fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld TimeIndex:%f\n", (char *) key, index, dictHashKey(d, key), time_taken);
-	// fclose(log_file);
-
-//	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
-//	fclose(log_file);
-
-//	char buffer1[4096];
-//	dictGetStats(buffer1,	sizeof(buffer1),d);
-//	log_file = fopen("/tmp/dictlog", "a");  // Open file in append mode
-//	fprintf(log_file, "HT : %s\n", buffer1);
-//	fprintf(log_file, "adding key : %s, INDEX:%ld, HASH:%ld\n", (char *) key, index, dictHashKey(d, key));
-//	fclose(log_file);
-
 	/* Set the hash entry fields. */
 	dictSetKey(d, entry, key);
-	pthread_mutex_unlock(&migration_dict_locks[index]);
+	//pthread_mutex_unlock(&migration_dict_locks[index]);
+  release_lock_with_stats(d->rehashidx, &lock_start);
 	return entry;
 }
 
@@ -531,6 +564,8 @@ dictEntry *dictAddOrFind(dict *d, void *key) {
  * dictDelete() and dictUnlink(), please check the top comment
  * of those functions. */
 static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
+
+  struct timespec lock_start;
 	uint64_t h, idx;
 	dictEntry *he, *prevHe;
 	int table;
@@ -542,7 +577,10 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 
 	for (table = 0; table <= 1; table++) {
 		idx = h & d->ht[table].sizemask;
-		pthread_mutex_lock(&migration_dict_locks[idx]);
+		//pthread_mutex_lock(&migration_dict_locks[idx]);
+	  acquire_lock_with_stats(idx);
+    clock_gettime(CLOCK_MONOTONIC, &lock_start);
+
 		he = d->ht[table].table[idx];
 		prevHe = NULL;
 		while(he) {
@@ -558,13 +596,15 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
 					zfree(he);
 				}
 				d->ht[table].used--;
-				pthread_mutex_unlock(&migration_dict_locks[idx]);
+				//pthread_mutex_unlock(&migration_dict_locks[idx]);
+        release_lock_with_stats(idx, &lock_start);
 				return he;
 			}
 			prevHe = he;
 			he = he->next;
 		}
-		pthread_mutex_unlock(&migration_dict_locks[idx]);
+		//pthread_mutex_unlock(&migration_dict_locks[idx]);
+    release_lock_with_stats(idx, &lock_start);
 		if (!dictIsRehashing(d)) break;
 	}
 	return NULL; /* not found */
@@ -649,6 +689,7 @@ dictEntry *dictFind(dict *d, const void *key)
 {
 	dictEntry *he;
 	uint64_t h, idx, table;
+  struct timespec lock_start;
 
 	clock_t start, end;
 	double cpu_time_used;
@@ -657,7 +698,9 @@ dictEntry *dictFind(dict *d, const void *key)
 	h = dictHashKey(d, key);
 	for (table = 0; table <= 1; table++) {
 		idx = h & d->ht[table].sizemask;
-		pthread_mutex_lock(&migration_dict_locks[idx]);
+		//pthread_mutex_lock(&migration_dict_locks[idx]);
+	  acquire_lock_with_stats(idx);
+    clock_gettime(CLOCK_MONOTONIC, &lock_start);
 		he = d->ht[table].table[idx];
 		while(he) {
 			if (key==he->key || dictCompareKeys(d, key, he->key)){
@@ -666,7 +709,8 @@ dictEntry *dictFind(dict *d, const void *key)
 			}
 			he = he->next;
 		}
-		pthread_mutex_unlock(&migration_dict_locks[idx]);
+		//pthread_mutex_unlock(&migration_dict_locks[idx]);
+    release_lock_with_stats(idx, &lock_start);
 		if (!dictIsRehashing(d)) return NULL;
 	}
 	return NULL;
@@ -790,6 +834,7 @@ dictEntry *dictGetRandomKey(dict *d)
 	dictEntry *he, *orighe;
 	unsigned long h;
 	int listlen, listele;
+  struct timespec lock_start;
 
 	if (dictSize(d) == 0) return NULL;
 	if (dictIsRehashing(d)) _dictRehashStep(d);
@@ -798,17 +843,23 @@ dictEntry *dictGetRandomKey(dict *d)
 			/* We are sure there are no elements in indexes from 0
 			 * to rehashidx-1 */
 			h = d->rehashidx + (randomULong() % (dictSlots(d) - d->rehashidx));
-			pthread_mutex_lock(&migration_dict_locks[h - d->ht[0].size]);
+			//pthread_mutex_lock(&migration_dict_locks[h - d->ht[0].size]);
+	    acquire_lock_with_stats(h - d->ht[0].size);
+      clock_gettime(CLOCK_MONOTONIC, &lock_start);
 			he = (h >= d->ht[0].size) ? d->ht[1].table[h - d->ht[0].size] :
 				d->ht[0].table[h];
-			pthread_mutex_unlock(&migration_dict_locks[h - d->ht[0].size]);
+			//pthread_mutex_unlock(&migration_dict_locks[h - d->ht[0].size]);
+      release_lock_with_stats(h - d->ht[0].size, &lock_start);
 		} while(he == NULL);
 	} else {
 		do {
 			h = randomULong() & d->ht[0].sizemask;
-			pthread_mutex_lock(&migration_dict_locks[h]);
+			//pthread_mutex_lock(&migration_dict_locks[h]);
+	    acquire_lock_with_stats(h);
+      clock_gettime(CLOCK_MONOTONIC, &lock_start);
 			he = d->ht[0].table[h];
-			pthread_mutex_unlock(&migration_dict_locks[h]);
+			//pthread_mutex_unlock(&migration_dict_locks[h]);
+      release_lock_with_stats(h, &lock_start);
 		} while(he == NULL);
 	}
 
@@ -1202,6 +1253,7 @@ static unsigned long _dictNextPower(unsigned long size)
 static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **existing)
 {
 	unsigned long idx, table;
+  struct timespec lock_start;
 	dictEntry *he;
 	if (existing) *existing = NULL;
 
@@ -1214,7 +1266,9 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
 		//fprintf(log_file, "idx index: %ld, hash:%ld, sizemask:%ld\n", idx, hash, d->ht[table].sizemask);
 		//fclose(log_file);
 		/* Search if this slot does not already contain the given key */
-		pthread_mutex_lock(&migration_dict_locks[idx]);
+		//pthread_mutex_lock(&migration_dict_locks[idx]);
+	  acquire_lock_with_stats(idx);
+    clock_gettime(CLOCK_MONOTONIC, &lock_start);
 		he = d->ht[table].table[idx];
 		while(he) {
 			if (key==he->key || dictCompareKeys(d, key, he->key)) {
@@ -1259,22 +1313,27 @@ uint64_t dictGetHash(dict *d, const void *key) {
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash) {
 	dictEntry *he, **heref;
 	unsigned long idx, table;
+  struct timespec lock_start;
 
 	if (dictSize(d) == 0) return NULL; /* dict is empty */
 	for (table = 0; table <= 1; table++) {
 		idx = hash & d->ht[table].sizemask;
-		pthread_mutex_lock(&migration_dict_locks[idx]);
+		//pthread_mutex_lock(&migration_dict_locks[idx]);
+    acquire_lock_with_stats(idx);
+    clock_gettime(CLOCK_MONOTONIC, &lock_start);
 		heref = &d->ht[table].table[idx];
 		he = *heref;
 		while(he) {
 			if (oldptr==he->key){
-				pthread_mutex_unlock(&migration_dict_locks[idx]);
+				//pthread_mutex_unlock(&migration_dict_locks[idx]);
+        release_lock_with_stats(idx, &lock_start);
 				return heref;
 			}
 			heref = &he->next;
 			he = *heref;
 		}
-		pthread_mutex_unlock(&migration_dict_locks[idx]);
+		//pthread_mutex_unlock(&migration_dict_locks[idx]);
+    release_lock_with_stats(idx, &lock_start);
 		if (!dictIsRehashing(d)) return NULL;
 	}
 	return NULL;
@@ -1498,4 +1557,25 @@ int dictTest(int argc, char **argv, int accurate) {
 	dictRelease(dict);
 	return 0;
 }
+
+void writeLockStatsToFile() {
+    FILE *file = fopen("/tmp/lock_stats.txt", "w");
+    if (!file) {
+        perror("Error opening file /tmp/lock_stats.txt");
+        return;
+    }
+
+    for (unsigned long i = 0; i < 268435456; i++) {
+        if (lock_stats[i].lock_count > 0) {
+            fprintf(file, "Lock %lu: Acquired %lu times, Contentions %lu, "
+                          "Total wait time %.2f ms, Total hold time %.2f ms\n",
+                    i, lock_stats[i].lock_count, lock_stats[i].contention_count,
+                    lock_stats[i].total_wait_time_ns / 1e6,
+                    lock_stats[i].total_hold_time_ns / 1e6);
+        }
+    }
+
+    fclose(file);
+}
+
 #endif
