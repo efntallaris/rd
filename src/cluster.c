@@ -7132,9 +7132,20 @@ void *rdmaDoneSlotsThread(void *arg) {
 }
 
 
+
+pthread_t rdmaDoneThread;
+pthread_t rdmaDoneBatchThread;
+pthread_t rdmaDoneBatchThread2;
+
+
+typedef struct ThreadData {
+    int thread_id;
+    int total_threads;
+} ThreadData;
+
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
-
+  int thread_id = *((int *) arg);
 	int i=0;
 	int total_keys_added = 0;
 	int total_rest_keys_added =0;
@@ -7155,21 +7166,10 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
 
-			//			if(firstSlot > 16385){
-			//					int inner_rest_keys=0;
-			//					for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
-			//						int slotInt = j;
-			//						segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-			//						robj *key_meta, *val_meta;
-			//						while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-			//							key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-			//							val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-			//							inner_rest_keys++;
-			//						}
-			//						serverLog(LL_WARNING, "STRATOS TOTAL_NUMBER OF KEYS IN SPILL_OVER_SLOT: %d -> %d", slotInt, inner_rest_keys);
-			//					}
-			//			}
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+        if (j % total_threads != thread_id) {
+                continue;
+        }
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
 				int slotInt = j;
@@ -7233,10 +7233,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 }
 
 
-pthread_t rdmaDoneThread;
-pthread_t rdmaDoneBatchThread;
-
-
 // Thread code that it is handling the RDMA Migration//
 void rdmaDoneBatchCommand(client *c) {
 	MessageData *data = (MessageData *) zmalloc(sizeof(MessageData));
@@ -7250,7 +7246,12 @@ void rdmaDoneBatchCommand(client *c) {
 	if(rdmaDoneBatchThread == NULL){
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
+    ThreadData thread_data1 = {0, 2};
+    ThreadData thread_data2 = {1, 2};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, NULL);
+		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, NULL);
+
+		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
 	}
 	enqueue(&queue, data);
 	//	serverLog(LL_WARNING, "STRATOS INSIDE COMMAND %s, %s, %s", item->first_slot, item->last_slot, item->message);
