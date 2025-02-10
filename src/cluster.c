@@ -7153,6 +7153,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 	int total_rest_keys_added =0;
 	int total_keys_exist_and_not_added = 0;
 	serverLog(LL_WARNING, "STRATOS STARTED BATCH THREAD");
+	serverLog(LL_WARNING, "STRATOS thread id is:%d", thread_id);
 	while(true){
 		if (!isQueueEmpty(&queue)) {
 			MessageData* item = (MessageData*)dequeue(&queue);
