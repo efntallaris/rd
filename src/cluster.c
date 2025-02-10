@@ -7172,14 +7172,14 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
-        if (j % total_threads != thread_id) {
-                continue;
-        }
+//        if (j % total_threads != thread_id) {
+//                continue;
+//        }
 
-        if(firstSlot > 16395 && thread_id!=0){
-			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
-          break;
-        }
+//        if(firstSlot > 16395 && thread_id!=0){
+//			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
+//          break;
+//        }
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
 				int slotInt = j;
@@ -7257,9 +7257,9 @@ void rdmaDoneBatchCommand(client *c) {
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
     ThreadData thread_data1 = {0, 2};
-    ThreadData thread_data2 = {1, 2};
+   // ThreadData thread_data2 = {1, 2};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
-		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, &thread_data2);
+		//pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, &thread_data2);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
 	}
