@@ -11,7 +11,7 @@ for redis_instance in "${!instances[@]}"; do
     tko=$(
       sudo ssh -o StrictHostKeyChecking=no ${info[1]} bash <<EOF
 cd /root/rd
-git stash 
+git stash
 git checkout blocking_version_2_threads
 cd /root/rd/scripts_copy
 #./install_preqs.sh
