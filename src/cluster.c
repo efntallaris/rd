@@ -7176,7 +7176,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
                 continue;
         }
 
-        if(firstSlot > 16395 && thread_id!=0){
+        if(j > 16395 && thread_id!=0){
 			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
           break;
         }
