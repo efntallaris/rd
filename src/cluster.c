@@ -7137,14 +7137,57 @@ void *rdmaDoneSlotsThread(void *arg) {
 pthread_t rdmaDoneThread;
 pthread_t rdmaDoneBatchThread;
 pthread_t rdmaDoneBatchThread2;
-pthread_mutex_t completed_lock = PTHREAD_MUTEX_INITIALIZER;
-int threads_completed = 0;
 
 
 typedef struct ThreadData {
     int thread_id;
     int total_threads;
 } ThreadData;
+
+
+
+typedef struct {
+    int thread_id;
+    int start_slot;
+    int end_slot;
+    MessageData *item;
+} WorkerData;
+
+void *processSlotRange(void *arg) {
+    WorkerData *worker_data = (WorkerData *)arg;
+    int thread_id = worker_data->thread_id;
+    int start_slot = worker_data->start_slot;
+    int end_slot = worker_data->end_slot;
+    MessageData *item = worker_data->item;
+
+    int total_keys_added = 0;
+    int total_keys_exist_and_not_added = 0;
+
+    for (int slot = start_slot; slot <= end_slot; slot++) {
+        segment_iterator_t *iter = create_iterator_for_slot(slot);
+        robj *key_meta, *val_meta;
+
+        while (iter->getNext(slot, &key_meta, &val_meta) != NULL) {
+            key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
+            val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+
+            // If key does not exist, add it to the dictionary; otherwise, ignore
+            if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+                dbAddNoCopy(item->c->db, key_meta, val_meta);
+                total_keys_added++;
+            } else {
+                total_keys_exist_and_not_added++;
+            }
+        }
+        r_allocator_lock_slot_blocks(slot);
+    }
+
+    serverLog(LL_WARNING, "Thread %d processed slots [%d - %d]. Keys added: %d, keys not added: %d",
+              thread_id, start_slot, end_slot, total_keys_added, total_keys_exist_and_not_added);
+
+    free(worker_data);
+    pthread_exit(NULL);
+}
 
 void *rdmaDoneBatchThreadFunc(void *arg) {
 
@@ -7171,85 +7214,98 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
+      int slots_per_thread = (lastSlot - firstSlot + 1) / total_threads;
+      pthread_t workers[total_threads];
 
-			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+      
+      for (int i = 0; i < total_threads; i++) {
+          int start_slot = firstSlot + i * slots_per_thread;
+          int end_slot = (i == total_threads - 1) ? lastSlot : (start_slot + slots_per_thread - 1);
 
-        if (j % total_threads != thread_id) {
-                continue;
-        }
+          WorkerData *worker_data = (WorkerData *)malloc(sizeof(WorkerData));
+          worker_data->thread_id = i;
+          worker_data->start_slot = start_slot;
+          worker_data->end_slot = end_slot;
+          worker_data->item = item;
 
-//        if(firstSlot > 16395 && thread_id!=0){
-//			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
-//          break;
-//        }
+          pthread_create(&workers[i], NULL, processSlotRange, (void *)worker_data);
+      }
 
-				//serverLog(LL_WARNING, "STRATOS IM HERE");
-				int slotInt = j;
-				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
-				robj *key_meta, *val_meta;
-				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
-					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
-					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
-					//if key does not exist then add it to dictionary, else ignore
-					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
-						dbAddNoCopy(item->c->db, key_meta, val_meta);
-						total_keys_added++;
-						total_keys_per_range++;
-						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
-					}else{
-						total_keys_exist_and_not_added++;
-
-					}
-					if(total_keys_added % 10 == 0){
-						//usleep(10);
-					}
-				}
-				r_allocator_lock_slot_blocks(slotInt);
-			}
+      // Wait for all worker threads to finish
+      for (int i = 0; i < total_threads; i++) {
+          pthread_join(workers[i], NULL);
+      }
+// 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
+//
+// //        if (j % total_threads != thread_id) {
+// //                continue;
+// //        }
+//
+// //        if(firstSlot > 16395 && thread_id!=0){
+// //			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
+// //          break;
+// //        }
+//
+// 				//serverLog(LL_WARNING, "STRATOS IM HERE");
+// 				int slotInt = j;
+// 				segment_iterator_t *iter = create_iterator_for_slot(slotInt);
+// 				robj *key_meta, *val_meta;
+// 				while (iter->getNext(slotInt, &key_meta, &val_meta) != NULL) {
+// 					key_meta->ptr = (char *) key_meta + key_meta->data_offset + 8;
+// 					val_meta->ptr = (char *) val_meta + val_meta->data_offset + 8;
+// 					//if key does not exist then add it to dictionary, else ignore
+// 					if (lookupKeyWrite(item->c->db,key_meta) == NULL) {
+// 						dbAddNoCopy(item->c->db, key_meta, val_meta);
+// 						total_keys_added++;
+// 						total_keys_per_range++;
+// 						//serverLog(LL_WARNING, "STRATOS ADDING KEY %s", key_meta->ptr);
+// 					}else{
+// 						total_keys_exist_and_not_added++;
+//
+// 					}
+// 					if(total_keys_added % 10 == 0){
+// 						//usleep(10);
+// 					}
+// 				}
+// 				r_allocator_lock_slot_blocks(slotInt);
+// 			}
 			serverLog(LL_WARNING, "STRATOS SLOT RANGE [%d-%d] TOTAL_KEYS_PER_RANGE:%d",firstSlot, lastSlot, total_keys_per_range);
-			// dictDisableMigration();
 
 
 			if(strcmp("LAST", item->message)==0){
-        pthread_mutex_lock(&completed_lock);
-        threads_completed++;
-			  serverLog(LL_WARNING, "STRATOS THREADS COMPLETED:%d, total_threads:%d",threads_completed, total_threads);
-        if (threads_completed == total_threads) {
-          connection *conn = item->c->conn;
-          char ip[1000];
-          int port;
+				connection *conn = item->c->conn;
+				char ip[1000];
+				int port;
 
-          char ackRDMADoneReply[1024];
-          connPeerToString(conn, ip, NET_IP_STR_LEN, &port);
-          serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED:%d", total_keys_added, total_keys_exist_and_not_added);
+				char ackRDMADoneReply[1024];
+				connPeerToString(conn, ip, NET_IP_STR_LEN, &port);
+				serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED:%d", total_keys_added, total_keys_exist_and_not_added);
 
-          // SEND RDMA DONE ACK TO DONOR, TO NOTIFY THAT RDMA DONE THREAD IS DONE
-          clusterNode *nodeDonor = clusterLookupNodeByIP(ip);
-          connection *connDonor = server.tls_cluster ? connCreateTLS() : connCreateSocket();
-          connBlockingConnect(connDonor, nodeDonor->ip, nodeDonor->port, 1000);
-          serverLog(LL_WARNING, "STRATOS Connected to :%s", nodeDonor->ip);
+				// SEND RDMA DONE ACK TO DONOR, TO NOTIFY THAT RDMA DONE THREAD IS DONE
+				clusterNode *nodeDonor = clusterLookupNodeByIP(ip);
+				connection *connDonor = server.tls_cluster ? connCreateTLS() : connCreateSocket();
+				connBlockingConnect(connDonor, nodeDonor->ip, nodeDonor->port, 1000);
+				serverLog(LL_WARNING, "STRATOS Connected to :%s", nodeDonor->ip);
 
-          rio ackRDMADoneCmd;
-          rioInitWithBuffer(&ackRDMADoneCmd, sdsempty());
-          serverAssertWithInfo(item->c,NULL,rioWriteBulkCount(&ackRDMADoneCmd, '*', 2));
-          serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "rdmaDoneAck", 11));
-          serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "OK", 2));
-          sds buf = ackRDMADoneCmd.io.buffer.ptr;
-          int nwritten = connSyncWrite(connDonor, buf, sdslen(buf), 1000);
-          if(nwritten != (int) sdslen(buf)) {
-            serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG IN RDMADONEACK RPC");
-          }
-          connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
-          serverLog(LL_WARNING, "OK HERE");
-          threads_completed = 0;
-        }
-        pthread_mutex_unlock(&completed_lock);
+				rio ackRDMADoneCmd;
+				rioInitWithBuffer(&ackRDMADoneCmd, sdsempty());
+				serverAssertWithInfo(item->c,NULL,rioWriteBulkCount(&ackRDMADoneCmd, '*', 2));
+				serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "rdmaDoneAck", 11));
+				serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "OK", 2));
+				sds buf = ackRDMADoneCmd.io.buffer.ptr;
+				int nwritten = connSyncWrite(connDonor, buf, sdslen(buf), 1000);
+				if(nwritten != (int) sdslen(buf)) {
+					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG IN RDMADONEACK RPC");
+				}
+				connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
+				serverLog(LL_WARNING, "OK HERE");
 
 			}
 			i++;
 		}
 	}
 }
+
 
 // Thread code that it is handling the RDMA Migration//
 void rdmaDoneBatchCommand(client *c) {
@@ -7265,9 +7321,7 @@ void rdmaDoneBatchCommand(client *c) {
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
     ThreadData thread_data1 = {0, 2};
-    ThreadData thread_data2 = {1, 2};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
-		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, &thread_data2);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
 	}
