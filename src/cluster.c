@@ -7164,6 +7164,7 @@ void *processSlotRange(void *arg) {
     int total_keys_exist_and_not_added = 0;
 
     for (int slot = start_slot; slot <= end_slot; slot++) {
+        serverLog(LL_WARNING, "STRATOS SLOT IS :%d", slot);
         segment_iterator_t *iter = create_iterator_for_slot(slot);
         robj *key_meta, *val_meta;
 
