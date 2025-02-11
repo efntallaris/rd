@@ -7320,7 +7320,7 @@ void rdmaDoneBatchCommand(client *c) {
 	if(rdmaDoneBatchThread == NULL){
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
-    ThreadData thread_data1 = {0, 2};
+    ThreadData thread_data1 = {0, 1};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
