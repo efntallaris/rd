@@ -7213,6 +7213,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 			if(strcmp("LAST", item->message)==0){
         pthread_mutex_lock(&completed_lock);
         threads_completed++;
+			  serverLog(LL_WARNING, "STRATOS THREADS COMPLETED:%d, total_threads:%d",threads_completed, total_threads);
         if (threads_completed == total_threads) {
           connection *conn = item->c->conn;
           char ip[1000];
