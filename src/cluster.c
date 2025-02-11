@@ -7172,14 +7172,14 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 
-//        if (j % total_threads != thread_id) {
-//                continue;
-//        }
+        if (j % total_threads != thread_id) {
+                continue;
+        }
 
-//        if(firstSlot > 16395 && thread_id!=0){
-//			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
-//          break;
-//        }
+        if(firstSlot > 16395 && thread_id!=0){
+			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
+          break;
+        }
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
 				int slotInt = j;
