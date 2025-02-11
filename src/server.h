@@ -153,15 +153,15 @@ typedef long long ustime_t; /* microsecond time type. */
 #define STATS_METRIC_COUNT 3
 
 /* Protocol and I/O related defines */
-#define PROTO_IOBUF_LEN         (1024*16)  /* Generic I/O buffer size */
-#define PROTO_REPLY_CHUNK_BYTES (16*1024) /* 16k output buffer */
-#define PROTO_INLINE_MAX_SIZE   (1024*64) /* Max size of inline reads */
+#define PROTO_IOBUF_LEN         (1024*256)  /* Generic I/O buffer size */
+#define PROTO_REPLY_CHUNK_BYTES (256*1024) /* 16k output buffer */
+#define PROTO_INLINE_MAX_SIZE   (1024*256) /* Max size of inline reads */
 #define PROTO_MBULK_BIG_ARG     (1024*32)
 #define LONG_STR_SIZE      21          /* Bytes needed for long -> str + '\0' */
 #define REDIS_AUTOSYNC_BYTES (1024*1024*32) /* fdatasync every 32MB */
 
 // #define LIMIT_PENDING_QUERYBUF (4024*1024*1024) /* 4GB */
-#define LIMIT_PENDING_QUERYBUF (16 * 1024 * 1024 * 1024) /* 12MB */
+#define LIMIT_PENDING_QUERYBUF (16 * 1024 * 1024 * 1024) /* 16GB */
 
 /* When configuring the server eventloop, we setup it so that the total number
  * of file descriptors we can handle are server.maxclients + RESERVED_FDS +
