@@ -211,10 +211,14 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
 }
 
 void dbAddNoCopy(redisDb *db, robj *key, robj *val) {
+
+	int hashSlot = keyHashSlot((char *) key->ptr, sdslen(key->ptr));
+	pthread_mutex_lock(&server.lock_slots[0]);
 	int retval = dictAdd(db->dict, key->ptr, val);
 	serverAssertWithInfo(NULL,key,retval == DICT_OK);
 	signalKeyAsReady(db, key, val->type);
 	if (server.cluster_enabled) slotToKeyAdd(key->ptr);
+	pthread_mutex_unlock(&server.lock_slots[0]);
 }
 
 /* This is a special version of dbAdd() that is used only when loading
