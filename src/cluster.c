@@ -7222,6 +7222,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
           int start_slot = firstSlot + i * slots_per_thread;
           int end_slot = (i == total_threads - 1) ? lastSlot : (start_slot + slots_per_thread - 1);
 
+          serverLog(LL_WARNING, "STRATOS GIVING THREAD with id:%d the range[%d:%d]", i, start_slot, end_slot);
           WorkerData *worker_data = (WorkerData *)malloc(sizeof(WorkerData));
           worker_data->thread_id = i;
           worker_data->start_slot = start_slot;
@@ -7320,7 +7321,7 @@ void rdmaDoneBatchCommand(client *c) {
 	if(rdmaDoneBatchThread == NULL){
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
-    ThreadData thread_data1 = {0, 1};
+    ThreadData thread_data1 = {0, 2};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
