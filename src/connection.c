@@ -328,15 +328,24 @@ static int connSocketBlockingConnect(connection *conn, const char *addr, int por
  */
 
 static ssize_t connSocketSyncWrite(connection *conn, char *ptr, ssize_t size, long long timeout) {
-    return syncWrite(conn->fd, ptr, size, timeout);
+    pthread_mutex_lock(&conn->mutex);
+    ssize_t syncWriteRes = syncWrite(conn->fd, ptr, size, timeout);
+    pthread_mutex_unlock(&conn->mutex);
+    return syncWriteRes;
 }
 
 static ssize_t connSocketSyncRead(connection *conn, char *ptr, ssize_t size, long long timeout) {
-    return syncRead(conn->fd, ptr, size, timeout);
+    pthread_mutex_lock(&conn->mutex);
+    ssize_t syncReadRes = syncRead(conn->fd, ptr, size, timeout);
+    pthread_mutex_unlock(&conn->mutex);
+    return syncWriteRes;
 }
 
 static ssize_t connSocketSyncReadLine(connection *conn, char *ptr, ssize_t size, long long timeout) {
-    return syncReadLine(conn->fd, ptr, size, timeout);
+    pthread_mutex_lock(&conn->mutex);
+    ssize_t syncReadLine = syncReadLine(conn->fd, ptr, size, timeout);
+    pthread_mutex_unlock(&conn->mutex);
+    return syncReadLineRes;
 }
 
 static int connSocketGetType(connection *conn) {

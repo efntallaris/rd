@@ -81,6 +81,7 @@ struct connection {
     ConnectionCallbackFunc write_handler;
     ConnectionCallbackFunc read_handler;
     int fd;
+    pthread_mutex_t mutex;
 };
 
 /* The connection module does not deal with listening and accepting sockets,
