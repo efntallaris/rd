@@ -1202,13 +1202,27 @@ int load_slot_from_file(int slot, char *fileName)
 /* * * * * * * * * *  ITERATOR  * * * * * * * * * */
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
 
-//TODO: init iterator in r_allocator_init
-segment_iterator_t *iter = NULL;
+#define MAX_SLOTS 19000
 
+segment_iterator_t *iterators_per_slot[MAX_SLOTS] = {NULL};
+
+//TODO: init iterator in r_allocator_init
+//segment_iterator_t *iter = NULL;
+
+
+
+static segment_iterator_t *get_iterator(int slot) {
+    if (slot < 0 || slot >= MAX_SLOTS) {
+        fprintf(stderr, "%s:%d %s() ERROR! Invalid slot number: %d\n", __FILE__, __LINE__, __func__, slot);
+        exit(-1);
+    }
+    return iterators_per_slot[slot];
+}
 //will appear as public API through the struct field that points to this function
 // return ptr at the segment after its header or NULL if no KV left for the slot
 void * _getNext(int slot, robj **key_meta, robj **value_meta)
 {
+    segment_iterator_t *iter = get_iterator(slot);
     if (iter == NULL) {
         fprintf(stderr, "%s:%d %s() ERROR! iterator has not been initialized\n", __FILE__, __LINE__, __func__);
         exit(-1);
@@ -1256,9 +1270,14 @@ void * _getNext(int slot, robj **key_meta, robj **value_meta)
 segment_iterator_t * create_iterator_for_slot(int slot)
 {
 	// segment_iterator_t *iter = (segment_iterator_t *)malloc(sizeof(segment_iterator_t));
-    if (iter == NULL) {
-        iter = (segment_iterator_t *)malloc(sizeof(segment_iterator_t));
-    }
+//    if (iter == NULL) {
+//        iter = (segment_iterator_t *)malloc(sizeof(segment_iterator_t));
+//    }
+
+  if (iterators_per_slot[slot] == NULL) {
+        iterators_per_slot[slot] = (segment_iterator_t *)malloc(sizeof(segment_iterator_t));
+  }
+  segment_iterator_t *iter = iterators_per_slot[slot];
 	iter->cur_block = r_allocator_get_block_list_for_slot(slot);
 	if (iter->cur_block == NULL) {
 		iter->cur_segment = NULL;
