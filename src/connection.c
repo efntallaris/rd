@@ -338,12 +338,12 @@ static ssize_t connSocketSyncRead(connection *conn, char *ptr, ssize_t size, lon
     pthread_mutex_lock(&conn->mutex);
     ssize_t syncReadRes = syncRead(conn->fd, ptr, size, timeout);
     pthread_mutex_unlock(&conn->mutex);
-    return syncWriteRes;
+    return syncReadRes;
 }
 
 static ssize_t connSocketSyncReadLine(connection *conn, char *ptr, ssize_t size, long long timeout) {
     pthread_mutex_lock(&conn->mutex);
-    ssize_t syncReadLine = syncReadLine(conn->fd, ptr, size, timeout);
+    ssize_t syncReadLineRes = syncReadLine(conn->fd, ptr, size, timeout);
     pthread_mutex_unlock(&conn->mutex);
     return syncReadLineRes;
 }
