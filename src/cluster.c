@@ -6294,8 +6294,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	// int chunk_size = 3000;
 	// int chunk_size = 547;
-	//int chunk_size = 683;
-	int chunk_size = 2732;
+	int chunk_size = 683;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -7258,9 +7257,9 @@ void rdmaDoneBatchCommand(client *c) {
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
     ThreadData thread_data1 = {0, 2};
-   // ThreadData thread_data2 = {1, 2};
+    ThreadData thread_data2 = {1, 2};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
-		//pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, &thread_data2);
+		pthread_create(&rdmaDoneBatchThread2, NULL, rdmaDoneBatchThreadFunc, &thread_data2);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
 	}
