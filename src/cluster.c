@@ -7250,7 +7250,6 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 	}
 }
 
-int threads_completed = 0;  // Shared counter for completed threads
 // Thread code that it is handling the RDMA Migration//
 void rdmaDoneBatchCommand(client *c) {
 	MessageData *data = (MessageData *) zmalloc(sizeof(MessageData));
