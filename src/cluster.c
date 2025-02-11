@@ -7171,14 +7171,13 @@ void *processSlotRange(void *arg) {
         while (iter->getNext(slot, &key_meta, &val_meta) != NULL) {
             key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
             val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
-//
-//            // If key does not exist, add it to the dictionary; otherwise, ignore
-//            if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
-//                dbAddNoCopy(item->c->db, key_meta, val_meta);
-//                total_keys_added++;
-//            } else {
-//                total_keys_exist_and_not_added++;
-//            }
+            // If key does not exist, add it to the dictionary; otherwise, ignore
+            if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
+                dbAddNoCopy(item->c->db, key_meta, val_meta);
+                total_keys_added++;
+            } else {
+                total_keys_exist_and_not_added++;
+            }
         }
         r_allocator_lock_slot_blocks(slot);
     }
