@@ -7138,6 +7138,7 @@ pthread_t rdmaDoneThread;
 pthread_t rdmaDoneBatchThread;
 pthread_t rdmaDoneBatchThread2;
 pthread_mutex_t completed_lock = PTHREAD_MUTEX_INITIALIZER;
+int threads_completed = 0;
 
 
 typedef struct ThreadData {
@@ -7249,7 +7250,7 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 	}
 }
 
-
+int threads_completed = 0;  // Shared counter for completed threads
 // Thread code that it is handling the RDMA Migration//
 void rdmaDoneBatchCommand(client *c) {
 	MessageData *data = (MessageData *) zmalloc(sizeof(MessageData));
