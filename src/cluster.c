@@ -7137,6 +7137,7 @@ void *rdmaDoneSlotsThread(void *arg) {
 pthread_t rdmaDoneThread;
 pthread_t rdmaDoneBatchThread;
 pthread_t rdmaDoneBatchThread2;
+pthread_mutex_t completed_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
 typedef struct ThreadData {
@@ -7176,10 +7177,10 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
                 continue;
         }
 
-        if(j > 16395 && thread_id!=0){
-			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
-          break;
-        }
+//        if(firstSlot > 16395 && thread_id!=0){
+//			    serverLog(LL_WARNING, "STRATOS FIRSTSLOT IS THE SAME AS LASTSLOT");
+//          break;
+//        }
 
 				//serverLog(LL_WARNING, "STRATOS IM HERE");
 				int slotInt = j;
@@ -7209,32 +7210,38 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 
 			if(strcmp("LAST", item->message)==0){
-				connection *conn = item->c->conn;
-				char ip[1000];
-				int port;
+        pthread_mutex_lock(&completed_lock);
+        threads_completed++;
+        if (threads_completed == total_threads) {
+          connection *conn = item->c->conn;
+          char ip[1000];
+          int port;
 
-				char ackRDMADoneReply[1024];
-				connPeerToString(conn, ip, NET_IP_STR_LEN, &port);
-				serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED:%d", total_keys_added, total_keys_exist_and_not_added);
+          char ackRDMADoneReply[1024];
+          connPeerToString(conn, ip, NET_IP_STR_LEN, &port);
+          serverLog(LL_WARNING, "STRATOS TOTAL KEYS ADDED:%d, TOTAL KEYS EXIST AND NOT ADDED:%d", total_keys_added, total_keys_exist_and_not_added);
 
-				// SEND RDMA DONE ACK TO DONOR, TO NOTIFY THAT RDMA DONE THREAD IS DONE
-				clusterNode *nodeDonor = clusterLookupNodeByIP(ip);
-				connection *connDonor = server.tls_cluster ? connCreateTLS() : connCreateSocket();
-				connBlockingConnect(connDonor, nodeDonor->ip, nodeDonor->port, 1000);
-				serverLog(LL_WARNING, "STRATOS Connected to :%s", nodeDonor->ip);
+          // SEND RDMA DONE ACK TO DONOR, TO NOTIFY THAT RDMA DONE THREAD IS DONE
+          clusterNode *nodeDonor = clusterLookupNodeByIP(ip);
+          connection *connDonor = server.tls_cluster ? connCreateTLS() : connCreateSocket();
+          connBlockingConnect(connDonor, nodeDonor->ip, nodeDonor->port, 1000);
+          serverLog(LL_WARNING, "STRATOS Connected to :%s", nodeDonor->ip);
 
-				rio ackRDMADoneCmd;
-				rioInitWithBuffer(&ackRDMADoneCmd, sdsempty());
-				serverAssertWithInfo(item->c,NULL,rioWriteBulkCount(&ackRDMADoneCmd, '*', 2));
-				serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "rdmaDoneAck", 11));
-				serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "OK", 2));
-				sds buf = ackRDMADoneCmd.io.buffer.ptr;
-				int nwritten = connSyncWrite(connDonor, buf, sdslen(buf), 1000);
-				if(nwritten != (int) sdslen(buf)) {
-					serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG IN RDMADONEACK RPC");
-				}
-				connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
-				serverLog(LL_WARNING, "OK HERE");
+          rio ackRDMADoneCmd;
+          rioInitWithBuffer(&ackRDMADoneCmd, sdsempty());
+          serverAssertWithInfo(item->c,NULL,rioWriteBulkCount(&ackRDMADoneCmd, '*', 2));
+          serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "rdmaDoneAck", 11));
+          serverAssertWithInfo(item->c,NULL,rioWriteBulkString(&ackRDMADoneCmd, "OK", 2));
+          sds buf = ackRDMADoneCmd.io.buffer.ptr;
+          int nwritten = connSyncWrite(connDonor, buf, sdslen(buf), 1000);
+          if(nwritten != (int) sdslen(buf)) {
+            serverLog(LL_WARNING, "STRATOS SOMETHING WENT WRONG IN RDMADONEACK RPC");
+          }
+          connSyncReadLine(connDonor, ackRDMADoneReply, sizeof(ackRDMADoneReply), 1000);
+          serverLog(LL_WARNING, "OK HERE");
+          threads_completed = 0;
+        }
+        pthread_mutex_unlock(&completed_lock);
 
 			}
 			i++;
