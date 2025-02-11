@@ -7167,9 +7167,11 @@ void *processSlotRange(void *arg) {
         segment_iterator_t *iter = create_iterator_for_slot(slot);
         robj *key_meta, *val_meta;
 
+      
         while (iter->getNext(slot, &key_meta, &val_meta) != NULL) {
 //            key_meta->ptr = (char *)key_meta + key_meta->data_offset + 8;
 //            val_meta->ptr = (char *)val_meta + val_meta->data_offset + 8;
+              serverLog(LL_WARNING, "STRATOS key is :%s", val_meta->ptr);
 //
 //            // If key does not exist, add it to the dictionary; otherwise, ignore
 //            if (lookupKeyWrite(item->c->db, key_meta) == NULL) {
