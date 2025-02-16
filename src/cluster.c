@@ -6523,7 +6523,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
           serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
           serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
-			    unsigned int firstSlot = atoi(args[start]);
+		      unsigned int firstSlot = atoi(args[start]);
           int first_batch_slot = firstSlot + ((long)sent_batch * SPLIT_SLOTS);
           int last_batch_slot = firstSlot + ((sent_batch +1) * SPLIT_SLOTS) - 1;
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
