@@ -6502,6 +6502,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
 		#define THROTTLE_WINDOW_MS 0.40  // Desired time window in milliseconds
     #define MAX_OUTSTANDING_WR 1000
+
     int sent_batch = 0;
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
@@ -6522,6 +6523,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
           serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
           serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
+			    unsigned int firstSlot = atoi(args[start]);
+			    unsigned int lastSlot = atoi(args[end-1]);
           int first_batch_slot = firstSlot + ((long)sent_batch * SPLIT_SLOTS);
           int last_batch_slot = firstSlot + ((sent_batch +1) * SPLIT_SLOTS) - 1;
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
@@ -6669,6 +6672,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
     //
           int first_batch_slot = firstSlot + ((long)sent_batch * SPLIT_SLOTS);
           int last_batch_slot = firstSlot + ((sent_batch +1) * SPLIT_SLOTS) - 1;
+			    unsigned int firstSlot = atoi(args[start]);
+			    unsigned int lastSlot = atoi(args[end-1]);
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           rio rdmaDoneBatchCmd;
           rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
