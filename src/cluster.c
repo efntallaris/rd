@@ -6669,9 +6669,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		//   sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
 		//   sent_batch++;
     //
+			    unsigned int firstSlot = atoi(args[start]);
           int first_batch_slot = firstSlot + ((long)sent_batch * SPLIT_SLOTS);
           int last_batch_slot = firstSlot + ((sent_batch +1) * SPLIT_SLOTS) - 1;
-			    unsigned int firstSlot = atoi(args[start]);
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           rio rdmaDoneBatchCmd;
           rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
