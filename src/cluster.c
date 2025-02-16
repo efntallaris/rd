@@ -6525,8 +6525,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
           int first_batch_slot = firstSlot + ((long)sent_batch * SPLIT_SLOTS);
           int last_batch_slot = firstSlot + ((sent_batch +1) * SPLIT_SLOTS) - 1;
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
-          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)first_batch_slot);
-          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)last_batch_slot);
+          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)first_batch_slot));
+          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)last_batch_slot));
           serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTR", 4));
 
           buf = rdmaDoneBatchCmd.io.buffer.ptr;
@@ -6675,8 +6675,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
           serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
           serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
-          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)sent_batch * SPLIT_SLOTS));
-          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1));
+          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)first_batch_slot));
+          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)last_batch_slot));
           serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
 
           buf = rdmaDoneBatchCmd.io.buffer.ptr;
