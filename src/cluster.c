@@ -6501,6 +6501,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
 		#define THROTTLE_WINDOW_MS 0.40  // Desired time window in milliseconds
+    //
+    #define MAX_OUTSTANDING_WR 128
     int sent_batch = 0;
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
@@ -6517,6 +6519,32 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		    //struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
         
+        if (i % MAX_OUTSTANDING_WR == 0) {
+          // Wait for completions every MAX_OUTSTANDING_WR posts
+		      struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+
+          serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", sent_batch * SPLIT_SLOTS, (sent_batch +1) * SPLIT_SLOTS - 1);
+          rio rdmaDoneBatchCmd;
+          rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+          serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+          serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+
+          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)sent_batch * SPLIT_SLOTS));
+          serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1));
+          serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTR", 4));
+
+          buf = rdmaDoneBatchCmd.io.buffer.ptr;
+          nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+          if(nwritten != (int) sdslen(buf)) {
+            serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+          }
+          char rdmaDoneBatchCmdReply[1024];
+          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+          sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+          sent_batch++;
+        }
+
         int sent_slots = wait_for_send_completion_with_wc_client_non_blocking(server.rdma_client);
         if(sent_slots > 0){
           
