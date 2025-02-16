@@ -6574,7 +6574,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
         serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
         serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)sent_batch * SPLIT_SLOTS));
-        serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1);
+        serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1));
         serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTR", 4));
 
         buf = rdmaDoneBatchCmd.io.buffer.ptr;
