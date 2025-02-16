@@ -6441,7 +6441,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_data[0].ptr, all_remote_data[0].rkey);
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_buffers-1, (void *)all_remote_data[total_number_of_remote_buffers-1].ptr, all_remote_data[total_number_of_remote_buffers-1].rkey);
-		int SPLIT_SLOTS = 400;
+		int SPLIT_SLOTS = 10;
 
 		gettimeofday(&tv_register_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS START PREPARING BUFFERS SLOT");
@@ -6501,7 +6501,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
 		#define THROTTLE_WINDOW_MS 0.40  // Desired time window in milliseconds
-    #define MAX_OUTSTANDING_WR 800
+    #define MAX_OUTSTANDING_WR 1000
     int sent_batch = 0;
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
@@ -6519,7 +6519,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    //struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
         
         if (i % MAX_OUTSTANDING_WR == 0) {
-          // Wait for completions every MAX_OUTSTANDING_WR posts
+          serverLog(LL_WARNING, "SENT SLOT %d and waiting at %d", i, MAX_OUTSTANDING_WR);
 		      struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", sent_batch * SPLIT_SLOTS, (sent_batch +1) * SPLIT_SLOTS - 1);
