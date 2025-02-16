@@ -6519,6 +6519,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    //struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
         
         if (i % MAX_OUTSTANDING_WR == 0 && i!=0) {
+
           serverLog(LL_WARNING, "SENT SLOT %d and waiting at %d", i, MAX_OUTSTANDING_WR);
 		      struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
 
