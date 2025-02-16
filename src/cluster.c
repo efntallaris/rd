@@ -6294,7 +6294,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 	// int chunk_size = 3000;
 	// int chunk_size = 547;
-	int chunk_size = 683;
+	//int chunk_size = 683;
+	int chunk_size = 2732;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -6472,13 +6473,13 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs[current_buffer_index].next = NULL;
 				wrs[current_buffer_index].num_sge = 1;
 				wrs[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
-				// if(intSlot % SPLIT_SLOTS == 0){
-				// 	// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
-				// 	should_wait_for_block[current_buffer_index] = 1;
-				// 	wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+				if(intSlot % SPLIT_SLOTS == 0){
+					// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+					should_wait_for_block[current_buffer_index] = 1;
+					wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 
-				// }
-				wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
+				}
+				//wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 				wrs[current_buffer_index].wr.rdma.remote_addr = all_remote_data[current_buffer_index].ptr;
 				wrs[current_buffer_index].wr.rdma.rkey = all_remote_data[current_buffer_index].rkey;
 				current_buffer_index++;
@@ -6500,6 +6501,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, total_number_of_remote_buffers);
 		#define THROTTLE_WINDOW_MS 0.40  // Desired time window in milliseconds
+    int sent_batch = 0;
 		for (int i = 0; i < total_number_of_remote_buffers; i++) {
 		    struct ibv_send_wr bad_wr;
 		    struct timespec start, end;
@@ -6511,9 +6513,39 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    if (ibv_post_send(rdma_buffers[0]->id->qp, &(wrs[i]), &bad_wr) != 0) {
 		        serverLog(LL_WARNING, "IBV_POST_SEND ERROR: %d, %s", i, strerror(errno));
 		    }
-			
+		
 
-		    struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+		    //struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+        
+        int sent_slots = wait_for_send_completion_with_wc_client_non_blocking(server.rdma_client);
+        if(sent_slots > 0){
+          
+          for (int k=0;k<sent_slots;k++) {
+              //sent the rpc
+
+              serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", sent_batch * SPLIT_SLOTS, (sent_batch +1) * SPLIT_SLOTS - 1);
+              rio rdmaDoneBatchCmd;
+              rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+              serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+              serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+
+              serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)sent_batch * SPLIT_SLOTS));
+              serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1);
+              serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTR", 4));
+
+              buf = rdmaDoneBatchCmd.io.buffer.ptr;
+              nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+              if(nwritten != (int) sdslen(buf)) {
+                serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+              }
+              char rdmaDoneBatchCmdReply[1024];
+              connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+              connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+              sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+              sent_batch++;
+          }
+
+        }
 		        
 		    // Record the end time (after completion)
 		    clock_gettime(CLOCK_MONOTONIC, &end);
@@ -6529,27 +6561,75 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		gettimeofday(&tv_transfer_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS SENT ALL BUFFERS");
 		gettimeofday(&tv_backpatching_start, NULL);
-		prevSlot = atoi(args[start]);
-		currentSlot = atoi(args[end-1]);
+		int first_slot = atoi(args[start]);
+		int last_slot = atoi(args[end-1]);
+    int total_slots = last_slot - first_slot;
+    int total_batches = total_slots / SPLIT_SLOTS;
+    int remaining_batches = total_batches - sent_batch;
+    for(int k=0; k<remaining_batches-1;k++){
+        struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+        rio rdmaDoneBatchCmd;
+        rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+        serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+        serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
 
-		rio rdmaDoneBatchCmd;
-		rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
-		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
-		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+        serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)sent_batch * SPLIT_SLOTS));
+        serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1);
+        serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTR", 4));
 
-		serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
-		serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
-		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+        buf = rdmaDoneBatchCmd.io.buffer.ptr;
+        nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+        if(nwritten != (int) sdslen(buf)) {
+          serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+        }
+        char rdmaDoneBatchCmdReply[1024];
+        connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+        connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+        sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+        sent_batch++;
 
-		buf = rdmaDoneBatchCmd.io.buffer.ptr;
-		nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
-		if(nwritten != (int) sdslen(buf)) {
-			serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
-		}
-		char rdmaDoneBatchCmdReply[1024];
-		connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-		connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-		sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+    }
+    rio rdmaDoneBatchCmd;
+    rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+    serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+    serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+
+    serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)sent_batch * SPLIT_SLOTS));
+    serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)((sent_batch +1) * SPLIT_SLOTS) - 1);
+    serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+
+    buf = rdmaDoneBatchCmd.io.buffer.ptr;
+    nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+    if(nwritten != (int) sdslen(buf)) {
+      serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+    }
+    char rdmaDoneBatchCmdReply[1024];
+    connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+    connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+    sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+    sent_batch++;
+
+//		prevSlot = atoi(args[start]);
+//		currentSlot = atoi(args[end-1]);
+
+//		rio rdmaDoneBatchCmd;
+//		rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
+//		serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
+//		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd,"rdmaDoneBatch", 13));
+//
+//		serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)prevSlot));
+//		serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)currentSlot));
+//		serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "LAST", 4));
+//
+//		buf = rdmaDoneBatchCmd.io.buffer.ptr;
+//		nwritten = connSyncWrite(cs->conn, buf, sdslen(buf), 1000000000);
+//		if(nwritten != (int) sdslen(buf)) {
+//			serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
+//		}
+//		char rdmaDoneBatchCmdReply[1024];
+//		connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+//		connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+//		sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
 
 		while(1) {
 			pthread_mutex_lock(&server.generic_migration_mutex);
