@@ -6612,7 +6612,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		
 		    // If the elapsed time is less than the throttle window, sleep for the remaining time
 		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
-		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		        //usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
 		    }
 		}
 
