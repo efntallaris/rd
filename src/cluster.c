@@ -6517,7 +6517,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		    }
 		
         if(should_wait_for_block[i]){
+          serverLog(LL_WARNING, "STRATOS WAITING AT %d", i);
 		      struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
+          serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           rio rdmaDoneBatchCmd;
           rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
           serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
@@ -6525,7 +6527,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
           unsigned int first_batch_slot = prevSlot + (sent_batch * SPLIT_SLOTS);
           unsigned int last_batch_slot = prevSlot + ((sent_batch+1) * SPLIT_SLOTS) - 1;
-          serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)first_batch_slot));
           serverAssertWithInfo(c,NULL,rioWriteBulkLongLong(&rdmaDoneBatchCmd, (long)last_batch_slot));
           serverAssertWithInfo(c,NULL,rioWriteBulkString(&rdmaDoneBatchCmd, "INTR", 4));
@@ -6539,6 +6540,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
           connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
           connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
           sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+          serverLog(LL_WARNING, "STRATOS SENT RPC FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           sent_batch++;
 
         }
