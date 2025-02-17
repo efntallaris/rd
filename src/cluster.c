@@ -6539,10 +6539,10 @@ void *migrateRDMASlotsCommandThread(void *arg) {
           if(nwritten != (int) sdslen(buf)) {
             serverLog(LL_WARNING, "SOCKET WRITE prepareBlocks CMD");
           }
-          char rdmaDoneBatchCmdReply[1024];
-          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
-          sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
+//          char rdmaDoneBatchCmdReply[1024];
+//          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+//          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
+//          sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
           serverLog(LL_WARNING, "STRATOS SENT RPC FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           sent_batch++;
 
