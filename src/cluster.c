@@ -7215,28 +7215,28 @@ void *rdmaDoneBatchThreadFunc(void *arg) {
 
 			firstSlot = (int)strtol(item->first_slot, NULL, 10);
 			lastSlot = (int)strtol(item->last_slot, NULL, 10);
-      int slots_per_thread = (lastSlot - firstSlot + 1) / total_threads;
-      pthread_t workers[total_threads];
+		      	int slots_per_thread = (lastSlot - firstSlot + 1) / total_threads;
+		      	pthread_t workers[total_threads];
 
       
-      for (int i = 0; i < total_threads; i++) {
-          int start_slot = firstSlot + i * slots_per_thread;
-          int end_slot = (i == total_threads - 1) ? lastSlot : (start_slot + slots_per_thread - 1);
-
-          serverLog(LL_WARNING, "STRATOS GIVING THREAD with id:%d the range[%d:%d]", i, start_slot, end_slot);
-          WorkerData *worker_data = (WorkerData *)malloc(sizeof(WorkerData));
-          worker_data->thread_id = i;
-          worker_data->start_slot = start_slot;
-          worker_data->end_slot = end_slot;
-          worker_data->item = item;
-
-          pthread_create(&workers[i], NULL, processSlotRange, (void *)worker_data);
-      }
-
-      // Wait for all worker threads to finish
-      for (int i = 0; i < total_threads; i++) {
-          pthread_join(workers[i], NULL);
-      }
+		      for (int i = 0; i < total_threads; i++) {
+		          int start_slot = firstSlot + i * slots_per_thread;
+		          int end_slot = (i == total_threads - 1) ? lastSlot : (start_slot + slots_per_thread - 1);
+		
+		          serverLog(LL_WARNING, "STRATOS GIVING THREAD with id:%d the range[%d:%d]", i, start_slot, end_slot);
+		          WorkerData *worker_data = (WorkerData *)malloc(sizeof(WorkerData));
+		          worker_data->thread_id = i;
+		          worker_data->start_slot = start_slot;
+		          worker_data->end_slot = end_slot;
+		          worker_data->item = item;
+		
+		          pthread_create(&workers[i], NULL, processSlotRange, (void *)worker_data);
+		      }
+		
+		      // Wait for all worker threads to finish
+		      for (int i = 0; i < total_threads; i++) {
+		          pthread_join(workers[i], NULL);
+		      }
 // 			for(long unsigned int j = firstSlot; j <= lastSlot ; j++) {
 //
 // //        if (j % total_threads != thread_id) {
@@ -7322,7 +7322,7 @@ void rdmaDoneBatchCommand(client *c) {
 	if(rdmaDoneBatchThread == NULL){
 		serverLog(LL_WARNING, "STRATOS INITIALIZING LOCK FREE QUEUE");
 		initializeQueue(&queue);
-    ThreadData thread_data1 = {0, 4};
+    		ThreadData thread_data1 = {0, 2};
 		pthread_create(&rdmaDoneBatchThread, NULL, rdmaDoneBatchThreadFunc, &thread_data1);
 
 		serverLog(LL_WARNING, "STRATOS LOCK FREE QUEUE INITIALIZED");
