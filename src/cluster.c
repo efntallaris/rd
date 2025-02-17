@@ -6544,6 +6544,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 //          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
 //          sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
           serverLog(LL_WARNING, "STRATOS SENT RPC FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
+          usleep(1000);
           sent_batch++;
 
         }
