@@ -6295,7 +6295,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	// int chunk_size = 3000;
 	// int chunk_size = 547;
 	//int chunk_size = 683;
-	int chunk_size = 2732;
+	int chunk_size = 683;
 	for(int start=7; start<number_of_arguments; start +=chunk_size){
 		// TIMERS START
 		struct timeval tv_register_duration_start, tv_register_duration_end;
@@ -6544,7 +6544,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 //          connSyncReadLine(cs->conn, rdmaDoneBatchCmdReply, sizeof(rdmaDoneBatchCmdReply), 10000);
 //          sdsfree(rdmaDoneBatchCmd.io.buffer.ptr);
           serverLog(LL_WARNING, "STRATOS SENT RPC FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
-          usleep(1000);
+          //usleep(1000);
           sent_batch++;
 
         }
