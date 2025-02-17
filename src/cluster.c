@@ -6516,7 +6516,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		        serverLog(LL_WARNING, "IBV_POST_SEND ERROR: %d, %s", i, strerror(errno));
 		    }
 		
-        if(should_wait_for_block[i]){
+        if(should_wait_for_block[i] == 1){
           serverLog(LL_WARNING, "STRATOS WAITING AT %d", i);
 		      struct ibv_wc *_completion = server.rdma_client->buffer_ops.wait_for_send_completion_with_wc(server.rdma_client);
           unsigned int first_batch_slot = prevSlot + (sent_batch * SPLIT_SLOTS);
