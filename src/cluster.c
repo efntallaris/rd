@@ -6612,7 +6612,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		
 		    // If the elapsed time is less than the throttle window, sleep for the remaining time
 		    if (elapsed_ms < THROTTLE_WINDOW_MS) {
-		        //usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
+		        usleep((THROTTLE_WINDOW_MS - elapsed_ms) * 1000);  // Convert milliseconds to microseconds for usleep
 		    }
 		}
 
@@ -6670,7 +6670,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
     //
           unsigned int first_batch_slot = prevSlot + (sent_batch * SPLIT_SLOTS);
           unsigned int last_batch_slot = prevSlot + ((sent_batch+1) * SPLIT_SLOTS) - 1;
-          serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
+          serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION 2 FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           rio rdmaDoneBatchCmd;
           rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
           serverAssertWithInfo(c,NULL,rioWriteBulkCount(&rdmaDoneBatchCmd, '*', 4));
