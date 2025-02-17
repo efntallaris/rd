@@ -6450,6 +6450,8 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		struct ibv_sge sges[total_number_of_remote_buffers];
 		struct ibv_send_wr wrs[total_number_of_remote_buffers];
 		int should_wait_for_block[total_number_of_remote_buffers];
+    int slots_marked_as_signaled[16385] = { 0 };
+    
 		
 		int current_buffer_index = 0;
 		for(int j=start; j<end; j++) {
@@ -6473,8 +6475,9 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs[current_buffer_index].next = NULL;
 				wrs[current_buffer_index].num_sge = 1;
 				wrs[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
-				if(intSlot % SPLIT_SLOTS == 0){
+				if(intSlot % SPLIT_SLOTS == 0 && slots_marked_as_signaled[intSlot] != 1){
 					// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+          slots_marked_as_signaled[intSlot] = 1;
 					should_wait_for_block[current_buffer_index] = 1;
 					wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
 
