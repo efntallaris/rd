@@ -6476,7 +6476,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 				wrs[current_buffer_index].num_sge = 1;
 				wrs[current_buffer_index].opcode = IBV_WR_RDMA_WRITE;
 				if(intSlot % SPLIT_SLOTS == 0 && slots_marked_as_signaled[intSlot] != 1){
-					// serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON %d",  intSlot);
+					serverLog(LL_WARNING, "STRATOS SPLITTING SLOT ON Block %d",  current_buffer_index);
           slots_marked_as_signaled[intSlot] = 1;
 					should_wait_for_block[current_buffer_index] = 1;
 					wrs[current_buffer_index].send_flags = IBV_SEND_SIGNALED;
