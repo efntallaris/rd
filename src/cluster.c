@@ -6500,6 +6500,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		unsigned int prevSlot = atoi(args[start]);
 		unsigned int currentSlot = atoi(args[start]);
+		unsigned int lastSlot = atoi(args[end-1]);
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, firstSlot:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, prevSlot, total_number_of_remote_buffers);
@@ -6675,7 +6676,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 		//   sent_batch++;
     //
           unsigned int first_batch_slot = prevSlot + (sent_batch * SPLIT_SLOTS);
-          unsigned int last_batch_slot = prevSlot + ((sent_batch+1) * SPLIT_SLOTS) - 1;
+          unsigned int last_batch_slot = lastSlot;
           serverLog(LL_WARNING, "STRATOS RECEIVED NOTIFICATION 2 FOR RANGE[%d, %d], and sending rpc", first_batch_slot, last_batch_slot);
           rio rdmaDoneBatchCmd;
           rioInitWithBuffer(&rdmaDoneBatchCmd,sdsempty());
