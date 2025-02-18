@@ -21,7 +21,7 @@ YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
 
 #EXPERIMENT_NAME="4_GROUPS_4_threads_backpatching_2"
-EXPERIMENT_NAME="experimental"
+EXPERIMENT_NAME="experimental_4_threads_g1"
 
 #	MASTER NODES 	#
 declare -A redis_master_instances
