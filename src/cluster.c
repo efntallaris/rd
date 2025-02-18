@@ -6500,7 +6500,6 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		unsigned int prevSlot = atoi(args[start]);
 		unsigned int currentSlot = atoi(args[start]);
-		unsigned int lastSlot = atoi(args[end-1]);
 
 		int awaiting_acks = ((end - start)/SPLIT_SLOTS) - 1 > 0 ? ((end - start)/SPLIT_SLOTS) - 1 : 0 ;
 		serverLog(LL_WARNING, "STRATOS end-start:%d, SPLIT_SLOTS:%d, firstSlot:%d, REMOTE_BUFFERS:%d", end-start, SPLIT_SLOTS, prevSlot, total_number_of_remote_buffers);
