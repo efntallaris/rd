@@ -6442,7 +6442,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE FIRST BUFFER POINTER AT %d is %p - key:%d", 0, (void *) all_remote_data[0].ptr, all_remote_data[0].rkey);
 		serverLog(LL_WARNING, "STRATOS RECIP SIDE LAST BUFFER POINTER AT %d is %p - key:%d", total_number_of_remote_buffers-1, (void *)all_remote_data[total_number_of_remote_buffers-1].ptr, all_remote_data[total_number_of_remote_buffers-1].rkey);
-		int SPLIT_SLOTS = 683;
+		int SPLIT_SLOTS = 1;
 
 		gettimeofday(&tv_register_duration_end, NULL);
 		serverLog(LL_WARNING, "STRATOS START PREPARING BUFFERS SLOT");
