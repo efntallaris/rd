@@ -1642,7 +1642,6 @@ robj *streamTypeLookupWriteOrCreate(client *c, robj *key, int no_create) {
         }
         o = createStreamObject();
         dbAdd(c->db,key,o);
-	serverLog(LL_WARNING, "STRATOS CREATED STREAM OBJECT");
     }
     return o;
 }
@@ -2415,7 +2414,6 @@ NULL
             serverAssert(mkstream);
             o = createStreamObject();
             dbAdd(c->db,c->argv[2],o);
-	    serverLog(LL_WARNING, "STRATOS MKSTREAM");
             s = o->ptr;
             signalModifiedKey(c,c->db,c->argv[2]);
         }

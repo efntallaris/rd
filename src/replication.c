@@ -719,8 +719,7 @@ int startBgsaveForReplication(int mincapa) {
 void syncCommand(client *c) {
     /* ignore SYNC if already slave or in monitor mode */
     if (c->flags & CLIENT_SLAVE) return;
-    //TODO REMOVE IF ANYTHING GOES WRONG
-    return;
+
     /* Check if this is a failover request to a replica with the same replid and
      * become a master if so. */
     if (c->argc > 3 && !strcasecmp(c->argv[0]->ptr,"psync") && 

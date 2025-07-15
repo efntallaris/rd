@@ -452,7 +452,6 @@ robj *hashTypeLookupWriteOrCreate(client *c, robj *key) {
     if (o == NULL) {
         o = createHashObject();
         dbAdd(c->db,key,o);
-	serverLog(LL_WARNING, "STRATOS ADDING NEW HASH");
     }
     return o;
 }

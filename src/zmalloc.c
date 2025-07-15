@@ -87,7 +87,7 @@ static redisAtomic size_t used_memory = 0;
 
 static void zmalloc_default_oom(size_t size) {
     fprintf(stderr, "zmalloc: Out of memory trying to allocate %zu bytes\n",
-            size);
+        size);
     fflush(stderr);
     abort();
 }
@@ -114,12 +114,10 @@ void *ztrymalloc_usable(size_t size, size_t *usable) {
 #endif
 }
 
-
 /* Allocate memory or panic */
 void *zmalloc(size_t size) {
     void *ptr = ztrymalloc_usable(size, NULL);
     if (!ptr) zmalloc_oom_handler(size);
-
     return ptr;
 }
 
@@ -457,7 +455,7 @@ size_t zmalloc_get_rss(void) {
     if ((fd = open(filename,O_RDONLY)) == -1) return 0;
     if (ioctl(fd, PIOCPSINFO, &info) == -1) {
         close(fd);
-        return 0;
+	return 0;
     }
 
     close(fd);
@@ -499,7 +497,7 @@ int zmalloc_get_allocator_info(size_t *allocated,
 }
 
 void set_jemalloc_bg_thread(int enable) {
-    /* let jemalloc do purging asynchronously, required when there's no traffic
+    /* let jemalloc do purging asynchronously, required when there's no traffic 
      * after flushdb */
     char val = !!enable;
     je_mallctl("background_thread", NULL, 0, &val, 1);

@@ -559,7 +559,6 @@ int moduleCreateEmptyKey(RedisModuleKey *key, int type) {
     default: return REDISMODULE_ERR;
     }
     dbAdd(key->db,key->key,obj);
-    serverLog(LL_WARNING, "STRATOS EMPTY KEY CREATED");
     key->value = obj;
     moduleInitKeyTypeSpecific(key);
     return REDISMODULE_OK;

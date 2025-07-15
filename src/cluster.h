@@ -30,7 +30,6 @@
 #define CLUSTER_REDIR_DOWN_STATE 5    /* -CLUSTERDOWN, global state. */
 #define CLUSTER_REDIR_DOWN_UNBOUND 6  /* -CLUSTERDOWN, unbound slot. */
 #define CLUSTER_REDIR_DOWN_RO_STATE 7 /* -CLUSTERDOWN, allow reads. */
-#define CLUSTER_REDIR_TRYAGAIN 8 /* -TRYAGAIN, key is migrating try again. */
 
 struct clusterNode;
 
@@ -106,21 +105,6 @@ typedef struct clusterLink {
 #define CLUSTER_MODULE_FLAG_NONE 0
 #define CLUSTER_MODULE_FLAG_NO_FAILOVER (1<<1)
 #define CLUSTER_MODULE_FLAG_NO_REDIRECTION (1<<2)
-
-
-
-/* RDMA CACHED CONNECTION */
-typedef struct rdmaCachedConnection {
-    struct rdma_server_info *s;
-
-    client *c;
-
-    redisDb *db;
-    rdmaRemoteBufferInfo buffers[16384];
-    int number_of_assigned_slots;
-    struct ibv_mr *memory_regions[16384];
-    
-} rdmaCachedConnection;
 
 /* This structure represent elements of node->fail_reports. */
 typedef struct clusterNodeFailReport {

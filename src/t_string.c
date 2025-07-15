@@ -28,7 +28,6 @@
  */
 
 #include "server.h"
-#include "cluster.h"
 #include <math.h> /* isnan(), isinf() */
 
 /* Forward declarations */
@@ -76,13 +75,11 @@ static int checkStringLength(client *c, long long size) {
 void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
     long long milliseconds = 0, when = 0; /* initialized to avoid any harmness warning */
 
-    //serverLog(LL_WARNING, "STRATOS SETTING KEY %s", key->ptr);
     if (expire) {
         if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != C_OK)
             return;
         if (milliseconds <= 0 || (unit == UNIT_SECONDS && milliseconds > LLONG_MAX / 1000)) {
             /* Negative value provided or multiplication is gonna overflow. */
-	    serverLog(LL_WARNING, "STRATOS IM HERE3");
             addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
             return;
         }
@@ -92,27 +89,23 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
             when += mstime();
         if (when <= 0) {
             /* Overflow detected. */
-	    serverLog(LL_WARNING, "STRATOS IM HERE 2");
             addReplyErrorFormat(c, "invalid expire time in %s", c->cmd->name);
             return;
         }
     }
 
     if ((flags & OBJ_SET_NX && lookupKeyWrite(c->db,key) != NULL) ||
-            (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
+        (flags & OBJ_SET_XX && lookupKeyWrite(c->db,key) == NULL))
     {
-	serverLog(LL_WARNING, "STRATOS IM HERE");
         addReply(c, abort_reply ? abort_reply : shared.null[c->resp]);
         return;
     }
 
     if (flags & OBJ_SET_GET) {
-        if (getGenericCommand(c) == C_ERR) {
-            return;
-        }
+        if (getGenericCommand(c) == C_ERR) return;
     }
 
-    genericSetKey(c, c->db, key, val, flags & OBJ_KEEPTTL,1);
+    genericSetKey(c,c->db,key, val,flags & OBJ_KEEPTTL,1);
     server.dirty++;
     notifyKeyspaceEvent(NOTIFY_STRING,"set",key,c->db->id);
     if (expire) {
@@ -146,9 +139,9 @@ void setGenericCommand(client *c, int flags, robj *key, robj *val, robj *expire,
             char *a = c->argv[j]->ptr;
             /* Skip GET which may be repeated multiple times. */
             if (j >= 3 &&
-                    (a[0] == 'g' || a[0] == 'G') &&
-                    (a[1] == 'e' || a[1] == 'E') &&
-                    (a[2] == 't' || a[2] == 'T') && a[3] == '\0')
+                (a[0] == 'g' || a[0] == 'G') &&
+                (a[1] == 'e' || a[1] == 'E') &&
+                (a[2] == 't' || a[2] == 'T') && a[3] == '\0')
                 continue;
             argv[argc++] = c->argv[j];
             incrRefCount(c->argv[j]);
@@ -183,8 +176,8 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
         robj *next = (j == c->argc-1) ? NULL : c->argv[j+1];
 
         if ((opt[0] == 'n' || opt[0] == 'N') &&
-                (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
-                !(*flags & OBJ_SET_XX) && !(*flags & OBJ_SET_GET) && (command_type == COMMAND_SET))
+            (opt[1] == 'x' || opt[1] == 'X') && opt[2] == '\0' &&
+            !(*flags & OBJ_SET_XX) && !(*flags & OBJ_SET_GET) && (command_type == COMMAND_SET))
         {
             *flags |= OBJ_SET_NX;
         } else if ((opt[0] == 'x' || opt[0] == 'X') &&
@@ -199,14 +192,14 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
         {
             *flags |= OBJ_SET_GET;
         } else if (!strcasecmp(opt, "KEEPTTL") && !(*flags & OBJ_PERSIST) &&
-                   !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
-                   !(*flags & OBJ_PX) && !(*flags & OBJ_PXAT) && (command_type == COMMAND_SET))
+            !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
+            !(*flags & OBJ_PX) && !(*flags & OBJ_PXAT) && (command_type == COMMAND_SET))
         {
             *flags |= OBJ_KEEPTTL;
         } else if (!strcasecmp(opt,"PERSIST") && (command_type == COMMAND_GET) &&
-                   !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
-                   !(*flags & OBJ_PX) && !(*flags & OBJ_PXAT) &&
-                   !(*flags & OBJ_KEEPTTL))
+               !(*flags & OBJ_EX) && !(*flags & OBJ_EXAT) &&
+               !(*flags & OBJ_PX) && !(*flags & OBJ_PXAT) &&
+               !(*flags & OBJ_KEEPTTL))
         {
             *flags |= OBJ_PERSIST;
         } else if ((opt[0] == 'e' || opt[0] == 'E') &&
@@ -262,7 +255,6 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
 /* SET key value [NX] [XX] [KEEPTTL] [GET] [EX <seconds>] [PX <milliseconds>]
  *     [EXAT <seconds-timestamp>][PXAT <milliseconds-timestamp>] */
 void setCommand(client *c) {
-    //serverLog(LL_WARNING, "STRATOS SET COMMAND");
     robj *expire = NULL;
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
@@ -293,23 +285,8 @@ void psetexCommand(client *c) {
 int getGenericCommand(client *c) {
     robj *o;
 
-    //serverLog(LL_WARNING, "STRATOS GETTING KEY %s", c->argv[1]);
-
-	if(strcmp(server.cluster->myself->ip, "10.10.1.4") == 0){
-        	// serverLog(LL_WARNING, "STRATOS READING FROM RECIP");
-		// 	if(hashSlot >= 5461 && hashSlot <= 6661){
-		// 		serverLog(LL_WARNING, "STRATOS 5461 - 6661");
-		// 	}
-		// if(hashSlot >= 0 && hashSlot <= 1363){
-		// 	 serverLog(LL_WARNING, "STRATOS 0 - 1363");
-		// }
-		// 	if(hashSlot >= 10923 && hashSlot <= 12123){
-		// 		serverLog(LL_WARNING, "STRATOS 10923 - 12123");
-		// 	}
-	}
-    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL) {
+    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
         return C_OK;
-    }
 
     if (checkType(c,o,OBJ_STRING)) {
         return C_ERR;
@@ -448,7 +425,6 @@ void setrangeCommand(client *c) {
     robj *o;
     long offset;
     sds value = c->argv[3]->ptr;
-    serverLog(LL_WARNING, "STRATOS IN SET RANGE");
 
     if (getLongFromObjectOrReply(c,c->argv[2],&offset,NULL) != C_OK)
         return;
@@ -472,7 +448,6 @@ void setrangeCommand(client *c) {
 
         o = createObject(OBJ_STRING,sdsnewlen(NULL, offset+sdslen(value)));
         dbAdd(c->db,c->argv[1],o);
-        serverLog(LL_WARNING, "STRATOS NEW STRING");
     } else {
         size_t olen;
 
@@ -500,7 +475,7 @@ void setrangeCommand(client *c) {
         memcpy((char*)o->ptr+offset,value,sdslen(value));
         signalModifiedKey(c,c->db,c->argv[1]);
         notifyKeyspaceEvent(NOTIFY_STRING,
-                            "setrange",c->argv[1],c->db->id);
+            "setrange",c->argv[1],c->db->id);
         server.dirty++;
     }
     addReplyLongLong(c,sdslen(o->ptr));
@@ -517,7 +492,7 @@ void getrangeCommand(client *c) {
     if (getLongLongFromObjectOrReply(c,c->argv[3],&end,NULL) != C_OK)
         return;
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.emptybulk)) == NULL ||
-            checkType(c,o,OBJ_STRING)) return;
+        checkType(c,o,OBJ_STRING)) return;
 
     if (o->encoding == OBJ_ENCODING_INT) {
         str = llbuf;
@@ -611,15 +586,15 @@ void incrDecrCommand(client *c, long long incr) {
 
     oldvalue = value;
     if ((incr < 0 && oldvalue < 0 && incr < (LLONG_MIN-oldvalue)) ||
-            (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))) {
+        (incr > 0 && oldvalue > 0 && incr > (LLONG_MAX-oldvalue))) {
         addReplyError(c,"increment or decrement would overflow");
         return;
     }
     value += incr;
 
     if (o && o->refcount == 1 && o->encoding == OBJ_ENCODING_INT &&
-            (value < 0 || value >= OBJ_SHARED_INTEGERS) &&
-            value >= LONG_MIN && value <= LONG_MAX)
+        (value < 0 || value >= OBJ_SHARED_INTEGERS) &&
+        value >= LONG_MIN && value <= LONG_MAX)
     {
         new = o;
         o->ptr = (void*)((long)value);
@@ -629,7 +604,6 @@ void incrDecrCommand(client *c, long long incr) {
             dbOverwrite(c->db,c->argv[1],new);
         } else {
             dbAdd(c->db,c->argv[1],new);
-            serverLog(LL_WARNING, "STRATOS NEW STRING");
         }
     }
     signalModifiedKey(c,c->db,c->argv[1]);
@@ -669,7 +643,7 @@ void incrbyfloatCommand(client *c) {
     o = lookupKeyWrite(c->db,c->argv[1]);
     if (checkType(c,o,OBJ_STRING)) return;
     if (getLongDoubleFromObjectOrReply(c,o,&value,NULL) != C_OK ||
-            getLongDoubleFromObjectOrReply(c,c->argv[2],&incr,NULL) != C_OK)
+        getLongDoubleFromObjectOrReply(c,c->argv[2],&incr,NULL) != C_OK)
         return;
 
     value += incr;
@@ -682,8 +656,6 @@ void incrbyfloatCommand(client *c) {
         dbOverwrite(c->db,c->argv[1],new);
     else
         dbAdd(c->db,c->argv[1],new);
-    serverLog(LL_WARNING, "STRATOS NEW STRING");
-
     signalModifiedKey(c,c->db,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_STRING,"incrbyfloat",c->argv[1],c->db->id);
     server.dirty++;
@@ -706,12 +678,10 @@ void appendCommand(client *c) {
         /* Create the key */
         c->argv[2] = tryObjectEncoding(c->argv[2]);
         dbAdd(c->db,c->argv[1],c->argv[2]);
-        serverLog(LL_WARNING, "STRATOS NEW STRING");
         incrRefCount(c->argv[2]);
         totlen = stringObjectLen(c->argv[2]);
     } else {
         /* Key exists, check type */
-        serverLog(LL_WARNING, "STRATOS NEW STRING");
         if (checkType(c,o,OBJ_STRING))
             return;
 
@@ -735,7 +705,7 @@ void appendCommand(client *c) {
 void strlenCommand(client *c) {
     robj *o;
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
-            checkType(c,o,OBJ_STRING)) return;
+        checkType(c,o,OBJ_STRING)) return;
     addReplyLongLong(c,stringObjectLen(o));
 }
 
@@ -775,7 +745,7 @@ void stralgoLCS(client *c) {
             withmatchlen = 1;
         } else if (!strcasecmp(opt,"MINMATCHLEN") && moreargs) {
             if (getLongLongFromObjectOrReply(c,c->argv[j+1],&minmatchlen,NULL)
-                    != C_OK) goto cleanup;
+                != C_OK) goto cleanup;
             if (minmatchlen < 0) minmatchlen = 0;
             j++;
         } else if (!strcasecmp(opt,"STRINGS") && moreargs > 1) {
@@ -794,10 +764,10 @@ void stralgoLCS(client *c) {
             obja = lookupKeyRead(c->db,c->argv[j+1]);
             objb = lookupKeyRead(c->db,c->argv[j+2]);
             if ((obja && obja->type != OBJ_STRING) ||
-                    (objb && objb->type != OBJ_STRING))
+                (objb && objb->type != OBJ_STRING))
             {
                 addReplyError(c,
-                              "The specified keys must contain string values");
+                    "The specified keys must contain string values");
                 /* Don't cleanup the objects, we need to do that
                  * only after calling getDecodedObject(). */
                 obja = NULL;
@@ -818,12 +788,12 @@ void stralgoLCS(client *c) {
     /* Complain if the user passed ambiguous parameters. */
     if (a == NULL) {
         addReplyError(c,"Please specify two strings: "
-                      "STRINGS or KEYS options are mandatory");
+                        "STRINGS or KEYS options are mandatory");
         goto cleanup;
     } else if (getlen && getidx) {
         addReplyError(c,
-                      "If you want both the length and indexes, please "
-                      "just use IDX.");
+            "If you want both the length and indexes, please "
+            "just use IDX.");
         goto cleanup;
     }
 
@@ -841,7 +811,7 @@ void stralgoLCS(client *c) {
     /* Setup an uint32_t array to store at LCS[i,j] the length of the
      * LCS A0..i-1, B0..j-1. Note that we have a linear array here, so
      * we index it as LCS[j+(blen+1)*j] */
-#define LCS(A,B) lcs[(B)+((A)*(blen+1))]
+    #define LCS(A,B) lcs[(B)+((A)*(blen+1))]
 
     /* Try to allocate the LCS table, and abort on overflow or insufficient memory. */
     unsigned long long lcssize = (unsigned long long)(alen+1)*(blen+1); /* Can't overflow due to the size limits above. */
@@ -927,9 +897,7 @@ void stralgoLCS(client *c) {
             /* Emit the range if we matched with the first byte of
              * one of the two strings. We'll exit the loop ASAP. */
             if (arange_start == 0 || brange_start == 0) emit_range = 1;
-            idx--;
-            i--;
-            j--;
+            idx--; i--; j--;
         } else {
             /* Otherwise reduce i and j depending on the largest
              * LCS between, to understand what direction we need to go. */
