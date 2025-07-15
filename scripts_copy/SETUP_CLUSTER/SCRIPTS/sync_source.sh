@@ -31,6 +31,7 @@ cd /root/rd
 
 # Sync to specified branch
 git fetch origin
+git reset --hard
 git checkout -B "\$BRANCH" "origin/\$BRANCH"
 git pull origin "\$BRANCH"
 EOF
