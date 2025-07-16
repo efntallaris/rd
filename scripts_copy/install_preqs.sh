@@ -16,6 +16,15 @@ sudo apt-get install -y sysstat
 sudo apt-get install -y ifstat
 sudo apt-get install -y libtool autoconf automake libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
+sudo apt-get install -y ncurses-dev
+
+git clone https://github.com/tenox7/ttyplot
+cd ttyplot
+sudo make
+sudo make install
+sudo ldconfig
+cd ..
+
 # Clone the rdma-core repository
 git clone https://github.com/linux-rdma/rdma-core.git
 cd rdma-core
@@ -71,5 +80,3 @@ chmod +x src/mkreleasehdr.sh
 #sudo cp -rf /usr/include/infiniband /usr/local/include
 
 sudo make
-
-
