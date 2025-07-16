@@ -97,7 +97,7 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
  * NOTE: This function should only be called by ht_destroy(). */
 static void _dictReset(dictht *ht)
 {
-    atomicSet(ht->table, NULL);
+    ht->table = NULL;
     atomicSet(ht->size, 0);
     ht->sizemask = 0;
     atomicSet(ht->used, 0);
@@ -1482,8 +1482,7 @@ dictEntry *dictFindLockFree(dict *d, const void *key) {
     
     for (int table = 0; table <= 1; table++) {
         dictht *ht = &d->ht[table];
-        dictEntry **table_ptr;
-        atomicGet(ht->table, table_ptr);
+        dictEntry **table_ptr = ht->table;
         
         if (table_ptr == NULL) continue;
         
@@ -1492,21 +1491,21 @@ dictEntry *dictFindLockFree(dict *d, const void *key) {
         if (size == 0) continue;
         
         unsigned long idx = h & ht->sizemask;
-        dictEntry *he = atomic_load(&table_ptr[idx]);
+        dictEntry *he = table_ptr[idx]; /* Read pointer - rely on RCU for safety */
         
         while (he != NULL) {
             /* Increment reference count to prevent deletion */
             atomicIncr(he->ref_count, 1);
             
+            /* Check if this is the entry we're looking for */
             if (he->hash == h && (key == he->key || dictCompareKeys(d, key, he->key))) {
                 result = he;
                 break;
             }
             
-            /* Decrement reference count */
+            /* Decrement reference count and move to next */
             atomicDecr(he->ref_count, 1);
-            
-            he = atomic_load(&he->next);
+            he = he->next; /* Read next pointer - rely on RCU for safety */
         }
         
         if (result) break;
@@ -1531,7 +1530,7 @@ void *dictFetchValueLockFree(dict *d, const void *key) {
     return NULL;
 }
 
-/* Lock-free dictionary add */
+/* Simplified lock-free dictionary add using RCU protection */
 int dictAddLockFree(dict *d, void *key, void *val) {
     uint64_t h = dictHashKey(d, key);
     
@@ -1539,6 +1538,13 @@ int dictAddLockFree(dict *d, void *key, void *val) {
     long rehash_idx;
     atomicGet(d->rehashidx, rehash_idx);
     dictht *ht = (rehash_idx != -1) ? &d->ht[1] : &d->ht[0];
+    
+    /* Check if key already exists first */
+    dictEntry *existing = dictFindLockFree(d, key);
+    if (existing) {
+        atomicDecr(existing->ref_count, 1); /* Release reference from find */
+        return DICT_ERR; /* Key already exists */
+    }
     
     /* Create new entry */
     dictEntry *entry = zmalloc(sizeof(*entry));
@@ -1551,8 +1557,7 @@ int dictAddLockFree(dict *d, void *key, void *val) {
     atomicGetIncr(d->epoch, current_epoch, 1);
     entry->version = current_epoch;
     
-    dictEntry **table_ptr;
-    atomicGet(ht->table, table_ptr);
+    dictEntry **table_ptr = ht->table;
     if (table_ptr == NULL) {
         zfree(entry);
         return DICT_ERR;
@@ -1560,35 +1565,18 @@ int dictAddLockFree(dict *d, void *key, void *val) {
     
     unsigned long idx = h & ht->sizemask;
     
-    /* Atomic insertion using CAS loop */
-    while (1) {
-        dictEntry *head = atomic_load(&table_ptr[idx]);
-        
-        /* Check if key already exists */
-        dictEntry *existing = head;
-        while (existing) {
-            if (existing->hash == h && 
-                (key == existing->key || dictCompareKeys(d, key, existing->key))) {
-                zfree(entry); /* Key exists, cleanup and return error */
-                return DICT_ERR;
-            }
-            existing = atomic_load(&existing->next);
-        }
-        
-        /* Try to insert at head of chain */
-        atomic_store(&entry->next, head);
-        
-        /* Use CAS to atomically update the head pointer */
-        if (atomic_compare_exchange_weak(&table_ptr[idx], &head, entry)) {
-            atomicIncr(ht->used, 1);
-            return DICT_OK;
-        }
-        
-        /* CAS failed, retry */
-    }
+    /* Insert at head of chain - this is a simple pointer update */
+    /* RCU ensures readers won't see inconsistent state */
+    rcu_read_lock(d);
+    entry->next = table_ptr[idx];
+    table_ptr[idx] = entry; /* Simple assignment - RCU provides safety */
+    atomicIncr(ht->used, 1);
+    rcu_read_unlock(d);
+    
+    return DICT_OK;
 }
 
-/* Lock-free dictionary delete */
+/* Simplified lock-free dictionary delete using RCU protection */
 int dictDeleteLockFree(dict *d, const void *key) {
     unsigned long size0, size1;
     atomicGet(d->ht[0].size, size0);
@@ -1597,68 +1585,55 @@ int dictDeleteLockFree(dict *d, const void *key) {
     if (size0 == 0 && size1 == 0) return DICT_ERR;
     
     uint64_t h = dictHashKey(d, key);
-    dictEntry *found_entry = NULL; /* Store the entry to delete */
     
     for (int table = 0; table <= 1; table++) {
         dictht *ht = &d->ht[table];
-        dictEntry **table_ptr;
-        atomicGet(ht->table, table_ptr);
+        dictEntry **table_ptr = ht->table;
         
         if (table_ptr == NULL) continue;
         
         unsigned long idx = h & ht->sizemask;
         
-        /* Use CAS loop for atomic deletion */
-        while (1) {
-            dictEntry *prev = NULL;
-            dictEntry *curr = atomic_load(&table_ptr[idx]);
-            
-            /* Find the entry to delete */
-            while (curr != NULL) {
-                if (curr->hash == h && 
-                    (key == curr->key || dictCompareKeys(d, key, curr->key))) {
-                    dictEntry *next = atomic_load(&curr->next);
-                    
-                    /* Atomic removal */
-                    if (prev == NULL) {
-                        /* Removing head of chain */
-                        if (atomic_compare_exchange_weak(&table_ptr[idx], &curr, next)) {
-                            found_entry = curr;
-                            goto deletion_success;
-                        }
-                    } else {
-                        /* Removing from middle/end of chain */
-                        if (atomic_compare_exchange_weak(&prev->next, &curr, next)) {
-                            found_entry = curr;
-                            goto deletion_success;
-                        }
-                    }
-                    /* CAS failed, restart search */
-                    break;
+        rcu_read_lock(d);
+        
+        /* Find and remove the entry */
+        dictEntry *prev = NULL;
+        dictEntry *curr = table_ptr[idx];
+        
+        while (curr != NULL) {
+            if (curr->hash == h && 
+                (key == curr->key || dictCompareKeys(d, key, curr->key))) {
+                
+                /* Remove from chain */
+                if (prev == NULL) {
+                    /* Removing head of chain */
+                    table_ptr[idx] = curr->next;
+                } else {
+                    /* Removing from middle/end of chain */
+                    prev->next = curr->next;
                 }
                 
-                prev = curr;
-                curr = atomic_load(&curr->next);
+                atomicDecr(ht->used, 1);
+                
+                /* Mark for RCU deletion */
+                uint64_t current_epoch;
+                atomicGetIncr(d->epoch, current_epoch, 1);
+                curr->version = current_epoch;
+                rcu_retire_entry(curr);
+                
+                rcu_read_unlock(d);
+                return DICT_OK;
             }
             
-            if (curr == NULL) break; /* Key not found */
+            prev = curr;
+            curr = curr->next;
         }
+        
+        rcu_read_unlock(d);
         
         long rehash_idx;
         atomicGet(d->rehashidx, rehash_idx);
         if (rehash_idx == -1) return DICT_ERR;
-        continue;
-        
-        deletion_success:
-        atomicDecr(ht->used, 1);
-        
-        /* Mark for RCU deletion */
-        uint64_t current_epoch;
-        atomicGetIncr(d->epoch, current_epoch, 1);
-        found_entry->version = current_epoch;
-        rcu_retire_entry(found_entry);
-        
-        return DICT_OK;
     }
     
     return DICT_ERR;

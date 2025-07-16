@@ -54,7 +54,7 @@
 #define RCU_RETIRE_LIST_INITIAL_SIZE 1024
 #define RCU_EPOCH_THRESHOLD 2
 
-/* Enhanced dictEntry with atomic pointers and versioning */
+/* Enhanced dictEntry with atomic support and versioning */
 typedef struct dictEntry {
     void *key;
     union {
@@ -63,10 +63,10 @@ typedef struct dictEntry {
         int64_t s64;
         double d;
     } v;
-    _Atomic(struct dictEntry*) next;  /* Atomic pointer to next entry */
-    uint64_t hash;                    /* Cache hash for faster lookups */
-    _Atomic(uint32_t) ref_count;      /* Reference count for safe deletion */
-    uint64_t version;                 /* Version for ABA problem prevention */
+    struct dictEntry *next;              /* Next entry in chain */
+    uint64_t hash;                       /* Cache hash for faster lookups */
+    redisAtomic uint32_t ref_count;      /* Reference count for safe deletion */
+    uint64_t version;                    /* Version for ABA problem prevention */
 } dictEntry;
 
 typedef struct dictType {
@@ -79,12 +79,12 @@ typedef struct dictType {
     int (*expandAllowed)(size_t moreMem, double usedRatio);
 } dictType;
 
-/* Enhanced dictht with atomic table pointer */
+/* Enhanced dictht with atomic support */
 typedef struct dictht {
-    _Atomic(dictEntry**) table;       /* Atomic pointer to bucket array */
-    _Atomic(unsigned long) size;      /* Atomic size */
+    dictEntry **table;                /* Pointer to bucket array */
+    redisAtomic unsigned long size;   /* Atomic size */
     unsigned long sizemask;           /* size - 1 (for fast modulo) */
-    _Atomic(unsigned long) used;      /* Atomic used count */
+    redisAtomic unsigned long used;   /* Atomic used count */
     uint64_t version;                 /* Version for resize operations */
 } dictht;
 
@@ -102,13 +102,13 @@ typedef struct dict {
     dictType *type;
     void *privdata;
     dictht ht[2];
-    _Atomic(long) rehashidx;          /* Atomic rehash index */
+    redisAtomic long rehashidx;       /* Atomic rehash index */
     int16_t pauserehash;
     
     /* RCU/Lock-free specific fields */
-    _Atomic(uint64_t) epoch;          /* Global epoch counter */
-    _Atomic(uint32_t) resize_in_progress; /* Resize flag */
-    _Atomic(int) lockfree_enabled;    /* Enable/disable lock-free mode */
+    redisAtomic uint64_t epoch;       /* Global epoch counter */
+    redisAtomic uint32_t resize_in_progress; /* Resize flag */
+    redisAtomic int lockfree_enabled; /* Enable/disable lock-free mode */
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
