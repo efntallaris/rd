@@ -110,7 +110,7 @@ eval "$clusterCreateCommand"
 echo "RUNNING WORKLOAD ${REDIS_WORKLOAD}"
 sleep 5
 cd $YCSB_DIR
-ycsbCommand=$(sudo ./ycsb load redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads 25)
+ycsbCommand=$(sudo ./ycsb load redis -p "redis.host=${REDIS_HOST}" -p "redis.port=${REDIS_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads ${YCSB_LOAD_THREADS})
 echo ${ycsbCommand}
 sleep 10
 

@@ -58,7 +58,7 @@ tko=$(
 	sudo ./build_ycsb.sh ${YCSB_SRC_DIR} ${YCSB_DIR}
 	cd ${YCSB_DIR}/bin
 	echo "running loading phase for workload ${REDIS_WORKLOAD}"
-	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads 100
+	sudo ./ycsb.sh load redis -p "redis.host=${MASTER_HOST}" -p "redis.port=${MASTER_PORT}" -p "redis.cluster=true" -P ${REDIS_WORKLOAD} -threads ${YCSB_LOAD_THREADS}
 EOF
 2>&1)
 echo ${tko}

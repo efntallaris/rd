@@ -19,6 +19,8 @@ YCSB_DIR_BIN="/root/ycsb_client/bin"
 REDIS_WORKLOAD_PATH="${MAIN_DIR}/workloads/"
 YCSB_LOG_FILENAME="/tmp/ycsb_output"
 LOCAL_LOG_DIR="/root/systat_logs"
+YCSB_LOAD_THREADS="100"
+YCSB_RUN_THREADS="200"
 
 #EXPERIMENT_NAME="4_GROUPS_4_threads_backpatching_2"
 EXPERIMENT_NAME="g4_s1_2bp"
