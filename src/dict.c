@@ -1597,6 +1597,7 @@ int dictDeleteLockFree(dict *d, const void *key) {
     if (size0 == 0 && size1 == 0) return DICT_ERR;
     
     uint64_t h = dictHashKey(d, key);
+    dictEntry *found_entry = NULL; /* Store the entry to delete */
     
     for (int table = 0; table <= 1; table++) {
         dictht *ht = &d->ht[table];
@@ -1622,11 +1623,13 @@ int dictDeleteLockFree(dict *d, const void *key) {
                     if (prev == NULL) {
                         /* Removing head of chain */
                         if (atomic_compare_exchange_weak(&table_ptr[idx], &curr, next)) {
+                            found_entry = curr;
                             goto deletion_success;
                         }
                     } else {
                         /* Removing from middle/end of chain */
                         if (atomic_compare_exchange_weak(&prev->next, &curr, next)) {
+                            found_entry = curr;
                             goto deletion_success;
                         }
                     }
@@ -1652,8 +1655,8 @@ int dictDeleteLockFree(dict *d, const void *key) {
         /* Mark for RCU deletion */
         uint64_t current_epoch;
         atomicGetIncr(d->epoch, current_epoch, 1);
-        curr->version = current_epoch;
-        rcu_retire_entry(curr);
+        found_entry->version = current_epoch;
+        rcu_retire_entry(found_entry);
         
         return DICT_OK;
     }
