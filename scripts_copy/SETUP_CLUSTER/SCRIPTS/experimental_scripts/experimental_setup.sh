@@ -8,9 +8,9 @@ declare -A redis_experiments
 #redis_experiments["experiment_write_only"]="workloadwriteonly|workload_write_only"
 #redis_experiments["experiment_update_only"]="workloadupdateonly|workload_update_only"
 # redis_experiments["experiment_write_only"]="workloadwriteonly|workloadwriteonly"
-# redis_experiments["experiment_read_only"]="workloadreadonly|workloadreadonly"
-redis_experiments["experiment_fulva_95_5"]="workloadfulva955|workload_fulva_95_5"
-redis_experiments["experiment_fulva_50_50"]="workloadfulva5050|workload_fulva_50_50"
+redis_experiments["experiment_read_only"]="workloadreadonly|workloadreadonly"
+#redis_experiments["experiment_fulva_95_5"]="workloadfulva955|workload_fulva_95_5"
+#redis_experiments["experiment_fulva_50_50"]="workloadfulva5050|workload_fulva_50_50"
 
 tko=$(
   sudo ssh -o StrictHostKeyChecking=no ${YCSB_LOADER_INSTANCE} bash <<EOF
@@ -53,8 +53,8 @@ EOF
       2>&1
     )
     echo "$tko"
-    echo "SLEEPING FOR 5 MINUTES"
-    sleep 5m
+    echo "SLEEPING FOR 2 MINUTES"
+    sleep 2m
 
     timestamp=$(date '+%Y_%m_%d_%H_%M_%S')
     cd ${EXPERIMENTAL_OUTPUT_DIR}
