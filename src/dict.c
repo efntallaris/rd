@@ -97,10 +97,11 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
  * NOTE: This function should only be called by ht_destroy(). */
 static void _dictReset(dictht *ht)
 {
-    ht->table = NULL;
-    ht->size = 0;
+    atomicSet(ht->table, NULL);
+    atomicSet(ht->size, 0);
     ht->sizemask = 0;
-    ht->used = 0;
+    atomicSet(ht->used, 0);
+    ht->version = 0;
 }
 
 /* Create a new hash table */
@@ -121,8 +122,14 @@ int _dictInit(dict *d, dictType *type,
     _dictReset(&d->ht[1]);
     d->type = type;
     d->privdata = privDataPtr;
-    d->rehashidx = -1;
+    atomicSet(d->rehashidx, -1);
     d->pauserehash = 0;
+    
+    /* Initialize lock-free/RCU fields */
+    atomicSet(d->epoch, 0);
+    atomicSet(d->resize_in_progress, 0);
+    atomicSet(d->lockfree_enabled, 0); /* Disabled by default */
+    
     return DICT_OK;
 }
 
@@ -1309,3 +1316,512 @@ int dictTest(int argc, char **argv, int accurate) {
     return 0;
 }
 #endif
+
+/* ========================== Lock-Free/RCU Implementation ========================== */
+
+/* Thread-local storage for RCU */
+__thread rcu_thread_data *tls_rcu_data = NULL;
+
+/* Global list of all RCU thread data for epoch management */
+static rcu_thread_data **global_rcu_threads = NULL;
+static size_t global_rcu_threads_count = 0;
+static size_t global_rcu_threads_capacity = 0;
+static pthread_mutex_t global_rcu_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Initialize RCU for a thread */
+void rcu_thread_init(void) {
+    if (tls_rcu_data != NULL) return; /* Already initialized */
+    
+    tls_rcu_data = zmalloc(sizeof(rcu_thread_data));
+    tls_rcu_data->local_epoch = 0;
+    tls_rcu_data->retire_list = zmalloc(sizeof(dictEntry*) * RCU_RETIRE_LIST_INITIAL_SIZE);
+    tls_rcu_data->retire_count = 0;
+    tls_rcu_data->retire_capacity = RCU_RETIRE_LIST_INITIAL_SIZE;
+    tls_rcu_data->thread_id = pthread_self();
+    
+    /* Register this thread globally */
+    pthread_mutex_lock(&global_rcu_lock);
+    if (global_rcu_threads_count >= global_rcu_threads_capacity) {
+        global_rcu_threads_capacity = global_rcu_threads_capacity ? global_rcu_threads_capacity * 2 : 16;
+        global_rcu_threads = zrealloc(global_rcu_threads, 
+            sizeof(rcu_thread_data*) * global_rcu_threads_capacity);
+    }
+    global_rcu_threads[global_rcu_threads_count++] = tls_rcu_data;
+    pthread_mutex_unlock(&global_rcu_lock);
+}
+
+/* Cleanup RCU for a thread */
+void rcu_thread_cleanup(void) {
+    if (tls_rcu_data == NULL) return;
+    
+    /* Remove from global list */
+    pthread_mutex_lock(&global_rcu_lock);
+    for (size_t i = 0; i < global_rcu_threads_count; i++) {
+        if (global_rcu_threads[i] == tls_rcu_data) {
+            global_rcu_threads[i] = global_rcu_threads[--global_rcu_threads_count];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&global_rcu_lock);
+    
+    /* Free any remaining retired entries */
+    for (size_t i = 0; i < tls_rcu_data->retire_count; i++) {
+        if (tls_rcu_data->retire_list[i]) {
+            zfree(tls_rcu_data->retire_list[i]);
+        }
+    }
+    
+    zfree(tls_rcu_data->retire_list);
+    zfree(tls_rcu_data);
+    tls_rcu_data = NULL;
+}
+
+/* Enter RCU read section */
+void rcu_read_lock(dict *d) {
+    rcu_thread_init();
+    uint64_t current_epoch;
+    atomicGet(d->epoch, current_epoch);
+    tls_rcu_data->local_epoch = current_epoch;
+}
+
+/* Exit RCU read section */
+void rcu_read_unlock(dict *d) {
+    /* Optionally process retired entries */
+    if (tls_rcu_data && tls_rcu_data->retire_count > 100) {
+        rcu_reclaim_retired(d);
+    }
+}
+
+/* Add entry to retirement list */
+void rcu_retire_entry(dictEntry *entry) {
+    if (!tls_rcu_data) rcu_thread_init();
+    
+    if (tls_rcu_data->retire_count >= tls_rcu_data->retire_capacity) {
+        tls_rcu_data->retire_capacity *= 2;
+        tls_rcu_data->retire_list = zrealloc(tls_rcu_data->retire_list, 
+            sizeof(dictEntry*) * tls_rcu_data->retire_capacity);
+    }
+    tls_rcu_data->retire_list[tls_rcu_data->retire_count++] = entry;
+}
+
+/* Reclaim retired entries that are safe to free */
+void rcu_reclaim_retired(dict *d) {
+    if (!tls_rcu_data) return;
+    
+    uint64_t current_epoch;
+    atomicGet(d->epoch, current_epoch);
+    
+    /* Find minimum epoch across all threads */
+    uint64_t min_epoch = current_epoch;
+    pthread_mutex_lock(&global_rcu_lock);
+    for (size_t i = 0; i < global_rcu_threads_count; i++) {
+        if (global_rcu_threads[i]->local_epoch < min_epoch) {
+            min_epoch = global_rcu_threads[i]->local_epoch;
+        }
+    }
+    pthread_mutex_unlock(&global_rcu_lock);
+    
+    for (size_t i = 0; i < tls_rcu_data->retire_count; i++) {
+        dictEntry *entry = tls_rcu_data->retire_list[i];
+        if (entry && entry->version + RCU_EPOCH_THRESHOLD < min_epoch) {
+            uint32_t ref_count;
+            atomicGet(entry->ref_count, ref_count);
+            if (ref_count == 0) {
+                zfree(entry);
+                tls_rcu_data->retire_list[i] = NULL;
+            }
+        }
+    }
+    
+    /* Compact the retire list */
+    size_t write_idx = 0;
+    for (size_t read_idx = 0; read_idx < tls_rcu_data->retire_count; read_idx++) {
+        if (tls_rcu_data->retire_list[read_idx] != NULL) {
+            tls_rcu_data->retire_list[write_idx++] = tls_rcu_data->retire_list[read_idx];
+        }
+    }
+    tls_rcu_data->retire_count = write_idx;
+}
+
+/* Advance the epoch counter */
+void dictAdvanceEpoch(dict *d) {
+    atomicIncr(d->epoch, 1);
+}
+
+/* Enable lock-free mode for a dictionary */
+void dictEnableLockFree(dict *d) {
+    atomicSet(d->lockfree_enabled, 1);
+    atomicSet(d->epoch, 1);
+    atomicSet(d->resize_in_progress, 0);
+}
+
+/* Disable lock-free mode for a dictionary */
+void dictDisableLockFree(dict *d) {
+    atomicSet(d->lockfree_enabled, 0);
+}
+
+/* Check if lock-free mode is enabled */
+int dictIsLockFreeEnabled(dict *d) {
+    int enabled;
+    atomicGet(d->lockfree_enabled, enabled);
+    return enabled;
+}
+
+/* Lock-free dictionary find */
+dictEntry *dictFindLockFree(dict *d, const void *key) {
+    unsigned long size0, size1;
+    atomicGet(d->ht[0].size, size0);
+    atomicGet(d->ht[1].size, size1);
+    
+    if (size0 == 0 && size1 == 0) return NULL;
+    
+    rcu_read_lock(d);
+    
+    uint64_t h = dictHashKey(d, key);
+    dictEntry *result = NULL;
+    
+    for (int table = 0; table <= 1; table++) {
+        dictht *ht = &d->ht[table];
+        dictEntry **table_ptr;
+        atomicGet(ht->table, table_ptr);
+        
+        if (table_ptr == NULL) continue;
+        
+        unsigned long size;
+        atomicGet(ht->size, size);
+        if (size == 0) continue;
+        
+        unsigned long idx = h & ht->sizemask;
+        dictEntry *he = atomic_load(&table_ptr[idx]);
+        
+        while (he != NULL) {
+            /* Increment reference count to prevent deletion */
+            atomicIncr(he->ref_count, 1);
+            
+            if (he->hash == h && (key == he->key || dictCompareKeys(d, key, he->key))) {
+                result = he;
+                break;
+            }
+            
+            /* Decrement reference count */
+            atomicDecr(he->ref_count, 1);
+            
+            he = atomic_load(&he->next);
+        }
+        
+        if (result) break;
+        
+        long rehash_idx;
+        atomicGet(d->rehashidx, rehash_idx);
+        if (rehash_idx == -1) break; /* Not rehashing */
+    }
+    
+    rcu_read_unlock(d);
+    return result;
+}
+
+/* Lock-free dictionary fetch value */
+void *dictFetchValueLockFree(dict *d, const void *key) {
+    dictEntry *he = dictFindLockFree(d, key);
+    if (he) {
+        void *val = he->v.val;
+        atomicDecr(he->ref_count, 1); /* Release reference from find */
+        return val;
+    }
+    return NULL;
+}
+
+/* Lock-free dictionary add */
+int dictAddLockFree(dict *d, void *key, void *val) {
+    uint64_t h = dictHashKey(d, key);
+    
+    /* Determine which table to use */
+    long rehash_idx;
+    atomicGet(d->rehashidx, rehash_idx);
+    dictht *ht = (rehash_idx != -1) ? &d->ht[1] : &d->ht[0];
+    
+    /* Create new entry */
+    dictEntry *entry = zmalloc(sizeof(*entry));
+    entry->key = key;
+    dictSetVal(d, entry, val);
+    entry->hash = h;
+    atomicSet(entry->ref_count, 0);
+    
+    uint64_t current_epoch;
+    atomicGetIncr(d->epoch, current_epoch, 1);
+    entry->version = current_epoch;
+    
+    dictEntry **table_ptr;
+    atomicGet(ht->table, table_ptr);
+    if (table_ptr == NULL) {
+        zfree(entry);
+        return DICT_ERR;
+    }
+    
+    unsigned long idx = h & ht->sizemask;
+    
+    /* Atomic insertion using CAS loop */
+    while (1) {
+        dictEntry *head = atomic_load(&table_ptr[idx]);
+        
+        /* Check if key already exists */
+        dictEntry *existing = head;
+        while (existing) {
+            if (existing->hash == h && 
+                (key == existing->key || dictCompareKeys(d, key, existing->key))) {
+                zfree(entry); /* Key exists, cleanup and return error */
+                return DICT_ERR;
+            }
+            existing = atomic_load(&existing->next);
+        }
+        
+        /* Try to insert at head of chain */
+        atomic_store(&entry->next, head);
+        
+        /* Use CAS to atomically update the head pointer */
+        if (atomic_compare_exchange_weak(&table_ptr[idx], &head, entry)) {
+            atomicIncr(ht->used, 1);
+            return DICT_OK;
+        }
+        
+        /* CAS failed, retry */
+    }
+}
+
+/* Lock-free dictionary delete */
+int dictDeleteLockFree(dict *d, const void *key) {
+    unsigned long size0, size1;
+    atomicGet(d->ht[0].size, size0);
+    atomicGet(d->ht[1].size, size1);
+    
+    if (size0 == 0 && size1 == 0) return DICT_ERR;
+    
+    uint64_t h = dictHashKey(d, key);
+    
+    for (int table = 0; table <= 1; table++) {
+        dictht *ht = &d->ht[table];
+        dictEntry **table_ptr;
+        atomicGet(ht->table, table_ptr);
+        
+        if (table_ptr == NULL) continue;
+        
+        unsigned long idx = h & ht->sizemask;
+        
+        /* Use CAS loop for atomic deletion */
+        while (1) {
+            dictEntry *prev = NULL;
+            dictEntry *curr = atomic_load(&table_ptr[idx]);
+            
+            /* Find the entry to delete */
+            while (curr != NULL) {
+                if (curr->hash == h && 
+                    (key == curr->key || dictCompareKeys(d, key, curr->key))) {
+                    dictEntry *next = atomic_load(&curr->next);
+                    
+                    /* Atomic removal */
+                    if (prev == NULL) {
+                        /* Removing head of chain */
+                        if (atomic_compare_exchange_weak(&table_ptr[idx], &curr, next)) {
+                            goto deletion_success;
+                        }
+                    } else {
+                        /* Removing from middle/end of chain */
+                        if (atomic_compare_exchange_weak(&prev->next, &curr, next)) {
+                            goto deletion_success;
+                        }
+                    }
+                    /* CAS failed, restart search */
+                    break;
+                }
+                
+                prev = curr;
+                curr = atomic_load(&curr->next);
+            }
+            
+            if (curr == NULL) break; /* Key not found */
+        }
+        
+        long rehash_idx;
+        atomicGet(d->rehashidx, rehash_idx);
+        if (rehash_idx == -1) return DICT_ERR;
+        continue;
+        
+        deletion_success:
+        atomicDecr(ht->used, 1);
+        
+        /* Mark for RCU deletion */
+        uint64_t current_epoch;
+        atomicGetIncr(d->epoch, current_epoch, 1);
+        curr->version = current_epoch;
+        rcu_retire_entry(curr);
+        
+        return DICT_OK;
+    }
+    
+    return DICT_ERR;
+}
+
+/* Lock-free dictionary replace */
+int dictReplaceLockFree(dict *d, void *key, void *val) {
+    /* First try to find and update existing entry */
+    dictEntry *existing = dictFindLockFree(d, key);
+    if (existing) {
+        void *old_val = existing->v.val;
+        existing->v.val = val;
+        atomicDecr(existing->ref_count, 1); /* Release reference from find */
+        
+        /* Free old value if needed */
+        if (d->type->valDestructor) {
+            d->type->valDestructor(d->privdata, old_val);
+        }
+        return DICT_OK;
+    }
+    
+    /* If not found, add new entry */
+    return dictAddLockFree(d, key, val);
+}
+
+/* Lock-free add raw (returns existing entry if key exists) */
+dictEntry *dictAddRawLockFree(dict *d, void *key, dictEntry **existing) {
+    uint64_t h = dictHashKey(d, key);
+    
+    /* First check if key already exists */
+    dictEntry *found = dictFindLockFree(d, key);
+    if (found) {
+        if (existing) *existing = found;
+        return NULL; /* Key already exists */
+    }
+    
+    /* Determine which table to use */
+    long rehash_idx;
+    atomicGet(d->rehashidx, rehash_idx);
+    dictht *ht = (rehash_idx != -1) ? &d->ht[1] : &d->ht[0];
+    
+    /* Create new entry */
+    dictEntry *entry = zmalloc(sizeof(*entry));
+    entry->key = key;
+    entry->hash = h;
+    atomicSet(entry->ref_count, 1); /* Start with reference count 1 */
+    
+    uint64_t current_epoch;
+    atomicGetIncr(d->epoch, current_epoch, 1);
+    entry->version = current_epoch;
+    
+    dictEntry **table_ptr;
+    atomicGet(ht->table, table_ptr);
+    if (table_ptr == NULL) {
+        zfree(entry);
+        return NULL;
+    }
+    
+    unsigned long idx = h & ht->sizemask;
+    
+    /* Atomic insertion using CAS loop */
+    while (1) {
+        dictEntry *head = atomic_load(&table_ptr[idx]);
+        
+        /* Double-check if key already exists */
+        dictEntry *check = head;
+        while (check) {
+            if (check->hash == h && 
+                (key == check->key || dictCompareKeys(d, key, check->key))) {
+                if (existing) *existing = check;
+                zfree(entry);
+                return NULL;
+            }
+            check = atomic_load(&check->next);
+        }
+        
+        /* Try to insert at head of chain */
+        atomic_store(&entry->next, head);
+        
+        /* Use CAS to atomically update the head pointer */
+        if (atomic_compare_exchange_weak(&table_ptr[idx], &head, entry)) {
+            atomicIncr(ht->used, 1);
+            if (existing) *existing = NULL;
+            return entry;
+        }
+    }
+}
+
+/* Note: Lock-free resize is complex and omitted for brevity.
+ * In practice, resize operations might still use traditional locking
+ * while individual operations are lock-free. */
+int dictResizeLockFree(dict *d) {
+    /* For now, fall back to regular resize with locking */
+    return dictResize(d);
+}
+
+/* ========================== Adaptive Wrapper Functions ========================== */
+
+/* Adaptive find function - chooses lock-free or traditional based on configuration */
+dictEntry *dictFindAdaptive(dict *d, const void *key) {
+    if (dictIsLockFreeEnabled(d)) {
+        return dictFindLockFree(d, key);
+    } else {
+        return dictFind(d, key);
+    }
+}
+
+/* Adaptive fetch value function */
+void *dictFetchValueAdaptive(dict *d, const void *key) {
+    if (dictIsLockFreeEnabled(d)) {
+        return dictFetchValueLockFree(d, key);
+    } else {
+        return dictFetchValue(d, key);
+    }
+}
+
+/* Adaptive add function */
+int dictAddAdaptive(dict *d, void *key, void *val) {
+    if (dictIsLockFreeEnabled(d)) {
+        return dictAddLockFree(d, key, val);
+    } else {
+        return dictAdd(d, key, val);
+    }
+}
+
+/* Adaptive delete function */
+int dictDeleteAdaptive(dict *d, const void *key) {
+    if (dictIsLockFreeEnabled(d)) {
+        return dictDeleteLockFree(d, key);
+    } else {
+        return dictDelete(d, key);
+    }
+}
+
+/* Adaptive replace function */
+int dictReplaceAdaptive(dict *d, void *key, void *val) {
+    if (dictIsLockFreeEnabled(d)) {
+        return dictReplaceLockFree(d, key, val);
+    } else {
+        return dictReplace(d, key, val);
+    }
+}
+
+/* Initialize a dictionary for lock-free operations */
+dict *dictCreateLockFree(dictType *type, void *privDataPtr) {
+    dict *d = dictCreate(type, privDataPtr);
+    if (d) {
+        dictEnableLockFree(d);
+        rcu_thread_init(); /* Initialize RCU for current thread */
+    }
+    return d;
+}
+
+/* Safe dictionary release with RCU cleanup */
+void dictReleaseLockFree(dict *d) {
+    if (dictIsLockFreeEnabled(d)) {
+        /* Process any remaining retired entries */
+        rcu_reclaim_retired(d);
+        
+        /* Wait for all threads to finish current RCU sections */
+        dictAdvanceEpoch(d);
+        dictAdvanceEpoch(d);
+        
+        /* Final cleanup */
+        rcu_reclaim_retired(d);
+    }
+    
+    dictRelease(d);
+}

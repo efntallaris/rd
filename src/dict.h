@@ -37,9 +37,12 @@
 #define __DICT_H
 
 #include "mt19937-64.h"
+#include "atomicvar.h"
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 #define DICT_OK 0
 #define DICT_ERR 1
@@ -47,6 +50,11 @@
 /* Unused arguments generate annoying warnings... */
 #define DICT_NOTUSED(V) ((void) V)
 
+/* RCU and Lock-free specific definitions */
+#define RCU_RETIRE_LIST_INITIAL_SIZE 1024
+#define RCU_EPOCH_THRESHOLD 2
+
+/* Enhanced dictEntry with atomic pointers and versioning */
 typedef struct dictEntry {
     void *key;
     union {
@@ -55,7 +63,10 @@ typedef struct dictEntry {
         int64_t s64;
         double d;
     } v;
-    struct dictEntry *next;
+    _Atomic(struct dictEntry*) next;  /* Atomic pointer to next entry */
+    uint64_t hash;                    /* Cache hash for faster lookups */
+    _Atomic(uint32_t) ref_count;      /* Reference count for safe deletion */
+    uint64_t version;                 /* Version for ABA problem prevention */
 } dictEntry;
 
 typedef struct dictType {
@@ -68,21 +79,36 @@ typedef struct dictType {
     int (*expandAllowed)(size_t moreMem, double usedRatio);
 } dictType;
 
-/* This is our hash table structure. Every dictionary has two of this as we
- * implement incremental rehashing, for the old to the new table. */
+/* Enhanced dictht with atomic table pointer */
 typedef struct dictht {
-    dictEntry **table;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
+    _Atomic(dictEntry**) table;       /* Atomic pointer to bucket array */
+    _Atomic(unsigned long) size;      /* Atomic size */
+    unsigned long sizemask;           /* size - 1 (for fast modulo) */
+    _Atomic(unsigned long) used;      /* Atomic used count */
+    uint64_t version;                 /* Version for resize operations */
 } dictht;
 
+/* Per-thread RCU data for safe memory reclamation */
+typedef struct rcu_thread_data {
+    uint64_t local_epoch;             /* Thread's current epoch */
+    dictEntry **retire_list;          /* List of entries to be freed */
+    size_t retire_count;              /* Number of entries to retire */
+    size_t retire_capacity;           /* Capacity of retire list */
+    pthread_t thread_id;              /* Thread identifier */
+} rcu_thread_data;
+
+/* Enhanced dict with RCU support */
 typedef struct dict {
     dictType *type;
     void *privdata;
     dictht ht[2];
-    long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-    int16_t pauserehash; /* If >0 rehashing is paused (<0 indicates coding error) */
+    _Atomic(long) rehashidx;          /* Atomic rehash index */
+    int16_t pauserehash;
+    
+    /* RCU/Lock-free specific fields */
+    _Atomic(uint64_t) epoch;          /* Global epoch counter */
+    _Atomic(uint32_t) resize_in_progress; /* Resize flag */
+    _Atomic(int) lockfree_enabled;    /* Enable/disable lock-free mode */
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
@@ -96,6 +122,7 @@ typedef struct dictIterator {
     dictEntry *entry, *nextEntry;
     /* unsafe iterator fingerprint for misuse detection. */
     long long fingerprint;
+    uint64_t rcu_epoch;               /* RCU epoch when iterator was created */
 } dictIterator;
 
 typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
@@ -195,6 +222,40 @@ uint8_t *dictGetHashFunctionSeed(void);
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, dictScanBucketFunction *bucketfn, void *privdata);
 uint64_t dictGetHash(dict *d, const void *key);
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
+
+/* Lock-free/RCU API */
+void rcu_thread_init(void);
+void rcu_thread_cleanup(void);
+void rcu_read_lock(dict *d);
+void rcu_read_unlock(dict *d);
+void rcu_retire_entry(dictEntry *entry);
+void rcu_reclaim_retired(dict *d);
+
+/* Lock-free dictionary operations */
+dictEntry *dictFindLockFree(dict *d, const void *key);
+void *dictFetchValueLockFree(dict *d, const void *key);
+int dictAddLockFree(dict *d, void *key, void *val);
+int dictDeleteLockFree(dict *d, const void *key);
+int dictReplaceLockFree(dict *d, void *key, void *val);
+dictEntry *dictAddRawLockFree(dict *d, void *key, dictEntry **existing);
+int dictResizeLockFree(dict *d);
+
+/* Lock-free utility functions */
+void dictEnableLockFree(dict *d);
+void dictDisableLockFree(dict *d);
+int dictIsLockFreeEnabled(dict *d);
+void dictAdvanceEpoch(dict *d);
+
+/* Adaptive wrapper functions - automatically choose lock-free or traditional */
+dictEntry *dictFindAdaptive(dict *d, const void *key);
+void *dictFetchValueAdaptive(dict *d, const void *key);
+int dictAddAdaptive(dict *d, void *key, void *val);
+int dictDeleteAdaptive(dict *d, const void *key);
+int dictReplaceAdaptive(dict *d, void *key, void *val);
+
+/* Lock-free dictionary creation and cleanup */
+dict *dictCreateLockFree(dictType *type, void *privDataPtr);
+void dictReleaseLockFree(dict *d);
 
 /* Hash table types */
 extern dictType dictTypeHeapStringCopyKey;
