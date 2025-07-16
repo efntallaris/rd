@@ -10,6 +10,8 @@ YCSB_BIN=$2
 sudo rm -rf ${YCSB_INTERMEDIATE_FOLDER}
 sudo mkdir -p ${YCSB_INTERMEDIATE_FOLDER}
 
+cd ${YCSB_DIR}/lettuce
+sudo mvn clean install -DskipTests
 cd ${YCSB_DIR}
 sudo mvn -pl redis -am clean install -T 9 -DskipTests -Dcheckstyle.skip
 
