@@ -38,7 +38,6 @@ public class ClientThread implements Runnable {
   private double targetOpsPerMs;
 
   private int opsdone;
-  private int tryagain;
   private int threadid;
   private int threadcount;
   private Object workloadstate;
@@ -64,7 +63,6 @@ public class ClientThread implements Runnable {
     this.workload = workload;
     this.opcount = opcount;
     opsdone = 0;
-    tryagain = 0;
     if (targetperthreadperms > 0) {
       targetOpsPerMs = targetperthreadperms;
       targetOpsTickNs = (long) (1000000 / targetOpsPerMs);
@@ -85,10 +83,6 @@ public class ClientThread implements Runnable {
 
   public int getOpsDone() {
     return opsdone;
-  }
-
-  public int getTryAgain() {
-    return tryagain;
   }
 
   @Override
@@ -123,35 +117,16 @@ public class ClientThread implements Runnable {
       if (dotransactions) {
         long startTimeNanos = System.nanoTime();
 
-	while (((opcount == 0) || (opsdone < opcount)) && !workload.isStopRequested()) {
-	    try {
-		if (!workload.doTransaction(db, workloadstate)) {
-		    break;
-		}
+        while (((opcount == 0) || (opsdone < opcount)) && !workload.isStopRequested()) {
 
-		opsdone++;
+          if (!workload.doTransaction(db, workloadstate)) {
+            break;
+          }
 
-		throttleNanos(startTimeNanos);
-	    } catch (Exception e) {
-		if (e.getMessage().contains("B cannot be cast to class java.util.List")) {
-		    System.out.println("CANNOT BE CAST");
-		} else if (e.getMessage().contains("TRYAGAIN  Key is migrating")) {
-		    tryagain++;
-		    try {
-			//Thread.sleep(0, 250000); // Sleep for 0.5 milliseconds (500,000 nanoseconds)
-			Thread.sleep(0, 1000); // Sleep for 0.25 microseconds (250 nanoseconds)
-		    } catch (InterruptedException ie) {
-			Thread.currentThread().interrupt(); // Restore the interrupted status
-			throw new RuntimeException(ie);
-		    }
-		} else {
-		    // System.out.println("Jedis Data Exception occurred: " + e.getMessage());
-		    System.out.println(e);
-		    e.printStackTrace();
-		    throw e;
-		}
-	    }
-	}
+          opsdone++;
+
+          throttleNanos(startTimeNanos);
+        }
       } else {
         long startTimeNanos = System.nanoTime();
 

@@ -105,17 +105,13 @@ public class StatusThread extends Thread {
     long deadline = startTimeNanos + sleeptimeNs;
     long startIntervalMs = startTimeMs;
     long lastTotalOps = 0;
-    long lastTryAgains = 0;
 
     boolean alldone;
 
     do {
       long nowMs = System.currentTimeMillis();
 
-      long[] results = computeStats(startTimeMs, startIntervalMs, nowMs, lastTotalOps, lastTryAgains);
-
-      lastTotalOps = results[0];
-      lastTryAgains = results[1];
+      lastTotalOps = computeStats(startTimeMs, startIntervalMs, nowMs, lastTotalOps);
 
       if (trackJVMStats) {
         measureJVM();
@@ -132,7 +128,7 @@ public class StatusThread extends Thread {
       measureJVM();
     }
     // Print the final stats.
-    computeStats(startTimeMs, startIntervalMs, System.currentTimeMillis(), lastTotalOps, lastTryAgains);
+    computeStats(startTimeMs, startIntervalMs, System.currentTimeMillis(), lastTotalOps);
   }
 
   /**
@@ -144,28 +140,23 @@ public class StatusThread extends Thread {
    * @param lastTotalOps    The last total operations count.
    * @return The current operation count.
    */
-  private long[] computeStats(final long startTimeMs, long startIntervalMs, long endIntervalMs,
-                            long lastTotalOps, long lastTryAgains) {
+  private long computeStats(final long startTimeMs, long startIntervalMs, long endIntervalMs,
+                            long lastTotalOps) {
     SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss:SSS");
 
     long totalops = 0;
     long todoops = 0;
-    long totaltryagains = 0;
 
     // Calculate the total number of operations completed.
     for (ClientThread t : clients) {
       totalops += t.getOpsDone();
       todoops += t.getOpsTodo();
-      totaltryagains += t.getTryAgain();
     }
 
 
     long interval = endIntervalMs - startTimeMs;
     double throughput = 1000.0 * (((double) totalops) / (double) interval);
     double curthroughput = 1000.0 * (((double) (totalops - lastTotalOps)) /
-        ((double) (endIntervalMs - startIntervalMs)));
-    double tryagains = 1000.0 * (((double) totaltryagains) / (double) interval);
-    double curtryagains = 1000.0 * (((double) (totaltryagains - lastTryAgains)) /
         ((double) (endIntervalMs - startIntervalMs)));
     long estremaining = (long) Math.ceil(todoops / throughput);
 
@@ -179,15 +170,6 @@ public class StatusThread extends Thread {
     if (totalops != 0) {
       msg.append(d.format(curthroughput)).append(" current ops/sec; ");
     }
-
-    
-    if (tryagains >= 0) {
-      msg.append(d.format(curtryagains)).append(" try agains; ");
-    }else{
-	tryagains = 0;
-        msg.append(d.format(curtryagains)).append(" try agains; ");
-    }
-
     if (todoops != 0) {
       msg.append("est completion in ").append(RemainingFormatter.format(estremaining));
     }
@@ -199,7 +181,7 @@ public class StatusThread extends Thread {
     if (standardstatus) {
       System.out.println(msg);
     }
-    return new long[] {totalops, totaltryagains};
+    return totalops;
   }
 
   /**

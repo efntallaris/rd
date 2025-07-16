@@ -23,7 +23,7 @@ YCSB_LOAD_THREADS="100"
 YCSB_RUN_THREADS="200"
 
 #EXPERIMENT_NAME="4_GROUPS_4_threads_backpatching_2"
-EXPERIMENT_NAME="g4_s1_2bp"
+EXPERIMENT_NAME="rd_temp"
 
 #	MASTER NODES 	#
 declare -A redis_master_instances
