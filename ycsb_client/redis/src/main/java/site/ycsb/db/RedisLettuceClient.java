@@ -143,41 +143,32 @@ public class RedisLettuceClient extends DB {
       Map<String, ByteIterator> result) {
     // System.out.println("[RedisLettuceClient] READ invoked. Table: " + table + ", Key: " + key + ", Fields: " + (fields == null ? "ALL" : fields.toString()) + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
-      if (fields == null) {
-        Map<String, String> hashMap;
-        if (isCluster) {
-          hashMap = clusterCommands.hgetall(key);
-        } else {
-          hashMap = redisCommands.hgetall(key);
-        }
-        StringByteIterator.putAllAsByteIterators(result, hashMap);
+      String value;
+      if (isCluster) {
+        value = clusterCommands.get(key);
       } else {
-        String[] fieldArray = fields.toArray(new String[fields.size()]);
-        List<KeyValue<String, String>> keyValues;
-        if (isCluster) {
-          keyValues = clusterCommands.hmget(key, fieldArray);
-        } else {
-          keyValues = redisCommands.hmget(key, fieldArray);
-        }
-
-        // Convert KeyValue list to String list
-        List<String> values = keyValues.stream()
-            .map(kv -> kv.getValue())
-            .collect(Collectors.toList());
-
-        Iterator<String> fieldIterator = fields.iterator();
-        Iterator<String> valueIterator = values.iterator();
-
-        while (fieldIterator.hasNext() && valueIterator.hasNext()) {
-          String value = valueIterator.next();
-          if (value != null) {
-            result.put(fieldIterator.next(), new StringByteIterator(value));
-          } else {
-            fieldIterator.next(); // Skip this field
+        value = redisCommands.get(key);
+      }
+      
+      if (value == null) {
+        return Status.ERROR;
+      }
+      
+      // Parse the merged string back into field-value pairs
+      String[] pairs = value.split("\\|");
+      for (String pair : pairs) {
+        String[] fieldValue = pair.split(":", 2); // Split on first colon only
+        if (fieldValue.length == 2) {
+          String fieldName = fieldValue[0];
+          String fieldValueStr = fieldValue[1];
+          
+          // If specific fields are requested, only include those
+          if (fields == null || fields.contains(fieldName)) {
+            result.put(fieldName, new StringByteIterator(fieldValueStr));
           }
         }
-        assert !fieldIterator.hasNext() && !valueIterator.hasNext();
       }
+      
       return result.isEmpty() ? Status.ERROR : Status.OK;
     } catch (Exception e) {
       return Status.ERROR;
@@ -227,12 +218,43 @@ public class RedisLettuceClient extends DB {
   @Override
   public Status update(String table, String key,
       Map<String, ByteIterator> values) {
+    // System.out.println("[RedisLettuceClient] UPDATE invoked. Table: " + table + ", Key: " + key + ", Values: " + values + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
-      Map<String, String> stringMap = StringByteIterator.getStringMap(values);
+      // Get existing value
+      String existingValue;
       if (isCluster) {
-        clusterCommands.hmset(key, stringMap);
+        existingValue = clusterCommands.get(key);
       } else {
-        redisCommands.hmset(key, stringMap);
+        existingValue = redisCommands.get(key);
+      }
+      
+      // Parse existing value into a map
+      Map<String, String> existingMap = new HashMap<>();
+      if (existingValue != null) {
+        String[] pairs = existingValue.split("\\|");
+        for (String pair : pairs) {
+          String[] fieldValue = pair.split(":", 2);
+          if (fieldValue.length == 2) {
+            existingMap.put(fieldValue[0], fieldValue[1]);
+          }
+        }
+      }
+      
+      // Add new values to the map
+      for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+        existingMap.put(entry.getKey(), entry.getValue().toString());
+      }
+      
+      // Merge back into string
+      String mergedValue = existingMap.entrySet().stream()
+          .map(entry -> entry.getKey() + ":" + entry.getValue())
+          .collect(Collectors.joining("|"));
+      
+      // Set the updated value
+      if (isCluster) {
+        clusterCommands.set(key, mergedValue);
+      } else {
+        redisCommands.set(key, mergedValue);
       }
       return Status.OK;
     } catch (Exception e) {
