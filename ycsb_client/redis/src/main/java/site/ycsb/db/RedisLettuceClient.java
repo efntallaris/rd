@@ -83,14 +83,14 @@ public class RedisLettuceClient extends DB {
     boolean clusterEnabled = Boolean.parseBoolean(props.getProperty(CLUSTER_PROPERTY));
     if (clusterEnabled) {
       isCluster = true;
-      System.out.println("[RedisLettuceClient] Initializing Lettuce in CLUSTER mode for host: " + host + ", port: " + port);
+      // System.out.println("[RedisLettuceClient] Initializing Lettuce in CLUSTER mode for host: " + host + ", port: " + port);
       RedisClusterClient clusterClient = RedisClusterClient.create("redis://" + host + ":" + port);
       clusterConnection = clusterClient.connect();
       clusterCommands = clusterConnection.sync();
-      System.out.println("[RedisLettuceClient] Lettuce cluster connection established.");
+      // System.out.println("[RedisLettuceClient] Lettuce cluster connection established.");
     } else {
       isCluster = false;
-      System.out.println("[RedisLettuceClient] Initializing Lettuce in STANDALONE mode for host: " + host + ", port: " + port);
+      // System.out.println("[RedisLettuceClient] Initializing Lettuce in STANDALONE mode for host: " + host + ", port: " + port);
       RedisURI redisURI = RedisURI.create(host, port);
       
       String redisTimeout = props.getProperty(TIMEOUT_PROPERTY);
@@ -106,7 +106,7 @@ public class RedisLettuceClient extends DB {
       RedisClient client = RedisClient.create(redisURI);
       connection = client.connect();
       redisCommands = connection.sync();
-      System.out.println("[RedisLettuceClient] Lettuce standalone connection established.");
+      // System.out.println("[RedisLettuceClient] Lettuce standalone connection established.");
     }
   }
 
@@ -141,7 +141,7 @@ public class RedisLettuceClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    System.out.println("[RedisLettuceClient] READ invoked. Table: " + table + ", Key: " + key + ", Fields: " + (fields == null ? "ALL" : fields.toString()) + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
+    // System.out.println("[RedisLettuceClient] READ invoked. Table: " + table + ", Key: " + key + ", Fields: " + (fields == null ? "ALL" : fields.toString()) + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
       if (fields == null) {
         Map<String, String> hashMap;
@@ -192,7 +192,7 @@ public class RedisLettuceClient extends DB {
         .map(entry -> entry.getKey() + ":" + entry.getValue().toString())
         .collect(Collectors.joining("|"));
     
-    System.out.println("[RedisLettuceClient] SET/INSERT (merged string) invoked. Table: " + table + ", Key: " + key + ", MergedValue: " + mergedValue + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
+    // System.out.println("[RedisLettuceClient] SET/INSERT (merged string) invoked. Table: " + table + ", Key: " + key + ", MergedValue: " + mergedValue + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
       if (isCluster) {
         clusterCommands.set(key, mergedValue);
