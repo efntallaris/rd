@@ -37,6 +37,8 @@ import io.lettuce.core.cluster.RedisClusterClient;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
 import io.lettuce.core.KeyValue;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -53,6 +55,8 @@ import java.util.stream.Collectors;
  * See {@code redis/README.md} for details.
  */
 public class RedisLettuceClient extends DB {
+
+  private static final Logger logger = LogManager.getLogger(RedisLettuceClient.class);
 
   private RedisCommands<String, String> redisCommands;
   private StatefulRedisConnection<String, String> connection;
@@ -83,14 +87,14 @@ public class RedisLettuceClient extends DB {
     boolean clusterEnabled = Boolean.parseBoolean(props.getProperty(CLUSTER_PROPERTY));
     if (clusterEnabled) {
       isCluster = true;
-      // System.out.println("[RedisLettuceClient] Initializing Lettuce in CLUSTER mode for host: " + host + ", port: " + port);
+      logger.info("Initializing Lettuce in CLUSTER mode for host: {}:{}", host, port);
       RedisClusterClient clusterClient = RedisClusterClient.create("redis://" + host + ":" + port);
       clusterConnection = clusterClient.connect();
       clusterCommands = clusterConnection.sync();
-      // System.out.println("[RedisLettuceClient] Lettuce cluster connection established.");
+      logger.info("Lettuce cluster connection established.");
     } else {
       isCluster = false;
-      // System.out.println("[RedisLettuceClient] Initializing Lettuce in STANDALONE mode for host: " + host + ", port: " + port);
+      logger.info("Initializing Lettuce in STANDALONE mode for host: {}:{}", host, port);
       RedisURI redisURI = RedisURI.create(host, port);
       
       String redisTimeout = props.getProperty(TIMEOUT_PROPERTY);
@@ -106,7 +110,7 @@ public class RedisLettuceClient extends DB {
       RedisClient client = RedisClient.create(redisURI);
       connection = client.connect();
       redisCommands = connection.sync();
-      // System.out.println("[RedisLettuceClient] Lettuce standalone connection established.");
+      logger.info("Lettuce standalone connection established.");
     }
   }
 
@@ -141,7 +145,8 @@ public class RedisLettuceClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    // System.out.println("[RedisLettuceClient] READ invoked. Table: " + table + ", Key: " + key + ", Fields: " + (fields == null ? "ALL" : fields.toString()) + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
+    logger.info("READ invoked. Table: {}, Key: {}, Fields: {}, Mode: {}", 
+        table, key, (fields == null ? "ALL" : fields.toString()), (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
       String value;
       if (isCluster) {
@@ -183,7 +188,8 @@ public class RedisLettuceClient extends DB {
         .map(entry -> entry.getKey() + ":" + entry.getValue().toString())
         .collect(Collectors.joining("|"));
     
-    // System.out.println("[RedisLettuceClient] SET/INSERT (merged string) invoked. Table: " + table + ", Key: " + key + ", MergedValue: " + mergedValue + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
+    logger.info("SET/INSERT (merged string) invoked. Table: {}, Key: {}, MergedValue: {}, Mode: {}", 
+        table, key, mergedValue, (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
       if (isCluster) {
         clusterCommands.set(key, mergedValue);
@@ -218,7 +224,8 @@ public class RedisLettuceClient extends DB {
   @Override
   public Status update(String table, String key,
       Map<String, ByteIterator> values) {
-    // System.out.println("[RedisLettuceClient] UPDATE invoked. Table: " + table + ", Key: " + key + ", Values: " + values + ", Mode: " + (isCluster ? "CLUSTER" : "STANDALONE"));
+    logger.info("UPDATE invoked. Table: {}, Key: {}, Values: {}, Mode: {}", 
+        table, key, values, (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
       // Get existing value
       String existingValue;

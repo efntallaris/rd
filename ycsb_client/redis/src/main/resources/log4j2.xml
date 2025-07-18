@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss} [%-5p] [%t] %m (%c{1}:%L)%n"/>
+        </Console>
+
+        <File name="File" fileName="lettuce-ycsb.log" bufferedIO="true">
+            <PatternLayout pattern="%d{yyyy-MM-dd HH:mm:ss} [%-5p] [%t] %m (%c{1}:%L)%n"/>
+        </File>
+    </Appenders>
+
+    <Loggers>
+        <!-- Enable detailed logging for Lettuce protocol operations -->
+        <Logger name="io.lettuce.core.protocol" level="DEBUG"/>
+        
+        <!-- Enable logging for Lettuce command handling -->
+        <Logger name="io.lettuce.core.protocol.CommandHandler" level="DEBUG"/>
+        
+        <!-- Enable logging for Lettuce connection management -->
+        <Logger name="io.lettuce.core.protocol.DefaultEndpoint" level="DEBUG"/>
+        
+        <!-- Enable logging for Lettuce state machine -->
+        <Logger name="io.lettuce.core.protocol.RedisStateMachine" level="DEBUG"/>
+        
+        <!-- Enable logging for Lettuce connection events -->
+        <Logger name="io.lettuce.core.event" level="INFO"/>
+        
+        <!-- Enable logging for Lettuce cluster operations -->
+        <Logger name="io.lettuce.core.cluster" level="DEBUG"/>
+        
+        <!-- Enable logging for YCSB operations -->
+        <Logger name="com.yahoo.ycsb" level="INFO"/>
+        
+        <!-- Enable logging for your RedisLettuceClient -->
+        <Logger name="site.ycsb.db.RedisLettuceClient" level="DEBUG"/>
+        
+        <!-- Root logger configuration -->
+        <Root level="INFO">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="File"/>
+        </Root>
+    </Loggers>
+
+</Configuration> 
