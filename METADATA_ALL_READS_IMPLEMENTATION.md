@@ -9,14 +9,9 @@ The implementation extends the double read mechanism to include metadata on **ev
 1. **Global metadata tracking** for all read operations
 2. **Automatic double read detection** based on migration ranges
 3. **Consistent metadata format** across all data types
-4. **Configurable metadata inclusion** (can be enabled/disabled)
+4. **Always-on metadata inclusion** (no configuration needed)
 
 ## Key Features
-
-### 🔧 **Global Metadata Control**
-- **Enable/Disable**: Global switch to control metadata inclusion
-- **Backward Compatibility**: Metadata disabled by default
-- **Runtime Configuration**: Can be changed without restart
 
 ### 📊 **Comprehensive Coverage**
 - **All Data Types**: String, Hash, List, Set, Sorted Set
@@ -32,7 +27,7 @@ The implementation extends the double read mechanism to include metadata on **ev
 
 ### Core Components
 
-#### 1. **Migration Context Enhancement**
+#### 1. **Migration Context**
 ```c
 typedef struct migrationContext {
     list *migration_ranges;     /* List of migration completion ranges */
@@ -41,7 +36,6 @@ typedef struct migrationContext {
     uint32_t dest_node_id;      /* Destination node ID */
     int migration_active;       /* Whether migration is active */
     time_t migration_start;     /* When migration started */
-    int metadata_enabled;       /* Whether to add metadata to all read responses */
 } migrationContext;
 ```
 
@@ -51,26 +45,25 @@ void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen, co
 ```
 
 This function is called by **all read commands** and:
-- Checks if metadata is enabled globally
 - Determines if double read should be performed
 - Adds migration metadata to responses
 - Handles field-specific metadata for hash operations
 
-#### 3. **Configuration Commands**
+#### 3. **Migration Commands**
 ```bash
-# Enable metadata for all read responses
-MIGRATION.METADATA enable
+# Set up migration nodes
+MIGRATION.SETNODES <source_id> <dest_id>
 
-# Disable metadata for all read responses  
-MIGRATION.METADATA disable
+# Add migration ranges
+MIGRATION.RANGE <start_slot> <end_slot>
 
-# Check metadata status
-MIGRATION.METADATA status
+# Check migration status
+MIGRATION.STATUS
 ```
 
 ### Modified Commands
 
-The following read commands now include metadata when enabled:
+The following read commands now include metadata:
 
 #### **String Commands**
 - `GET` - Basic string retrieval
@@ -113,13 +106,19 @@ The following read commands now include metadata when enabled:
 
 ## Response Format
 
-### Standard Response (Metadata Disabled)
+### Standard Response (No Migration)
 ```
 GET mykey
 "myvalue"
+# Additional metadata attributes (RESP3)
+>3
+slot_id:1234
+migration_status:0
+source_id:0
+dest_id:0
 ```
 
-### Response with Metadata (Metadata Enabled)
+### Response with Migration Active
 ```
 GET mykey
 "myvalue"
@@ -129,7 +128,6 @@ slot_id:1234
 migration_status:2
 source_id:1001
 dest_id:1002
-version:5
 ```
 
 ### Hash Response with Metadata
@@ -142,7 +140,6 @@ slot_id:5678
 migration_status:1
 source_id:1001
 dest_id:1002
-version:3
 ```
 
 ## Metadata Fields
@@ -155,7 +152,6 @@ version:3
   - `2` = In progress (triggers double read)
 - **source_id**: Source node ID
 - **dest_id**: Destination node ID
-- **version**: Version number for consistency
 
 ### Migration Status Logic
 1. **Not Migrated (0)**: No migration active
@@ -167,7 +163,6 @@ version:3
 ### When Double Read is Performed
 - Migration is active
 - Key's hash slot is **NOT** in migration completion ranges
-- Metadata is enabled
 
 ### Double Read Process
 1. **Check Migration Range**: Determine if key is in migrated slots
@@ -177,7 +172,6 @@ version:3
 5. **Add Metadata**: Include migration information in response
 
 ### Performance Considerations
-- **Minimal Overhead**: Only adds metadata when enabled
 - **Smart Detection**: Only performs double reads when necessary
 - **Caching**: Migration ranges are cached for fast lookups
 
@@ -185,9 +179,6 @@ version:3
 
 ### Basic Setup
 ```bash
-# Enable metadata
-MIGRATION.METADATA enable
-
 # Set up migration nodes
 MIGRATION.SETNODES 1001 1002
 
@@ -223,47 +214,32 @@ ZSCORE zset_key member1  # Includes metadata
 # Check migration status
 MIGRATION.STATUS
 
-# Response: [active, source_id, dest_id, range_count, metadata_enabled]
-# Example: [1, 1001, 1002, 3, 1]
+# Response: [active, source_id, dest_id, range_count]
+# Example: [1, 1001, 1002, 3]
 ```
 
 ## Configuration
 
 ### Default Settings
-- **Metadata Enabled**: `false` (disabled by default)
 - **Migration Active**: `false` (no migration by default)
 - **Source Node**: `0` (not set)
 - **Destination Node**: `0` (not set)
 
-### Runtime Configuration
-```bash
-# Enable metadata globally
-MIGRATION.METADATA enable
-
-# Disable metadata globally
-MIGRATION.METADATA disable
-
-# Check current status
-MIGRATION.METADATA status
-```
-
 ## Performance Impact
 
 ### Minimal Overhead
-- **Disabled by Default**: No impact on existing deployments
-- **Conditional Execution**: Only adds metadata when enabled
+- **Always Active**: Metadata included in all read responses
 - **Efficient Lookups**: Hash slot calculation is fast
 - **Cached Ranges**: Migration ranges are cached in memory
 
 ### Memory Usage
 - **Migration Context**: ~100 bytes per instance
 - **Migration Ranges**: ~24 bytes per range
-- **Metadata**: ~32 bytes per response (when enabled)
+- **Metadata**: ~16 bytes per response
 
 ### Network Impact
 - **RESP3 Attributes**: Minimal additional bytes
 - **RESP2 Compatibility**: Metadata not included (maintains compatibility)
-- **Configurable**: Can be disabled to reduce bandwidth
 
 ## Migration Scenarios
 
@@ -271,7 +247,7 @@ MIGRATION.METADATA status
 ```
 GET mykey
 "myvalue"
-# No additional metadata (migration not active)
+# Metadata: slot_id:1234, migration_status:0, source_id:0, dest_id:0
 ```
 
 ### Scenario 2: Migration Active, Key Migrated
@@ -296,9 +272,6 @@ GET mykey
 import redis
 r = redis.Redis()
 
-# Enable metadata
-r.execute_command("MIGRATION.METADATA", "enable")
-
 # All read operations now include metadata
 result = r.get("mykey")
 # Result includes both data and metadata (in RESP3)
@@ -308,9 +281,6 @@ result = r.get("mykey")
 ```javascript
 const redis = require('redis');
 const client = redis.createClient();
-
-// Enable metadata
-await client.executeCommand(['MIGRATION.METADATA', 'enable']);
 
 // All read operations now include metadata
 const result = await client.get('mykey');
@@ -326,7 +296,6 @@ python3 test_metadata_all_reads.py
 ```
 
 This script tests:
-- Metadata enable/disable functionality
 - All data types (string, hash, list, set, zset)
 - Migration scenarios
 - Double read functionality
@@ -339,9 +308,6 @@ redis-server
 
 # Connect and test
 redis-cli
-
-# Enable metadata
-MIGRATION.METADATA enable
 
 # Test various commands
 SET test_key "test_value"
@@ -357,7 +323,6 @@ GET test_key
 2. **Custom Metadata Fields**: Allow custom metadata fields
 3. **Performance Metrics**: Add timing information to metadata
 4. **Compression**: Compress metadata for large responses
-5. **Selective Commands**: Enable metadata for specific commands only
 
 ### Extensibility
 The implementation is designed to be easily extensible:
@@ -368,4 +333,4 @@ The implementation is designed to be easily extensible:
 
 ## Conclusion
 
-This implementation provides a comprehensive solution for adding metadata to all Redis read requests. It maintains backward compatibility while offering powerful migration tracking and double read capabilities. The global configuration makes it easy to enable/disable as needed, and the consistent metadata format simplifies client integration. 
+This implementation provides a comprehensive solution for adding metadata to all Redis read requests. It offers powerful migration tracking and double read capabilities with a consistent metadata format across all data types. The metadata is always included, providing complete visibility into migration status and data access patterns. 
