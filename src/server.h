@@ -2675,10 +2675,7 @@ void latencyCommand(client *c);
 void moduleCommand(client *c);
 void securityWarningCommand(client *c);
 
-/* Migration commands */
-void migrationRangeCommand(client *c);
-void migrationStatusCommand(client *c);
-void migrationSetNodesCommand(client *c);
+
 
 void xaddCommand(client *c);
 void xrangeCommand(client *c);

@@ -57,4 +57,9 @@ doubleReadResponse* performDoubleRead(client *c, const char *key, size_t keylen)
 void addDoubleReadResponse(client *c, doubleReadResponse *response);
 void freeDoubleReadResponse(doubleReadResponse *response);
 
+/* Command functions */
+void migrationRangeCommand(client *c);
+void migrationStatusCommand(client *c);
+void migrationSetNodesCommand(client *c);
+
 #endif /* __MIGRATION_H */ 
