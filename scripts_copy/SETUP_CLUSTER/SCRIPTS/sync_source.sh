@@ -34,7 +34,7 @@ git fetch origin
 git reset --hard
 git checkout -B "\$BRANCH" "origin/\$BRANCH"
 git pull origin "\$BRANCH"
-git submodule update --recursive --remote --force
+git submodule update --init --recursive
 EOF
 
   done
