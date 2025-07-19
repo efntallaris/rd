@@ -28,6 +28,7 @@
  */
 
 #include "server.h"
+#include "migration.h"
 #include <math.h> /* isnan(), isinf() */
 
 /* Forward declarations */
@@ -284,7 +285,10 @@ void psetexCommand(client *c) {
 
 int getGenericCommand(client *c) {
     robj *o;
+    const char *key = c->argv[1]->ptr;
+    size_t keylen = sdslen(c->argv[1]);
 
+    /* Normal lookup */
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
         return C_OK;
 
@@ -292,7 +296,12 @@ int getGenericCommand(client *c) {
         return C_ERR;
     }
 
+    /* Add the data */
     addReplyBulk(c,o);
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, key, keylen, NULL);
+    
     return C_OK;
 }
 

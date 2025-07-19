@@ -28,6 +28,7 @@
  */
 
 #include "server.h"
+#include "migration.h"
 #include <math.h>
 
 /*-----------------------------------------------------------------------------
@@ -796,6 +797,9 @@ static void addHashFieldToReply(client *c, robj *o, sds field) {
     } else {
         serverPanic("Unknown hash encoding");
     }
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), field);
 }
 
 void hgetCommand(client *c) {

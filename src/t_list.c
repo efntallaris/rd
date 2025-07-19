@@ -28,6 +28,7 @@
  */
 
 #include "server.h"
+#include "migration.h"
 
 /*-----------------------------------------------------------------------------
  * List API
@@ -345,6 +346,9 @@ void lindexCommand(client *c) {
     } else {
         serverPanic("Unknown list encoding");
     }
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), NULL);
 }
 
 /* LSET <key> <index> <element> */
@@ -504,6 +508,9 @@ void lrangeCommand(client *c) {
          || checkType(c,o,OBJ_LIST)) return;
 
     addListRangeReply(c,o,start,end,0);
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), NULL);
 }
 
 /* LTRIM <key> <start> <stop> */

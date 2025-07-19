@@ -28,6 +28,7 @@
  */
 
 #include "server.h"
+#include "migration.h"
 
 /*-----------------------------------------------------------------------------
  * Set Commands
@@ -413,6 +414,9 @@ void sismemberCommand(client *c) {
         addReply(c,shared.cone);
     else
         addReply(c,shared.czero);
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), NULL);
 }
 
 void smismemberCommand(client *c) {
@@ -441,6 +445,9 @@ void scardCommand(client *c) {
         checkType(c,o,OBJ_SET)) return;
 
     addReplyLongLong(c,setTypeSize(o));
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), NULL);
 }
 
 /* Handle the "SPOP key <count>" variant. The normal version of the

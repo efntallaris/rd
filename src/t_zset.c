@@ -57,6 +57,7 @@
  * from tail to head, useful for ZREVRANGE. */
 
 #include "server.h"
+#include "migration.h"
 #include <math.h>
 
 /*-----------------------------------------------------------------------------
@@ -3705,6 +3706,9 @@ void zcardCommand(client *c) {
         checkType(c,zobj,OBJ_ZSET)) return;
 
     addReplyLongLong(c,zsetLength(zobj));
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, key->ptr, sdslen(key), NULL);
 }
 
 void zscoreCommand(client *c) {
@@ -3720,6 +3724,9 @@ void zscoreCommand(client *c) {
     } else {
         addReplyDouble(c,score);
     }
+    
+    /* Add metadata to all read responses */
+    addMetadataToAllReadResponses(c, key->ptr, sdslen(key), NULL);
 }
 
 void zmscoreCommand(client *c) {
