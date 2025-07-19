@@ -1,7 +1,6 @@
 #include "server.h"
 #include "migration.h"
 #include "cluster.h"
-#include "crc16.h"
 #include <string.h>
 
 /* Global migration context */
@@ -45,7 +44,7 @@ void freeMigrationContext(void) {
 
 /* Get hash slot for a key */
 uint32_t getSlotForKey(const char *key, size_t keylen) {
-    return crc16(key, keylen) & 0x3FFF; /* 16383 slots */
+    return keyHashSlot((char*)key, (int)keylen);
 }
 
 /* Check if key is in migration range */
