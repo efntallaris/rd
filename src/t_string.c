@@ -300,7 +300,7 @@ int getGenericCommand(client *c) {
     addReplyBulk(c,o);
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, key, keylen, NULL);
+    // addMetadataToAllReadResponses(c, key, keylen, NULL);
     
     return C_OK;
 }
