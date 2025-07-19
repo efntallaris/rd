@@ -295,7 +295,6 @@ int getGenericCommand(client *c) {
     if (checkType(c,o,OBJ_STRING)) {
         return C_ERR;
     }
-    serverLog(LL_WARNING, "getGenericCommand: key=%s, keylen=%zu", key, keylen);
     /* Add the data */
     addReplyBulk(c,o);
     

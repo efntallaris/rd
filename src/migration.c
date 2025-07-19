@@ -24,7 +24,7 @@ void initMigrationContext(void) {
     /* Set list free method */
     listSetFreeMethod(migration_ctx->migration_ranges, zfree);
     
-    serverLog(LL_DEBUG, "Migration context initialized successfully");
+    serverLog(LL_WARNING, "Migration context initialized successfully");
 }
 
 /* Free migration context */
@@ -168,11 +168,11 @@ void updateMigrationRange(uint32_t start_slot, uint32_t end_slot) {
 void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen) {
     migrationMetadata *metadata = getMigrationMetadata(key, keylen);
     if (metadata == NULL) {
-        serverLog(LL_DEBUG, "Cannot add metadata to response for key '%.*s': metadata is NULL", (int)keylen, key);
+        serverLog(LL_WARNING, "Cannot add metadata to response for key '%.*s': metadata is NULL", (int)keylen, key);
         return;
     }
     
-    serverLog(LL_DEBUG, "Adding metadata to response for key '%.*s': slot=%u, status=%d, source=%u, dest=%u", 
+    serverLog(LL_WARNING, "Adding metadata to response for key '%.*s': slot=%u, status=%d, source=%u, dest=%u", 
              (int)keylen, key, metadata->slot_id, metadata->migration_status, metadata->source_id, metadata->dest_id);
 
     addReplyAttributeLen(c, 2); /* 2 attributes: slot_id, migration_status */
@@ -188,7 +188,7 @@ void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen) {
 
 /* Add metadata to all read responses */
 void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen, const char *field) {
-    serverLog(LL_DEBUG, "Adding metadata to read response for key '%.*s'%s%s", 
+    serverLog(LL_WARNING, "Adding metadata to read response for key '%.*s'%s%s", 
              (int)keylen, key, field ? " field '" : "", field ? field : "", field ? "'" : "");
     addMigrationMetadataToResponse(c, key, keylen);
 }
@@ -273,7 +273,7 @@ void freeDoubleReadResponse(doubleReadResponse *response) {
 
 /* Command to update migration ranges (for testing/admin) */
 void migrationRangeCommand(client *c) {
-    serverLog(LL_DEBUG, "MIGRATION.RANGE command called with %d arguments", c->argc);
+    serverLog(LL_WARNING, "MIGRATION.RANGE command called with %d arguments", c->argc);
     
     if (c->argc != 3) {
         serverLog(LL_DEBUG, "MIGRATION.RANGE: wrong number of arguments (%d)", c->argc);
