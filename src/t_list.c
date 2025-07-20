@@ -348,7 +348,7 @@ void lindexCommand(client *c) {
     }
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
+    // addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
 }
 
 /* LSET <key> <index> <element> */
@@ -510,7 +510,7 @@ void lrangeCommand(client *c) {
     addListRangeReply(c,o,start,end,0);
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
+    // addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
 }
 
 /* LTRIM <key> <start> <stop> */

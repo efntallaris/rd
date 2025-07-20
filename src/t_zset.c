@@ -3708,7 +3708,7 @@ void zcardCommand(client *c) {
     addReplyLongLong(c,zsetLength(zobj));
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, key->ptr, sdslen(key));
+    // addMetadataToAllReadResponses(c, key->ptr, sdslen(key));
 }
 
 void zscoreCommand(client *c) {
@@ -3726,7 +3726,7 @@ void zscoreCommand(client *c) {
     }
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, key->ptr, sdslen(key));
+    // addMetadataToAllReadResponses(c, key->ptr, sdslen(key));
 }
 
 void zmscoreCommand(client *c) {
