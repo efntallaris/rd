@@ -416,7 +416,7 @@ void sismemberCommand(client *c) {
         addReply(c,shared.czero);
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), NULL);
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
 }
 
 void smismemberCommand(client *c) {
@@ -447,7 +447,7 @@ void scardCommand(client *c) {
     addReplyLongLong(c,setTypeSize(o));
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), NULL);
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
 }
 
 /* Handle the "SPOP key <count>" variant. The normal version of the

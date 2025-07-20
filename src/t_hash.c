@@ -799,7 +799,7 @@ static void addHashFieldToReply(client *c, robj *o, sds field) {
     }
     
     /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]), field);
+    addMetadataToAllReadResponses(c, c->argv[1]->ptr, sdslen(c->argv[1]));
 }
 
 void hgetCommand(client *c) {
