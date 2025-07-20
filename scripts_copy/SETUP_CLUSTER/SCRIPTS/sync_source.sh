@@ -35,6 +35,8 @@ git reset --hard
 git checkout -B "\$BRANCH" "origin/\$BRANCH"
 git pull origin "\$BRANCH"
 git submodule update --init --recursive
+git gc --prune=now
+git repack -Ad
 EOF
 
   done
