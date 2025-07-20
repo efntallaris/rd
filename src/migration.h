@@ -42,19 +42,6 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen);
 void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen);
 
 /* Add metadata to all read responses */
-void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen, const char *field);
-
-/* Perform double read operation */
-doubleReadResponse* performDoubleRead(client *c, const char *key, size_t keylen);
-
-/* Add double read response to client */
-void addDoubleReadResponse(client *c, doubleReadResponse *response);
-
-/* Free double read response */
-void freeDoubleReadResponse(doubleReadResponse *response);
-
-/* Command functions */
-void migrationStatusCommand(client *c);
-void migrationSlotInfoCommand(client *c);
+void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen);
 
 #endif /* __MIGRATION_H */ 

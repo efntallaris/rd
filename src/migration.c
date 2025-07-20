@@ -104,8 +104,7 @@ void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen) {
         return;
     }
     
-    serverLog(LL_WARNING, "Adding metadata to response for key '%.*s': slot=%u, status=%d, source=%u, dest=%u", 
-             (int)keylen, key, metadata->slot_id, metadata->migration_status, metadata->source_id, metadata->dest_id);
+    serverLog(LL_WARNING, "Adding metadata to response for key %s: slot=%u, status=%d, source=%u, dest=%u", key, metadata->slot_id, metadata->migration_status, metadata->source_id, metadata->dest_id);
 
     addReplyAttributeLen(c, 4); /* 4 attributes: slot_id, migration_status */
     addReplyProto(c, "slot_id", 7);
@@ -122,90 +121,10 @@ void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen) {
 }
 
 /* Add metadata to all read responses */
-void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen, const char *field) {
-    serverLog(LL_WARNING, "Adding metadata to read response for key '%.*s'%s%s", 
-             (int)keylen, key, field ? " field '" : "", field ? field : "", field ? "'" : "");
+void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen) {
     addMigrationMetadataToResponse(c, key, keylen);
 }
 
-/* Perform double read operation */
-doubleReadResponse* performDoubleRead(client *c, const char *key, size_t keylen) {
-    serverLog(LL_DEBUG, "Performing double read for key '%.*s'", (int)keylen, key);
-    
-    doubleReadResponse *response = zmalloc(sizeof(doubleReadResponse));
-    response->data = NULL;
-    response->double_read_performed = 0;
-    response->from_source = 0;
-    
-    /* Get migration metadata */
-    migrationMetadata *metadata = getMigrationMetadata(key, keylen);
-    if (metadata) {
-        memcpy(&response->metadata, metadata, sizeof(migrationMetadata));
-        serverLog(LL_DEBUG, "Got migration metadata for double read: slot=%u, status=%d", 
-                 metadata->slot_id, metadata->migration_status);
-        zfree(metadata); /* Free since we copied it */
-    } else {
-        serverLog(LL_DEBUG, "No migration metadata available for double read");
-    }
-    
-    /* Simulate double read logic */
-    /* In a real implementation, this would:
-       1. Try to read from destination first
-       2. If destination returns empty/null, read from source
-       3. Compare responses and return the latest
-    */
-    
-    /* For now, we'll just do a normal lookup */
-    robj *o = lookupKeyRead(c->db, c->argv[1]);
-    if (o != NULL) {
-        response->data = o;
-        incrRefCount(o); /* Increment ref count since we're keeping it */
-        response->from_source = 0; /* Assume from destination */
-        serverLog(LL_DEBUG, "Double read found data for key '%.*s' (from destination)", (int)keylen, key);
-    } else {
-        serverLog(LL_DEBUG, "Double read found no data for key '%.*s'", (int)keylen, key);
-    }
-    
-    /* Mark that double read was performed */
-    response->double_read_performed = 1;
-    serverLog(LL_DEBUG, "Double read completed for key '%.*s'", (int)keylen, key);
-    
-    return response;
-}
-
-/* Add double read response to client */
-void addDoubleReadResponse(client *c, doubleReadResponse *response) {
-    if (response == NULL) {
-        addReplyNull(c);
-        return;
-    }
-    
-    if (response->data == NULL) {
-        addReplyNull(c);
-        return;
-    }
-    
-    /* Add the actual data */
-    addReplyBulk(c, response->data);
-    
-    /* Add migration metadata if double read was performed */
-    if (response->double_read_performed) {
-        addMigrationMetadataToResponse(c, c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
-    }
-}
-
-/* Free double read response */
-void freeDoubleReadResponse(doubleReadResponse *response) {
-    if (response == NULL) {
-        return;
-    }
-    
-    if (response->data != NULL) {
-        decrRefCount(response->data);
-    }
-    
-    zfree(response);
-}
 
 /* Command to get migration status */
 void migrationStatusCommand(client *c) {

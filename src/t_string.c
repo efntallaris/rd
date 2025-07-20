@@ -285,7 +285,7 @@ void psetexCommand(client *c) {
 
 int getGenericCommand(client *c) {
     robj *o;
-    const char *key = c->argv[1]->ptr;
+    const char *key = c->argv[1];
     size_t keylen = sdslen(c->argv[1]);
 
     /* Normal lookup */
