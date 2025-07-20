@@ -35,6 +35,7 @@
 #include "latency.h"
 #include "atomicvar.h"
 #include "mt19937-64.h"
+#include "migration.h"
 
 #include <time.h>
 #include <signal.h>
@@ -3244,6 +3245,8 @@ void initServer(void) {
     server.pubsub_channels = dictCreate(&keylistDictType,NULL);
     server.pubsub_patterns = dictCreate(&keylistDictType,NULL);
     server.cronloops = 0;
+    
+    /* Migration context is now handled by cluster state */
     server.in_eval = 0;
     server.in_exec = 0;
     server.propagate_in_transaction = 0;
