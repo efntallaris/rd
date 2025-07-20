@@ -295,11 +295,9 @@ int getGenericCommand(client *c) {
     if (checkType(c,o,OBJ_STRING)) {
         return C_ERR;
     }
-    /* Add the data */
-    addReplyBulk(c,o);
     
-    /* Add metadata to all read responses */
-    addMetadataToAllReadResponses(c, key, keylen);
+    /* Use the new optimized approach with metadata appended to buffer */
+    addReplyBulkCBufferWithMetadata(c, o->ptr, sdslen(o->ptr), key, keylen);
     
     return C_OK;
 }

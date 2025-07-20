@@ -8,21 +8,21 @@
 #define MIGRATION_STATUS_IN_PROGRESS  1
 #define MIGRATION_STATUS_MIGRATED     2
 
-/* Migration metadata structure */
+/* Optimized migration metadata structure - saves space */
 typedef struct migrationMetadata {
-    uint32_t slot_id;
-    uint32_t source_id;
-    uint32_t dest_id;
-    uint32_t migration_status;
+    uint16_t slot_id;           /* Reduced from uint32_t to uint16_t (0-16383) */
+    uint16_t migration_status;  /* Reduced from uint32_t to uint16_t (0-2) */
+    uint32_t source_id;         /* Keep as uint32_t for node IDs */
+    uint32_t dest_id;           /* Keep as uint32_t for node IDs */
 } migrationMetadata;
 
-/* Double read response structure */
-typedef struct doubleReadResponse {
-    robj *data;
-    int double_read_performed;
-    int from_source;
+/* Single buffer structure for metadata + data */
+typedef struct metadataBuffer {
     migrationMetadata metadata;
-} doubleReadResponse;
+    char *data;
+    size_t data_len;
+    size_t total_size;
+} metadataBuffer;
 
 /* Function declarations */
 
@@ -35,14 +35,34 @@ int isKeyInMigrationRange(const char *key, size_t keylen);
 /* Determine if double read should be performed */
 int shouldPerformDoubleRead(const char *key, size_t keylen);
 
-/* Get migration metadata for a key */
+/* Get migration metadata for a key - original version */
 migrationMetadata* getMigrationMetadata(const char *key, size_t keylen);
 
-/* Add migration metadata to response */
+/* Get migration metadata for a key - optimized version */
+migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen);
+
+/* Add migration metadata to response - original version */
 void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen);
+
+/* Add migration metadata to response - optimized version */
+void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t keylen, const char *value, size_t valuelen);
 
 /* Add metadata to all read responses */
 void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen);
 
+/* Single buffer approach functions */
+metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char *value, size_t valuelen);
+void addMetadataBufferToResponse(client *c, metadataBuffer *buffer);
+void freeMetadataBuffer(metadataBuffer *buffer);
+
+/* New functions for single buffer approach with metadata appended */
+char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const char *key, size_t keylen, size_t *total_len);
+void addReplyBulkCBufferWithMetadata(client *c, const char *value, size_t valuelen, const char *key, size_t keylen);
+migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_len, size_t data_len);
+char* extractDataFromBuffer(const char *buffer, size_t buffer_len, size_t *data_len);
+
+/* Command functions */
+void migrationStatusCommand(client *c);
+void migrationSlotInfoCommand(client *c);
 
 #endif /* __MIGRATION_H */ 
