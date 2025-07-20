@@ -35,7 +35,6 @@
 #include "latency.h"
 #include "atomicvar.h"
 #include "mt19937-64.h"
-#include "migration.h"
 
 #include <time.h>
 #include <signal.h>
@@ -197,17 +196,6 @@ struct redisCommand redisCommandTable[] = {
     {"module",moduleCommand,-2,
      "admin no-script",
      0,NULL,0,0,0,0,0,0},
-
-    /* Migration commands */
-    {"migration.status",migrationStatusCommand,1,
-     "read-only no-script",
-     0,NULL,0,0,0,0,0,0},
-
-    {"migration.slotinfo",migrationSlotInfoCommand,2,
-     "read-only no-script",
-     0,NULL,0,0,0,0,0,0},
-
-
 
     {"get",getCommand,2,
      "read-only fast @string",
@@ -3256,8 +3244,6 @@ void initServer(void) {
     server.pubsub_channels = dictCreate(&keylistDictType,NULL);
     server.pubsub_patterns = dictCreate(&keylistDictType,NULL);
     server.cronloops = 0;
-    
-    /* Migration context is now handled by cluster state */
     server.in_eval = 0;
     server.in_exec = 0;
     server.propagate_in_transaction = 0;
