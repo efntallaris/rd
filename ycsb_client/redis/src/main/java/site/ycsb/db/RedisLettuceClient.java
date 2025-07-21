@@ -148,11 +148,18 @@ public class RedisLettuceClient extends DB {
     logger.info("READ invoked. Table: {}, Key: {}, Fields: {}, Mode: {}", 
         table, key, (fields == null ? "ALL" : fields.toString()), (isCluster ? "CLUSTER" : "STANDALONE"));
     try {
-      String value;
+      String value = null;
       if (isCluster) {
         value = clusterCommands.get(key);
       } else {
-        value = redisCommands.get(key);
+        // Use async API to get migration metadata
+        io.lettuce.core.api.async.RedisAsyncCommands<String, String> asyncCommands = connection.async();
+        io.lettuce.core.RedisFuture<io.lettuce.core.migration.MigrationAwareResponse<String>> future = asyncCommands.getWithMigrationMetadata(key);
+        io.lettuce.core.migration.MigrationAwareResponse<String> response = future.get();
+        if (response != null) {
+          value = response.getValue();
+          // Optionally, you can access migration metadata here: response.getMetadata()
+        }
       }
       
       if (value == null) {
