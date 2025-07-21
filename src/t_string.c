@@ -298,7 +298,7 @@ int getGenericCommand(client *c) {
     
     /* Use the new optimized approach with metadata appended to buffer */
     addReplyBulkCBufferWithMetadata(c, o->ptr, sdslen(o->ptr), key, keylen);
-    
+    serverLog(LL_WARNING, "value: %s", o->ptr);
     return C_OK;
 }
 
