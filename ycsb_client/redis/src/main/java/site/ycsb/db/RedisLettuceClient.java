@@ -150,21 +150,9 @@ public class RedisLettuceClient extends DB {
     try {
       String value = null;
       if (isCluster) {
-        io.lettuce.core.migration.MigrationAwareResponse<String> response = clusterCommands.getWithMigrationMetadata(key);
-        if (response != null) {
-          value = response.getValue();
-          // Print value and metadata
-          logger.info("Redis value: {}", value);
-          logger.info("Redis migration metadata: {}", response.getMetadata());
-        }
+        value = clusterCommands.get(key);
       } else {
-        io.lettuce.core.migration.MigrationAwareResponse<String> response = redisCommands.getWithMigrationMetadata(key);
-        if (response != null) {
-          value = response.getValue();
-          // Print value and metadata
-          logger.info("Redis value: {}", value);
-          logger.info("Redis migration metadata: {}", response.getMetadata());
-        }
+        value = redisCommands.get(key);
       }
       
       if (value == null) {
