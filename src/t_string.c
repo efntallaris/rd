@@ -309,7 +309,7 @@ int getGenericCommand(client *c) {
         for (size_t i = 0; i < data_len; i++) {
             sprintf(data_hex + i * 2, "%02x", (unsigned char)buffer[i]);
         }
-        serverLog(LL_WARNING, "data hex (%zu bytes): %s", data_len, data_hex);
+        // serverLog(LL_WARNING, "data hex (%zu bytes): %s", data_len, data_hex);
         zfree(data_hex);
         
         /* Print metadata part in hex */
@@ -330,6 +330,14 @@ int getGenericCommand(client *c) {
         
         serverLog(LL_WARNING, "buffer length: %zu (data: %zu, metadata: %zu)", 
                  total_len, data_len, metadata_len);
+        
+        /* Print the full payload (data length prefix + data + metadata) in hex */
+        char *payload_hex = zmalloc(total_len * 2 + 1);
+        for (size_t i = 0; i < total_len; i++) {
+            sprintf(payload_hex + i * 2, "%02x", (unsigned char)buffer[i]);
+        }
+        serverLog(LL_WARNING, "full payload hex (%zu bytes): %s", total_len, payload_hex);
+        zfree(payload_hex);
         
         /* Send the combined buffer as a single response */
         addReplyBulkCBuffer(c, buffer, total_len);
