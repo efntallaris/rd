@@ -227,7 +227,18 @@ void freeMetadataBuffer(metadataBuffer *buffer) {
     }
 }
 
-/* Create a single buffer with data + metadata appended */
+// Helper functions for little-endian serialization
+static void write_le16(char *buf, uint16_t v) {
+    buf[0] = v & 0xFF;
+    buf[1] = (v >> 8) & 0xFF;
+}
+static void write_le32(char *buf, uint32_t v) {
+    buf[0] = v & 0xFF;
+    buf[1] = (v >> 8) & 0xFF;
+    buf[2] = (v >> 16) & 0xFF;
+    buf[3] = (v >> 24) & 0xFF;
+}
+
 char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const char *key, size_t keylen, size_t *total_len) {
     migrationMetadata *metadata = getMigrationMetadataOptimized(key, keylen);
     if (metadata == NULL) {
@@ -238,28 +249,19 @@ char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const cha
         return buffer;
     }
     
-    /* Calculate sizes */
-    size_t metadata_size = sizeof(migrationMetadata);
+    size_t metadata_size = 12; // 2+2+4+4
     size_t total_size = valuelen + metadata_size;
-    
-    /* Allocate buffer for data + metadata */
     char *buffer = zmalloc(total_size);
-    
-    /* Copy the original data first */
     memcpy(buffer, value, valuelen);
-    
-    /* Append metadata at the end */
-    memcpy(buffer + valuelen, metadata, metadata_size);
-    
-    /* Set total length */
+    size_t offset = valuelen;
+    write_le16(buffer + offset, metadata->slot_id); offset += 2;
+    write_le16(buffer + offset, metadata->migration_status); offset += 2;
+    write_le32(buffer + offset, metadata->source_id); offset += 4;
+    write_le32(buffer + offset, metadata->dest_id); offset += 4;
     *total_len = total_size;
-    
-    /* Free the temporary metadata */
     zfree(metadata);
-    
-    serverLog(LL_DEBUG, "Created data+metadata buffer: data_size=%zu, metadata_size=%zu, total=%zu", 
+    serverLog(LL_DEBUG, "Created data+metadata buffer (portable): data_size=%zu, metadata_size=%zu, total=%zu", 
              valuelen, metadata_size, total_size);
-    
     return buffer;
 }
 
@@ -284,23 +286,25 @@ void addReplyBulkCBufferWithMetadata(client *c, const char *value, size_t valuel
     serverLog(LL_DEBUG, "Sent data+metadata buffer for key '%.*s': total_size=%zu", (int)keylen, key, total_len);
 }
 
-/* Extract metadata from a buffer that contains data + metadata */
+// Helper functions for little-endian deserialization
+static uint16_t read_le16(const char *buf) {
+    return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+}
+static uint32_t read_le32(const char *buf) {
+    return (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) | ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+}
+
 migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_len, size_t data_len) {
-    if (buffer_len <= data_len) {
-        /* Buffer doesn't contain metadata */
-        return NULL;
-    }
-    
-    size_t metadata_size = sizeof(migrationMetadata);
+    size_t metadata_size = 12;
     if (buffer_len < data_len + metadata_size) {
-        /* Buffer too small to contain complete metadata */
         return NULL;
     }
-    
-    /* Extract metadata from the end of the buffer */
+    const char *meta = buffer + data_len;
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
-    memcpy(metadata, buffer + data_len, metadata_size);
-    
+    metadata->slot_id = read_le16(meta);
+    metadata->migration_status = read_le16(meta + 2);
+    metadata->source_id = read_le32(meta + 4);
+    metadata->dest_id = read_le32(meta + 8);
     return metadata;
 }
 

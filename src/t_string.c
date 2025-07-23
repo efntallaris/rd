@@ -318,13 +318,14 @@ int getGenericCommand(client *c) {
             for (size_t i = 0; i < metadata_len; i++) {
                 sprintf(metadata_hex + i * 2, "%02x", (unsigned char)buffer[data_len + i]);
             }
-            serverLog(LL_WARNING, "metadata hex (%zu bytes): %s", metadata_len, metadata_hex);
+            serverLog(LL_WARNING, "metadata hex (%zu bytes, little-endian portable): %s", metadata_len, metadata_hex);
             zfree(metadata_hex);
             
             /* Extract and print metadata values */
-            migrationMetadata *metadata = (migrationMetadata*)(buffer + data_len);
+            migrationMetadata *metadata = extractMetadataFromBuffer(buffer, total_len, data_len);
             serverLog(LL_WARNING, "metadata values: slot_id=%u, status=%u, source_id=%u, dest_id=%u", 
                      metadata->slot_id, metadata->migration_status, metadata->source_id, metadata->dest_id);
+            zfree(metadata);
         }
         
         serverLog(LL_WARNING, "buffer length: %zu (data: %zu, metadata: %zu)", 
