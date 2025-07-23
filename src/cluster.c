@@ -5684,16 +5684,16 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	dictGetStats(buffer,	sizeof(buffer),	server.db[0].dict);
 	serverLog(LL_WARNING, "STRATOS %s", buffer);
 	serverLog(LL_WARNING, "STRATOS DISABLED REHASHING");
-	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE :%d", server.db[0].dict->ht[0].size);
-	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE MASK:%d", server.db[0].dict->ht[0].sizemask);
-	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE 2:%d", server.db[0].dict->ht[1].size);
-	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE MASK 2:%d", server.db[0].dict->ht[1].sizemask);
+	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE :%lu", server.db[0].dict->ht[0].size);
+	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE MASK:%lu", server.db[0].dict->ht[0].sizemask);
+	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE 2:%lu", server.db[0].dict->ht[1].size);
+	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE MASK 2:%lu", server.db[0].dict->ht[1].sizemask);
 	struct threadArgs *tArgs = (struct threadArgs *) arg;
 
 
-	client *c = (client *) tArgs->c;
-	sds *args = tArgs->_args;
-	size_t number_of_arguments = tArgs->number_of_arguments;
+	// client *c = (client *) tArgs->c;
+	// sds *args = tArgs->_args;
+	// size_t number_of_arguments = tArgs->number_of_arguments;
 
 // 	migrateCachedSocket *targetSocket;
 // 	targetSocket = migrateGetSocketOtherParams(c, args[3], args[4], args[3], args[4], 10000);
@@ -6492,7 +6492,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 // 	printTimevalInMilliseconds(&tv_total_migration_start, &tv_total_migration_end, "MIGRATION_DURATION");
 	serverLog(LL_WARNING, "STRATOS ENDED MIGRATION ON DONOR SIDE");
 	//SOS TODO CLEAN ARGUMETNS TAKEN FROM migrateRDMASlots Command
-	return;
+	return NULL;
 }
 //
 //
