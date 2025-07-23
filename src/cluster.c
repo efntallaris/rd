@@ -5688,7 +5688,7 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE MASK:%lu", server.db[0].dict->ht[0].sizemask);
 	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE 2:%lu", server.db[0].dict->ht[1].size);
 	serverLog(LL_WARNING, "STRATOS DICTIONARY SIZE MASK 2:%lu", server.db[0].dict->ht[1].sizemask);
-	struct threadArgs *tArgs = (struct threadArgs *) arg;
+	// struct threadArgs *tArgs = (struct threadArgs *) arg;
 
 
 	// client *c = (client *) tArgs->c;

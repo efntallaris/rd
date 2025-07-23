@@ -36,6 +36,11 @@
 #include "rio.h"
 #include "atomicvar.h"
 
+
+#include "rdma_buffer.h"
+#include "rdma_client.h"
+#include "rdma_server.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
