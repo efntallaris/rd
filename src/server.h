@@ -1166,6 +1166,15 @@ typedef enum childInfoType {
     CHILD_INFO_TYPE_MODULE_COW_SIZE
 } childInfoType;
 
+
+
+typedef struct _rdmaRemoteBufferInfo{
+
+	uint64_t ptr;
+	uint32_t rkey;
+	
+} rdmaRemoteBufferInfo;
+
 struct redisServer {
     /* General */
     pid_t pid;                  /* Main process pid. */
