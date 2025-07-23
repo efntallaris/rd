@@ -284,13 +284,6 @@ void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t 
     freeMetadataBuffer(buffer);
 }
 
-/* Add metadata to all read responses */
-void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen) {
-    /* This function now needs the value data to create the buffer */
-    /* It should be called with the actual value data */
-    serverLog(LL_WARNING, "addMetadataToAllReadResponses called without value data - use addReplyBulkCBufferWithMetadata instead");
-}
-
 /* Command to get migration status */
 void migrationStatusCommand(client *c) {
     serverLog(LL_WARNING, "MIGRATION.STATUS command called");
