@@ -1247,6 +1247,15 @@ struct redisServer {
     mstime_t client_pause_end_time;    /* Time when we undo clients_paused */
     char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
     dict *migrate_cached_sockets;/* MIGRATE cached sockets */
+
+
+
+    dict *migrate_cached_sockets;/* MIGRATE cached sockets */
+    dict *rdma_cached_connections;/* RDMA cached sockets */
+    dict *slot_buffers; /* RDMA CACHED BUFFERS FOR THE SLOTS */
+    int clientBuffersLastIndex;
+
+
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
     int gopher_enabled;         /* If true the server will reply to gopher
