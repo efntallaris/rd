@@ -335,7 +335,7 @@ int getGenericCommand(client *c) {
         size_t chunk_size = 256; // bytes per chunk
         size_t hex_chunk_size = chunk_size * 2;
         size_t num_chunks = (total_len + chunk_size - 1) / chunk_size;
-        serverLog(LL_WARNING, "full payload hex length: %zu (should be %zu)", strlen(payload_hex), total_len * 2);
+        serverLog(LL_WARNING, "full payload hex length: %zu (should be %zu)", strlen(buffer), total_len * 2);
         for (size_t c = 0; c < num_chunks; ++c) {
             size_t start = c * hex_chunk_size;
             size_t end = start + hex_chunk_size;
