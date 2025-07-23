@@ -296,9 +296,31 @@ int getGenericCommand(client *c) {
         return C_ERR;
     }
     
-    /* Use the new optimized approach with metadata appended to buffer */
-    addReplyBulkCBufferWithMetadata(c, o->ptr, sdslen(o->ptr), key, keylen);
-    serverLog(LL_WARNING, "value: %s", o->ptr);
+    /* Create the buffer with metadata first to inspect it */
+    size_t total_len;
+    char *buffer = createDataWithMetadataBuffer(o->ptr, sdslen(o->ptr), key, keylen, &total_len);
+    
+    if (buffer != NULL) {
+        /* Print the entire buffer (data + metadata) in hex format */
+        char *hex_buf = zmalloc(total_len * 2 + 1); /* 2 chars per byte + null terminator */
+        for (size_t i = 0; i < total_len; i++) {
+            sprintf(hex_buf + i * 2, "%02x", (unsigned char)buffer[i]);
+        }
+        serverLog(LL_WARNING, "entire buffer (data+metadata) hex: %s", hex_buf);
+        serverLog(LL_WARNING, "buffer length: %zu (data: %zu, metadata: %zu)", 
+                 total_len, sdslen(o->ptr), total_len - sdslen(o->ptr));
+        zfree(hex_buf);
+        
+        /* Send the combined buffer as a single response */
+        addReplyBulkCBuffer(c, buffer, total_len);
+        
+        /* Free the buffer */
+        zfree(buffer);
+    } else {
+        /* Fallback to regular response without metadata */
+        addReplyBulkCBuffer(c, o->ptr, sdslen(o->ptr));
+        serverLog(LL_WARNING, "fallback: no metadata buffer created");
+    }
     return C_OK;
 }
 
