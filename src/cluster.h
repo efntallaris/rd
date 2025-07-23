@@ -108,6 +108,7 @@ typedef struct clusterLink {
 
 
 //Thread that is handlind the migration on donor side
+void rdmaAddConnection(client *c, struct rdma_server_info *s, char *port);
 pthread_t migrateThread;
 
 struct threadArgs {
