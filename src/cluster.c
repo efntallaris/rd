@@ -6605,6 +6605,27 @@ void initRDMAServerCommand(client *c) {
 }
 
 
+void rdmaAddConnection(client *c, struct rdma_server_info *s_rdma, char *rdmaPort) {
+	rdmaCachedConnection *cs;
+	sds name = sdsempty();
+
+	char clientIDBuffer[50];
+	sprintf(clientIDBuffer, "%ld", c->id);
+
+	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
+
+	/* Add to the cache and return it to the caller. */
+	cs = zmalloc(sizeof(*cs));
+	cs->s = s_rdma;
+	cs->db = c->db;
+	cs->c = c;
+
+	dictAdd(server.rdma_cached_connections, sdsnew(name), cs);
+	sdsfree(name);
+}
+
+
+
 /* -----------------------------------------------------------------------------
  * MIGRATION STOP
  * -------------------------------------------------------------------------- */
