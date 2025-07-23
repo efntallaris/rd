@@ -5675,6 +5675,7 @@ socket_err:
  * MIGRATION START
  * -------------------------------------------------------------------------- */
 
+pthread_t migrateThread;
 
 //
 // // Thread code that it is handling the RDMA Migration//
