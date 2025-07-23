@@ -48,7 +48,7 @@ void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen);
 void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t keylen, const char *value, size_t valuelen);
 
 /* Add metadata to all read responses */
-void addMetadataToAllReadResponses(client *c, const char *key, size_t keylen);
+void (client *c, const char *key, size_t keylen);
 
 /* Single buffer approach functions */
 metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char *value, size_t valuelen);
