@@ -41,7 +41,6 @@ static struct rdma_buffer_info default_buffer_ops = {
 		.getMR = getMR, 	
 		.getBufferPointer = getBufferPointer,
 		.getSize = getSize,
-		.allocateBuffer = allocateBuffer,
 		.registerBuffer = registerBuffer,
 		.getRemoteKey = getRemoteKey,
 		.addBufferDataToBuffer = addBufferDataToBuffer,

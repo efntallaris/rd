@@ -27,7 +27,6 @@ struct rdma_buffer_info {
 	    struct ibv_mr *(*getMR)(struct rdma_buffer_info *);
 	    char *(*getBufferPointer)(struct rdma_buffer_info *);
 	    size_t (*getSize)(struct rdma_buffer_info *);
-	    void (*allocateBuffer)(struct rdma_buffer_info *);
 	    void (*registerBuffer)(struct rdma_buffer_info *);
 	    void (*setSize)(struct rdma_buffer_info *, size_t);
 	    void (*setBufferData)(struct rdma_buffer_info *, uint64_t, uint32_t);
