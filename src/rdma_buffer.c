@@ -82,19 +82,6 @@ struct rdma_buffer_info *init_rdma_buffer(struct rdma_cm_id *id, char *buffer, s
 }
 
 
-struct rdma_buffer_info *init_zero_rdma_buffer(struct rdma_cm_id *id){
-	struct rdma_buffer_info *newBuffer = (struct rdma_buffer_info *) malloc(sizeof(struct rdma_buffer_info));
-	newBuffer->buffer_ops = default_buffer_ops.buffer_ops;
-	newBuffer->id = id;
-	newBuffer->buffer = NULL;
-	newBuffer->size = 0;
-	newBuffer->buffer_access = IBV_ACCESS_ZERO_BASED;
-	newBuffer->mr = ibv_reg_mr(newBuffer->id->pd, NULL, 0, IBV_ACCESS_ZERO_BASED);
-	if(newBuffer->mr == NULL){
-		return NULL;
-	}
-	return newBuffer;
-}
 
 void setRemoteData(struct rdma_buffer_info *b, uint64_t buf_va, uint32_t buf_rkey){
 	b->remote_data.buf_va = buf_va;
