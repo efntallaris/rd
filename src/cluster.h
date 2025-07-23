@@ -117,6 +117,20 @@ struct threadArgs {
 };
 
 
+/* RDMA CACHED CONNECTION */
+typedef struct rdmaCachedConnection {
+    struct rdma_server_info *s;
+
+    client *c;
+
+    redisDb *db;
+    rdmaRemoteBufferInfo buffers[16384];
+    int number_of_assigned_slots;
+    struct ibv_mr *memory_regions[16384];
+    
+} rdmaCachedConnection;
+
+
 /* This structure represent elements of node->fail_reports. */
 typedef struct clusterNodeFailReport {
     struct clusterNode *node;  /* Node reporting the failure condition. */

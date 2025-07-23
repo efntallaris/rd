@@ -77,6 +77,11 @@ uint64_t clusterGetMaxEpoch(void);
 int clusterBumpConfigEpochWithoutConsensus(void);
 void moduleCallClusterReceivers(const char *sender_id, uint64_t module_id, uint8_t type, const unsigned char *payload, uint32_t len);
 
+
+
+rdmaCachedConnection* rdmaGetConnection(client *c);
+
+
 #define RCVBUF_INIT_LEN 1024
 #define RCVBUF_MAX_PREALLOC (1<<20) /* 1MB */
 
@@ -5671,9 +5676,54 @@ socket_err:
 
 
 
+
 /* -----------------------------------------------------------------------------
  * MIGRATION START
  * -------------------------------------------------------------------------- */
+
+
+// CACHE FOR RDMA CONENCTIONS, STORE QP IN ORDER TO FIND IT BETWEEN RPC's
+
+rdmaCachedConnection* rdmaGetConnection(client *c) {
+	sds name = sdsempty();
+	rdmaCachedConnection *cs;
+
+	/* Check if we have an already cached socket for this ip:port pair. */
+
+	char clientIDBuffer[50];
+	sprintf(clientIDBuffer, "%ld", c->id);
+
+	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
+	cs = dictFetchValue(server.rdma_cached_connections, name);
+	if (cs) {
+		sdsfree(name);
+		return cs;
+	}
+
+	sdsfree(name);
+	return NULL;
+}
+
+
+void rdmaAddConnection(client *c, struct rdma_server_info *s_rdma, char *rdmaPort) {
+	rdmaCachedConnection *cs;
+	sds name = sdsempty();
+
+	char clientIDBuffer[50];
+	sprintf(clientIDBuffer, "%ld", c->id);
+
+	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
+
+	/* Add to the cache and return it to the caller. */
+	cs = zmalloc(sizeof(*cs));
+	cs->s = s_rdma;
+	cs->db = c->db;
+	cs->c = c;
+
+	dictAdd(server.rdma_cached_connections, sdsnew(name), cs);
+	sdsfree(name);
+}
+
 
 pthread_t migrateThread;
 
