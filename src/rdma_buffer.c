@@ -14,10 +14,6 @@ size_t getSize(struct rdma_buffer_info *b){
 	return b->size;
 }
 
-void allocateBuffer(struct rdma_buffer_info *b){
-	b->buffer = (char *) malloc(b->size);
-	b->mr = ibv_reg_mr(b->id->pd, (void *)b->buffer, b->size, b->buffer_access);
-}
 
 void registerBuffer(struct rdma_buffer_info *b){
 	b->mr = ibv_reg_mr(b->id->pd, (void *)b->buffer, b->size, b->buffer_access);

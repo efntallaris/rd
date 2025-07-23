@@ -44,7 +44,6 @@ char *getBufferPointer(struct rdma_buffer_info *b);
 
 size_t getSize(struct rdma_buffer_info *b);
 
-void allocateBuffer(struct rdma_buffer_info *b);
 
 void registerBuffer(struct rdma_buffer_info *b);
 
