@@ -40,16 +40,9 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen);
 /* Get migration metadata for a key - optimized version */
 migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen);
 
-/* Add migration metadata to response - original version */
-void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen);
-
-/* Add migration metadata to response - optimized version */
-void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t keylen, const char *value, size_t valuelen);
-
 
 /* Single buffer approach functions */
 metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char *value, size_t valuelen);
-void addMetadataBufferToResponse(client *c, metadataBuffer *buffer);
 void freeMetadataBuffer(metadataBuffer *buffer);
 
 /* New functions for single buffer approach with metadata appended */
