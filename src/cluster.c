@@ -6586,7 +6586,7 @@ void initRDMAServerCommand(client *c) {
 	char *rdma_server_port = (char *) c->argv[1]->ptr;
 	struct rdma_server_info *s;
 	s = init_rdma_server(rdma_server_port);
-	rdmaAddConnection(c, s, rdma_server_port);
+	rdmaAddConnection(c, s);
 	if(s->id == NULL) {
 		serverLog(LL_WARNING, "STRATOS CONNECTION IS NULL");
 	}
@@ -6597,46 +6597,77 @@ void initRDMAServerCommand(client *c) {
 
 // CACHE FOR RDMA CONENCTIONS, STORE QP IN ORDER TO FIND IT BETWEEN RPC's
 
+// rdmaCachedConnection* rdmaGetConnection(client *c) {
+// 	sds name = sdsempty();
+// 	rdmaCachedConnection *cs;
+
+// 	/* Check if we have an already cached socket for this ip:port pair. */
+
+// 	char clientIDBuffer[50];
+// 	sprintf(clientIDBuffer, "%ld", c->id);
+
+// 	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
+// 	cs = dictFetchValue(server.rdma_cached_connections, name);
+// 	if (cs) {
+// 		sdsfree(name);
+// 		return cs;
+// 	}
+
+// 	sdsfree(name);
+// 	return NULL;
+// }
+
 rdmaCachedConnection* rdmaGetConnection(client *c) {
-	sds name = sdsempty();
-	rdmaCachedConnection *cs;
+    char clientIDBuffer[32];
+    snprintf(clientIDBuffer, sizeof(clientIDBuffer), "%ld", c->id);
 
-	/* Check if we have an already cached socket for this ip:port pair. */
-
-	char clientIDBuffer[50];
-	sprintf(clientIDBuffer, "%ld", c->id);
-
-	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
-	cs = dictFetchValue(server.rdma_cached_connections, name);
-	if (cs) {
-		sdsfree(name);
-		return cs;
-	}
-
-	sdsfree(name);
-	return NULL;
+    sds key = sdsnew(clientIDBuffer);
+    rdmaCachedConnection *cs = dictFetchValue(server.rdma_cached_connections, key);
+    sdsfree(key);
+    return cs;
 }
 
+// void rdmaAddConnection(client *c, struct rdma_server_info *s_rdma) {
+// 	rdmaCachedConnection *cs;
+// 	sds name = sdsempty();
 
-void rdmaAddConnection(client *c, struct rdma_server_info *s_rdma, char *rdmaPort) {
-	rdmaCachedConnection *cs;
-	sds name = sdsempty();
+// 	char clientIDBuffer[50];
+// 	sprintf(clientIDBuffer, "%ld", c->id);
 
-	char clientIDBuffer[50];
-	sprintf(clientIDBuffer, "%ld", c->id);
+// 	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
 
-	name = sdscatlen(name, clientIDBuffer, strlen(clientIDBuffer));
+// 	/* Add to the cache and return it to the caller. */
+// 	cs = zmalloc(sizeof(*cs));
+// 	cs->s = s_rdma;
+// 	cs->db = c->db;
+// 	cs->c = c;
 
-	/* Add to the cache and return it to the caller. */
-	cs = zmalloc(sizeof(*cs));
-	cs->s = s_rdma;
-	cs->db = c->db;
-	cs->c = c;
+// 	dictAdd(server.rdma_cached_connections, sdsnew(name), cs);
+// 	sdsfree(name);
+// }
 
-	dictAdd(server.rdma_cached_connections, sdsnew(name), cs);
-	sdsfree(name);
+void rdmaAddConnection(client *c, struct rdma_server_info *s_rdma) {
+    char clientIDBuffer[32];
+    snprintf(clientIDBuffer, sizeof(clientIDBuffer), "%ld", c->id);
+
+    sds key = sdsnew(clientIDBuffer);
+
+    // If a connection already exists for this client, free it
+    rdmaCachedConnection *old = dictFetchValue(server.rdma_cached_connections, key);
+    if (old) {
+        // Free old connection resources if needed
+        // zfree(old); // Uncomment if you want to free the old connection
+        dictDelete(server.rdma_cached_connections, key);
+    }
+
+    rdmaCachedConnection *cs = zmalloc(sizeof(*cs));
+    cs->s = s_rdma;
+    cs->db = c->db;
+    cs->c = c;
+
+    dictAdd(server.rdma_cached_connections, key, cs);
+    // No need to sdsfree(key) since dictAdd takes ownership
 }
-
 
 
 /* -----------------------------------------------------------------------------
