@@ -1249,8 +1249,6 @@ struct redisServer {
     dict *migrate_cached_sockets;/* MIGRATE cached sockets */
 
 
-
-    dict *migrate_cached_sockets;/* MIGRATE cached sockets */
     dict *rdma_cached_connections;/* RDMA cached sockets */
     dict *slot_buffers; /* RDMA CACHED BUFFERS FOR THE SLOTS */
     int clientBuffersLastIndex;
