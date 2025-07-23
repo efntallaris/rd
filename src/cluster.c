@@ -6518,7 +6518,7 @@ void migrateRDMASlotsCommand(client *c) {
 
 	client *tempClient = (client *) zmalloc(sizeof(client));
 	memcpy(tempClient, c, sizeof(client));
-	struct threadArgs *tArgs = (struct threadArgs *) malloc(sizeof(struct threadArgs));
+	struct threadArgs *tArgs = (struct threadArgs *) zmalloc(sizeof(struct threadArgs));
 	tArgs->c = c;
 	tArgs->_args = _args;
 	tArgs->number_of_arguments = c->argc;
