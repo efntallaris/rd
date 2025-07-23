@@ -12,7 +12,6 @@
 typedef struct migrationMetadata {
     uint16_t slot_id;           /* Reduced from uint32_t to uint16_t (0-16383) */
     uint16_t migration_status;  /* Reduced from uint32_t to uint16_t (0-2) */
-    uint32_t source_id;         /* Keep as uint32_t for node IDs */
     uint32_t dest_id;           /* Keep as uint32_t for node IDs */
 } migrationMetadata;
 
@@ -47,8 +46,6 @@ void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen);
 /* Add migration metadata to response - optimized version */
 void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t keylen, const char *value, size_t valuelen);
 
-/* Add metadata to all read responses */
-void (client *c, const char *key, size_t keylen);
 
 /* Single buffer approach functions */
 metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char *value, size_t valuelen);
