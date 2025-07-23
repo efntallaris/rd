@@ -873,6 +873,16 @@ struct redisCommand redisCommandTable[] = {
      "write random @keyspace @dangerous",
      0,migrateGetKeys,0,0,0,0,0,0},
 
+		{"migrateRDMASlots", migrateRDMASlotsCommand, -8,
+			"read-only random @keyspace",
+			0,NULL,0,0,0,0,0,0
+		},
+
+    {"initRDMAServer",initRDMAServerCommand,4,
+			"read-only random @keyspace",
+			0,NULL,0,0,0,0,0,0
+		},
+
     {"asking",askingCommand,1,
      "fast @keyspace",
      0,NULL,0,0,0,0,0,0},

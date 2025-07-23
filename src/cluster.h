@@ -106,6 +106,17 @@ typedef struct clusterLink {
 #define CLUSTER_MODULE_FLAG_NO_FAILOVER (1<<1)
 #define CLUSTER_MODULE_FLAG_NO_REDIRECTION (1<<2)
 
+
+//Thread that is handlind the migration on donor side
+pthread_t migrateThread;
+
+struct threadArgs {
+	sds * _args;
+	client  *c;
+	size_t number_of_arguments;
+};
+
+
 /* This structure represent elements of node->fail_reports. */
 typedef struct clusterNodeFailReport {
     struct clusterNode *node;  /* Node reporting the failure condition. */
