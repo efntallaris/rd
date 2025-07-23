@@ -301,15 +301,34 @@ int getGenericCommand(client *c) {
     char *buffer = createDataWithMetadataBuffer(o->ptr, sdslen(o->ptr), key, keylen, &total_len);
     
     if (buffer != NULL) {
-        /* Print the entire buffer (data + metadata) in hex format */
-        char *hex_buf = zmalloc(total_len * 2 + 1); /* 2 chars per byte + null terminator */
-        for (size_t i = 0; i < total_len; i++) {
-            sprintf(hex_buf + i * 2, "%02x", (unsigned char)buffer[i]);
+        size_t data_len = sdslen(o->ptr);
+        size_t metadata_len = total_len - data_len;
+        
+        /* Print data part in hex */
+        char *data_hex = zmalloc(data_len * 2 + 1);
+        for (size_t i = 0; i < data_len; i++) {
+            sprintf(data_hex + i * 2, "%02x", (unsigned char)buffer[i]);
         }
-        serverLog(LL_WARNING, "entire buffer (data+metadata) hex: %s", hex_buf);
+        serverLog(LL_WARNING, "data hex (%zu bytes): %s", data_len, data_hex);
+        zfree(data_hex);
+        
+        /* Print metadata part in hex */
+        if (metadata_len > 0) {
+            char *metadata_hex = zmalloc(metadata_len * 2 + 1);
+            for (size_t i = 0; i < metadata_len; i++) {
+                sprintf(metadata_hex + i * 2, "%02x", (unsigned char)buffer[data_len + i]);
+            }
+            serverLog(LL_WARNING, "metadata hex (%zu bytes): %s", metadata_len, metadata_hex);
+            zfree(metadata_hex);
+            
+            /* Extract and print metadata values */
+            migrationMetadata *metadata = (migrationMetadata*)(buffer + data_len);
+            serverLog(LL_WARNING, "metadata values: slot_id=%u, status=%u, source_id=%u, dest_id=%u", 
+                     metadata->slot_id, metadata->migration_status, metadata->source_id, metadata->dest_id);
+        }
+        
         serverLog(LL_WARNING, "buffer length: %zu (data: %zu, metadata: %zu)", 
-                 total_len, sdslen(o->ptr), total_len - sdslen(o->ptr));
-        zfree(hex_buf);
+                 total_len, data_len, metadata_len);
         
         /* Send the combined buffer as a single response */
         addReplyBulkCBuffer(c, buffer, total_len);
