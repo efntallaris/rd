@@ -139,7 +139,6 @@ int post_write_at_address_client(struct rdma_buffer_info *b, char *local_addr, u
     struct ibv_send_wr wr;
     struct ibv_send_wr *bad_wr;
 
-    int ret;
     sge.addr = (uint64_t)(uintptr_t) local_addr;
     sge.length = (uint32_t) len;
     sge.lkey = b->buffer_ops.getMR(b) ? b->buffer_ops.getMR(b)->lkey : 0;
@@ -235,8 +234,10 @@ void wait_for_multiple_send_completions_client(int number_of_completions, struct
             break;
 
         ret = ibv_req_notify_cq(c->id->send_cq, 0);
-        if (ret)
-            return rdma_seterrno(ret);
+        if (ret){
+            rdma_seterrno(ret);
+            return NULL;
+        }
 
         ret = ibv_poll_cq(c->id->send_cq, 1, &wc);
 
