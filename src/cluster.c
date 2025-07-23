@@ -6507,45 +6507,26 @@ void *migrateRDMASlotsCommandThread(void *arg) {
 //
 //
 //
-// // RPC to initiate RDMA migration
-// void migrateRDMASlotsCommand(client *c) {
-// 	sds *_args;
-// 	_args = (sds*) zmalloc((c->argc) * sizeof(sds));
-//
-// 	for(int j=0; j<c->argc; j++) {
-// 		_args[j] = sdsdup(c->argv[j]->ptr);
-// 	}
-//
-// 	client *tempClient = (client *) zmalloc(sizeof(client));
-// 	memcpy(tempClient, c, sizeof(client));
-// 	struct threadArgs *tArgs = (struct threadArgs *) malloc(sizeof(struct threadArgs));
-// 	tArgs->c = c;
-// 	tArgs->_args = _args;
-// 	tArgs->number_of_arguments = c->argc;
-// 	pthread_create( &migrateThread, NULL, migrateRDMASlotsCommandThread, (void *) tArgs);
-// 	//pthread_join(migrateThread, NULL);
-// 	addReply(c, shared.ok);
-// }
-//
-// // RPC to initiate RDMA migration
-// void migrateRDMASlotsCommand(client *c) {
-// 	sds *_args;
-// 	_args = (sds*) zmalloc((c->argc) * sizeof(sds));
-//
-// 	for(int j=0; j<c->argc; j++) {
-// 		_args[j] = sdsdup(c->argv[j]->ptr);
-// 	}
-//
-// 	client *tempClient = (client *) zmalloc(sizeof(client));
-// 	memcpy(tempClient, c, sizeof(client));
-// 	struct threadArgs *tArgs = (struct threadArgs *) malloc(sizeof(struct threadArgs));
-// 	tArgs->c = c;
-// 	tArgs->_args = _args;
-// 	tArgs->number_of_arguments = c->argc;
-// 	pthread_create( &migrateThread, NULL, migrateRDMASlotsCommandThread, (void *) tArgs);
-// 	//pthread_join(migrateThread, NULL);
-// 	addReply(c, shared.ok);
-// }
+// RPC to initiate RDMA migration
+void migrateRDMASlotsCommand(client *c) {
+	sds *_args;
+	_args = (sds*) zmalloc((c->argc) * sizeof(sds));
+
+	for(int j=0; j<c->argc; j++) {
+		_args[j] = sdsdup(c->argv[j]->ptr);
+	}
+
+	client *tempClient = (client *) zmalloc(sizeof(client));
+	memcpy(tempClient, c, sizeof(client));
+	struct threadArgs *tArgs = (struct threadArgs *) malloc(sizeof(struct threadArgs));
+	tArgs->c = c;
+	tArgs->_args = _args;
+	tArgs->number_of_arguments = c->argc;
+	pthread_create( &migrateThread, NULL, migrateRDMASlotsCommandThread, (void *) tArgs);
+	//pthread_join(migrateThread, NULL);
+	addReply(c, shared.ok);
+}
+
 
 
 migrateCachedSocket* migrateGetSocketOtherParams(client *c, sds host, sds port, sds connectionHost, sds connectionPort, long timeout) {
