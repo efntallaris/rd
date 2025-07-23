@@ -87,23 +87,23 @@ void accept_connection(struct rdma_server_info *se) {
 	int ret;
 	ret = rdma_accept(se->id, &(se->conn_param));
 	if(ret) {
-		FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
-		if (!debug_file) {
-			perror("Error opening debug file");
-			return;
-		}
+		// FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
+		// if (!debug_file) {
+		// 	perror("Error opening debug file");
+		// 	return;
+		// }
 
-		fprintf(debug_file, "rdma_accept() ERROR: %s\n", strerror(errno));
-		fclose(debug_file);
-		printf("STRATOS rdma_accept_error");
+		// fprintf(debug_file, "rdma_accept() ERROR: %s\n", strerror(errno));
+		// fclose(debug_file);
+		// printf("STRATOS rdma_accept_error");
 	}
-	FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
-	if (!debug_file) {
-		perror("Error opening debug file");
-		return;
-	}
-	fprintf(debug_file, "Client Accepted\n", strerror(errno));
-	fclose(debug_file);
+	// FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
+	// if (!debug_file) {
+	// 	perror("Error opening debug file");
+	// 	return;
+	// }
+	// fprintf(debug_file, "Client Accepted\n", strerror(errno));
+	// fclose(debug_file);
 	printf("STRATOS CLIENT ACCEPTED\n");
 }
 
@@ -133,13 +133,12 @@ void *listenThread(void *data) {
 	err = rdma_listen(se->listen_id, MAX_CONNECTIONS);
 	if(err) {
 		printf("STRATOS rdma_listen() error");
-		FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
-		if (!debug_file) {
-			perror("Error opening debug file");
-			return;
-		}
-
-		fprintf(debug_file, "rdma_listen() ERROR: %d\n", err);
+		// FILE *debug_file = fopen("/tmp/rdma_debug.log", "a");
+		// if (!debug_file) {
+		// 	perror("Error opening debug file");
+		// 	return NULL;
+		// }
+		// fprintf(debug_file, "rdma_listen() ERROR: %d\n", err);
 		printf("STRATOS rdma_accept_error");
 	}
 	se->server_ops.get_request(se);
