@@ -2648,6 +2648,20 @@ void askingCommand(client *c);
 void readonlyCommand(client *c);
 void readwriteCommand(client *c);
 void dumpCommand(client *c);
+
+
+
+void migrateRDMASlotsCommand(client *c);
+void initRDMAClientCommand(client *c);
+void initRDMAServerCommand(client *c);
+// void registerRDMABufferClientCommand(client *c);
+// void registerRDMABlockSlotsCommand(client *c);
+// void rdmaDoneSlotsCommand(client *c);
+// void rdmaDoneBatchCommand(client *c);
+// void rdmaDoneAckCommand(client  *c);
+// void shadowWriteCommand(client *c);
+
+
 void objectCommand(client *c);
 void memoryCommand(client *c);
 void clientCommand(client *c);

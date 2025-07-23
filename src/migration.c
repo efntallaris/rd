@@ -270,20 +270,6 @@ char* extractDataFromBuffer(const char *buffer, size_t buffer_len, size_t *data_
     return data;
 }
 
-/* Optimized version of addMigrationMetadataToResponse */
-void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t keylen, const char *value, size_t valuelen) {
-    metadataBuffer *buffer = createMetadataBuffer(key, keylen, value, valuelen);
-    if (buffer == NULL) {
-        serverLog(LL_WARNING, "Cannot create metadata buffer for key '%.*s'", (int)keylen, key);
-        /* Fallback to regular response without metadata */
-        addReplyBulkCBuffer(c, value, valuelen);
-        return;
-    }
-    
-    addMetadataBufferToResponse(c, buffer);
-    freeMetadataBuffer(buffer);
-}
-
 /* Command to get migration status */
 void migrationStatusCommand(client *c) {
     serverLog(LL_WARNING, "MIGRATION.STATUS command called");
