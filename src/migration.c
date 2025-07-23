@@ -67,28 +67,24 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen) {
     /* Allocate metadata structure */
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
     metadata->slot_id = slot;
-    metadata->source_id = 0;
     metadata->dest_id = 0;
     
     /* Determine migration status based on cluster state */
     if (server.cluster->migrating_slots_to[slot] != NULL) {
         /* This slot is being migrated to another node */
         metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
-        metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
         metadata->dest_id = (uint32_t)server.cluster->migrating_slots_to[slot]->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as MIGRATING to node %.40s", 
                  (int)keylen, key, slot, server.cluster->migrating_slots_to[slot]->name);
     } else if (server.cluster->importing_slots_from[slot] != NULL) {
         /* This slot is being imported from another node */
         metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
-        metadata->source_id = (uint32_t)server.cluster->importing_slots_from[slot]->configEpoch;
         metadata->dest_id = (uint32_t)server.cluster->myself->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as IMPORTING from node %.40s", 
                  (int)keylen, key, slot, server.cluster->importing_slots_from[slot]->name);
     } else {
         /* This slot is not being migrated */
         metadata->migration_status = MIGRATION_STATUS_NOT_MIGRATED;
-        metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
         metadata->dest_id = 0;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
     }
@@ -108,6 +104,7 @@ migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen)
     /* Allocate metadata structure */
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
     metadata->slot_id = (uint16_t)slot;  /* Cast to uint16_t to save space */
+    metadata->source_id = 0;
     metadata->dest_id = 0;
     
     /* Determine migration status based on cluster state */
@@ -115,24 +112,50 @@ migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen)
         /* This slot is being migrated to another node */
         metadata->migration_status = (uint16_t)MIGRATION_STATUS_IN_PROGRESS;
         metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
+        metadata->dest_id = (uint32_t)server.cluster->migrating_slots_to[slot]->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as MIGRATING to node %.40s", 
                  (int)keylen, key, slot, server.cluster->migrating_slots_to[slot]->name);
     } else if (server.cluster->importing_slots_from[slot] != NULL) {
         /* This slot is being imported from another node */
         metadata->migration_status = (uint16_t)MIGRATION_STATUS_IN_PROGRESS;
         metadata->source_id = (uint32_t)server.cluster->importing_slots_from[slot]->configEpoch;
+        metadata->dest_id = (uint32_t)server.cluster->myself->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as IMPORTING from node %.40s", 
                  (int)keylen, key, slot, server.cluster->importing_slots_from[slot]->name);
     } else {
         /* This slot is not being migrated */
         metadata->migration_status = (uint16_t)MIGRATION_STATUS_NOT_MIGRATED;
         metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
+        metadata->dest_id = 0;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
     }
     
     return metadata;
 }
 
+/* Add migration metadata to response - original version */
+void addMigrationMetadataToResponse(client *c, const char *key, size_t keylen) {
+    migrationMetadata *metadata = getMigrationMetadata(key, keylen);
+    if (metadata == NULL) {
+        serverLog(LL_WARNING, "Cannot add metadata to response for key '%.*s': metadata is NULL", (int)keylen, key);
+        return;
+    }
+    
+    serverLog(LL_WARNING, "Adding metadata to response for key %s: slot=%u, status=%d, source=%u, dest=%u", key, metadata->slot_id, metadata->migration_status, metadata->source_id, metadata->dest_id);
+
+    addReplyAttributeLen(c, 4); /* 4 attributes: slot_id, migration_status */
+    addReplyProto(c, "slot_id", 7);
+    addReplyLongLong(c, metadata->slot_id);
+    addReplyProto(c, "migration_status", 16);
+    addReplyLongLong(c, metadata->migration_status);
+    addReplyProto(c, "source_id", 9);
+    addReplyLongLong(c, metadata->source_id);
+    addReplyProto(c, "dest_id", 7);
+    addReplyLongLong(c, metadata->dest_id);
+    
+    /* Free the metadata since we don't need it anymore */
+    zfree(metadata);
+}
 
 /* Create a single buffer containing metadata and data */
 metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char *value, size_t valuelen) {
@@ -164,6 +187,31 @@ metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char 
     return buffer;
 }
 
+/* Add metadata buffer to response - optimized version */
+void addMetadataBufferToResponse(client *c, metadataBuffer *buffer) {
+    if (buffer == NULL) {
+        serverLog(LL_WARNING, "Cannot add metadata buffer to response: buffer is NULL");
+        return;
+    }
+    
+    serverLog(LL_DEBUG, "Adding metadata buffer to response: slot=%u, status=%u, source=%u, dest=%u", 
+             buffer->metadata.slot_id, buffer->metadata.migration_status, 
+             buffer->metadata.source_id, buffer->metadata.dest_id);
+
+    /* Add the actual data first */
+    addReplyBulkCBuffer(c, buffer->data, buffer->data_len);
+    
+    /* Add metadata attributes */
+    addReplyAttributeLen(c, 4); /* 4 attributes: slot_id, migration_status, source_id, dest_id */
+    addReplyProto(c, "slot_id", 7);
+    addReplyLongLong(c, buffer->metadata.slot_id);
+    addReplyProto(c, "migration_status", 16);
+    addReplyLongLong(c, buffer->metadata.migration_status);
+    addReplyProto(c, "source_id", 9);
+    addReplyLongLong(c, buffer->metadata.source_id);
+    addReplyProto(c, "dest_id", 7);
+    addReplyLongLong(c, buffer->metadata.dest_id);
+}
 
 /* Free metadata buffer */
 void freeMetadataBuffer(metadataBuffer *buffer) {
@@ -204,7 +252,7 @@ char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const cha
     size_t offset = valuelen;
     write_le16(buffer + offset, metadata->slot_id); offset += 2;
     write_le16(buffer + offset, metadata->migration_status); offset += 2;
-    write_le32(buffer + offset, metadata->source_id); offset += 4;
+    write_le32(buffer + offset, metadata->dest_id); offset += 4;
     *total_len = total_size;
     zfree(metadata);
     serverLog(LL_DEBUG, "Created data+metadata buffer (portable): data_size=%zu, metadata_size=%zu, total=%zu", 
@@ -242,7 +290,7 @@ static uint32_t read_le32(const char *buf) {
 }
 
 migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_len, size_t data_len) {
-    size_t metadata_size = 12;
+    size_t metadata_size = 8;
     if (buffer_len < data_len + metadata_size) {
         return NULL;
     }
@@ -250,8 +298,7 @@ migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_l
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
     metadata->slot_id = read_le16(meta);
     metadata->migration_status = read_le16(meta + 2);
-    metadata->source_id = read_le32(meta + 4);
-    metadata->dest_id = read_le32(meta + 8);
+    metadata->dest_id = read_le32(meta + 4);
     return metadata;
 }
 
@@ -290,6 +337,7 @@ void addMigrationMetadataToResponseOptimized(client *c, const char *key, size_t 
     addMetadataBufferToResponse(c, buffer);
     freeMetadataBuffer(buffer);
 }
+
 
 /* Command to get migration status */
 void migrationStatusCommand(client *c) {

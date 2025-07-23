@@ -12,7 +12,7 @@
 typedef struct migrationMetadata {
     uint16_t slot_id;           /* Reduced from uint32_t to uint16_t (0-16383) */
     uint16_t migration_status;  /* Reduced from uint32_t to uint16_t (0-2) */
-    uint32_t dest_id;           /* Keep as uint32_t for node IDs */
+    uint32_t source_id;           /* Keep as uint32_t for node IDs */
 } migrationMetadata;
 
 /* Single buffer structure for metadata + data */
