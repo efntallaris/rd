@@ -302,7 +302,7 @@ int getGenericCommand(client *c) {
     
     if (buffer != NULL) {
         size_t data_len = sdslen(o->ptr);
-        // size_t metadata_len = total_len - data_len;
+        size_t metadata_len = total_len - data_len;
         
         /* Print data part in hex */
         char *data_hex = zmalloc(data_len * 2 + 1);
