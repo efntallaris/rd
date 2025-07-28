@@ -171,7 +171,7 @@ metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char 
     /* Free the temporary metadata */
     zfree(metadata);
     
-    serverLog(LL_INFO, "Created metadata buffer: slot=%u, status=%u, host=%s, port=%u, size=%zu", 
+    serverLog(LL_WARNING, "Created metadata buffer: slot=%u, status=%u, host=%s, port=%u, size=%zu", 
              buffer->metadata.slot_id, buffer->metadata.migration_status, 
              buffer->metadata.host, buffer->metadata.port, total_size);
     
@@ -192,7 +192,7 @@ void freeMetadataBuffer(metadataBuffer *buffer) {
 static void write_le16(char *buf, uint16_t v) {
     buf[0] = v & 0xFF;
     buf[1] = (v >> 8) & 0xFF;
-    serverLog(LL_INFO, "write_le16: value=%d, bytes=[0x%02x, 0x%02x]", v, buf[0], buf[1]);
+    serverLog(LL_WARNING, "write_le16: value=%d, bytes=[0x%02x, 0x%02x]", v, buf[0], buf[1]);
 }
 static void write_le32(char *buf, uint32_t v) {
     buf[0] = v & 0xFF;
