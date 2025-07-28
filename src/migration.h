@@ -55,8 +55,5 @@ void addReplyBulkCBufferWithMetadata(client *c, const char *value, size_t valuel
 migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_len, size_t data_len);
 char* extractDataFromBuffer(const char *buffer, size_t buffer_len, size_t *data_len);
 
-/* Command functions */
-void migrationStatusCommand(client *c);
-void migrationSlotInfoCommand(client *c);
 
 #endif /* __MIGRATION_H */ 
