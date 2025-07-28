@@ -123,6 +123,9 @@ migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen)
     }
     metadata->port = server.port;
     
+    /* Debug logging for port value */
+    serverLog(LL_DEBUG, "Setting port in metadata: server.port=%d, metadata->port=%d", server.port, metadata->port);
+    
     /* Determine migration status based on cluster state */
     if (server.cluster->migrating_slots_to[slot] != NULL) {
         /* This slot is being migrated to another node */
@@ -140,6 +143,7 @@ migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen)
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
     }
     
+    serverLog(LL_WARNING, "Key '%.*s' (slot %u) marked as %s", (int)keylen, key, slot, metadata->migration_status);
     return metadata;
 }
 
@@ -167,7 +171,7 @@ metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char 
     /* Free the temporary metadata */
     zfree(metadata);
     
-    serverLog(LL_DEBUG, "Created metadata buffer: slot=%u, status=%u, host=%s, port=%u, size=%zu", 
+    serverLog(LL_INFO, "Created metadata buffer: slot=%u, status=%u, host=%s, port=%u, size=%zu", 
              buffer->metadata.slot_id, buffer->metadata.migration_status, 
              buffer->metadata.host, buffer->metadata.port, total_size);
     
@@ -188,6 +192,7 @@ void freeMetadataBuffer(metadataBuffer *buffer) {
 static void write_le16(char *buf, uint16_t v) {
     buf[0] = v & 0xFF;
     buf[1] = (v >> 8) & 0xFF;
+    serverLog(LL_INFO, "write_le16: value=%d, bytes=[0x%02x, 0x%02x]", v, buf[0], buf[1]);
 }
 static void write_le32(char *buf, uint32_t v) {
     buf[0] = v & 0xFF;
@@ -214,7 +219,11 @@ char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const cha
     write_le16(buffer + offset, metadata->slot_id); offset += 2;
     write_le16(buffer + offset, metadata->migration_status); offset += 2;
     memcpy(buffer + offset, metadata->host, MAX_HOST_LEN); offset += MAX_HOST_LEN;
+    
+    /* Debug logging for port writing */
+    serverLog(LL_DEBUG, "Writing port to buffer: metadata->port=%d, offset=%zu", metadata->port, offset);
     write_le16(buffer + offset, metadata->port); offset += 2;
+    
     *total_len = total_size;
     zfree(metadata);
     serverLog(LL_DEBUG, "Created data+metadata buffer (portable): data_size=%zu, metadata_size=%zu, total=%zu", 
