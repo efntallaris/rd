@@ -9,7 +9,7 @@
 #define MIGRATION_STATUS_MIGRATED     2
 
 /* Maximum host length for IPv6 addresses */
-#define MAX_HOST_LEN 46
+#define MAX_HOST_LEN 12
 
 /* Optimized migration metadata structure - saves space */
 typedef struct migrationMetadata {
