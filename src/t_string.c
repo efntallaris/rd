@@ -323,7 +323,7 @@ int getGenericCommand(client *c) {
             
             /* Extract and print metadata values */
             migrationMetadata *metadata = extractMetadataFromBuffer(buffer, total_len, data_len);
-            serverLog(LL_WARNING, "metadata values: slot_id=%u, status=%u, host=%u", 
+            serverLog(LL_WARNING, "metadata values: slot_id=%u, status=%u, host=%s", 
                      metadata->slot_id, metadata->migration_status, metadata->host);
             zfree(metadata);
         }
