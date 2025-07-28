@@ -67,25 +67,32 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen) {
     /* Allocate metadata structure */
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
     metadata->slot_id = slot;
-    metadata->source_id = 0;
+    
+    /* Initialize host and port fields */
+    metadata->host[0] = '\0';  /* Initialize empty */
+    metadata->port = 0;        /* Initialize to 0 */
+    
+    /* Set host and port from server configuration */
+    if (server.cluster != NULL && server.cluster->myself != NULL) {
+        strncpy(metadata->host, server.cluster->myself->ip, MAX_HOST_LEN - 1);
+        metadata->host[MAX_HOST_LEN - 1] = '\0';  /* Ensure null termination */
+    }
+    metadata->port = server.port;
     
     /* Determine migration status based on cluster state */
     if (server.cluster->migrating_slots_to[slot] != NULL) {
         /* This slot is being migrated to another node */
         metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
-        metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as MIGRATING to node %.40s", 
                  (int)keylen, key, slot, server.cluster->migrating_slots_to[slot]->name);
     } else if (server.cluster->importing_slots_from[slot] != NULL) {
         /* This slot is being imported from another node */
         metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
-        metadata->source_id = (uint32_t)server.cluster->importing_slots_from[slot]->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as IMPORTING from node %.40s", 
                  (int)keylen, key, slot, server.cluster->importing_slots_from[slot]->name);
     } else {
         /* This slot is not being migrated */
         metadata->migration_status = MIGRATION_STATUS_NOT_MIGRATED;
-        metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
     }
     
@@ -104,25 +111,32 @@ migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen)
     /* Allocate metadata structure */
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
     metadata->slot_id = (uint16_t)slot;  /* Cast to uint16_t to save space */
-    metadata->source_id = 0;
+    
+    /* Initialize host and port fields */
+    metadata->host[0] = '\0';  /* Initialize empty */
+    metadata->port = 0;        /* Initialize to 0 */
+    
+    /* Set host and port from server configuration */
+    if (server.cluster != NULL && server.cluster->myself != NULL) {
+        strncpy(metadata->host, server.cluster->myself->ip, MAX_HOST_LEN - 1);
+        metadata->host[MAX_HOST_LEN - 1] = '\0';  /* Ensure null termination */
+    }
+    metadata->port = server.port;
     
     /* Determine migration status based on cluster state */
     if (server.cluster->migrating_slots_to[slot] != NULL) {
         /* This slot is being migrated to another node */
         metadata->migration_status = (uint16_t)MIGRATION_STATUS_IN_PROGRESS;
-        metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as MIGRATING to node %.40s", 
                  (int)keylen, key, slot, server.cluster->migrating_slots_to[slot]->name);
     } else if (server.cluster->importing_slots_from[slot] != NULL) {
         /* This slot is being imported from another node */
         metadata->migration_status = (uint16_t)MIGRATION_STATUS_IN_PROGRESS;
-        metadata->source_id = (uint32_t)server.cluster->importing_slots_from[slot]->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as IMPORTING from node %.40s", 
                  (int)keylen, key, slot, server.cluster->importing_slots_from[slot]->name);
     } else {
         /* This slot is not being migrated */
         metadata->migration_status = (uint16_t)MIGRATION_STATUS_NOT_MIGRATED;
-        metadata->source_id = (uint32_t)server.cluster->myself->configEpoch;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
     }
     
@@ -153,8 +167,9 @@ metadataBuffer* createMetadataBuffer(const char *key, size_t keylen, const char 
     /* Free the temporary metadata */
     zfree(metadata);
     
-    serverLog(LL_DEBUG, "Created metadata buffer: slot=%u, status=%u, size=%zu", 
-             buffer->metadata.slot_id, buffer->metadata.migration_status, total_size);
+    serverLog(LL_DEBUG, "Created metadata buffer: slot=%u, status=%u, host=%s, port=%u, size=%zu", 
+             buffer->metadata.slot_id, buffer->metadata.migration_status, 
+             buffer->metadata.host, buffer->metadata.port, total_size);
     
     return buffer;
 }
@@ -191,14 +206,15 @@ char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const cha
         return buffer;
     }
     
-    size_t metadata_size = 12; // 2+2+4+4
+    size_t metadata_size = 50; // 2+2+46+2 (slot_id + migration_status + host + port)
     size_t total_size = valuelen + metadata_size;
     char *buffer = zmalloc(total_size);
     memcpy(buffer, value, valuelen);
     size_t offset = valuelen;
     write_le16(buffer + offset, metadata->slot_id); offset += 2;
     write_le16(buffer + offset, metadata->migration_status); offset += 2;
-    write_le32(buffer + offset, metadata->source_id); offset += 4;
+    memcpy(buffer + offset, metadata->host, MAX_HOST_LEN); offset += MAX_HOST_LEN;
+    write_le16(buffer + offset, metadata->port); offset += 2;
     *total_len = total_size;
     zfree(metadata);
     serverLog(LL_DEBUG, "Created data+metadata buffer (portable): data_size=%zu, metadata_size=%zu, total=%zu", 
@@ -236,7 +252,7 @@ static uint32_t read_le32(const char *buf) {
 }
 
 migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_len, size_t data_len) {
-    size_t metadata_size = 12;
+    size_t metadata_size = 50; // 2+2+46+2 (slot_id + migration_status + host + port)
     if (buffer_len < data_len + metadata_size) {
         return NULL;
     }
@@ -244,7 +260,8 @@ migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_l
     migrationMetadata *metadata = zmalloc(sizeof(migrationMetadata));
     metadata->slot_id = read_le16(meta);
     metadata->migration_status = read_le16(meta + 2);
-    metadata->source_id = read_le32(meta + 4);
+    memcpy(metadata->host, meta + 4, MAX_HOST_LEN);
+    metadata->port = read_le16(meta + 4 + MAX_HOST_LEN);
     return metadata;
 }
 
