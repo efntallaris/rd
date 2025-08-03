@@ -79,8 +79,6 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen) {
     }
     metadata->port = server.port;
     
-    // tbd remove the next line, for debug purposes
-    metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
     /* Determine migration status based on cluster state */
     if (server.cluster->migrating_slots_to[slot] != NULL) {
         /* This slot is being migrated to another node */
@@ -94,7 +92,9 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen) {
                  (int)keylen, key, slot, server.cluster->importing_slots_from[slot]->name);
     } else {
         /* This slot is not being migrated */
-        metadata->migration_status = MIGRATION_STATUS_NOT_MIGRATED;
+        //metadata->migration_status = MIGRATION_STATUS_NOT_MIGRATED;
+        // tbd remove the next line, for debug purposes
+        metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
         serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
     }
     
