@@ -141,11 +141,12 @@ migrationMetadata* getMigrationMetadataOptimized(const char *key, size_t keylen)
                  (int)keylen, key, slot, server.cluster->importing_slots_from[slot]->name);
     } else {
         /* This slot is not being migrated */
-        metadata->migration_status = (uint16_t)MIGRATION_STATUS_NOT_MIGRATED;
-        serverLog(LL_DEBUG, "Key '%.*s' (slot %u) marked as NOT_MIGRATED", (int)keylen, key, slot);
+        //metadata->migration_status = (uint16_t)MIGRATION_STATUS_NOT_MIGRATED;
+        metadata->migration_status = (uint16_t)MIGRATION_STATUS_IN_PROGRESS;
+        serverLog(LL_WARNING, "Key '%s' (slot %u) marked as %u",  key, slot, metadata->migration_status);
     }
     
-    serverLog(LL_WARNING, "Key '%.*s' (slot %u) marked as %s", (int)keylen, key, slot, metadata->migration_status);
+    serverLog(LL_WARNING, "Key '%s' (slot %u) marked as %u",  key, slot, metadata->migration_status);
     return metadata;
 }
 
