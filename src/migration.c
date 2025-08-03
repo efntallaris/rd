@@ -79,6 +79,8 @@ migrationMetadata* getMigrationMetadata(const char *key, size_t keylen) {
     }
     metadata->port = server.port;
     
+    // tbd remove the next line, for debug purposes
+    metadata->migration_status = MIGRATION_STATUS_IN_PROGRESS;
     /* Determine migration status based on cluster state */
     if (server.cluster->migrating_slots_to[slot] != NULL) {
         /* This slot is being migrated to another node */
