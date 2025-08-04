@@ -214,7 +214,7 @@ char* createDataWithMetadataBuffer(const char *value, size_t valuelen, const cha
         return buffer;
     }
     
-    size_t metadata_size = 18; // 2+2+18+2 (slot_id + migration_status + host + port)
+    size_t metadata_size = METADATA_SIZE; // 2+2+18+2 (slot_id + migration_status + host + port)
     size_t total_size = valuelen + metadata_size;
     char *buffer = zmalloc(total_size);
     memcpy(buffer, value, valuelen);

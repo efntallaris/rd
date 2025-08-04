@@ -11,6 +11,8 @@
 /* Maximum host length for IPv6 addresses */
 #define MAX_HOST_LEN 12
 
+#define METADATA_SIZE 18 //2+2+18+2 (slot_id + migration_status + host + port)
+
 /* Optimized migration metadata structure - saves space */
 typedef struct migrationMetadata {
     uint16_t slot_id;           /* Reduced from uint32_t to uint16_t (0-16383) */
