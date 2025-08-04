@@ -264,7 +264,7 @@ static uint32_t read_le32(const char *buf) {
 }
 
 migrationMetadata* extractMetadataFromBuffer(const char *buffer, size_t buffer_len, size_t data_len) {
-    size_t metadata_size = 50; // 2+2+46+2 (slot_id + migration_status + host + port)
+    size_t metadata_size = METADATA_SIZE; // 2+2+12+2 (slot_id + migration_status + host + port)
     if (buffer_len < data_len + metadata_size) {
         return NULL;
     }
