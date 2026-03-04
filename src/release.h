@@ -1,3 +1,0 @@
-#define REDIS_GIT_SHA1 "43d11756"
-#define REDIS_GIT_DIRTY "333"
-#define REDIS_BUILD_ID "stratos-pc-1739071173"

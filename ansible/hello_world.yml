@@ -1,0 +1,12 @@
+---
+# hello_world.yml
+# usage: ansible-playbook -i inventory.ini hello_world.yml
+
+- name: "Hello World"
+  hosts: all
+  become: no
+
+  tasks:
+    - name: say hello
+      debug:
+        msg: "Hello, World!"

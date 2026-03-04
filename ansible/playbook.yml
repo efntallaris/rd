@@ -1,0 +1,40 @@
+- name: "Build & run Redis from GitHub on CloudLab nodes"
+  hosts: redis-nodes
+  become: yes
+
+  vars:
+    redis_repo: "https://github.com/efntallaris/rd.git"
+    base_dir: /root/rd
+    redis_base_dir: /root/redis
+    redis_src_dir: /root/rd/redis
+    redis_conf: /etc/redis/redis.conf
+    redis_port: 6379
+
+  pre_tasks:
+    - name: ensure build tools are installed
+      package:
+        name:
+          - build-essential
+          - tcl
+          - git
+        state: present
+
+    - name: create base directory
+      file:
+        path: "{{ redis_base_dir }}"
+        state: directory
+        mode: "0755"
+
+  tasks:
+    - name: clone redis repository from github
+      git:
+        repo: "{{ redis_repo }}"
+        dest: "{{ base_dir }}"
+        version: "HEAD"
+        update:
+          yes
+
+          #- name: build redis on remote host
+          #make:
+          #chdir: "{{ base_dir }}"
+          #target: all
