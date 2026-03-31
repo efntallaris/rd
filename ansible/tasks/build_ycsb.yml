@@ -1,0 +1,51 @@
+---
+- name: "Build YCSB"
+  hosts: ycsb_nodes
+  become: yes
+  tasks:
+    - name: Build YCSB with Maven
+      command: mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
+      args:
+        chdir: "{{ ycsb_src_dir }}"
+
+    - name: Find YCSB tarball
+      find:
+        paths: "{{ ycsb_src_dir }}/distribution/target"
+        patterns: "ycsb-*.tar.gz"
+      register: ycsb_tarball
+
+    - name: Create temp directory
+      file:
+        path: /tmp/ycsb_temp
+        state: directory
+
+    - name: Extract YCSB tarball
+      unarchive:
+        src: "{{ ycsb_tarball.files[0].path }}"
+        dest: /tmp/ycsb_temp
+        remote_src: yes
+
+    - name: Remove old YCSB directory
+      file:
+        path: "{{ ycsb_dir }}"
+        state: absent
+
+    - name: Create YCSB directory
+      file:
+        path: "{{ ycsb_dir }}"
+        state: directory
+
+    - name: Find extracted YCSB directory
+      find:
+        paths: /tmp/ycsb_temp
+        file_type: directory
+        recurse: no
+      register: ycsb_extracted
+
+    - name: Copy YCSB to final location
+      shell: cp -rf {{ ycsb_extracted.files[0].path }}/* {{ ycsb_dir }}/
+
+    - name: Clean up temp directory
+      file:
+        path: /tmp/ycsb_temp
+        state: absent

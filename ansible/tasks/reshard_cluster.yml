@@ -1,0 +1,25 @@
+---
+- name: "Reshard cluster to migration nodes"
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Get migration node IDs
+      command: >
+        {{ redis_bin_dir }}/redis-cli -c
+        -h {{ item }} -p {{ master_port }}
+        CLUSTER MYID
+      register: migrate_node_ids
+      loop: "{{ groups['redis_migrate'] }}"
+
+    - name: Reshard slots to migration nodes
+      command: >
+        {{ redis_bin_dir }}/redis-cli --cluster reshard
+        {{ master_host }}:{{ master_port }}
+        --cluster-from all
+        --cluster-to {{ item.stdout }}
+        --cluster-slots {{ reshard_slots }}
+        --cluster-yes
+        --cluster-timeout {{ reshard_timeout }}
+      loop: "{{ migrate_node_ids.results }}"
+      loop_control:
+        label: "{{ item.item }} ({{ item.stdout }})"

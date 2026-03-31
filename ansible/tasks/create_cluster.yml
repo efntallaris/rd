@@ -1,0 +1,17 @@
+---
+- name: "Create Redis cluster"
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Wait for Redis to be ready on all masters
+      wait_for:
+        host: "{{ item }}"
+        port: "{{ master_port }}"
+        timeout: 30
+      loop: "{{ groups['redis_masters'] }}"
+
+    - name: Create Redis cluster
+      command: >
+        {{ redis_bin_dir }}/redis-cli --cluster create
+        {% for host in groups['redis_masters'] %}{{ host }}:{{ master_port }} {% endfor %}
+        --cluster-yes

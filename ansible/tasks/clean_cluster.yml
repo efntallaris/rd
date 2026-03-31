@@ -1,0 +1,24 @@
+---
+- name: "Clean cluster data"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Remove node config file
+      file:
+        path: "{{ node_conf }}"
+        state: absent
+
+    - name: Remove Redis binary directory
+      file:
+        path: "{{ local_setup_dir }}"
+        state: absent
+
+    - name: Remove Redis log directory
+      file:
+        path: "{{ redis_log_dir }}"
+        state: absent
+
+    - name: Remove monitoring log directory
+      file:
+        path: "{{ local_log_dir }}"
+        state: absent

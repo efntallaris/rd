@@ -1,0 +1,84 @@
+---
+- name: "Collect experiment results"
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Create experiment output directory
+      file:
+        path: "{{ experimental_output_dir }}/{{ experiment_name }}"
+        state: directory
+        mode: "0755"
+
+- name: "Collect YCSB results"
+  hosts: ycsb_nodes
+  become: yes
+  tasks:
+    - name: Find YCSB output files
+      find:
+        paths: /tmp
+        patterns: "ycsb_output_*"
+      register: ycsb_files
+
+    - name: Fetch YCSB results to control node
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ experimental_output_dir }}/{{ experiment_name }}/ycsb/"
+        flat: no
+      loop: "{{ ycsb_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Fetch YCSB log
+      fetch:
+        src: "{{ ycsb_log_filename }}_{{ inventory_hostname }}"
+        dest: "{{ experimental_output_dir }}/{{ experiment_name }}/ycsb/"
+        flat: no
+      ignore_errors: yes
+
+    - name: Clean up YCSB output files
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ ycsb_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+- name: "Collect Redis and monitoring logs"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Fetch monitoring logs
+      fetch:
+        src: "{{ local_log_dir }}/{{ item }}"
+        dest: "{{ experimental_output_dir }}/{{ experiment_name }}/logs/"
+        flat: no
+        fail_on_missing: no
+      loop:
+        - "{{ inventory_hostname }}{{ mp_stat }}"
+        - "{{ inventory_hostname }}{{ io_stat }}"
+        - "{{ inventory_hostname }}{{ if_stat }}"
+
+    - name: Find Redis log files
+      find:
+        paths: "{{ redis_log_dir }}"
+        patterns: "{{ inventory_hostname }}*"
+      register: redis_logs
+
+    - name: Fetch Redis logs
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ experimental_output_dir }}/{{ experiment_name }}/logs/"
+        flat: no
+      loop: "{{ redis_logs.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Clean up monitoring logs
+      file:
+        path: "{{ local_log_dir }}"
+        state: absent
+
+    - name: Clean up Redis logs
+      file:
+        path: "{{ redis_log_dir }}"
+        state: absent

@@ -4,11 +4,7 @@
   become: yes
 
   vars:
-    rd_repo: "https://github.com/efntallaris/rd.git"
-    rd_branch: aqueduct
     base_dir: /root/rd
-    redis_src_dir: /root/rd/redis
-    rdma_core_dir: /root/rd/rdma-core
 
   handlers:
     - name: run ldconfig
@@ -107,19 +103,19 @@
     - name: Run jemalloc autogen.sh
       command: /bin/sh autogen.sh
       args:
-        chdir: "{{ redis_src_dir }}/deps/jemalloc"
-        creates: "{{ redis_src_dir }}/deps/jemalloc/config.status"
+        chdir: "{{ redis_dir }}/deps/jemalloc"
+        creates: "{{ redis_dir }}/deps/jemalloc/config.status"
 
     - name: Configure jemalloc
       command: /bin/sh configure
       args:
-        chdir: "{{ redis_src_dir }}/deps/jemalloc"
-        creates: "{{ redis_src_dir }}/deps/jemalloc/config.status"
+        chdir: "{{ redis_dir }}/deps/jemalloc"
+        creates: "{{ redis_dir }}/deps/jemalloc/config.status"
 
     # ── 6. Build all dependencies ───────────────────────────────────────
     - name: "Build dependency: {{ item }}"
       make:
-        chdir: "{{ redis_src_dir }}/deps"
+        chdir: "{{ redis_dir }}/deps"
         target: "{{ item }}"
         params:
           --jobs: "{{ ansible_processor_vcpus }}"
@@ -132,9 +128,17 @@
     # ── 7. Build Redis ──────────────────────────────────────────────────
     - name: Ensure mkreleasehdr.sh is executable
       file:
-        path: "{{ redis_src_dir }}/src/mkreleasehdr.sh"
+        path: "{{ redis_dir }}/src/mkreleasehdr.sh"
         mode: "0755"
 
     - name: Build Redis
       make:
-        chdir: "{{ redis_src_dir }}"
+        chdir: "{{ redis_dir }}"
+
+    # ── 8. Install Redis binaries ───────────────────────────────────────
+    - name: Install Redis binaries
+      make:
+        chdir: "{{ redis_dir }}"
+        target: install
+        params:
+          PREFIX: "{{ local_setup_dir }}"

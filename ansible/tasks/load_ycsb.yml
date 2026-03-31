@@ -1,0 +1,13 @@
+---
+- name: "YCSB load phase"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Run YCSB load phase
+      command: >
+        {{ ycsb_dir_bin }}/ycsb.sh load redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}{{ redis_workload }}
+        -threads {{ ycsb_threads_load }}

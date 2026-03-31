@@ -1,0 +1,45 @@
+---
+- name: "Start and add migration nodes to cluster"
+  hosts: redis_migrate
+  become: yes
+  tasks:
+    - name: Set ulimit for open files
+      shell: ulimit -n 65535
+
+    - name: Remove old node config
+      file:
+        path: "{{ node_conf }}"
+        state: absent
+
+    - name: Install Redis binaries
+      make:
+        chdir: "{{ redis_dir }}"
+        target: install
+        params:
+          PREFIX: "{{ local_setup_dir }}"
+
+    - name: Create Redis log directory
+      file:
+        path: "{{ redis_log_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Generate cluster config
+      template:
+        src: templates/redis_cluster.conf.j2
+        dest: "{{ node_conf }}"
+        mode: "0644"
+
+    - name: Start redis-server
+      command: "{{ redis_bin_dir }}/redis-server {{ node_conf }}"
+
+    - name: Wait for Redis to be ready
+      wait_for:
+        port: "{{ master_port }}"
+        timeout: 30
+
+    - name: Add node to cluster
+      command: >
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }}
+        --cluster add-node {{ inventory_hostname }}:{{ master_port }}
+        {{ master_host }}:{{ master_port }}

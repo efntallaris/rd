@@ -1,0 +1,19 @@
+---
+- name: "Start monitoring"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Create monitoring log directory
+      file:
+        path: "{{ local_log_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Start mpstat
+      shell: "nohup mpstat 1 >> {{ local_log_dir }}/{{ inventory_hostname }}{{ mp_stat }} 2>&1 &"
+
+    - name: Start iostat
+      shell: "nohup iostat -t 1 >> {{ local_log_dir }}/{{ inventory_hostname }}{{ io_stat }} 2>&1 &"
+
+    - name: Start ifstat
+      shell: "nohup ifstat -t 1 >> {{ local_log_dir }}/{{ inventory_hostname }}{{ if_stat }} 2>&1 &"
