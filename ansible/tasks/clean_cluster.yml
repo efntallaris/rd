@@ -22,3 +22,7 @@
       file:
         path: "{{ local_log_dir }}"
         state: absent
+
+    - name: Remove cluster state files
+      shell: rm -f /root/nodes.conf /root/dump.rdb /root/appendonly.aof /root/*.aof
+      ignore_errors: yes
