@@ -8,7 +8,6 @@
     rd_branch: aqueduct
     base_dir: /root/rd
     redis_src_dir: /root/rd/redis
-    rdma_core_repo: "https://github.com/linux-rdma/rdma-core.git"
     rdma_core_dir: /root/rd/rdma-core
 
   handlers:
@@ -51,38 +50,14 @@
         update_cache: yes
 
     # ── 2. Clone or update project repo ─────────────────────────────────
-    - name: Check if rd repository exists
-      stat:
-        path: "{{ base_dir }}/.git"
-      register: rd_repo_exists
-
-    - name: Clone rd repository
+    - name: Clone or update rd repository
       git:
         repo: "{{ rd_repo }}"
         dest: "{{ base_dir }}"
         version: "{{ rd_branch }}"
-      when: not rd_repo_exists.stat.exists
-
-    - name: Fetch latest changes
-      command: git fetch origin {{ rd_branch }}
-      args:
-        chdir: "{{ base_dir }}"
-      when: rd_repo_exists.stat.exists
-
-    - name: Reset to latest remote
-      command: git reset --hard origin/{{ rd_branch }}
-      args:
-        chdir: "{{ base_dir }}"
-      when: rd_repo_exists.stat.exists
+        force: yes
 
     # ── 3. Build rdma-core from source ──────────────────────────────────
-    - name: Clone rdma-core
-      git:
-        repo: "{{ rdma_core_repo }}"
-        dest: "{{ rdma_core_dir }}"
-        version: HEAD
-        update: yes
-
     - name: Create rdma-core build directory
       file:
         path: "{{ rdma_core_dir }}/build"
