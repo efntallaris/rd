@@ -50,12 +50,18 @@
         update_cache: yes
 
     # ── 2. Clone or update project repo ─────────────────────────────────
-    - name: Clone or update rd repository
+    - name: Remove old rd repository (clean re-clone)
+      file:
+        path: "{{ base_dir }}"
+        state: absent
+      when: ansible_connection != "local"
+
+    - name: Clone rd repository
       git:
         repo: "{{ rd_repo }}"
         dest: "{{ base_dir }}"
         version: "{{ rd_branch }}"
-        force: yes
+      when: ansible_connection != "local"
 
     # ── 3. Build rdma-core from source ──────────────────────────────────
     - name: Create rdma-core build directory
