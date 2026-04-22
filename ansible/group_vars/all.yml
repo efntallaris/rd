@@ -1,28 +1,28 @@
 ---
 # ─── Directories ────────────────────────────────────────────────────────────
-main_dir: /root/rd
-redis_dir: /root/rd/redis
-redis_src_dir: /root/rd/redis/src
-local_setup_dir: /root/rd/redis_bin
+main_dir: /users/entall/rd
+redis_dir: /users/entall/rd/redis
+redis_src_dir: /users/entall/rd/redis/src
+local_setup_dir: /users/entall/rd/redis_bin
 redis_bin_dir: "{{ local_setup_dir }}/bin"
-ycsb_src_dir: /root/rd/ycsb_client
-ycsb_dir: /root/ycsb_client
+ycsb_src_dir: /users/entall/rd/ycsb_client
+ycsb_dir: /users/entall/ycsb_client
 ycsb_dir_bin: "{{ ycsb_dir }}/bin"
 redis_workload_path: "{{ main_dir }}/workloads/"
 redis_log_dir: /tmp/redis_logs
-local_log_dir: /root/systat_logs
+local_log_dir: /users/entall/systat_logs
 ycsb_log_filename: /tmp/ycsb_output
 experimental_output_dir: /tmp/experiments
 
 # ─── Repo ───────────────────────────────────────────────────────────────────
 rd_repo: "https://github.com/efntallaris/rd.git"
 rd_branch: aqueduct
-rdma_core_dir: /root/rd/rdma-core
+rdma_core_dir: /users/entall/rd/rdma-core
 
 # ─── Cluster settings ──────────────────────────────────────────────────────
 master_port: "8000"
 master_host: redis0
-node_conf: "/root/{{ inventory_hostname }}.conf"
+node_conf: "/users/entall/{{ inventory_hostname }}.conf"
 
 # ─── YCSB settings ─────────────────────────────────────────────────────────
 ycsb_loader_instance: ycsb0
