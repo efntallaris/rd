@@ -8,7 +8,7 @@ sudo apt-get install -y librdmacm-dev
 sudo apt-get install -y libibumad-dev
 sudo apt-get install -y libpci-dev
 sudo apt install -y maven
-sudo apt install -y ansible
+
 
 sudo apt-get install -y pkg-config
 sudo apt-get install -y libuv1-dev
@@ -18,6 +18,15 @@ sudo apt-get install -y sysstat
 sudo apt-get install -y ifstat
 sudo apt-get install -y libtool autoconf automake libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
+
+# ── Ansible (current version via pipx) ─────────────────────────────────────
+sudo apt-get install -y python3-pip pipx
+pipx ensurepath
+pipx install --include-deps ansible
+export PATH="$HOME/.local/bin:$PATH"
+ansible-galaxy collection install community.general --force
+
+
 # Clone the rdma-core repository
 git clone https://github.com/linux-rdma/rdma-core.git
 cd rdma-core
