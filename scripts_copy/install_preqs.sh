@@ -1,10 +1,6 @@
 #!/bin/bash
 #
 
-sudo cp /users/entall/.ssh/authorized_keys /root/.ssh/authorized_keys
-sudo chmod 700 /root/.ssh
-sudo chmod 600 /root/.ssh/authorized_keys
-
 sudo apt-get update
 sudo apt-get install -y libtool autoconf automake libibverbs-dev librdmacm-dev libibumad-dev libpci-dev
 sudo apt-get install -y libibverbs-dev
