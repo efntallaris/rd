@@ -74,6 +74,8 @@ pwd
 chmod +x src/mkreleasehdr.sh
 #sudo rm -rf /usr/local/include/infiniband
 #sudo cp -rf /usr/include/infiniband /usr/local/include
+cd /users/entall
+git clone https://github.com/efntallaris/rd
 
 sudo make
 
