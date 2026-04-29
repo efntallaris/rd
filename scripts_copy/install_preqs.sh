@@ -8,6 +8,7 @@ sudo apt-get install -y librdmacm-dev
 sudo apt-get install -y libibumad-dev
 sudo apt-get install -y libpci-dev
 sudo apt install -y maven
+sudo apt install -y ansible
 
 sudo apt-get install -y pkg-config
 sudo apt-get install -y libuv1-dev
