@@ -72,6 +72,9 @@ chmod +x src/mkreleasehdr.sh
 #sudo cp -rf /usr/include/infiniband /usr/local/include
 cd /users/entall
 git clone https://github.com/efntallaris/rd
+cd rd
+git reset --hard origin/main
+git checkout aqueduct
 
 sudo make
 
