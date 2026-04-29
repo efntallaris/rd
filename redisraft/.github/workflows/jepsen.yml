@@ -1,0 +1,77 @@
+name: Jepsen
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      redisraft_repo:
+        description: 'redisraft repo owner and name'
+        required: false
+        default: 'redisLabs/redisraft'
+      redisraft_branch:
+        description: 'redisraft git branch or sha to use'
+        required: false
+        default: 'master'
+      redis_repo:
+        description: 'redis repo owner and name'
+        required: false
+        default: 'redis/redis'
+      redis_branch:
+        description: 'redis git branch or sha to use'
+        required: false
+        default: 'unstable'
+      jepsen-repo:
+        description: 'Jepsen repository, e.g redislabs/jepsen-redisraft'
+        default:  'redislabs/jepsen-redisraft'
+        required: false
+
+jobs:
+  jepsen:
+    runs-on: ubuntu-20.04
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.repository == 'redislabs/redisraft')
+    steps:
+    - uses: actions/checkout@v1
+    - name: Set repository variables
+      env:
+        DEFAULT_REDIS_REPO: redis/redis
+        DEFAULT_REDIS_BRANCH: unstable
+        DEFAULT_REDISRAFT_REPO: redislabs/redisraft
+        DEFAULT_REDISRAFT_BRANCH: master
+        DEFAULT_JEPSEN_REPO: 'redislabs/jepsen-redisraft'
+      run: |
+        echo "REDIS_REPO=${{github.event.inputs.redis_repo || env.DEFAULT_REDIS_REPO}}" >> $GITHUB_ENV
+        echo "REDIS_BRANCH=${{github.event.inputs.redis_branch || env.DEFAULT_REDIS_BRANCH}}" >> $GITHUB_ENV
+        echo "REDISRAFT_REPO=${{github.event.inputs.redisraft_repo || env.DEFAULT_REDISRAFT_REPO}}" >> $GITHUB_ENV
+        echo "REDISRAFT_BRANCH=${{github.event.inputs.redisraft_branch || env.DEFAULT_REDISRAFT_BRANCH}}" >> $GITHUB_ENV
+        echo "JEPSEN_REPO=${{ github.event.inputs.jepsen-repo || env.DEFAULT_JEPSEN_REPO }}" >> $GITHUB_ENV
+    - name: Install ripgrep
+      run: sudo apt-get install ripgrep
+    - name: Configure core_pattern
+      run: echo "core.%p" | sudo tee /proc/sys/kernel/core_pattern
+    - name: Build containers
+      run: cd jepsen/docker && ./genkeys.sh && docker-compose build --build-arg JEPSEN_REPO=${{ env.JEPSEN_REPO }}
+    - name: Start containers
+      run: cd jepsen/docker && docker-compose up -d
+    - name: Run test
+      run: |
+          docker exec -w /jepsen jepsen-control \
+              lein run test-all \
+                  --ssh-private-key /root/.ssh/id_rsa \
+                  --follower-proxy \
+                  --time-limit 600 \
+                  --test-count 20 \
+                  --concurrency 4n \
+                  --nemesis kill,pause,partition,member \
+                  --redis-repo https://github.com/${{ env.REDIS_REPO }} \
+                  --redis-version ${{ env.REDIS_BRANCH }} \
+                  --raft-repo https://github.com/${{ env.REDISRAFT_REPO }} \
+                  --raft-version ${{ env.REDISRAFT_BRANCH }} | rg --passthrough '^0 failures'
+    - name: Archive Jepsen results
+      uses: actions/upload-artifact@v2
+      if: failure() || cancelled()
+      with:
+        name: jepsen-results
+        path: ./jepsen/docker/store
