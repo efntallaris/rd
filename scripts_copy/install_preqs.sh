@@ -75,6 +75,7 @@ git clone https://github.com/efntallaris/rd
 cd rd
 git reset --hard origin/main
 git checkout aqueduct
+git config --global --add safe.directory /users/entall/rd
 
 sudo make
 
