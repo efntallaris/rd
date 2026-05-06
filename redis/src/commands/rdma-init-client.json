@@ -1,0 +1,20 @@
+{
+    "INIT-CLIENT": {
+        "summary": "Donor side: establish an RDMA queue-pair to a recipient node.",
+        "complexity": "O(1)",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaInitClientCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "ip",   "type": "string"  },
+            { "name": "port", "type": "integer" }
+        ]
+    }
+}

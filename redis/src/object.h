@@ -101,12 +101,17 @@ struct redisObject {
     unsigned encoding:4;
     unsigned refcount : OBJ_REFCOUNT_BITS;
     unsigned iskvobj : 1;   /* 1 if this struct serves as a kvobj base */
-    
-    /* metabits and lru are Relevant only when iskvobj is set: */     
+
+    /* metabits and lru are Relevant only when iskvobj is set: */
     unsigned metabits :8;  /* Bitmap of metadata (+expiry) attached to this kvobj */
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
                             * and most significant 16 bits access time). */
+    /* Offset (bytes) from this robj header to its data payload, used by the
+     * RDMA migration allocator (see redis/src/rdma_migration/allocator.c) to
+     * locate key/value bytes inside a staged segment. Zero for normal
+     * in-keyspace robjs. */
+    int data_offset;
     void *ptr;
 };
 

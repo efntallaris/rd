@@ -7,4 +7,7 @@ cluster-require-full-coverage no
 bind 0.0.0.0
 protected-mode no
 appendonly no
+dir {{ redis_data_dir }}
+dbfilename {{ inventory_hostname }}.rdb
+cluster-config-file nodes-{{ inventory_hostname }}-{{ master_port }}.conf
 logfile {{ redis_log_dir }}/{{ inventory_hostname }}__

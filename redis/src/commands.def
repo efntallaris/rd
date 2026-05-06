@@ -1156,6 +1156,153 @@ struct COMMAND_STRUCT CLUSTER_Subcommands[] = {
 #define CLUSTER_Keyspecs NULL
 #endif
 
+/********** RDMA DONE_SLOTS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DONE_SLOTS history */
+#define RDMA_DONE_SLOTS_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DONE_SLOTS tips */
+#define RDMA_DONE_SLOTS_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DONE_SLOTS key specs */
+#define RDMA_DONE_SLOTS_Keyspecs NULL
+#endif
+
+/* RDMA DONE_SLOTS argument table */
+struct COMMAND_ARG RDMA_DONE_SLOTS_Args[] = {
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/********** RDMA INIT_CLIENT ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA INIT_CLIENT history */
+#define RDMA_INIT_CLIENT_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA INIT_CLIENT tips */
+#define RDMA_INIT_CLIENT_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA INIT_CLIENT key specs */
+#define RDMA_INIT_CLIENT_Keyspecs NULL
+#endif
+
+/* RDMA INIT_CLIENT argument table */
+struct COMMAND_ARG RDMA_INIT_CLIENT_Args[] = {
+{MAKE_ARG("ip",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA INIT_SERVER ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA INIT_SERVER history */
+#define RDMA_INIT_SERVER_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA INIT_SERVER tips */
+#define RDMA_INIT_SERVER_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA INIT_SERVER key specs */
+#define RDMA_INIT_SERVER_Keyspecs NULL
+#endif
+
+/* RDMA INIT_SERVER argument table */
+struct COMMAND_ARG RDMA_INIT_SERVER_Args[] = {
+{MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA REGISTER_BLOCK_SLOTS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA REGISTER_BLOCK_SLOTS history */
+#define RDMA_REGISTER_BLOCK_SLOTS_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA REGISTER_BLOCK_SLOTS tips */
+#define RDMA_REGISTER_BLOCK_SLOTS_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA REGISTER_BLOCK_SLOTS key specs */
+#define RDMA_REGISTER_BLOCK_SLOTS_Keyspecs NULL
+#endif
+
+/* RDMA REGISTER_BLOCK_SLOTS slot_spec argument table */
+struct COMMAND_ARG RDMA_REGISTER_BLOCK_SLOTS_slot_spec_Subargs[] = {
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("n-blocks",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/* RDMA REGISTER_BLOCK_SLOTS argument table */
+struct COMMAND_ARG RDMA_REGISTER_BLOCK_SLOTS_Args[] = {
+{MAKE_ARG("slots-keyword",ARG_TYPE_PURE_TOKEN,-1,"SLOTS",NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot-spec",ARG_TYPE_BLOCK,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,2,NULL),.subargs=RDMA_REGISTER_BLOCK_SLOTS_slot_spec_Subargs},
+};
+
+/********** RDMA TRANSFER_SLOTS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA TRANSFER_SLOTS history */
+#define RDMA_TRANSFER_SLOTS_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA TRANSFER_SLOTS tips */
+#define RDMA_TRANSFER_SLOTS_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA TRANSFER_SLOTS key specs */
+#define RDMA_TRANSFER_SLOTS_Keyspecs NULL
+#endif
+
+/* RDMA TRANSFER_SLOTS argument table */
+struct COMMAND_ARG RDMA_TRANSFER_SLOTS_Args[] = {
+{MAKE_ARG("ip",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/* RDMA command table */
+struct COMMAND_STRUCT RDMA_Subcommands[] = {
+{MAKE_CMD("done-slots","Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_History,0,RDMA_DONE_SLOTS_Tips,0,rdmaDoneSlotsCommand,-3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_Keyspecs,0,NULL,1),.args=RDMA_DONE_SLOTS_Args},
+{MAKE_CMD("init-client","Donor side: establish an RDMA queue-pair to a recipient node.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_CLIENT_History,0,RDMA_INIT_CLIENT_Tips,0,rdmaInitClientCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_CLIENT_Keyspecs,0,NULL,2),.args=RDMA_INIT_CLIENT_Args},
+{MAKE_CMD("init-server","Recipient side: start listening on an RDMA endpoint.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_SERVER_History,0,RDMA_INIT_SERVER_Tips,0,rdmaInitServerCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_SERVER_Keyspecs,0,NULL,1),.args=RDMA_INIT_SERVER_Args},
+{MAKE_CMD("register-block-slots","Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.","O(N) where N is the total number of blocks requested.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_BLOCK_SLOTS_History,0,RDMA_REGISTER_BLOCK_SLOTS_Tips,0,rdmaRegisterBlockSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_BLOCK_SLOTS_Keyspecs,0,NULL,2),.args=RDMA_REGISTER_BLOCK_SLOTS_Args},
+{MAKE_CMD("transfer-slots","Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_TRANSFER_SLOTS_History,0,RDMA_TRANSFER_SLOTS_Tips,0,rdmaTransferSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_TRANSFER_SLOTS_Keyspecs,0,NULL,3),.args=RDMA_TRANSFER_SLOTS_Args},
+{0}
+};
+
+/********** RDMA ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA history */
+#define RDMA_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA tips */
+#define RDMA_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA key specs */
+#define RDMA_Keyspecs NULL
+#endif
+
 /********** READONLY ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -11745,6 +11892,7 @@ struct COMMAND_STRUCT redisCommandTable[] = {
 /* cluster */
 {MAKE_CMD("asking","Signals that a cluster client is following an -ASK redirect.","O(1)","3.0.0",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,ASKING_History,0,ASKING_Tips,0,askingCommand,1,CMD_FAST,ACL_CATEGORY_CONNECTION,ASKING_Keyspecs,0,NULL,0)},
 {MAKE_CMD("cluster","A container for Redis Cluster commands.","Depends on subcommand.","3.0.0",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,CLUSTER_History,0,CLUSTER_Tips,0,NULL,-2,0,0,CLUSTER_Keyspecs,0,NULL,0),.subcommands=CLUSTER_Subcommands},
+{MAKE_CMD("rdma","A container for Redis RDMA slot-migration commands.","Depends on subcommand.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_History,0,RDMA_Tips,0,NULL,-2,0,0,RDMA_Keyspecs,0,NULL,0),.subcommands=RDMA_Subcommands},
 {MAKE_CMD("readonly","Enables read-only queries for a connection to a Redis Cluster replica node.","O(1)","3.0.0",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,READONLY_History,0,READONLY_Tips,0,readonlyCommand,1,CMD_FAST|CMD_LOADING|CMD_STALE,ACL_CATEGORY_CONNECTION,READONLY_Keyspecs,0,NULL,0)},
 {MAKE_CMD("readwrite","Enables read-write queries for a connection to a Reids Cluster replica node.","O(1)","3.0.0",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,READWRITE_History,0,READWRITE_Tips,0,readwriteCommand,1,CMD_FAST|CMD_LOADING|CMD_STALE,ACL_CATEGORY_CONNECTION,READWRITE_Keyspecs,0,NULL,0)},
 /* connection */

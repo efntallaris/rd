@@ -1,0 +1,21 @@
+{
+    "TRANSFER-SLOTS": {
+        "summary": "Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.",
+        "complexity": "O(K) where K is the total number of keys in the listed slots.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -5,
+        "container": "RDMA",
+        "function": "rdmaTransferSlotsCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "ip",   "type": "string"  },
+            { "name": "port", "type": "integer" },
+            { "name": "slot", "type": "integer", "multiple": true }
+        ]
+    }
+}

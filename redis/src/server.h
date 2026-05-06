@@ -2006,6 +2006,10 @@ struct redisServer {
     pause_event client_pause_per_purpose[NUM_PAUSE_PURPOSES];
     char neterr[ANET_ERR_LEN];   /* Error buffer for anet.c */
     dict *migrate_cached_sockets;/* MIGRATE cached sockets */
+    /* RDMA slot-migration state (minimal: data-transfer slice only). */
+    dict *rdma_cached_connections;     /* RDMA cached connections, keyed by IP:port */
+    struct rdmamig_client *rdma_client; /* Donor side: outbound RDMA connection */
+    struct rdmamig_server *rdma_server; /* Recipient side: listening RDMA endpoint */
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
     int io_threads_num;         /* Number of IO threads to use. */
@@ -4344,6 +4348,11 @@ void watchCommand(client *c);
 void unwatchCommand(client *c);
 void clusterCommand(client *c);
 void clusterSlotStatsCommand(client *c);
+void rdmaInitClientCommand(client *c);
+void rdmaInitServerCommand(client *c);
+void rdmaRegisterBlockSlotsCommand(client *c);
+void rdmaTransferSlotsCommand(client *c);
+void rdmaDoneSlotsCommand(client *c);
 void restoreCommand(client *c);
 void migrateCommand(client *c);
 void askingCommand(client *c);

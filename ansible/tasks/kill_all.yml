@@ -17,7 +17,7 @@
         - ifstat
 
     - name: Kill YCSB
-      shell: pkill -9 -f "ycsb.sh" || true
+      shell: pkill -9 -f 'ycs[b].sh'; true
       ignore_errors: yes
 
     - name: Remove Redis binary directory

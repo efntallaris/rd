@@ -23,6 +23,14 @@
         path: "{{ local_log_dir }}"
         state: absent
 
-    - name: Remove cluster state files
-      shell: rm -f /root/nodes.conf /root/dump.rdb /root/appendonly.aof /root/*.aof
+    - name: Remove Redis data directory (RDB + cluster state)
+      file:
+        path: "{{ redis_data_dir }}"
+        state: absent
+
+    - name: Remove stale cluster state files in legacy locations
+      shell: >
+        rm -f /root/nodes*.conf /root/dump*.rdb /root/appendonly*.aof
+        /users/entall/rd/ansible/tasks/nodes*.conf
+        /users/entall/rd/ansible/tasks/dump*.rdb
       ignore_errors: yes

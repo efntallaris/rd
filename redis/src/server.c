@@ -27,6 +27,7 @@
 #include "threads_mngr.h"
 #include "fmtargs.h"
 #include "mstr.h"
+#include "rdma_migration/include/rdma_migration.h"
 #include "ebuckets.h"
 #include "cluster_asm.h"
 #include "fwtree.h"
@@ -2346,6 +2347,9 @@ void initServerConfig(void) {
     server.cluster_module_flags = CLUSTER_MODULE_FLAG_NONE;
     server.cluster_module_trim_disablers = 0;
     server.migrate_cached_sockets = dictCreate(&migrateCacheDictType);
+    server.rdma_cached_connections = dictCreate(&migrateCacheDictType);
+    server.rdma_client = NULL;
+    server.rdma_server = NULL;
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.page_size = sysconf(_SC_PAGESIZE);
     server.pause_cron = 0;
@@ -8020,6 +8024,17 @@ int main(int argc, char **argv) {
     if (server.maxmemory > 0 && server.maxmemory < 1024*1024) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
+
+    /* Forward the rdma_migration library's diagnostic messages through
+     * Redis's serverLog so they appear in the regular log file. The library
+     * defaults to stderr otherwise. Numeric levels match between the two
+     * APIs (see RDMAMIG_LOG_* in rdma_migration.h vs LL_* in server.h).
+     * `serverLog` is a macro, so we use the underlying _serverLog function. */
+    rdmamig_set_logger((rdmamig_log_fn) _serverLog);
+
+    /* Initialize the slot-keyed RDMA-registered block allocator used by the
+     * RDMA migration path (cluster_rdma.c). One-shot. */
+    r_allocator_init();
 
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);

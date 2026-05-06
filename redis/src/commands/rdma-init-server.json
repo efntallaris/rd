@@ -1,0 +1,19 @@
+{
+    "INIT-SERVER": {
+        "summary": "Recipient side: start listening on an RDMA endpoint.",
+        "complexity": "O(1)",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 3,
+        "container": "RDMA",
+        "function": "rdmaInitServerCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "port", "type": "integer" }
+        ]
+    }
+}

@@ -1,0 +1,28 @@
+{
+    "REGISTER-BLOCK-SLOTS": {
+        "summary": "Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.",
+        "complexity": "O(N) where N is the total number of blocks requested.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -5,
+        "container": "RDMA",
+        "function": "rdmaRegisterBlockSlotsCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "slots-keyword", "type": "pure-token", "token": "SLOTS" },
+            {
+                "name": "slot-spec",
+                "type": "block",
+                "multiple": true,
+                "arguments": [
+                    { "name": "slot",      "type": "integer" },
+                    { "name": "n-blocks",  "type": "integer" }
+                ]
+            }
+        ]
+    }
+}

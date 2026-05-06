@@ -3,8 +3,26 @@
   hosts: ycsb_nodes
   become: yes
   tasks:
+    - name: Ensure YCSB checkout parent dir exists
+      file:
+        path: "{{ ycsb_checkout_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone/update YCSB sources from {{ ycsb_branch }}
+      git:
+        repo: "{{ ycsb_repo }}"
+        dest: "{{ ycsb_checkout_dir }}"
+        version: "{{ ycsb_branch }}"
+        force: yes
+
+    - name: Purge potentially corrupted restlet artifacts from m2 cache
+      file:
+        path: "{{ ansible_env.HOME }}/.m2/repository/org/restlet"
+        state: absent
+
     - name: Build YCSB with Maven
-      command: mvn clean install -T 8 -DskipTests -Dcheckstyle.skip
+      command: mvn clean install -T 8 -Dmaven.test.skip=true -Dcheckstyle.skip
       args:
         chdir: "{{ ycsb_src_dir }}"
 
@@ -49,3 +67,17 @@
       file:
         path: /tmp/ycsb_temp
         state: absent
+
+    - name: Ensure workloads directory exists on YCSB node
+      file:
+        path: "{{ redis_workload_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy YCSB workload files to YCSB node
+      copy:
+        src: "{{ item }}"
+        dest: "{{ redis_workload_path }}"
+        mode: "0644"
+      with_fileglob:
+        - "/rd/workloads/*"

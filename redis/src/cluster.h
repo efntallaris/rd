@@ -41,6 +41,28 @@
 typedef struct _clusterNode clusterNode;
 struct clusterState;
 
+/* Forward decls for the rdma_migration library's opaque types. The full
+ * definitions live in redis/src/rdma_migration/. */
+struct rdmamig_server;
+struct ibv_mr;
+
+/* Per-connection RDMA state. The recipient owns one of these per connected
+ * donor. Holds the list of pre-registered slot landing buffers (VA + rkey)
+ * that the donor will RDMA-write into. */
+typedef struct _rdmaRemoteBufferInfo {
+    uint64_t ptr;
+    uint32_t rkey;
+} rdmaRemoteBufferInfo;
+
+typedef struct rdmaCachedConnection {
+    struct rdmamig_server *s;
+    struct client *c;
+    struct redisDb *db;
+    rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];
+    int number_of_assigned_slots;
+    struct ibv_mr *memory_regions[CLUSTER_SLOTS];
+} rdmaCachedConnection;
+
 /* Flags that a module can set in order to prevent certain Redis Cluster
  * features to be enabled. Useful when implementing a different distributed
  * system on top of Redis Cluster message bus, using modules. */

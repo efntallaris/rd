@@ -1,0 +1,19 @@
+{
+    "DONE-SLOTS": {
+        "summary": "Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.",
+        "complexity": "O(K) where K is the total number of keys in the listed slots.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -3,
+        "container": "RDMA",
+        "function": "rdmaDoneSlotsCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "slot", "type": "integer", "multiple": true }
+        ]
+    }
+}

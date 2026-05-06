@@ -24,6 +24,12 @@
         state: directory
         mode: "0755"
 
+    - name: Create Redis data directory
+      file:
+        path: "{{ redis_data_dir }}"
+        state: directory
+        mode: "0755"
+
     - name: Generate cluster config
       template:
         src: ../templates/redis_cluster.conf.j2
