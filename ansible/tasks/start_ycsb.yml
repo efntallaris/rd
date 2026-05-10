@@ -1,9 +1,9 @@
 ---
-- name: "YCSB run phase"
+- name: "Start YCSB run phase (async)"
   hosts: ycsb_nodes
   become: yes
   tasks:
-    - name: Run YCSB benchmark
+    - name: Start YCSB benchmark in background
       shell: >
         {{ ycsb_dir_bin }}/ycsb.sh run redis
         -p "redis.host={{ master_host }}"
@@ -19,10 +19,7 @@
       poll: 0
       register: ycsb_job
 
-    - name: Wait for YCSB to complete
-      async_status:
-        jid: "{{ ycsb_job.ansible_job_id }}"
-      register: ycsb_result
-      until: ycsb_result.finished
-      retries: 360
-      delay: 10
+    - name: Persist YCSB async job ID across plays
+      set_fact:
+        ycsb_async_jid: "{{ ycsb_job.ansible_job_id }}"
+        cacheable: yes

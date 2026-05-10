@@ -1,0 +1,12 @@
+---
+- name: "Wait for YCSB run phase to complete"
+  hosts: ycsb_nodes
+  become: yes
+  tasks:
+    - name: Wait for YCSB to complete
+      async_status:
+        jid: "{{ ycsb_async_jid }}"
+      register: ycsb_result
+      until: ycsb_result.finished
+      retries: 360
+      delay: 10

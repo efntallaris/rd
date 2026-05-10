@@ -25,10 +25,11 @@
 # 4. Add migration nodes to cluster
 - import_playbook: tasks/add_migrate_nodes.yml
 
-# 5. Start monitoring and run experiment
+# 5. Start monitoring, kick off YCSB run async, reshard concurrently, then wait
 - import_playbook: tasks/start_monitoring.yml
-- import_playbook: tasks/run_ycsb.yml
+- import_playbook: tasks/start_ycsb.yml
 - import_playbook: tasks/reshard_cluster.yml
+- import_playbook: tasks/wait_ycsb.yml
 
 # 6. Collect results and clean up
 - import_playbook: tasks/collect_results.yml
