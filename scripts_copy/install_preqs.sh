@@ -25,7 +25,7 @@ pipx ensurepath
 pipx install --include-deps ansible
 export PATH="$HOME/.local/bin:$PATH"
 ansible-galaxy collection install community.general --force
-sudo apt-get install ansible
+sudo apt-get install -y ansible
 
 
 # Clone the rdma-core repository
