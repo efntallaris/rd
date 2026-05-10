@@ -11,13 +11,6 @@
         path: "{{ node_conf }}"
         state: absent
 
-    - name: Install Redis binaries
-      make:
-        chdir: "{{ redis_dir }}"
-        target: install
-        params:
-          PREFIX: "{{ local_setup_dir }}"
-
     - name: Create Redis log directory
       file:
         path: "{{ redis_log_dir }}"

@@ -13,7 +13,8 @@
 - import_playbook: tasks/kill_all.yml
 - import_playbook: tasks/clean_cluster.yml
 
-# 2. Start Redis cluster
+# 2. Build Redis (with deps) and start cluster
+- import_playbook: tasks/build_redis.yml
 - import_playbook: tasks/start_redis_instances.yml
 - import_playbook: tasks/create_cluster.yml
 
