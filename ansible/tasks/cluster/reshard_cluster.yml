@@ -3,6 +3,12 @@
 # cluster topology before/after, and the redis-cli reshard output (both as
 # ansible debug messages and to a per-run logfile that collect_results
 # automatically fetches).
+#
+# Each line of redis-cli output is timestamped (ms precision) and annotated
+# with the delta since the previous line — since redis-cli emits one
+# "Moving slot X from A to B: ..." line per slot when that slot finishes,
+# the delta IS the per-slot wall-clock migration duration. Use that to
+# spot slow slots / stalls in the run.
 - name: "Reshard cluster to migration nodes"
   hosts: redis_masters[0]
   become: yes
@@ -14,6 +20,29 @@
         CLUSTER MYID
       register: migrate_node_ids
       loop: "{{ groups['redis_migrate'] }}"
+
+    - name: Stage per-line timestamping helper on the source master
+      copy:
+        dest: /tmp/_reshard_timestamp.py
+        mode: "0755"
+        content: |
+          #!/usr/bin/env python3
+          # Prefix each stdin line with wall-clock timestamp (ms),
+          # delta-since-previous-line (ms), and cumulative offset (s).
+          # Since redis-cli --cluster reshard emits exactly one line when
+          # each slot completes migration, delta == per-slot duration.
+          import sys, time
+          start = time.time()
+          prev = start
+          for line in sys.stdin:
+              now = time.time()
+              delta_ms = int((now - prev) * 1000)
+              total_s = now - start
+              sub_ms = int((now % 1) * 1000)
+              ts = time.strftime("%Y-%m-%dT%H:%M:%S") + f".{sub_ms:03d}"
+              print(f"[{ts}] (+{delta_ms}ms/+{total_s:.2f}s) {line}",
+                    end="", flush=True)
+              prev = now
 
     - name: Log pre-reshard cluster topology
       shell: |
@@ -31,13 +60,15 @@
         set -o pipefail
         LOGFILE={{ redis_log_dir }}/{{ inventory_hostname }}_reshard_{{ item.item }}.log
         echo "[$(date -Iseconds)] reshard starting target={{ item.item }} ({{ item.stdout }})" | tee -a "$LOGFILE"
-        {{ redis_bin_dir }}/redis-cli --cluster reshard \
+        stdbuf -oL {{ redis_bin_dir }}/redis-cli --cluster reshard \
           {{ master_host }}:{{ master_port }} \
           --cluster-from all \
           --cluster-to {{ item.stdout }} \
           --cluster-slots {{ reshard_slots }} \
           --cluster-yes \
-          --cluster-timeout {{ reshard_timeout }} 2>&1 | tee -a "$LOGFILE"
+          --cluster-timeout {{ reshard_timeout }} 2>&1 \
+          | python3 -u /tmp/_reshard_timestamp.py \
+          | tee -a "$LOGFILE"
         rc=${PIPESTATUS[0]}
         echo "[$(date -Iseconds)] reshard finished target={{ item.item }} rc=${rc}" | tee -a "$LOGFILE"
         exit ${rc}
@@ -48,7 +79,7 @@
         label: "{{ item.item }} ({{ item.stdout }})"
       register: reshard_runs
 
-    - name: Show reshard progress (last 40 lines per target)
+    - name: Show reshard progress (last 40 timestamped lines per target)
       debug:
         msg:
           - "===== reshard to {{ item.item.item }} ({{ item.item.stdout }}) ====="
