@@ -6,7 +6,7 @@ redis_src_dir: /users/entall/rd/redis/src
 local_setup_dir: /users/entall/rd/redis_bin
 redis_bin_dir: "{{ local_setup_dir }}/bin"
 ycsb_repo: "https://github.com/efntallaris/rd.git"
-ycsb_branch: blocking_version_2_threads
+ycsb_branch: aqueduct  # upstream YCSB now lives at /ycsb_client on aqueduct
 ycsb_checkout_dir: /users/entall/ycsb_src
 ycsb_src_dir: "{{ ycsb_checkout_dir }}/ycsb_client"
 ycsb_dir: /users/entall/ycsb_client
