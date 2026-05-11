@@ -1,4 +1,8 @@
 ---
+# Reshard slots to migration nodes. Emits explicit start/end timestamps,
+# cluster topology before/after, and the redis-cli reshard output (both as
+# ansible debug messages and to a per-run logfile that collect_results
+# automatically fetches).
 - name: "Reshard cluster to migration nodes"
   hosts: redis_masters[0]
   become: yes
@@ -11,15 +15,55 @@
       register: migrate_node_ids
       loop: "{{ groups['redis_migrate'] }}"
 
-    - name: Reshard slots to migration nodes
-      command: >
-        {{ redis_bin_dir }}/redis-cli --cluster reshard
-        {{ master_host }}:{{ master_port }}
-        --cluster-from all
-        --cluster-to {{ item.stdout }}
-        --cluster-slots {{ reshard_slots }}
-        --cluster-yes
-        --cluster-timeout {{ reshard_timeout }}
+    - name: Log pre-reshard cluster topology
+      shell: |
+        echo "[$(date -Iseconds)] === RESHARD START === slots={{ reshard_slots }} target={{ groups['redis_migrate'] | join(',') }} timeout={{ reshard_timeout }}s"
+        {{ redis_bin_dir }}/redis-cli -h {{ master_host }} -p {{ master_port }} CLUSTER NODES
+      register: pre_reshard
+      changed_when: false
+
+    - name: Show pre-reshard state
+      debug:
+        var: pre_reshard.stdout_lines
+
+    - name: Reshard slots to migration node(s)
+      shell: |
+        set -o pipefail
+        LOGFILE={{ redis_log_dir }}/{{ inventory_hostname }}_reshard_{{ item.item }}.log
+        echo "[$(date -Iseconds)] reshard starting target={{ item.item }} ({{ item.stdout }})" | tee -a "$LOGFILE"
+        {{ redis_bin_dir }}/redis-cli --cluster reshard \
+          {{ master_host }}:{{ master_port }} \
+          --cluster-from all \
+          --cluster-to {{ item.stdout }} \
+          --cluster-slots {{ reshard_slots }} \
+          --cluster-yes \
+          --cluster-timeout {{ reshard_timeout }} 2>&1 | tee -a "$LOGFILE"
+        rc=${PIPESTATUS[0]}
+        echo "[$(date -Iseconds)] reshard finished target={{ item.item }} rc=${rc}" | tee -a "$LOGFILE"
+        exit ${rc}
+      args:
+        executable: /bin/bash
       loop: "{{ migrate_node_ids.results }}"
       loop_control:
         label: "{{ item.item }} ({{ item.stdout }})"
+      register: reshard_runs
+
+    - name: Show reshard progress (last 40 lines per target)
+      debug:
+        msg:
+          - "===== reshard to {{ item.item.item }} ({{ item.item.stdout }}) ====="
+          - "{{ item.stdout_lines[-40:] }}"
+      loop: "{{ reshard_runs.results }}"
+      loop_control:
+        label: "{{ item.item.item }}"
+
+    - name: Log post-reshard cluster topology
+      shell: |
+        echo "[$(date -Iseconds)] === RESHARD END ==="
+        {{ redis_bin_dir }}/redis-cli -h {{ master_host }} -p {{ master_port }} CLUSTER NODES
+      register: post_reshard
+      changed_when: false
+
+    - name: Show post-reshard state
+      debug:
+        var: post_reshard.stdout_lines
