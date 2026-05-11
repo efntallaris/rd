@@ -1,0 +1,33 @@
+---
+# Like clean_cluster.yml but preserves {{ local_setup_dir }} (redis binaries)
+# and {{ ycsb_dir }} (ycsb binaries) — wipes only per-run state.
+- name: "Clean per-run state (preserve binaries)"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Remove node config file
+      file:
+        path: "{{ node_conf }}"
+        state: absent
+
+    - name: Remove Redis log directory
+      file:
+        path: "{{ redis_log_dir }}"
+        state: absent
+
+    - name: Remove monitoring log directory
+      file:
+        path: "{{ local_log_dir }}"
+        state: absent
+
+    - name: Remove Redis data directory (RDB + cluster state)
+      file:
+        path: "{{ redis_data_dir }}"
+        state: absent
+
+    - name: Remove stale cluster state files in legacy locations
+      shell: >
+        rm -f /root/nodes*.conf /root/dump*.rdb /root/appendonly*.aof
+        /users/entall/rd/ansible/tasks/nodes*.conf
+        /users/entall/rd/ansible/tasks/dump*.rdb
+      ignore_errors: yes

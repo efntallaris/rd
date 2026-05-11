@@ -1,0 +1,7 @@
+---
+# Custom-baseline: setup (build the aqueduct fork in place + YCSB). No
+# upstream clone — the fork source lives at {{ redis_dir }} already.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/build_redis_custom.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

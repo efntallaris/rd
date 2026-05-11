@@ -1,0 +1,17 @@
+---
+- name: "Run YCSB run phase (synchronous, vanilla baseline)"
+  hosts: ycsb_nodes
+  become: yes
+  tasks:
+    - name: Run YCSB benchmark to completion
+      shell: >
+        {{ ycsb_dir_bin }}/ycsb.sh run redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}{{ redis_workload }}
+        -p status.interval=1 -s
+        -p measurementtype=timeseries
+        -p "redis.timeout={{ ycsb_timeout }}"
+        -threads {{ ycsb_threads_run }}
+        >> {{ ycsb_log_filename }}_{{ inventory_hostname }} 2>&1

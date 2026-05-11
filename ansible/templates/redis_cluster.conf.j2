@@ -11,6 +11,8 @@ dir {{ redis_data_dir }}
 dbfilename {{ inventory_hostname }}.rdb
 cluster-config-file nodes-{{ inventory_hostname }}-{{ master_port }}.conf
 logfile {{ redis_log_dir }}/{{ inventory_hostname }}__
+{% if redis_variant | default('custom') == 'custom' %}
 cluster-rdma-allocator-shadow {{ "yes" if (rdma_allocator_shadow | default(false) | bool) else "no" }}
 cluster-rdma-allocator-skip-lock {{ "yes" if (rdma_allocator_skip_lock | default(false) | bool) else "no" }}
+{% endif %}
 save ""

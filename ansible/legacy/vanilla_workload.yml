@@ -1,0 +1,23 @@
+---
+# ── Vanilla-baseline experiment: per-workload run ─────────────────────────
+# Assumes vanilla_setup.yml has already cloned + built upstream Redis at
+# {{ redis_dir }} and installed it at {{ local_setup_dir }}. Performs:
+#   1. Stop stale processes (preserves binaries)
+#   2. Clean per-run state (preserves binaries + ycsb_dir)
+#   3. Start a fresh redis cluster on redis_masters (no migrate/reshard)
+#   4. YCSB load
+#   5. Start mpstat / iostat / ifstat
+#   6. YCSB run (synchronous — no concurrent reshard)
+#   7. Collect results into {{ experimental_output_dir }}/{{ experiment_name }}
+#
+# Invoked by run_vanilla_sweep.sh (passes redis_dir + local_setup_dir).
+# ──────────────────────────────────────────────────────────────────────────
+
+- import_playbook: tasks/kill_processes.yml
+- import_playbook: tasks/clean_runtime.yml
+- import_playbook: tasks/start_redis_instances.yml
+- import_playbook: tasks/create_cluster.yml
+- import_playbook: tasks/load_ycsb.yml
+- import_playbook: tasks/start_monitoring.yml
+- import_playbook: tasks/run_ycsb_sync.yml
+- import_playbook: tasks/collect_results.yml

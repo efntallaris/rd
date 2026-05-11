@@ -1,0 +1,26 @@
+---
+# ── Vanilla-baseline experiment: one-time setup ───────────────────────────
+# Fetches upstream Redis (NOT the local aqueduct fork) at the tag matching
+# the fork's REDIS_VERSION, then builds Redis + YCSB. The whole vanilla
+# pipeline operates under separate paths so it doesn't collide with the
+# fork's binaries:
+#   redis_dir         = /users/entall/rd/redis-vanilla
+#   local_setup_dir   = /users/entall/rd/redis_bin_vanilla
+#   vanilla_redis_tag = 8.6.2 (matches fork's src/version.h)
+#
+# These must be passed via -e at invocation time (run_vanilla_sweep.sh does
+# this for you).
+#
+# Usage:
+#   sudo ansible-playbook -i inventory.ini vanilla_setup.yml \
+#     -e redis_dir=/users/entall/rd/redis-vanilla \
+#     -e local_setup_dir=/users/entall/rd/redis_bin_vanilla \
+#     -e vanilla_redis_repo=https://github.com/redis/redis.git \
+#     -e vanilla_redis_tag=8.6.2
+# ──────────────────────────────────────────────────────────────────────────
+
+- import_playbook: tasks/kill_all.yml
+- import_playbook: tasks/clean_cluster.yml
+- import_playbook: tasks/clone_vanilla_redis.yml
+- import_playbook: tasks/build_redis_vanilla.yml
+- import_playbook: tasks/build_ycsb.yml

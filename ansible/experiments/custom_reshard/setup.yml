@@ -1,0 +1,7 @@
+---
+# Custom-reshard: setup (build aqueduct fork + YCSB). Identical to
+# custom_baseline/setup.yml.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/build_redis_custom.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

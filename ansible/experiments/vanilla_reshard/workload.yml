@@ -1,0 +1,14 @@
+---
+# Vanilla-reshard: per-workload run. Adds a migrate node and reshards slots
+# concurrently with the YCSB run (async pattern).
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redis_instances.yml
+- import_playbook: ../../tasks/cluster/create_cluster.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/cluster/add_migrate_nodes.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/cluster/reshard_cluster.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

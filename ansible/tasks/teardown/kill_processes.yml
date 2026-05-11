@@ -1,0 +1,23 @@
+---
+# Like kill_all.yml but preserves {{ local_setup_dir }} so we keep the built
+# binaries across iterations of the vanilla-baseline sweep.
+- name: "Kill processes (preserve binaries)"
+  hosts: all
+  become: yes
+  tasks:
+    - name: Kill redis-server
+      shell: pkill -9 redis-server || true
+
+    - name: Kill redis-cli
+      shell: pkill -9 redis-cli || true
+
+    - name: Kill monitoring tools
+      shell: pkill -9 {{ item }} || true
+      loop:
+        - mpstat
+        - iostat
+        - ifstat
+
+    - name: Kill YCSB
+      shell: pkill -9 -f 'ycs[b].sh'; true
+      ignore_errors: yes

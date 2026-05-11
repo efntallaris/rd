@@ -25,7 +25,7 @@
 
     - name: Generate cluster config
       template:
-        src: ../templates/redis_cluster.conf.j2
+        src: ../../templates/redis_cluster.conf.j2
         dest: "{{ node_conf }}"
         mode: "0644"
 

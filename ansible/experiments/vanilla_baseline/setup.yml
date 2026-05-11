@@ -1,0 +1,9 @@
+---
+# Vanilla-baseline: one-time setup (clone upstream Redis at vanilla_redis_tag,
+# build vanilla redis, build YCSB). Driven by run_sweep.sh which sets the
+# vanilla paths + redis_variant=vanilla.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/clone_vanilla_redis.yml
+- import_playbook: ../../tasks/build/build_redis_vanilla.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

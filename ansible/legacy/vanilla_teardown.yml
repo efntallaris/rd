@@ -1,0 +1,7 @@
+---
+# ── Vanilla-baseline experiment: final teardown ───────────────────────────
+# Kill processes and wipe binaries after the sweep is complete.
+# ──────────────────────────────────────────────────────────────────────────
+
+- import_playbook: tasks/kill_all.yml
+- import_playbook: tasks/clean_cluster.yml

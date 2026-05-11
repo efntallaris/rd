@@ -1,0 +1,29 @@
+---
+# Clone upstream vanilla Redis at the tag matching the fork's REDIS_VERSION.
+# Runs on every redis node since the source tree is local (not NFS).
+- name: "Clone vanilla Redis from upstream"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Ensure parent dir exists
+      file:
+        path: "{{ redis_dir | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone upstream redis/redis at tag {{ vanilla_redis_tag }}
+      git:
+        repo: "{{ vanilla_redis_repo }}"
+        dest: "{{ redis_dir }}"
+        version: "{{ vanilla_redis_tag }}"
+        depth: 1
+        force: yes
+
+    - name: Verify version.h matches expected tag
+      shell: grep '^#define REDIS_VERSION ' {{ redis_dir }}/src/version.h
+      register: vanilla_version
+      changed_when: false
+
+    - name: Show fetched version
+      debug:
+        var: vanilla_version.stdout

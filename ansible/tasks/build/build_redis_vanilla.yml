@@ -1,0 +1,30 @@
+---
+# Build vanilla upstream Redis. Mirrors tasks/build_redis.yml but drops the
+# rdma_migration sub-library step (that subdir does not exist upstream).
+- name: "Build vanilla Redis"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Generate jemalloc configure script if missing
+      shell: ./autogen.sh
+      args:
+        chdir: "{{ redis_dir }}/deps/jemalloc"
+        creates: "{{ redis_dir }}/deps/jemalloc/configure"
+
+    - name: Build Redis dependencies (hiredis, linenoise, lua, jemalloc, fast_float)
+      make:
+        chdir: "{{ redis_dir }}/deps"
+        target: "{{ item }}"
+      loop:
+        - hiredis
+        - linenoise
+        - lua
+        - jemalloc
+        - fast_float
+
+    - name: Install Redis binaries
+      make:
+        chdir: "{{ redis_dir }}"
+        target: install
+        params:
+          PREFIX: "{{ local_setup_dir }}"
