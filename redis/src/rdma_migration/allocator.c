@@ -607,6 +607,11 @@ void * r_allocator_insert_kv(int slot,
     // currently locked-for-migration, skip the mutex. UNSAFE for concurrent intra-slot
     // writers (free-list corruption possible) — only use when intra-slot collisions are
     // statistically rare (e.g. YCSB across 16384 slots).
+    /* === LOCKED PHASE: reserve a segment ===
+     * Critical work: freelist scan, block allocation, freelist insert/remove,
+     * header/footer marking. These touch shared state (free_list, block list).
+     * Once we mark the header as "allocated", the segment is uniquely ours
+     * and other inserters will skip it — payload memcpy can run unlocked. */
     int needs_lock = !r_allocator_skip_lock_when_idle || r_allocator.slot_locked[slot];
     if (needs_lock) {
         pthread_mutex_lock(&r_allocator.mutexes[slot]);
@@ -617,86 +622,55 @@ void * r_allocator_insert_kv(int slot,
 
     char * free_segment = freelist_find_fit(slot, final_size_aligned);
     if (!free_segment) {
-        // // printf("%s:%d %s() not found any free entry to fit\n", __FILE__, __LINE__, __func__);
         char * block_data_buffer = r_allocator_alloc_new_empty_block(slot);
-
         *allocated_new_block = 1;
-        // void *first_segment_ptr = new_blk->block_start + WSIZE; // the first WSIZE bytes is the prologue/dummy header
-        void *first_segment_ptr = block_data_buffer + WSIZE; // the first WSIZE bytes is the prologue/dummy header
-
-        // freelist_insert_segment(slot, (new_blk->block_start + WSIZE) );
-        // free_segment = (new_blk->block_start + WSIZE);
-        freelist_insert_segment(slot, (first_segment_ptr + WSIZE) );
+        void *first_segment_ptr = block_data_buffer + WSIZE;
+        freelist_insert_segment(slot, (first_segment_ptr + WSIZE));
         free_segment = (first_segment_ptr + WSIZE);
     }
-    
+
     freelist_remove_segment(slot, free_segment);
 
-    // get free segment header
     size_t free_segment_size = GET_SIZE(HDRP(free_segment));
     u_int dif = free_segment_size - final_size_aligned;
-    // if we won't split the free segment then bytes used will be equal to the size of the free segment
-    // u_int bytes_used = final_size_aligned;  
 
-    // printf("%s:%d %s() free_seg_size: %zu diff: %u  segment@: %p\n", __FILE__, __LINE__, __func__, free_segment_size, dif, free_segment);
-
-    /* If enough space: change header & footer, split, then coalesce */
-    if (dif >= MIN_SEGMENT_SIZE) { 
-        /* Setup allocated block (header and footer) */
+    /* If enough space: split and put the remainder back on the free list. */
+    if (dif >= MIN_SEGMENT_SIZE) {
         PUT(HDRP(free_segment), PACK(final_size_aligned, 1));
-        PUT(FTRP(free_segment), PACK(final_size_aligned, 1)); 
+        PUT(FTRP(free_segment), PACK(final_size_aligned, 1));
 
-        /* add new empty block (the remaining space of the segment) */
         char *next_segment = NEXT_SEGMENT(free_segment);
-        /* Enough space for another free block, so setup new free block */
         PUT_WTAG(HDRP(next_segment), PACK(dif, 0));
         PUT_WTAG(FTRP(next_segment), PACK(dif, 0));
 
         freelist_insert_segment(slot, next_segment);
-    } else { /* If remaining space isn't enough, don't split free block */
+    } else {
         PUT_WTAG(HDRP(free_segment), PACK(free_segment_size, 1));
-        PUT_WTAG(FTRP(free_segment), PACK(free_segment_size, 1)); 
-        // bytes_used = GET_SIZE(HDRP(free_segment));
+        PUT_WTAG(FTRP(free_segment), PACK(free_segment_size, 1));
     }
-
-    //DEBUG
-    // char *next_segment = NEXT_SEGMENT(free_segment);
-    // printf("%s:%d %s() free_segment: %p  next seg: %p\n",  __FILE__, __LINE__, __func__, free_segment, next_segment);
-    // printf("%s:%d %s() free_segment header: size = %u alloc: %u\n\t\t\t\t\t\t\t  footer: size = %u aloc: %u\n",
-    //             __FILE__, __LINE__, __func__, 
-    //             GET_SIZE(HDRP(free_segment)), GET_ALLOC(FTRP(free_segment)),   // header
-    //             GET_SIZE(FTRP(free_segment)), GET_ALLOC(HDRP(free_segment)));  // footer
-
-    // printf("%s:%d %s() next_segment header: size = %u alloc: %u\n\t\t\t\t\t\t\t  footer: size = %u aloc: %u\n",
-    //         __FILE__, __LINE__, __func__, 
-    //         GET_SIZE(HDRP(next_segment)), GET_ALLOC(FTRP(next_segment)),   // haeder
-    //         GET_SIZE(FTRP(next_segment)), GET_ALLOC(HDRP(next_segment)));  // footer
-
-    void *return_ptr = HDRP(free_segment);
-
-    // write <key meta size> (without header)
-    // modify the offset in key metadata to the actual key
-    // key_meta->data_offset = key_meta_size + ENTRY_HEADER_SIZE;
-    key_meta->data_offset = key_meta_size + value_meta_size + ENTRY_HEADER_SIZE;
-    (*ptr_key_meta) = add_data_no_header(&free_segment, (void *) key_meta, key_meta_size);    
-
-    // modify the offset back to actual value in the value metadata obj
-    // value_meta->data_offset = value_meta_size + ENTRY_HEADER_SIZE;
-    value_meta->data_offset = value_meta_size + ENTRY_HEADER_SIZE + key_size + ENTRY_HEADER_SIZE;
-    // write <value meta> (without header)
-    (*ptr_val_meta) = add_data_no_header(&free_segment, (void *) value_meta, value_meta_size);
-   
-    // write <key size> <key>
-    add_data_with_header(&free_segment, key, key_size);
-
-    // write <value size> <value>
-    add_data_with_header(&free_segment, value, value_size);
-
-    r_allocator.bytes_size += final_size_aligned;
 
     if (needs_lock) {
         pthread_mutex_unlock(&r_allocator.mutexes[slot]);
     }
+
+    /* === UNLOCKED PHASE: payload write ===
+     * The segment is now allocator-owned by this thread (header marked in-use,
+     * removed from free list). Other threads' freelist_find_fit cannot return it.
+     * The four memcpys below are the bulk of the per-insert wall-clock cost
+     * (~1 KB total for typical YCSB values) — they don't need the lock. */
+    void *return_ptr = HDRP(free_segment);
+
+    key_meta->data_offset = key_meta_size + value_meta_size + ENTRY_HEADER_SIZE;
+    (*ptr_key_meta) = add_data_no_header(&free_segment, (void *) key_meta, key_meta_size);
+
+    value_meta->data_offset = value_meta_size + ENTRY_HEADER_SIZE + key_size + ENTRY_HEADER_SIZE;
+    (*ptr_val_meta) = add_data_no_header(&free_segment, (void *) value_meta, value_meta_size);
+
+    add_data_with_header(&free_segment, key, key_size);
+    add_data_with_header(&free_segment, value, value_size);
+
+    /* Atomic: bytes_size is read by stats; don't need the per-slot mutex for it. */
+    __atomic_add_fetch(&r_allocator.bytes_size, final_size_aligned, __ATOMIC_RELAXED);
 
     return return_ptr;
 }
