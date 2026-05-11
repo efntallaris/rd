@@ -3137,6 +3137,7 @@ standardConfig static_configs[] = {
     createBoolConfig("cluster-enabled", NULL, IMMUTABLE_CONFIG, server.cluster_enabled, 0, NULL, NULL),
     createBoolConfig("appendonly", NULL, MODIFIABLE_CONFIG, server.aof_enabled, 0, NULL, updateAppendonly),
     createBoolConfig("cluster-rdma-allocator-shadow", NULL, MODIFIABLE_CONFIG, server.rdma_allocator_shadow, 0, NULL, NULL),
+    createBoolConfig("cluster-rdma-allocator-skip-lock", NULL, MODIFIABLE_CONFIG, server.rdma_allocator_skip_lock, 0, NULL, NULL),
     createBoolConfig("cluster-allow-reads-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_reads_when_down, 0, NULL, NULL),
     createBoolConfig("cluster-allow-pubsubshard-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_pubsubshard_when_down, 1, NULL, NULL),
     createBoolConfig("crash-log-enabled", NULL, MODIFIABLE_CONFIG, server.crashlog_enabled, 1, NULL, updateSighandlerEnabled),

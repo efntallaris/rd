@@ -38,6 +38,16 @@ typedef struct slot_stats {
 
 void r_allocator_init(void);
 
+/* Smoke-test optimization: when set, r_allocator_insert_kv skips the per-slot
+ * mutex if the slot is not currently locked for migration. UNSAFE if multiple
+ * writers can hit the same slot concurrently — they will corrupt the free list.
+ * Returns previous value. */
+int r_allocator_set_skip_lock_when_idle(int enable);
+
+/* Counters for skipped vs taken locks (only meaningful when skip_lock_when_idle=1) */
+unsigned long long r_allocator_get_locks_taken(void);
+unsigned long long r_allocator_get_locks_skipped(void);
+
 /* 
 * Allocates a new empty block for the given slot. 
 * If slot already has block, it will add the new block at the front of the block list

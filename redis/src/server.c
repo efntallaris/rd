@@ -6745,9 +6745,15 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         info = sdscatprintf(info,
             "# Allocator\r\n"
             "rdma_allocator_shadow:%d\r\n"
-            "rdma_allocator_inserts:%lld\r\n",
+            "rdma_allocator_inserts:%lld\r\n"
+            "rdma_allocator_skip_lock:%d\r\n"
+            "rdma_allocator_locks_taken:%llu\r\n"
+            "rdma_allocator_locks_skipped:%llu\r\n",
             server.rdma_allocator_shadow,
-            server.rdma_alloc_inserts);
+            server.rdma_alloc_inserts,
+            server.rdma_allocator_skip_lock,
+            r_allocator_get_locks_taken(),
+            r_allocator_get_locks_skipped());
         /* Per-slot block stats: enumerate up to 16384 slots, emit only non-empty. */
         long long total_blocks = 0, total_bytes = 0;
         int populated_slots = 0;
@@ -8080,9 +8086,11 @@ int main(int argc, char **argv) {
     /* Initialize the slot-keyed RDMA-registered block allocator used by the
      * RDMA migration path (cluster_rdma.c). One-shot. */
     r_allocator_init();
+    r_allocator_set_skip_lock_when_idle(server.rdma_allocator_skip_lock);
     serverLog(LL_NOTICE,
-        "RDMA migration allocator initialized. Shadow policy (cluster-rdma-allocator-shadow): %s",
-        server.rdma_allocator_shadow ? "ENABLED — every cluster-mode dbAdd will populate the allocator" : "disabled");
+        "RDMA migration allocator initialized. Shadow policy (cluster-rdma-allocator-shadow): %s. Skip-lock policy (cluster-rdma-allocator-skip-lock): %s",
+        server.rdma_allocator_shadow ? "ENABLED — every cluster-mode dbAdd will populate the allocator" : "disabled",
+        server.rdma_allocator_skip_lock ? "ENABLED — UNSAFE for concurrent intra-slot writers" : "disabled");
 
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);

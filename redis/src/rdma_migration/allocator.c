@@ -166,6 +166,18 @@ struct r_allocator {
 
 r_allocator_t r_allocator;
 
+static int r_allocator_skip_lock_when_idle = 0;
+static unsigned long long r_allocator_locks_taken = 0;
+static unsigned long long r_allocator_locks_skipped = 0;
+
+int r_allocator_set_skip_lock_when_idle(int enable) {
+    int prev = r_allocator_skip_lock_when_idle;
+    r_allocator_skip_lock_when_idle = enable ? 1 : 0;
+    return prev;
+}
+unsigned long long r_allocator_get_locks_taken(void)   { return r_allocator_locks_taken; }
+unsigned long long r_allocator_get_locks_skipped(void) { return r_allocator_locks_skipped; }
+
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
 /* * * * * * * * FREE LIST HANDLERS * * * * * * * * */
@@ -589,10 +601,19 @@ void * r_allocator_insert_kv(int slot,
 
     *allocated_new_block = 0;
 
-    // Acquire the lock for the slot. So other threads that want to modify the free list will be blocked
-    // We ensure that write will be complete when we release the lock and the lock_slot can acquire it
-    // Guarantee that when lock_slot resets the free list there are no active writes
-    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    // Acquire the lock for the slot. We ensure that write will be complete when we
+    // release the lock and lock_slot can acquire it.
+    // Optimization: when r_allocator_skip_lock_when_idle is set and the slot is not
+    // currently locked-for-migration, skip the mutex. UNSAFE for concurrent intra-slot
+    // writers (free-list corruption possible) — only use when intra-slot collisions are
+    // statistically rare (e.g. YCSB across 16384 slots).
+    int needs_lock = !r_allocator_skip_lock_when_idle || r_allocator.slot_locked[slot];
+    if (needs_lock) {
+        pthread_mutex_lock(&r_allocator.mutexes[slot]);
+        r_allocator_locks_taken++;
+    } else {
+        r_allocator_locks_skipped++;
+    }
 
     char * free_segment = freelist_find_fit(slot, final_size_aligned);
     if (!free_segment) {
@@ -673,7 +694,9 @@ void * r_allocator_insert_kv(int slot,
 
     r_allocator.bytes_size += final_size_aligned;
 
-    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+    if (needs_lock) {
+        pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+    }
 
     return return_ptr;
 }
