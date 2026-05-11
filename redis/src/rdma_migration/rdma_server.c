@@ -100,11 +100,16 @@ static void accept_pending_connection(rdmamig_server *s) {
 static void *listen_thread_main(void *data) {
     rdmamig_server *s = data;
 
+    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: listen_thread entered, calling rdma_listen on port %s", s->serverPort);
     if (rdma_listen(s->listen_id, MAX_CONNECTIONS) != 0) {
         RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_listen: %s", strerror(errno));
+        return NULL;
     }
+    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: listening on port %s, waiting for first donor", s->serverPort);
     wait_for_first_request(s);
+    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: donor connection request received, calling rdma_accept");
     accept_pending_connection(s);
+    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: donor connection accepted, cm_id=%p", (void*)s->id);
     return NULL;
 }
 

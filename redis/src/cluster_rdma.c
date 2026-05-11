@@ -89,9 +89,12 @@ void rdmaInitClientCommand(client *c) {
 void rdmaInitServerCommand(client *c) {
     /* argv[0]=RDMA argv[1]=INIT-SERVER argv[2]=port */
     char *rdma_server_port = c->argv[2]->ptr;
+    serverLog(LL_NOTICE, "RDMA INIT-SERVER: client_id=%llu requesting RDMA listener on port %s",
+              (unsigned long long) c->id, rdma_server_port);
 
     struct rdmamig_server *s = rdmamig_server_create(rdma_server_port);
     if (s == NULL) {
+        serverLog(LL_WARNING, "RDMA INIT-SERVER: rdmamig_server_create(%s) failed", rdma_server_port);
         addReplyError(c, "rdmamig_server_create failed");
         return;
     }
@@ -102,8 +105,14 @@ void rdmaInitServerCommand(client *c) {
 
     if (server.rdma_server == NULL) {
         server.rdma_server = s;
+        serverLog(LL_NOTICE, "RDMA INIT-SERVER: bound RDMA listener on port %s (server.rdma_server set)",
+                  rdma_server_port);
+    } else {
+        serverLog(LL_NOTICE, "RDMA INIT-SERVER: server.rdma_server already set; using new server for this client only");
     }
     rdmaAddConnection(c, s);
+    serverLog(LL_NOTICE, "RDMA INIT-SERVER: client_id=%llu cached connection, awaiting donor",
+              (unsigned long long) c->id);
     addReply(c, shared.ok);
 }
 
@@ -150,6 +159,8 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         total_requested_blocks += (int) n;
     }
 
+    serverLog(LL_NOTICE, "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu starting (%d total blocks across %d pairs)",
+              (unsigned long long) c->id, total_requested_blocks, (c->argc - start_idx) / 2);
     rdmaRemoteBufferInfo *remote_buffers = zmalloc(total_requested_blocks * sizeof(rdmaRemoteBufferInfo));
     int total_remote_buffers = 0;
 
@@ -183,10 +194,16 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
             }
             remote_buffers[total_remote_buffers].ptr = (uint64_t) block_ptr;
             remote_buffers[total_remote_buffers].rkey = rdmamig_buffer_rkey(rb);
+            serverLog(LL_NOTICE, "RDMA REGISTER-BLOCK-SLOTS: slot=%lld block=%d VA=0x%llx rkey=0x%x",
+                      slot_id, i,
+                      (unsigned long long) remote_buffers[total_remote_buffers].ptr,
+                      remote_buffers[total_remote_buffers].rkey);
             total_remote_buffers++;
         }
     }
 
+    serverLog(LL_NOTICE, "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu returning %d (VA, rkey) tuples",
+              (unsigned long long) c->id, total_remote_buffers);
     addReplyBulkCBuffer(c, (char *) remote_buffers, total_remote_buffers * sizeof(rdmaRemoteBufferInfo));
     zfree(remote_buffers);
 }
