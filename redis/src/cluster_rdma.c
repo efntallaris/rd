@@ -36,6 +36,7 @@
 #include "cluster.h"
 #include "rdma_migration/include/rdma_migration.h"
 #include "kvstore.h"
+#include "hiredis.h"
 #include <arpa/inet.h>
 
 /* ---- Connection cache ---------------------------------------------------- */
@@ -493,4 +494,207 @@ void rdmaDoneSlotsCommand(client *c) {
     serverLog(LL_NOTICE, "RDMA DONE-SLOTS: applied %lld keys across %d slots",
               total_added, c->argc - 2);
     addReply(c, shared.ok);
+}
+
+
+/* ====================================================================== *
+ *  RDMA MIGRATE-PREP  (source-side bootstrap RPC)
+ *
+ *  Hides the existing recipient subcommands (INIT-SERVER, REGISTER-BLOCK-
+ *  SLOTS) behind one operator-facing call:
+ *
+ *      RDMA MIGRATE-PREP <host> <port> <slot> [<slot> ...]
+ *
+ *  Caches a single RDMA control link per (source, recipient) pair in
+ *  server.rdma_outbound_links so subsequent prep calls reuse the same
+ *  RDMA QP and TCP control channel.
+ * ====================================================================== */
+
+/* Open a fresh outbound link to `host:port`. On success returns a link with
+ * a connected hiredis context and a connected rdmamig client; the caller
+ * is responsible for inserting it into the dict. Returns NULL on failure
+ * (with all partial resources freed and a serverLog warning emitted).
+ *
+ * `key` is consumed by the caller — we do not free or take ownership of it
+ * here; the dict owns the sds key after dictAdd. We still copy the addr
+ * into `L->addr` (an independent sds) for diagnostic dumps. */
+static rdmaOutboundLink *rdmaOutboundLinkOpen(const char *host, int port) {
+    rdmaOutboundLink *L = zcalloc(sizeof(*L));
+    L->addr = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    pthread_mutex_init(&L->mu, NULL);
+
+    /* 1. Plain-TCP redis client connection to the recipient (for INIT-SERVER
+     *    and REGISTER-BLOCK-SLOTS round-trips). Blocking — the prep RPC is
+     *    a synchronous operator call. */
+    L->ctrl = redisConnect(host, port);
+    if (L->ctrl == NULL || L->ctrl->err != 0) {
+        serverLog(LL_WARNING, "RDMA MIGRATE-PREP: redisConnect(%s:%d) failed: %s",
+                  host, port, L->ctrl ? L->ctrl->errstr : "alloc failed");
+        if (L->ctrl) redisFree(L->ctrl);
+        sdsfree(L->addr);
+        pthread_mutex_destroy(&L->mu);
+        zfree(L);
+        return NULL;
+    }
+
+    /* 2. Ask the recipient to bind its RDMA listener on server.rdma_migration_port.
+     *    INIT-SERVER is idempotent on the recipient: if a server is already up,
+     *    the existing handler keeps it and replies +OK. */
+    redisReply *r = redisCommand(L->ctrl, "RDMA INIT-SERVER %d", server.rdma_migration_port);
+    if (r == NULL || r->type == REDIS_REPLY_ERROR) {
+        serverLog(LL_WARNING, "RDMA MIGRATE-PREP: INIT-SERVER on %s:%d failed: %s",
+                  host, port, r ? r->str : "no reply");
+        if (r) freeReplyObject(r);
+        redisFree(L->ctrl);
+        sdsfree(L->addr);
+        pthread_mutex_destroy(&L->mu);
+        zfree(L);
+        return NULL;
+    }
+    freeReplyObject(r);
+
+    /* 3. Bring up the source-side RDMA QP and connect to the recipient's
+     *    just-bound RDMA listener. rdmamig_client_create takes the port as
+     *    a string. */
+    char rdma_port_str[16];
+    snprintf(rdma_port_str, sizeof(rdma_port_str), "%d", server.rdma_migration_port);
+    L->client = rdmamig_client_create((char *) host, rdma_port_str);
+    if (L->client == NULL) {
+        serverLog(LL_WARNING, "RDMA MIGRATE-PREP: rdmamig_client_create(%s:%s) failed",
+                  host, rdma_port_str);
+        redisFree(L->ctrl);
+        sdsfree(L->addr);
+        pthread_mutex_destroy(&L->mu);
+        zfree(L);
+        return NULL;
+    }
+    if (rdmamig_client_connect(L->client) != 0) {
+        serverLog(LL_WARNING, "RDMA MIGRATE-PREP: rdmamig_client_connect(%s:%s) failed",
+                  host, rdma_port_str);
+        zfree(L->client);
+        redisFree(L->ctrl);
+        sdsfree(L->addr);
+        pthread_mutex_destroy(&L->mu);
+        zfree(L);
+        return NULL;
+    }
+
+    serverLog(LL_NOTICE, "RDMA MIGRATE-PREP: new outbound link to %s (TCP %d, RDMA %d) up",
+              host, port, server.rdma_migration_port);
+    return L;
+}
+
+/* Dict valDestructor — invoked by dictRelease/dictDelete on the
+ * server.rdma_outbound_links dict. */
+void rdmaOutboundLinkFree(void *v) {
+    rdmaOutboundLink *L = v;
+    if (L == NULL) return;
+    if (L->client) zfree(L->client);  /* rdmamig_client has no public disconnect/free */
+    if (L->ctrl)   redisFree(L->ctrl);
+    pthread_mutex_destroy(&L->mu);
+    if (L->addr)   sdsfree(L->addr);
+    zfree(L);
+}
+
+/* RDMA MIGRATE-PREP <host> <port> <slot> [<slot> ...]
+ *
+ *   argv[0] = "RDMA"
+ *   argv[1] = "MIGRATE-PREP"
+ *   argv[2] = host
+ *   argv[3] = port
+ *   argv[4..argc-1] = slots
+ */
+void rdmaMigratePrepCommand(client *c) {
+    if (c->argc < 5) {
+        addReplyError(c, "syntax: RDMA MIGRATE-PREP host port slot [slot ...]");
+        return;
+    }
+
+    const char *host = c->argv[2]->ptr;
+    long long port_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "port out of range");
+        return;
+    }
+    int port = (int) port_ll;
+
+    int n_slots = c->argc - 4;
+    int *slots = zmalloc((size_t) n_slots * sizeof(int));
+    for (int i = 0; i < n_slots; i++) {
+        long long s_ll;
+        if (getLongLongFromObject(c->argv[4 + i], &s_ll) != C_OK ||
+            s_ll < 0 || s_ll >= CLUSTER_SLOTS) {
+            zfree(slots);
+            addReplyError(c, "slot id out of range");
+            return;
+        }
+        slots[i] = (int) s_ll;
+    }
+
+    /* Cache lookup. The dict key is owned by the dict; if we dictAdd we hand
+     * ownership over, otherwise we sdsfree below. */
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    int newly = 0;
+    if (L == NULL) {
+        L = rdmaOutboundLinkOpen(host, port);
+        if (L == NULL) {
+            sdsfree(key);
+            zfree(slots);
+            addReplyError(c, "could not establish outbound RDMA link (see server log)");
+            return;
+        }
+        dictAdd(server.rdma_outbound_links, key, L);    /* dict now owns key */
+        newly = 1;
+    } else {
+        sdsfree(key);                                   /* key not inserted */
+    }
+
+    /* Build "RDMA REGISTER-BLOCK-SLOTS SLOTS <s> 1 <s> 1 ..." via redisCommandArgv
+     * (avoids RESP-formatting pitfalls of redisCommand %s expansion). */
+    pthread_mutex_lock(&L->mu);
+
+    int argc = 3 + 2 * n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    argv[0] = "RDMA";                       argvlen[0] = 4;
+    argv[1] = "REGISTER-BLOCK-SLOTS";       argvlen[1] = 20;
+    argv[2] = "SLOTS";                      argvlen[2] = 5;
+
+    /* Stable storage for slot/nblocks number strings. */
+    char (*numbuf)[16] = zmalloc((size_t)(2 * n_slots) * sizeof(*numbuf));
+    for (int i = 0; i < n_slots; i++) {
+        argvlen[3 + 2*i]     = (size_t) snprintf(numbuf[2*i],     16, "%d", slots[i]);
+        argv  [3 + 2*i]     = numbuf[2*i];
+        argvlen[3 + 2*i + 1] = (size_t) snprintf(numbuf[2*i + 1], 16, "%d", 1);
+        argv  [3 + 2*i + 1] = numbuf[2*i + 1];
+    }
+    redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+    zfree(argv);
+    zfree(argvlen);
+    zfree(numbuf);
+
+    if (r == NULL || r->type != REDIS_REPLY_STRING ||
+        r->len != (size_t) n_slots * sizeof(rdmaRemoteBufferInfo)) {
+        if (r) freeReplyObject(r);
+        pthread_mutex_unlock(&L->mu);
+        zfree(slots);
+        addReplyError(c, "RDMA REGISTER-BLOCK-SLOTS: malformed or error reply from recipient");
+        return;
+    }
+    const rdmaRemoteBufferInfo *bufs = (const rdmaRemoteBufferInfo *) r->str;
+    for (int i = 0; i < n_slots; i++) {
+        L->buffers[slots[i]] = bufs[i];
+    }
+    freeReplyObject(r);
+    pthread_mutex_unlock(&L->mu);
+
+    serverLog(LL_NOTICE,
+              "RDMA MIGRATE-PREP %s:%d -> %d slots registered (%s link)",
+              host, port, n_slots, newly ? "new" : "cached");
+
+    zfree(slots);
+    addReplyStatusFormat(c, "OK %d slots, %d MiB (%s link)",
+                         n_slots, n_slots, newly ? "new" : "cached");
 }

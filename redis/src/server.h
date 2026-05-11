@@ -2010,6 +2010,8 @@ struct redisServer {
     dict *rdma_cached_connections;     /* RDMA cached connections, keyed by IP:port */
     struct rdmamig_client *rdma_client; /* Donor side: outbound RDMA connection */
     struct rdmamig_server *rdma_server; /* Recipient side: listening RDMA endpoint */
+    dict *rdma_outbound_links;         /* Source side: per-recipient RDMA bootstrap cache, keyed "host:port" */
+    int rdma_migration_port;           /* Port the recipient binds for RDMA when asked via INIT-SERVER */
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
     int io_threads_num;         /* Number of IO threads to use. */
@@ -4357,6 +4359,7 @@ void clusterSlotStatsCommand(client *c);
 void rdmaInitClientCommand(client *c);
 void rdmaInitServerCommand(client *c);
 void rdmaRegisterBlockSlotsCommand(client *c);
+void rdmaMigratePrepCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
 void restoreCommand(client *c);

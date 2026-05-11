@@ -1223,6 +1223,30 @@ struct COMMAND_ARG RDMA_INIT_SERVER_Args[] = {
 {MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA MIGRATE_PREP ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA MIGRATE_PREP history */
+#define RDMA_MIGRATE_PREP_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA MIGRATE_PREP tips */
+#define RDMA_MIGRATE_PREP_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA MIGRATE_PREP key specs */
+#define RDMA_MIGRATE_PREP_Keyspecs NULL
+#endif
+
+/* RDMA MIGRATE_PREP argument table */
+struct COMMAND_ARG RDMA_MIGRATE_PREP_Args[] = {
+{MAKE_ARG("host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
 /********** RDMA REGISTER_BLOCK_SLOTS ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1281,6 +1305,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("done-slots","Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_History,0,RDMA_DONE_SLOTS_Tips,0,rdmaDoneSlotsCommand,-3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_Keyspecs,0,NULL,1),.args=RDMA_DONE_SLOTS_Args},
 {MAKE_CMD("init-client","Donor side: establish an RDMA queue-pair to a recipient node.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_CLIENT_History,0,RDMA_INIT_CLIENT_Tips,0,rdmaInitClientCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_CLIENT_Keyspecs,0,NULL,2),.args=RDMA_INIT_CLIENT_Args},
 {MAKE_CMD("init-server","Recipient side: start listening on an RDMA endpoint.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_SERVER_History,0,RDMA_INIT_SERVER_Tips,0,rdmaInitServerCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_SERVER_Keyspecs,0,NULL,1),.args=RDMA_INIT_SERVER_Args},
+{MAKE_CMD("migrate-prep","Source side: open (or reuse) an RDMA control link to the recipient and pre-register one landing block per listed slot.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_PREP_History,0,RDMA_MIGRATE_PREP_Tips,0,rdmaMigratePrepCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_PREP_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_PREP_Args},
 {MAKE_CMD("register-block-slots","Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.","O(N) where N is the total number of blocks requested.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_BLOCK_SLOTS_History,0,RDMA_REGISTER_BLOCK_SLOTS_Tips,0,rdmaRegisterBlockSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_BLOCK_SLOTS_Keyspecs,0,NULL,2),.args=RDMA_REGISTER_BLOCK_SLOTS_Args},
 {MAKE_CMD("transfer-slots","Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_TRANSFER_SLOTS_History,0,RDMA_TRANSFER_SLOTS_Tips,0,rdmaTransferSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_TRANSFER_SLOTS_Keyspecs,0,NULL,3),.args=RDMA_TRANSFER_SLOTS_Args},
 {0}

@@ -708,6 +708,20 @@ dictType migrateCacheDictType = {
     NULL                        /* allow to expand */
 };
 
+/* Source-side RDMA outbound-link cache. Key is sds "host:port", value is
+ * rdmaOutboundLink* owned by the dict; freed via rdmaOutboundLinkFree
+ * (cluster_rdma.c) which tears down the hiredis context, the rdmamig client,
+ * and the per-link mutex. */
+dictType rdmaOutboundLinksDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    rdmaOutboundLinkFree,       /* val destructor */
+    NULL                        /* allow to expand */
+};
+
 /* Dict for for case-insensitive search using null terminated C strings.
  * The keys stored in dict are sds though. */
 dictType stringSetDictType = {
@@ -2350,6 +2364,7 @@ void initServerConfig(void) {
     server.rdma_cached_connections = dictCreate(&migrateCacheDictType);
     server.rdma_client = NULL;
     server.rdma_server = NULL;
+    server.rdma_outbound_links = dictCreate(&rdmaOutboundLinksDictType);
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.page_size = sysconf(_SC_PAGESIZE);
     server.pause_cron = 0;

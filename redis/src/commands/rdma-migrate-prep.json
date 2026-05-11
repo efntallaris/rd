@@ -1,0 +1,21 @@
+{
+    "MIGRATE-PREP": {
+        "summary": "Source side: open (or reuse) an RDMA control link to the recipient and pre-register one landing block per listed slot.",
+        "complexity": "O(N) in number of slots.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -5,
+        "container": "RDMA",
+        "function": "rdmaMigratePrepCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "host", "type": "string" },
+            { "name": "port", "type": "integer" },
+            { "name": "slot", "type": "integer", "multiple": true }
+        ]
+    }
+}

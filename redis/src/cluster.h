@@ -63,6 +63,26 @@ typedef struct rdmaCachedConnection {
     struct ibv_mr *memory_regions[CLUSTER_SLOTS];
 } rdmaCachedConnection;
 
+/* Source-side bootstrap cache for the RDMA migration data path. One entry per
+ * (recipient host, recipient redis port). Created lazily by the first
+ * RDMA MIGRATE-PREP call targeting that recipient; reused by subsequent
+ * prep calls so the operator only pays connection setup once.
+ *
+ * `buffers[slot].ptr == 0` marks a slot as not-yet-prepped on this link.
+ * The `ctrl` member is a blocking hiredis context used to issue the
+ * recipient subcommands (INIT-SERVER, REGISTER-BLOCK-SLOTS) over plain TCP. */
+#include <pthread.h>
+struct redisContext;    /* forward decl from hiredis */
+typedef struct rdmaOutboundLink {
+    sds addr;                                       /* "host:port", matches dict key */
+    struct rdmamig_client *client;                  /* active RDMA QP (rdmamig client) */
+    struct redisContext *ctrl;                      /* hiredis TCP control channel */
+    rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];    /* recipient (VA, rkey) per slot */
+    pthread_mutex_t mu;                             /* per-link guard for REGISTER round-trips */
+} rdmaOutboundLink;
+
+void rdmaOutboundLinkFree(void *v);
+
 /* Flags that a module can set in order to prevent certain Redis Cluster
  * features to be enabled. Useful when implementing a different distributed
  * system on top of Redis Cluster message bus, using modules. */
