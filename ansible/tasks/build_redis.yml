@@ -3,6 +3,11 @@
   hosts: redis_masters:redis_migrate
   become: yes
   tasks:
+    - name: Force-clean rdma_migration sub-library (avoid stale .a after git checkout — git resets mtimes so make would otherwise see "nothing to do")
+      shell: make clean
+      args:
+        chdir: "{{ redis_dir }}/src/rdma_migration"
+
     - name: Generate jemalloc configure script if missing
       shell: ./autogen.sh
       args:
