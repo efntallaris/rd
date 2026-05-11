@@ -25,6 +25,7 @@
 #include <ctype.h>
 #include "bio.h"
 #include "keymeta.h"
+#include "rdma_migration/include/rdma_migration.h" /* re-exports allocator.h */
 
 /*-----------------------------------------------------------------------------
  * C-level DB API
@@ -415,6 +416,32 @@ kvobj *dbAddInternal(redisDb *db, robj *key, robj **valref, dictEntryLink *link,
     dictEntryLink tmp = NULL;
     if (link == NULL) link = &tmp;
     robj *val = *valref;
+
+    /* Shadow-insert into RDMA migration allocator for source-side staging.
+     * Smoke-test scaffold: insert only, no free on overwrite/delete. Restart
+     * the cluster between runs. String values only. */
+    if (server.rdma_allocator_shadow && server.cluster_enabled
+        && val->type == OBJ_STRING && val->ptr != NULL) {
+        sds vsds = (sds) val->ptr;
+        int allocated_new_block = 0;
+        robj km = {0}, vm = {0};
+        robj *km_blk = NULL, *vm_blk = NULL;
+        r_allocator_insert_kv(slot,
+            key->ptr, sdslen(key->ptr),
+            vsds, sdslen(vsds),
+            &km, sizeof(robj),
+            &vm, sizeof(robj),
+            &allocated_new_block,
+            &km_blk, &vm_blk);
+        server.rdma_alloc_inserts++;
+        if ((server.rdma_alloc_inserts % 100000) == 0) {
+            serverLog(LL_NOTICE,
+                "RDMA allocator shadow: %lld inserts so far (last slot=%d, kv_size_aprox=%zu)",
+                server.rdma_alloc_inserts, slot,
+                sdslen(key->ptr) + sdslen(vsds) + 2 * sizeof(robj));
+        }
+    }
+
     kvobj *kv = kvobjSet(key->ptr, val, keymeta->metabits);
     initObjectLRUOrLFU(kv);
     kvstoreDictSetAtLink(db->keys, slot, kv, link, 1);

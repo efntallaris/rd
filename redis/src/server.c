@@ -6739,6 +6739,51 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         }
     }
 
+    /* RDMA migration allocator (smoke-test scaffold) */
+    if (all_sections || (dictFind(section_dict,"allocator") != NULL)) {
+        if (sections++) info = sdscat(info,"\r\n");
+        info = sdscatprintf(info,
+            "# Allocator\r\n"
+            "rdma_allocator_shadow:%d\r\n"
+            "rdma_allocator_inserts:%lld\r\n",
+            server.rdma_allocator_shadow,
+            server.rdma_alloc_inserts);
+        /* Per-slot block stats: enumerate up to 16384 slots, emit only non-empty. */
+        long long total_blocks = 0, total_bytes = 0;
+        int populated_slots = 0;
+        int top_n = 10;
+        struct { int slot; unsigned int blocks; unsigned int bytes; } top[10] = {{0}};
+        for (int s = 0; s < 16384; s++) {
+            slot_stats_t st = update_slot_stats(s);
+            if (st.blocks == 0) continue;
+            populated_slots++;
+            total_blocks += st.blocks;
+            total_bytes  += st.bytes_used;
+            /* track top-N by block count */
+            int min_idx = 0;
+            for (int i = 1; i < top_n; i++)
+                if (top[i].blocks < top[min_idx].blocks) min_idx = i;
+            if (st.blocks > top[min_idx].blocks) {
+                top[min_idx].slot = s;
+                top[min_idx].blocks = st.blocks;
+                top[min_idx].bytes = st.bytes_used;
+            }
+        }
+        info = sdscatprintf(info,
+            "rdma_allocator_populated_slots:%d\r\n"
+            "rdma_allocator_total_blocks:%lld\r\n"
+            "rdma_allocator_total_bytes_used:%lld\r\n",
+            populated_slots, total_blocks, total_bytes);
+        for (int i = 0; i < top_n; i++) {
+            if (top[i].blocks == 0) continue;
+            info = sdscatprintf(info,
+                "rdma_allocator_slot_%d_blocks:%u\r\n"
+                "rdma_allocator_slot_%d_bytes_used:%u\r\n",
+                top[i].slot, top[i].blocks,
+                top[i].slot, top[i].bytes);
+        }
+    }
+
     /* Modules */
     if (all_sections || (dictFind(section_dict,"module_list") != NULL) || (dictFind(section_dict,"modules") != NULL)) {
         if (sections++) info = sdscat(info,"\r\n");
@@ -8035,6 +8080,9 @@ int main(int argc, char **argv) {
     /* Initialize the slot-keyed RDMA-registered block allocator used by the
      * RDMA migration path (cluster_rdma.c). One-shot. */
     r_allocator_init();
+    serverLog(LL_NOTICE,
+        "RDMA migration allocator initialized. Shadow policy (cluster-rdma-allocator-shadow): %s",
+        server.rdma_allocator_shadow ? "ENABLED — every cluster-mode dbAdd will populate the allocator" : "disabled");
 
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);

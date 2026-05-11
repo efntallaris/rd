@@ -2159,6 +2159,9 @@ struct redisServer {
     double *latency_tracking_info_percentiles; /* Extended latency tracking info output percentile list configuration. */
     int latency_tracking_info_percentiles_len;
     int memory_tracking_enabled;    /* Account used memory per slot */
+    int rdma_allocator_shadow;      /* If true, dbAdd shadows the kvobj into the
+                                       RDMA-migration allocator (smoke test). */
+    long long rdma_alloc_inserts;   /* Counter of allocator shadow inserts. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */
