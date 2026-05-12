@@ -91,6 +91,18 @@ char ** r_allocator_get_block_buffers_for_slot(int slot, int *number_of_results)
 */
 void r_allocator_free_kv(int slot, void *key_meta_ptr);
 
+/* Allocate a segment for a kvobj-shaped payload (single robj header with
+ * embedded sds key and embedded sds value), set encoding to
+ * OBJ_ENCODING_R_ALLOCATOR, stash slot in robj->data_offset. Returns a
+ * kvobj* that can be inserted into the keyspace dict directly. See
+ * r_allocator_insert_kvobj body in allocator.c for full layout. */
+kvobj * r_allocator_insert_kvobj(int slot, sds key, sds value, int *allocated_new_block);
+
+/* Given a robj/kvobj whose backing memory lives inside an r_allocator
+ * segment, return the pointer to pass to r_allocator_free_kv (segment
+ * payload start, i.e. right after the segment header). */
+void * r_allocator_seg_for_robj(robj *o);
+
 /* free ALL blocks of the slot */
 void free_slot(int slot);
 
@@ -131,6 +143,23 @@ void * get_buffer_from_block(void *blk);
 // TESTING
 slot_stats_t update_slot_stats(int slot);
 void print_slot_stats(slot_stats_t slot_stats);
+
+/* Emit one redis-log line summarising a slot's allocator stats (blocks,
+ * used / free segments and bytes, freelist length). Reuses
+ * update_slot_stats(). Not called from any production path; provided for
+ * ad-hoc inspection. */
+void r_allocator_log_slot_stats(int slot);
+
+/* Iterate every slot, calling r_allocator_log_slot_stats() on those that
+ * currently have at least one block allocated, then emit a one-line
+ * summary with the populated-slot count. */
+void r_allocator_log_all_slot_stats(void);
+
+/* Walk a slot's blocks, treat each allocated segment as a kvobj
+ * (OBJ_ENCODING_R_ALLOCATOR layout), and emit one redis-log line per key
+ * plus a final total. Caller must ensure the slot is quiescent (no
+ * concurrent inserts/frees) — no internal locking. */
+void r_allocator_log_slot_keys(int slot);
 size_t calculate_required_space_for_segment( 
                             size_t key_size, 
                             size_t value_size,

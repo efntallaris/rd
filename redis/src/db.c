@@ -417,32 +417,43 @@ kvobj *dbAddInternal(redisDb *db, robj *key, robj **valref, dictEntryLink *link,
     if (link == NULL) link = &tmp;
     robj *val = *valref;
 
-    /* Shadow-insert into RDMA migration allocator for source-side staging.
-     * Smoke-test scaffold: insert only, no free on overwrite/delete. Restart
-     * the cluster between runs. String values only. */
-    if (server.rdma_allocator_shadow && server.cluster_enabled
-        && val->type == OBJ_STRING && val->ptr != NULL) {
-        sds vsds = (sds) val->ptr;
+    /* r_allocator-primary path: when shadow is enabled, in cluster mode, for
+     * plain-string values with no key metadata bits requested, build the kvobj
+     * (header + embedded key + embedded value sds) inside an r_allocator slot
+     * segment. Value bytes are written ONCE — no jemalloc shadow. Frees route
+     * via freeStringObject's OBJ_ENCODING_R_ALLOCATOR branch.
+     *
+     * Out of scope (falls back to jemalloc kvobjSet below):
+     *   - non-string types (lists/hashes/sets/zsets/streams),
+     *   - keys whose initial metadata has expire/module bits set
+     *     (r_allocator kvobj layout pins metabits=0). */
+    /* val->ptr is a real sds only for OBJ_ENCODING_RAW / OBJ_ENCODING_EMBSTR.
+     * For OBJ_ENCODING_INT, ptr is the integer value cast to a pointer (NOT an
+     * sds) — passing it to r_allocator_insert_kvobj would sdslen() a bogus
+     * address. INT-encoded values fall back to the jemalloc kvobjSet path,
+     * which handles INT encoding correctly (it does not call sdslen). */
+    kvobj *kv;
+    int use_r_allocator = (server.rdma_allocator_shadow && server.cluster_enabled
+                           && val->type == OBJ_STRING
+                           && (val->encoding == OBJ_ENCODING_RAW
+                               || val->encoding == OBJ_ENCODING_EMBSTR)
+                           && keymeta->metabits == 0);
+    if (use_r_allocator) {
         int allocated_new_block = 0;
-        robj km = {0}, vm = {0};
-        robj *km_blk = NULL, *vm_blk = NULL;
-        r_allocator_insert_kv(slot,
-            key->ptr, sdslen(key->ptr),
-            vsds, sdslen(vsds),
-            &km, sizeof(robj),
-            &vm, sizeof(robj),
-            &allocated_new_block,
-            &km_blk, &vm_blk);
+        kv = r_allocator_insert_kvobj(slot, key->ptr, (sds)val->ptr, &allocated_new_block);
         server.rdma_alloc_inserts++;
         if ((server.rdma_alloc_inserts % 100000) == 0) {
             serverLog(LL_NOTICE,
-                "RDMA allocator shadow: %lld inserts so far (last slot=%d, kv_size_aprox=%zu)",
+                "RDMA allocator: %lld inserts (last slot=%d, kv_size_aprox=%zu)",
                 server.rdma_alloc_inserts, slot,
-                sdslen(key->ptr) + sdslen(vsds) + 2 * sizeof(robj));
+                sdslen(key->ptr) + sdslen((sds)val->ptr));
         }
+        /* val's sds bytes are copied into the segment; release the transient
+         * input robj/sds. */
+        decrRefCount(val);
+    } else {
+        kv = kvobjSet(key->ptr, val, keymeta->metabits);
     }
-
-    kvobj *kv = kvobjSet(key->ptr, val, keymeta->metabits);
     initObjectLRUOrLFU(kv);
     kvstoreDictSetAtLink(db->keys, slot, kv, link, 1);
     
@@ -652,11 +663,50 @@ static void dbSetValue(redisDb *db, robj *key, robj **valref, dictEntryLink link
     if (server.memory_tracking_enabled)
         oldsize = kvobjAllocSize(old);
 
-    if ((old->refcount == 1 && old->encoding != OBJ_ENCODING_EMBSTR) &&
-        (val->refcount == 1 && val->encoding != OBJ_ENCODING_EMBSTR) && (!freeModuleMeta))
+    int use_r_allocator = (server.rdma_allocator_shadow && server.cluster_enabled
+                           && val->type == OBJ_STRING
+                           && (val->encoding == OBJ_ENCODING_RAW
+                               || val->encoding == OBJ_ENCODING_EMBSTR)
+                           && newKeyMetaBits == 0 && !freeModuleMeta);
+    if (use_r_allocator) {
+        /* r_allocator-primary overwrite path. Build a fresh kvobj inside an
+         * r_allocator slot segment; never reuse the old in-dict allocation.
+         *
+         * Why not swap or kvobjSet here:
+         *   - Swap exchanges {type,encoding,ptr} between old and val. If either
+         *     side carries OBJ_ENCODING_R_ALLOCATOR, the swap leaves a jemalloc-
+         *     allocated robj header pointing at r_allocator-backed bytes (or
+         *     vice versa). freeStringObject + r_allocator_seg_for_robj walk the
+         *     wrong allocation on the eventual free.
+         *   - kvobjSet allocates a fresh jemalloc kvobj and points it at the
+         *     same value sds — same Frankenstein layout.
+         * Always-fresh-segment avoids both pitfalls; old gets freed below by
+         * the existing decrRefCount / lazyfree path. */
+        int allocated_new_block = 0;
+        kvNew = r_allocator_insert_kvobj(slot, key->ptr, (sds)val->ptr, &allocated_new_block);
+        kvstoreDictSetAtLink(db->keys, slot, kvNew, &link, 0);
+
+        /* Mirror the else-branch expires-dict bookkeeping. newKeyMetaBits==0
+         * means we are NOT carrying expire forward — either keepTTL is off or
+         * old had none. If old had one, drop it from the expires dict. */
+        if (oldExpire != -1)
+            kvstoreDictDelete(db->expires, slot, key->ptr);
+
+        /* val's sds bytes are copied into the segment; release the input. */
+        decrRefCount(val);
+    } else if ((old->refcount == 1 && old->encoding != OBJ_ENCODING_EMBSTR
+                && old->encoding != OBJ_ENCODING_R_ALLOCATOR) &&
+        (val->refcount == 1 && val->encoding != OBJ_ENCODING_EMBSTR
+                && val->encoding != OBJ_ENCODING_R_ALLOCATOR) && (!freeModuleMeta))
     {
         /* Keep old object in the database. Just swap it's ptr, type and
-         * encoding with the content of val. */
+         * encoding with the content of val.
+         *
+         * Excluded: OBJ_ENCODING_R_ALLOCATOR on either side. The swap is a
+         * bytewise exchange of {type,encoding,ptr}; if it crosses an
+         * r_allocator boundary the resulting object has a jemalloc header
+         * pointing at a non-jemalloc payload (or vice versa), and the free
+         * path walks the wrong allocation. */
         robj tmp = *old;
         old->type = val->type;
         old->encoding = val->encoding;
@@ -674,7 +724,7 @@ static void dbSetValue(redisDb *db, robj *key, robj **valref, dictEntryLink link
     } else {
         /* Replace the old value at its location in the key space. */
         val->lru = old->lru;
-        
+
         kvNew = kvobjSet(key->ptr, val, newKeyMetaBits);
         kvstoreDictSetAtLink(db->keys, slot, kvNew, &link, 0);
 

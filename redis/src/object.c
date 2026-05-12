@@ -15,6 +15,7 @@
 #include "functions.h"
 #include "intset.h"  /* Compact integer set structure */
 #include "cluster_asm.h"
+#include "rdma_migration/include/rdma_migration.h" /* r_allocator_free_kv, r_allocator_seg_for_robj */
 #include <math.h>
 #include <ctype.h>
 
@@ -522,6 +523,16 @@ robj *createModuleObject(moduleType *mt, void *value) {
 }
 
 void freeStringObject(robj *o) {
+    if (o->encoding == OBJ_ENCODING_R_ALLOCATOR) {
+        /* The whole kvobj (robj header + embedded key sds + embedded value sds)
+         * lives inside one r_allocator segment. Hand the segment back to the
+         * slot's free list; do NOT sdsfree the value or zfree the header — both
+         * would call into jemalloc on a non-jemalloc pointer. The trailing
+         * zfree(alloc) in decrRefCount is also gated on this encoding. */
+        int slot = R_ALLOC_GET_SLOT(o);
+        r_allocator_free_kv(slot, r_allocator_seg_for_robj(o));
+        return;
+    }
     if (o->encoding == OBJ_ENCODING_RAW) {
         sdsfree(o->ptr);
     }
@@ -611,7 +622,14 @@ void decrRefCount(robj *o) {
 
     if (--(o->refcount) == 0) {
         void *alloc = o;
-        
+        /* Snapshot encoding BEFORE any type-specific free runs. For
+         * OBJ_ENCODING_R_ALLOCATOR, freeStringObject hands the segment back
+         * to the r_allocator slot freelist, and coalesce may zfree the
+         * entire block buffer — at which point `o` (which lives inside that
+         * buffer) is invalidated. Reading o->encoding after the free would
+         * be a use-after-free. */
+        int r_alloc_backed = (o->encoding == OBJ_ENCODING_R_ALLOCATOR);
+
         if (o->iskvobj) {
             /* eval real allocation pointer */
             alloc = kvobjGetAllocPtr(o);
@@ -619,7 +637,7 @@ void decrRefCount(robj *o) {
             if (getModuleMetaBits(o->metabits))
                 keyMetaOnFree((kvobj *)o);
         }
-        
+
         if (o->ptr != NULL) {
             switch(o->type) {
             case OBJ_STRING: freeStringObject(o); break;
@@ -632,6 +650,8 @@ void decrRefCount(robj *o) {
             default: serverPanic("Unknown object type"); break;
             }
         }
+        if (r_alloc_backed)
+            return; /* freeStringObject already returned the segment */
         zfree(alloc);
     }
 }
@@ -1045,6 +1065,10 @@ size_t stringObjectAllocSize(const robj *o) {
     } else if(o->encoding == OBJ_ENCODING_EMBSTR) {
         /* Value already counted (Value embedded in the object as well) */
         return 0;
+    } else if(o->encoding == OBJ_ENCODING_R_ALLOCATOR) {
+        /* Bytes live inside an r_allocator segment, not in jemalloc; jemalloc
+         * accounting (the caller's purpose) sees zero for these objects. */
+        return 0;
     } else {
         serverPanic("Unknown string encoding");
     }
@@ -1237,6 +1261,11 @@ size_t kvobjComputeSize(robj *key, kvobj *o, size_t sample_size, int dbid) {
 }
 
 size_t kvobjAllocSize(kvobj *o) {
+    /* r_allocator-backed kvobjs are NOT jemalloc allocations; zmalloc_size on
+     * a segment-interior pointer is undefined behavior. The bytes are tracked
+     * separately by r_allocator stats. */
+    if (o->encoding == OBJ_ENCODING_R_ALLOCATOR)
+        return 0;
     /* All kv-objects has at least kvobj header and embedded key */
     size_t asize = zmalloc_size(kvobjGetAllocPtr(o));
 

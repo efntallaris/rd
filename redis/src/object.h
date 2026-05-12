@@ -85,6 +85,27 @@ struct RedisModuleType;
 #define OBJ_ENCODING_STREAM 10 /* Encoded as a radix tree of listpacks */
 #define OBJ_ENCODING_LISTPACK 11 /* Encoded as a listpack */
 #define OBJ_ENCODING_LISTPACK_EX 12 /* Encoded as listpack, extended with metadata */
+#define OBJ_ENCODING_R_ALLOCATOR 13 /* String kvobj whose backing memory lives
+                                     * inside an r_allocator slot segment (see
+                                     * src/rdma_migration/allocator.c). Freed
+                                     * via r_allocator_free_kv, NOT zfree/sdsfree. */
+
+/* When encoding == OBJ_ENCODING_R_ALLOCATOR, robj->data_offset packs the slot
+ * id (upper 14 bits, range 0..16383 matching cluster slot count) and the
+ * byte offset from the robj header to the start of the value sds bytes
+ * (lower 18 bits, sufficient for in-segment offsets — segments stay well
+ * under 256KB). For all other encodings data_offset is zero / unused. */
+#define R_ALLOC_SLOT_BITS    14
+#define R_ALLOC_OFFSET_BITS  18
+#define R_ALLOC_OFFSET_MASK  ((1u << R_ALLOC_OFFSET_BITS) - 1)
+#define R_ALLOC_SLOT_MASK    ((1u << R_ALLOC_SLOT_BITS) - 1)
+#define R_ALLOC_PACK_DATA_OFFSET(slot, off) \
+    ((int)((((unsigned)(slot) & R_ALLOC_SLOT_MASK) << R_ALLOC_OFFSET_BITS) | \
+           ((unsigned)(off) & R_ALLOC_OFFSET_MASK)))
+#define R_ALLOC_GET_SLOT(o)   \
+    ((int)(((unsigned)(o)->data_offset >> R_ALLOC_OFFSET_BITS) & R_ALLOC_SLOT_MASK))
+#define R_ALLOC_GET_OFFSET(o) \
+    ((unsigned)(o)->data_offset & R_ALLOC_OFFSET_MASK)
 
 #define LRU_BITS 24
 #define LRU_CLOCK_MAX ((1<<LRU_BITS)-1) /* Max value of obj->lru */

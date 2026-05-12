@@ -54,6 +54,7 @@ fp+DSIZE--> +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+-
 ***************************************** END OF ENTRY INFO **************************************************/
 
 #include "allocator.h"
+#include "internal.h"   /* RMIG_LOG → rmig_logger (wired to _serverLog) */
 #include "zmalloc.h"
 #include <assert.h>
 #include <pthread.h>
@@ -474,7 +475,7 @@ void coalesce(int slot, void *segment)
         is_prev_prologue = 1;
     }
 
-    // if the free segments is between dummy prologue/epilogue headers, 
+    // if the free segments is between dummy prologue/epilogue headers,
     // this means the whole block is empty. We can delete the block
     if (is_next_epilogue && is_prev_prologue) {
         // printf("%s:%d %s() ########> Delete whole block\n", __FILE__, __LINE__, __func__);
@@ -675,8 +676,112 @@ void * r_allocator_insert_kv(int slot,
     return return_ptr;
 }
 
+/* public API
+ * Insert a kvobj-shaped payload (single robj header with embedded key and
+ * embedded value sds, mirroring kvobjCreateEmbedString's jemalloc layout) into
+ * an r_allocator segment for `slot`. Returns the kvobj pointer, suitable for
+ * direct insertion into the keyspace dict.
+ *
+ * Segment payload layout:
+ *   [robj kvobj header 24B] [1B key-hdr-size] [sds key hdr+bytes+\0] [sds value hdr+bytes+\0]
+ *
+ * The returned kvobj has:
+ *   - type        = OBJ_STRING
+ *   - encoding    = OBJ_ENCODING_R_ALLOCATOR (free path routes to r_allocator_free_kv)
+ *   - iskvobj     = 1, metabits = 0 (no expire/module metadata in this commit)
+ *   - refcount    = 1, lru = 0
+ *   - data_offset = R_ALLOC_PACK_DATA_OFFSET(slot, offset-to-value-sds-bytes)
+ *   - ptr         = value sds bytes (sds-shaped; sdslen() / sdsfree-equivalents
+ *                   need only the [-1] flag byte the embedded sds header writes)
+ *
+ * The lock-then-unlock-then-payload pattern from r_allocator_insert_kv is
+ * preserved: the segment is reserved under the slot mutex and the payload write
+ * runs unlocked once the header is marked in-use. */
+kvobj * r_allocator_insert_kvobj(int slot, sds key, sds value, int *allocated_new_block)
+{
+    size_t key_len = sdslen(key);
+    size_t val_len = sdslen(value);
+
+    char key_sds_type = sdsReqType(key_len);
+    size_t key_sds_size = sdsReqSize(key_len, key_sds_type);
+    /* Mirror kvobjCreateEmbedString: value sds is always SDS_TYPE_8. */
+    size_t val_sds_size = sdsReqSize(val_len, SDS_TYPE_8);
+
+    size_t payload_size = sizeof(robj) + 1 + key_sds_size + val_sds_size;
+    size_t final_size_aligned = MAX(ALIGN(payload_size) + OVERHEAD, MIN_SEGMENT_SIZE);
+    assert(BLOCK_SIZE_BYTES >= final_size_aligned && "kvobj segment exceeds block size");
+
+    *allocated_new_block = 0;
+
+    /* LOCKED PHASE — same pattern as r_allocator_insert_kv. */
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+
+    char *free_segment = freelist_find_fit(slot, final_size_aligned);
+    if (!free_segment) {
+        char *block_data_buffer = r_allocator_alloc_new_empty_block(slot);
+        *allocated_new_block = 1;
+        void *first_segment_ptr = block_data_buffer + WSIZE;
+        freelist_insert_segment(slot, (first_segment_ptr + WSIZE));
+        free_segment = (first_segment_ptr + WSIZE);
+    }
+    freelist_remove_segment(slot, free_segment);
+
+    size_t free_segment_size = GET_SIZE(HDRP(free_segment));
+    u_int dif = free_segment_size - final_size_aligned;
+    if (dif >= MIN_SEGMENT_SIZE) {
+        PUT(HDRP(free_segment), PACK(final_size_aligned, 1));
+        PUT(FTRP(free_segment), PACK(final_size_aligned, 1));
+        char *next_segment = NEXT_SEGMENT(free_segment);
+        PUT_WTAG(HDRP(next_segment), PACK(dif, 0));
+        PUT_WTAG(FTRP(next_segment), PACK(dif, 0));
+        freelist_insert_segment(slot, next_segment);
+    } else {
+        PUT_WTAG(HDRP(free_segment), PACK(free_segment_size, 1));
+        PUT_WTAG(FTRP(free_segment), PACK(free_segment_size, 1));
+    }
+
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+
+    /* UNLOCKED PHASE — payload write into the now-owned segment. */
+    kvobj *kv = (kvobj *) free_segment;
+    /* OBJ_STRING == 0; defined in server.h, not visible to this sub-library.
+     * Hardcoded to avoid pulling server.h into the rdma_migration layer. */
+    kv->type = 0 /* OBJ_STRING */;
+    kv->encoding = OBJ_ENCODING_R_ALLOCATOR;
+    kv->refcount = 1;
+    kv->iskvobj = 1;
+    kv->metabits = 0;
+    kv->lru = 0;
+
+    char *data = (char *)(kv + 1);
+    *data++ = sdsHdrSize(key_sds_type);
+    sdsnewplacement(data, key_sds_size, key_sds_type, (const char *)key, key_len);
+    data += key_sds_size;
+
+    sds val_sds = sdsnewplacement(data, val_sds_size, SDS_TYPE_8, (const char *)value, val_len);
+    kv->ptr = val_sds;
+
+    /* val_sds points at the sds bytes (past the sds header). Offset from kv. */
+    unsigned value_offset = (unsigned)((char *)val_sds - (char *)kv);
+    assert(value_offset <= R_ALLOC_OFFSET_MASK && "r_allocator kvobj value offset overflow");
+    kv->data_offset = R_ALLOC_PACK_DATA_OFFSET(slot, value_offset);
+
+    __atomic_add_fetch(&r_allocator.bytes_size, final_size_aligned, __ATOMIC_RELAXED);
+    return kv;
+}
+
+/* public API
+ * Given an r_allocator-backed robj/kvobj, return the pointer to pass to
+ * r_allocator_free_kv (start of the segment payload, right after the seg
+ * header). For kvobjs with metabits=0 this is the kvobj address itself;
+ * with future metadata prefixes it walks back via kvobjGetAllocPtr. */
+void * r_allocator_seg_for_robj(robj *o) {
+    if (o->iskvobj) return kvobjGetAllocPtr((kvobj *) o);
+    return o;
+}
+
 // public API
-/* 
+/*
 * returns the head of the block list of the slot
 * this is the list of the whole blocks not just the internal buffers of the blocks
 */
@@ -738,31 +843,36 @@ void r_allocator_free_kv(int slot, void *key_meta_ptr)
 {
     // the layout of the segment is:
     // <segment header> <key meta> <value meta> <key size> <key> <value size> <value>
-    // we have to add to the free list the pointer after the segment header
+    // OR (for r_allocator-backed kvobjs): <seg header> <kvobj robj> <key-hdr-size 1B> <embedded key sds> <embedded value sds>
+    // In both cases, key_meta_ptr is the pointer right AFTER the segment header.
     void *segment = key_meta_ptr;
+
+    /* Lock the slot for the duration of mark-free + coalesce: both mutate
+     * shared freelist state. Same mutex used by r_allocator_insert_kv, so
+     * concurrent insert+free on the same slot serialise correctly. Required
+     * for bio lazyfree thread and eviction to call us safely. */
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
 
     // if segment already marked as free, do nothing. Return with a warning msg
     if (GET_ALLOC(HDRP(segment)) == 0) {
         fprintf(stderr, "%s:%d %s() WARN: trying to free already free memory segment\n", __FILE__, __LINE__, __func__);
+        pthread_mutex_unlock(&r_allocator.mutexes[slot]);
         return;
     }
 
     size_t size = GET_SIZE(HDRP(segment));
-    //DEBUG fing the corresponding block and update used bytes counters
 
-    // mark this segment as free and then try to coalesce
-    // if we use the old pointer and try to delete the already deleted key in this segment
-    // we can detect the double free action (see a few lines above)
     PUT_WTAG(HDRP(segment), PACK(size, 0));
     PUT_WTAG(FTRP(segment), PACK(size, 0));
-    
-    // char *del_key = key_meta_ptr + KEY_META_SIZE + VALUE_META_SIZE + ENTRY_HEADER_SIZE;
-    // printf("%s:%d %s() delete: %s\n", __FILE__, __LINE__, __func__, del_key);
 
     //if slot is not locked, then coalsce, else not
     if (r_allocator.slot_locked[slot] == 0) {
         coalesce(slot, segment);
     }
+
+    __atomic_sub_fetch(&r_allocator.bytes_size, size, __ATOMIC_RELAXED);
+
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
 }
 
 // public API
@@ -1129,7 +1239,7 @@ slot_stats_t update_slot_stats(int slot)
     return stats;
 }
 
-void print_slot_stats(slot_stats_t slot_stats) 
+void print_slot_stats(slot_stats_t slot_stats)
 {
     printf("Stats for slot: %d:\n \
 	blocks: \t%d\n \
@@ -1145,6 +1255,72 @@ void print_slot_stats(slot_stats_t slot_stats)
     slot_stats.segments_used,
     slot_stats.segments_free,
 	slot_stats.freelist_len);
+}
+
+/* public API
+ * Emit one redis-log line summarising a slot's allocator stats (blocks,
+ * used / free segments and bytes, freelist length). Reuses
+ * update_slot_stats() so the figures stay consistent with the printf
+ * variant above. Not called from any production path; provided for
+ * ad-hoc inspection. */
+void r_allocator_log_slot_stats(int slot)
+{
+    slot_stats_t s = update_slot_stats(slot);
+    RMIG_LOG(RDMAMIG_LOG_NOTICE,
+        "r_allocator slot=%u blocks=%u segs_used=%u segs_free=%u "
+        "bytes_used=%u bytes_free=%u freelist_len=%u",
+        s.slot_id, s.blocks, s.segments_used, s.segments_free,
+        s.bytes_used, s.bytes_free, s.freelist_len);
+}
+
+/* public API
+ * Emit one stats line for every slot that currently has at least one block
+ * allocated. Skips empty slots so a fresh-cluster snapshot has zero output.
+ * Ends with a summary line giving the count of populated slots. */
+void r_allocator_log_all_slot_stats(void)
+{
+    int populated = 0;
+    for (int slot = 0; slot < SLOTS; slot++) {
+        if (r_allocator.slot_blocks[slot] != NULL) {
+            r_allocator_log_slot_stats(slot);
+            populated++;
+        }
+    }
+    RMIG_LOG(RDMAMIG_LOG_NOTICE,
+        "r_allocator all-slots summary: populated=%d (of %d)",
+        populated, SLOTS);
+}
+
+/* public API
+ * Walk a slot's blocks; for each allocated segment, treat it as a kvobj
+ * (the OBJ_ENCODING_R_ALLOCATOR layout produced by r_allocator_insert_kvobj)
+ * and emit one redis-log line per key plus a final total. Caller must
+ * ensure the slot is quiescent — no internal locking. */
+void r_allocator_log_slot_keys(int slot)
+{
+    alloc_bloc_t *blk = r_allocator.slot_blocks[slot];
+    unsigned long long counted = 0;
+    while (blk != NULL) {
+        /* First payload byte: skip the block's prologue dummy word plus the
+         * first segment's header word — same offset as create_iterator_for_slot. */
+        char *seg = (char *)blk->block_start + WSIZE + WSIZE;
+        while (GET_SIZE(HDRP(seg)) > 0) { /* epilogue terminates the walk */
+            if (GET_ALLOC(HDRP(seg))) {
+                kvobj *kv = (kvobj *) seg;
+                sds k = kvobjGetKey(kv);
+                size_t klen = sdslen(k);
+                size_t vlen = (kv->ptr != NULL) ? sdslen((sds) kv->ptr) : 0;
+                RMIG_LOG(RDMAMIG_LOG_NOTICE,
+                    "r_allocator slot=%d key='%.*s' key_len=%zu val_len=%zu enc=%u",
+                    slot, (int) klen, k, klen, vlen, kv->encoding);
+                counted++;
+            }
+            seg = NEXT_SEGMENT(seg);
+        }
+        blk = blk->next;
+    }
+    RMIG_LOG(RDMAMIG_LOG_NOTICE,
+        "r_allocator slot=%d total_keys=%llu", slot, counted);
 }
 
 
