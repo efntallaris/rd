@@ -1,0 +1,21 @@
+{
+    "RESHARD": {
+        "summary": "Source side: Phase 1 of bulk RDMA reshard. Picks N owned slots and registers one 1 MiB staging buffer per slot with the local RNIC (ibv_reg_mr).",
+        "complexity": "O(N) in number of slots.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaReshardCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "recipient-host", "type": "string" },
+            { "name": "recipient-port", "type": "integer" },
+            { "name": "slot-count", "type": "integer" }
+        ]
+    }
+}

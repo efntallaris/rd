@@ -4360,6 +4360,7 @@ void rdmaInitClientCommand(client *c);
 void rdmaInitServerCommand(client *c);
 void rdmaRegisterBlockSlotsCommand(client *c);
 void rdmaMigratePrepCommand(client *c);
+void rdmaReshardCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
 void restoreCommand(client *c);

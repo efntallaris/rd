@@ -34,6 +34,7 @@
 
 #include "server.h"
 #include "cluster.h"
+#include "cluster_legacy.h"
 #include "rdma_migration/include/rdma_migration.h"
 #include "kvstore.h"
 #include "hiredis.h"
@@ -714,4 +715,124 @@ void rdmaMigratePrepCommand(client *c) {
     zfree(slots);
     addReplyStatusFormat(c, "OK %d slots, %d MiB (%s link)",
                          n_slots, n_slots, newly ? "new" : "cached");
+}
+
+/* ====================================================================== *
+ *  RDMA RESHARD  (Phase 1: source-side MR registration only)
+ *
+ *  Mirrors `redis-cli --cluster reshard --cluster-slots N` UX from the
+ *  perspective of a single source master. Phase 1: walk self's owned
+ *  slots, allocate + ibv_reg_mr a 1 MiB staging buffer per slot, cache
+ *  in the rdmaOutboundLink's source_buffers[]. No recipient contact,
+ *  no data transfer, no CLUSTER SETSLOT — subsequent phases add those.
+ *
+ *  Precondition: RDMA MIGRATE-PREP must have already brought up the
+ *  outbound link (the QP whose PD owns the new MRs).
+ * ====================================================================== */
+
+void rdmaReshardCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c, "syntax: RDMA RESHARD recipient-host recipient-port n-slots");
+        return;
+    }
+    const char *host = c->argv[2]->ptr;
+    long long port_ll, n_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "port out of range");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &n_slots_ll) != C_OK ||
+        n_slots_ll <= 0 || n_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "n-slots out of range");
+        return;
+    }
+    int port = (int) port_ll;
+    int n_slots = (int) n_slots_ll;
+
+    /* Pick `n_slots` slots from self's owned set, lowest first. */
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        addReplyError(c, "cluster mode not enabled on this node");
+        return;
+    }
+    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
+    int picked = 0;
+    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+        if (server.cluster->slots[i] == server.cluster->myself) {
+            chosen[picked++] = i;
+        }
+    }
+    if (picked < n_slots) {
+        zfree(chosen);
+        addReplyErrorFormat(c, "self owns only %d slots, asked for %d", picked, n_slots);
+        return;
+    }
+
+    /* Look up the outbound link cached by a prior MIGRATE-PREP. */
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    sdsfree(key);
+    if (L == NULL) {
+        zfree(chosen);
+        addReplyError(c, "no outbound link cached; call RDMA MIGRATE-PREP first");
+        return;
+    }
+
+    pthread_mutex_lock(&L->mu);
+
+    int n_registered = 0, n_skipped = 0;
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        if (L->source_buffers[slot] != NULL) {
+            n_skipped++;
+            serverLog(LL_NOTICE,
+                      "RDMA RESHARD: slot=%d already registered, skipping",
+                      slot);
+            continue;
+        }
+        void *staging = zmalloc(RDMAMIG_BLOCK_SIZE_BYTES);
+        if (staging == NULL) {
+            pthread_mutex_unlock(&L->mu);
+            zfree(chosen);
+            addReplyError(c, "zmalloc failed for staging buffer");
+            return;
+        }
+        memset(staging, 0, RDMAMIG_BLOCK_SIZE_BYTES);
+        struct rdmamig_buffer *rb = rdmamig_buffer_create(
+            rdmamig_client_cm_id(L->client),
+            staging, RDMAMIG_BLOCK_SIZE_BYTES, 0);
+        if (rb == NULL) {
+            serverLog(LL_WARNING,
+                      "RDMA RESHARD: rdmamig_buffer_create failed for slot=%d",
+                      slot);
+            zfree(staging);
+            pthread_mutex_unlock(&L->mu);
+            zfree(chosen);
+            addReplyError(c, "rdmamig_buffer_create failed (see server log)");
+            return;
+        }
+        L->source_buffers[slot] = rb;
+        n_registered++;
+        serverLog(LL_NOTICE,
+                  "RDMA RESHARD: registered slot=%d buf=%p rkey=0x%x size=%d",
+                  slot, staging, rdmamig_buffer_rkey(rb), RDMAMIG_BLOCK_SIZE_BYTES);
+    }
+
+    pthread_mutex_unlock(&L->mu);
+
+    /* Summarise. If the slot list is a contiguous range, render it as A..B;
+     * otherwise just give first/last. */
+    int first = chosen[0], last = chosen[n_slots - 1];
+    int contiguous = (last - first + 1 == n_slots);
+    zfree(chosen);
+
+    if (contiguous) {
+        addReplyStatusFormat(c,
+            "OK %d source blocks registered (slots %d..%d, %d skipped)",
+            n_registered, first, last, n_skipped);
+    } else {
+        addReplyStatusFormat(c,
+            "OK %d source blocks registered (slots %d..%d non-contiguous, %d skipped)",
+            n_registered, first, last, n_skipped);
+    }
 }

@@ -78,6 +78,7 @@ typedef struct rdmaOutboundLink {
     struct rdmamig_client *client;                  /* active RDMA QP (rdmamig client) */
     struct redisContext *ctrl;                      /* hiredis TCP control channel */
     rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];    /* recipient (VA, rkey) per slot */
+    struct rdmamig_buffer *source_buffers[CLUSTER_SLOTS]; /* sender-side registered MR per slot (Phase 1) */
     pthread_mutex_t mu;                             /* per-link guard for REGISTER round-trips */
 } rdmaOutboundLink;
 
