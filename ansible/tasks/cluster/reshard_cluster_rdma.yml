@@ -2,25 +2,41 @@
 # RDMA-based reshard step. Used by experiments/custom_reshard/.
 #
 # Phase 1 of the new mechanism: each source master calls
-#   RDMA MIGRATE-PREP <recipient> <port> <any-slot>  (bootstrap RDMA QP)
-#   RDMA RESHARD     <recipient> <port> <n-slots>    (register sender MRs)
-# on the redis-migrate target. This does NOT move slot data yet — that's
-# Phase 2 — so YCSB-during-reshard won't see slot ownership changes here.
-# The orchestration slot is preserved so we can swap in Phases 2/3 without
-# touching the workload.yml.
+#   CONFIG SET rdma-migration-port <unique-per-source>   (avoid recipient port collision)
+#   RDMA MIGRATE-PREP <recipient> <port> <any-slot>      (bootstrap RDMA QP)
+#   RDMA RESHARD     <recipient> <port> <n-slots>        (register sender MRs)
 #
-# `reshard_slots_per_source` defaults to (reshard_slots / number_of_masters),
-# i.e. each source contributes roughly an even share of the total to drain.
+# By giving each source a unique port on the recipient, the recipient's
+# rdmamig_server can be created independently per donor (one rdma_server
+# per port), so all sources connect successfully. Without this, the
+# second/third donors' INIT-SERVER would fail with `rdmamig_server_create
+# failed` because the single shared port (17777) is already bound.
+#
+# Phase 1 does NOT move slot data yet — that's Phase 2 — so YCSB-during-
+# reshard won't see slot ownership changes here. The orchestration slot
+# is preserved so we can swap in Phases 2/3 without touching workload.yml.
 - name: "RDMA reshard: register source MRs on each master"
   hosts: redis_masters
   become: yes
   vars:
     reshard_target: "{{ groups['redis_migrate'][0] }}"
     reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+    rdma_port_base: 17777
   tasks:
+    - name: Compute this source's unique RDMA port
+      set_fact:
+        src_rdma_port: "{{ (rdma_port_base | int) + (groups['redis_masters'].index(inventory_hostname) | int) }}"
+
     - name: Log RDMA reshard start
       debug:
-        msg: "[{{ inventory_hostname }}] RDMA RESHARD -> {{ reshard_target }}:{{ master_port }} for {{ reshard_slots_per_source }} slots"
+        msg: "[{{ inventory_hostname }}] RDMA RESHARD -> {{ reshard_target }}:{{ master_port }} for {{ reshard_slots_per_source }} slots (own RDMA port {{ src_rdma_port }})"
+
+    - name: "CONFIG SET rdma-migration-port to per-source value"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          CONFIG SET rdma-migration-port {{ src_rdma_port }}
+      register: cfg_set
+      changed_when: false
 
     - name: "Bootstrap RDMA link (MIGRATE-PREP for slot 0 on each source)"
       shell: |
