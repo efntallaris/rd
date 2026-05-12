@@ -1,0 +1,56 @@
+---
+# RDMA-based reshard step. Used by experiments/custom_reshard/.
+#
+# Phase 1 of the new mechanism: each source master calls
+#   RDMA MIGRATE-PREP <recipient> <port> <any-slot>  (bootstrap RDMA QP)
+#   RDMA RESHARD     <recipient> <port> <n-slots>    (register sender MRs)
+# on the redis-migrate target. This does NOT move slot data yet — that's
+# Phase 2 — so YCSB-during-reshard won't see slot ownership changes here.
+# The orchestration slot is preserved so we can swap in Phases 2/3 without
+# touching the workload.yml.
+#
+# `reshard_slots_per_source` defaults to (reshard_slots / number_of_masters),
+# i.e. each source contributes roughly an even share of the total to drain.
+- name: "RDMA reshard: register source MRs on each master"
+  hosts: redis_masters
+  become: yes
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+  tasks:
+    - name: Log RDMA reshard start
+      debug:
+        msg: "[{{ inventory_hostname }}] RDMA RESHARD -> {{ reshard_target }}:{{ master_port }} for {{ reshard_slots_per_source }} slots"
+
+    - name: "Bootstrap RDMA link (MIGRATE-PREP for slot 0 on each source)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE-PREP {{ reshard_target }} {{ master_port }} 0
+      register: prep_result
+      changed_when: "'OK' in prep_result.stdout"
+
+    - name: Show MIGRATE-PREP result
+      debug:
+        var: prep_result.stdout
+
+    - name: "RDMA RESHARD: register MRs on source for {{ reshard_slots_per_source }} slots"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA RESHARD {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: reshard_result
+      changed_when: "'OK' in reshard_result.stdout"
+
+    - name: Show RDMA RESHARD result
+      debug:
+        var: reshard_result.stdout
+
+    - name: "Post-reshard: dump VmPin on source (pinned MR pages)"
+      shell: |
+        PID=$(pgrep -f 'redis-server.*:{{ master_port }}' | head -1)
+        if [ -n "$PID" ]; then grep -E 'VmPin|VmRSS' /proc/$PID/status; else echo "pid not found"; fi
+      register: vmpin
+      changed_when: false
+
+    - name: Show pinned memory after RDMA RESHARD
+      debug:
+        var: vmpin.stdout_lines
