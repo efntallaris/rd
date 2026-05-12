@@ -18,8 +18,16 @@
 /**
  * Redis client binding for YCSB.
  *
- * All YCSB records are mapped to a Redis *hash field*.  For scanning
- * operations, all keys are saved (by an arbitrary hash) in a sorted set.
+ * Records are mapped to *Redis string values* (SET/GET) rather than hashes.
+ * The string body is the concatenation of all field byte-values that YCSB
+ * generates, so the on-wire / on-disk size is exactly fieldcount *
+ * fieldlength (the values defined by the YCSB workload). This matches the
+ * single-buffer layout that the aqueduct fork's RDMA reshard data plane
+ * encodes (rdmaEncodeSlotEntries currently only handles OBJ_STRING).
+ *
+ * The legacy hash-field representation lives upstream; switch back to it by
+ * reverting this file. For scanning, all keys are still recorded in a
+ * sorted-set index keyed by an arbitrary hash.
  */
 
 package site.ycsb.db;
@@ -117,33 +125,34 @@ public class RedisClient extends DB {
 
   // XXX jedis.select(int index) to switch to `table`
 
+  /* Concatenate all field byte-values, in iteration order, into a single
+   * string. With fieldcount=N and fieldlength=L (YCSB defaults: 10 / 100),
+   * the result is exactly N*L bytes — the value size the workload defines. */
+  private static String concatFields(Map<String, ByteIterator> values) {
+    StringBuilder sb = new StringBuilder();
+    for (ByteIterator v : values.values()) {
+      sb.append(v.toString());
+    }
+    return sb.toString();
+  }
+
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    if (fields == null) {
-      StringByteIterator.putAllAsByteIterators(result, jedis.hgetAll(key));
-    } else {
-      String[] fieldArray =
-          (String[]) fields.toArray(new String[fields.size()]);
-      List<String> values = jedis.hmget(key, fieldArray);
-
-      Iterator<String> fieldIterator = fields.iterator();
-      Iterator<String> valueIterator = values.iterator();
-
-      while (fieldIterator.hasNext() && valueIterator.hasNext()) {
-        result.put(fieldIterator.next(),
-            new StringByteIterator(valueIterator.next()));
-      }
-      assert !fieldIterator.hasNext() && !valueIterator.hasNext();
+    /* Records are stored as a single string. There is no per-field
+     * structure to project; YCSB just measures the latency of the GET. */
+    String val = jedis.get(key);
+    if (val == null) {
+      return Status.ERROR;
     }
-    return result.isEmpty() ? Status.ERROR : Status.OK;
+    result.put("value", new StringByteIterator(val));
+    return Status.OK;
   }
 
   @Override
   public Status insert(String table, String key,
       Map<String, ByteIterator> values) {
-    if (jedis.hmset(key, StringByteIterator.getStringMap(values))
-        .equals("OK")) {
+    if (jedis.set(key, concatFields(values)).equals("OK")) {
       jedis.zadd(INDEX_KEY, hash(key), key);
       return Status.OK;
     }
@@ -159,8 +168,13 @@ public class RedisClient extends DB {
   @Override
   public Status update(String table, String key,
       Map<String, ByteIterator> values) {
-    return jedis.hmset(key, StringByteIterator.getStringMap(values))
-        .equals("OK") ? Status.OK : Status.ERROR;
+    /* YCSB update sends only the modified fields (typically 1 of N). With
+     * the single-string representation we just SET the new concatenated
+     * payload, replacing the prior contents. The wire-bytes-per-op match
+     * what the workload describes; the logical fields-merge that a hash
+     * would have provided is intentionally dropped. */
+    return jedis.set(key, concatFields(values)).equals("OK")
+        ? Status.OK : Status.ERROR;
   }
 
   @Override

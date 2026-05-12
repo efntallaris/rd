@@ -9,12 +9,22 @@
         state: directory
         mode: "0755"
 
-    - name: Clone/update YCSB sources from {{ ycsb_branch }}
-      git:
-        repo: "{{ ycsb_repo }}"
-        dest: "{{ ycsb_checkout_dir }}"
-        version: "{{ ycsb_branch }}"
-        force: yes
+    # Use the controller-local checkout as the source of truth instead of
+    # re-cloning from GitHub on every run. Lets us iterate on RedisClient.java
+    # locally without committing+pushing each change. To revert to upstream-only
+    # behavior, re-enable the `git:` block and remove the rsync below.
+    - name: Ensure ycsb_src_dir parent exists on YCSB host
+      file:
+        path: "{{ ycsb_src_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Mirror local ycsb_client from controller to YCSB host
+      delegate_to: localhost
+      shell: |
+        rsync -a --delete --exclude='.git' --exclude='target' \
+          /users/entall/rd/ycsb_client/ root@{{ inventory_hostname }}:{{ ycsb_src_dir }}/
+      changed_when: false
 
     - name: Purge potentially corrupted restlet artifacts from m2 cache
       file:
