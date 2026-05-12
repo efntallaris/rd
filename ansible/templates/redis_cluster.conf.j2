@@ -12,7 +12,11 @@ dbfilename {{ inventory_hostname }}.rdb
 cluster-config-file nodes-{{ inventory_hostname }}-{{ master_port }}.conf
 logfile {{ redis_log_dir }}/{{ inventory_hostname }}__
 {% if redis_variant | default('custom') == 'custom' %}
-cluster-rdma-allocator-shadow {{ "yes" if (rdma_allocator_shadow | default(false) | bool) else "no" }}
+# Aqueduct fork: shadow every dbAdd into the slot-keyed r_allocator so the
+# RDMA migration path can read live key data directly from registered MRs.
+# Always on for custom variants; vanilla variants don't include this line
+# because the directive doesn't exist upstream.
+cluster-rdma-allocator-shadow yes
 cluster-rdma-allocator-skip-lock {{ "yes" if (rdma_allocator_skip_lock | default(false) | bool) else "no" }}
 {% endif %}
 save ""
