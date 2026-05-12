@@ -10,8 +10,17 @@
         timeout: 30
       loop: "{{ groups['redis_masters'] }}"
 
+    # Resolve hostnames -> IPs first. Redis <7.0 (e.g. the vanilla_redis branch
+    # at 6.2.16) only accepts IP literals in CLUSTER MEET; 7.0+ would accept
+    # either. Using IPs works for both, so do it unconditionally.
+    - name: Resolve master hostnames to IPs
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: master_ips
+      changed_when: false
+      loop: "{{ groups['redis_masters'] }}"
+
     - name: Create Redis cluster
       command: >
         {{ redis_bin_dir }}/redis-cli --cluster create
-        {% for host in groups['redis_masters'] %}{{ host }}:{{ master_port }} {% endfor %}
+        {% for r in master_ips.results %}{{ r.stdout }}:{{ master_port }} {% endfor %}
         --cluster-yes

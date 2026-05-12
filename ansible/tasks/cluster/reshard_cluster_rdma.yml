@@ -38,10 +38,28 @@
       register: cfg_set
       changed_when: false
 
-    - name: "Bootstrap RDMA link (MIGRATE-PREP for slot 0 on each source)"
+    # MIGRATE-PREP's 3rd arg is slot COUNT (not slot id). Phase 2 RESHARD-EXEC
+    # needs the recipient's landing buffer for each slot the source registered,
+    # so this count must match `reshard_slots_per_source`. Earlier Phase 1
+    # versions passed 0 — Phase 1 only needed the QP up, not the recipient
+    # buffers — but Phase 2 reads L->buffers[slot].ptr to RDMA-WRITE into.
+    # rdmaMigratePrepCommand takes a LIST of slot ids (not a count).
+    # Each source enumerates its own lowest reshard_slots_per_source slots
+    # from CLUSTER NODES and passes them explicitly.
+    - name: "Get this source's owned slot range"
       shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER NODES \
+          | awk '$3 ~ /myself/ {print $9}'
+      register: my_slot_range
+      changed_when: false
+
+    - name: "Bootstrap RDMA link + register {{ reshard_slots_per_source }} recipient buffers"
+      shell: |
+        START=$(echo '{{ my_slot_range.stdout }}' | cut -d- -f1)
+        END=$((START + {{ reshard_slots_per_source }} - 1))
+        SLOTS=$(seq $START $END | tr '\n' ' ')
         {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
-          RDMA MIGRATE-PREP {{ reshard_target }} {{ master_port }} 0
+          RDMA MIGRATE-PREP {{ reshard_target }} {{ master_port }} $SLOTS
       register: prep_result
       changed_when: "'OK' in prep_result.stdout"
 
@@ -59,6 +77,17 @@
     - name: Show RDMA RESHARD result
       debug:
         var: reshard_result.stdout
+
+    - name: "RDMA RESHARD-EXEC: encode + RDMA-WRITE + DONE-SLOTS for {{ reshard_slots_per_source }} slots"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA RESHARD-EXEC {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: reshard_exec_result
+      changed_when: "'OK' in reshard_exec_result.stdout"
+
+    - name: Show RDMA RESHARD-EXEC result
+      debug:
+        var: reshard_exec_result.stdout
 
     - name: "Post-reshard: dump VmPin on source (pinned MR pages)"
       shell: |

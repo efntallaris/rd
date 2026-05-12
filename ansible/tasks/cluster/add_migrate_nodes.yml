@@ -37,8 +37,21 @@
         port: "{{ master_port }}"
         timeout: 30
 
+    # Redis <7.0 (the vanilla_redis branch is 6.2.16) rejects hostnames in
+    # CLUSTER MEET / cluster add-node — only IP literals are accepted.
+    # Resolve at runtime so the same task works against both 6.2 and 8.x.
+    - name: Resolve migrate-node IP (self)
+      shell: "getent hosts {{ inventory_hostname }} | awk '{print $1}'"
+      register: migrate_self_ip
+      changed_when: false
+
+    - name: Resolve master_host IP
+      shell: "getent hosts {{ master_host }} | awk '{print $1}'"
+      register: master_host_ip
+      changed_when: false
+
     - name: Add node to cluster
       command: >
         {{ redis_bin_dir }}/redis-cli -p {{ master_port }}
-        --cluster add-node {{ inventory_hostname }}:{{ master_port }}
-        {{ master_host }}:{{ master_port }}
+        --cluster add-node {{ migrate_self_ip.stdout }}:{{ master_port }}
+        {{ master_host_ip.stdout }}:{{ master_port }}
