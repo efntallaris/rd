@@ -1,0 +1,21 @@
+{
+    "RESHARD-EXEC": {
+        "summary": "Source side: Phase 2 of bulk RDMA reshard. For each of the N slots that the prior RDMA RESHARD registered, encodes the slot's keys into the source's staging buffer, RDMA-WRITEs the bytes to the recipient's landing buffer, then sends RDMA DONE-SLOTS so the recipient applies the staged entries into its keyspace.",
+        "complexity": "O(N * K) where K is the number of keys per slot.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaReshardExecCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "recipient-host", "type": "string" },
+            { "name": "recipient-port", "type": "integer" },
+            { "name": "slot-count", "type": "integer" }
+        ]
+    }
+}

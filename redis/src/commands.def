@@ -1300,6 +1300,30 @@ struct COMMAND_ARG RDMA_RESHARD_Args[] = {
 {MAKE_ARG("slot-count",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA RESHARD_EXEC ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA RESHARD_EXEC history */
+#define RDMA_RESHARD_EXEC_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA RESHARD_EXEC tips */
+#define RDMA_RESHARD_EXEC_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA RESHARD_EXEC key specs */
+#define RDMA_RESHARD_EXEC_Keyspecs NULL
+#endif
+
+/* RDMA RESHARD_EXEC argument table */
+struct COMMAND_ARG RDMA_RESHARD_EXEC_Args[] = {
+{MAKE_ARG("recipient-host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("recipient-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot-count",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA TRANSFER_SLOTS ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1332,6 +1356,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("migrate-prep","Source side: open (or reuse) an RDMA control link to the recipient and pre-register one landing block per listed slot.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_PREP_History,0,RDMA_MIGRATE_PREP_Tips,0,rdmaMigratePrepCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_PREP_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_PREP_Args},
 {MAKE_CMD("register-block-slots","Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.","O(N) where N is the total number of blocks requested.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_BLOCK_SLOTS_History,0,RDMA_REGISTER_BLOCK_SLOTS_Tips,0,rdmaRegisterBlockSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_BLOCK_SLOTS_Keyspecs,0,NULL,2),.args=RDMA_REGISTER_BLOCK_SLOTS_Args},
 {MAKE_CMD("reshard","Source side: Phase 1 of bulk RDMA reshard. Picks N owned slots and registers one 1 MiB staging buffer per slot with the local RNIC (ibv_reg_mr).","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_History,0,RDMA_RESHARD_Tips,0,rdmaReshardCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_Args},
+{MAKE_CMD("reshard-exec","Source side: Phase 2 of bulk RDMA reshard. For each of the N slots that the prior RDMA RESHARD registered, encodes the slot's keys into the source's staging buffer, RDMA-WRITEs the bytes to the recipient's landing buffer, then sends RDMA DONE-SLOTS so the recipient applies the staged entries into its keyspace.","O(N * K) where K is the number of keys per slot.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_EXEC_History,0,RDMA_RESHARD_EXEC_Tips,0,rdmaReshardExecCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_EXEC_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_EXEC_Args},
 {MAKE_CMD("transfer-slots","Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_TRANSFER_SLOTS_History,0,RDMA_TRANSFER_SLOTS_Tips,0,rdmaTransferSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_TRANSFER_SLOTS_Keyspecs,0,NULL,3),.args=RDMA_TRANSFER_SLOTS_Args},
 {0}
 };

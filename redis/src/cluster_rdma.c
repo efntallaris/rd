@@ -444,6 +444,27 @@ static size_t rdmaDecodeEntry(const char *buf, size_t remaining, robj **key_out,
     return sizeof(uint32_t) + klen + sizeof(uint32_t) + vlen;
 }
 
+/* Diagnostic byte dump for RDMA RESHARD-EXEC / rdmaApplySlot. Logs first 32
+ * and last 16 bytes of `buf` (length = RDMAMIG_BLOCK_SIZE_BYTES) at LL_NOTICE
+ * along with the leading u32 entry count, so source/recipient log lines can
+ * be cross-checked byte-for-byte. Gated on server.rdma_reshard_debug_bytes
+ * (CONFIG SET cluster-rdma-reshard-debug-bytes yes to enable). `tag` is
+ * "SRC" on the sender, "RCV" on the recipient. */
+static void rdmaDebugDumpSlotBytes(const char *tag, int slot, const char *buf) {
+    if (!server.rdma_reshard_debug_bytes) return;
+    uint32_t n_entries;
+    memcpy(&n_entries, buf, sizeof(n_entries));
+    char hex0[3*32 + 1], hexN[3*16 + 1];
+    for (int k = 0; k < 32; k++)
+        snprintf(hex0 + 3*k, 4, "%02x ", (unsigned char) buf[k]);
+    for (int k = 0; k < 16; k++)
+        snprintf(hexN + 3*k, 4, "%02x ",
+                 (unsigned char) buf[RDMAMIG_BLOCK_SIZE_BYTES - 16 + k]);
+    serverLog(LL_NOTICE,
+        "RDMA RESHARD-EXEC %s: slot=%d n_entries=%u first32=[%s] last16=[%s]",
+        tag, slot, n_entries, hex0, hexN);
+}
+
 /* Iterate the donor-staged blocks for a single slot from the recipient's
  * slot-keyed allocator, decode the flat-format entries, and dbAdd new keys
  * into the keyspace. Returns the number of keys added. */
@@ -456,6 +477,7 @@ static int rdmaApplySlot(redisDb *db, int slot) {
     for (int b = 0; b < n_blocks; b++) {
         char *buf = block_buffers[b];
         if (buf == NULL) continue;
+        if (b == 0) rdmaDebugDumpSlotBytes("RCV", slot, buf);
         uint32_t n_entries;
         memcpy(&n_entries, buf, sizeof(n_entries));
         if (n_entries == 0) continue;
@@ -835,4 +857,162 @@ void rdmaReshardCommand(client *c) {
             "OK %d source blocks registered (slots %d..%d non-contiguous, %d skipped)",
             n_registered, first, last, n_skipped);
     }
+}
+
+/* ====================================================================== *
+ *  RDMA RESHARD-EXEC  (Phase 2: data-plane transfer)
+ *
+ *  Per-slot pipeline against the N slots a prior RDMA RESHARD registered:
+ *    1. Encode the slot's keys into the source's pre-registered staging
+ *       buffer (rdmaEncodeSlotEntries, leading u32 entry count).
+ *    2. RDMA-WRITE that buffer to the recipient's landing buffer (the
+ *       VA/rkey returned by RDMA MIGRATE-PREP).
+ *    3. After all N slots are written, send "RDMA DONE-SLOTS <s1>..<sN>"
+ *       over the cached hiredis ctrl channel; the recipient applies the
+ *       landed bytes into its keyspace via rdmaDoneSlotsCommand.
+ *
+ *  Precondition: RDMA MIGRATE-PREP (recipient buffers cached in
+ *  L->buffers[]) AND RDMA RESHARD (source MRs cached in L->source_buffers[])
+ *  must have already run for these slots. Phase 2 does NOT flip slot
+ *  ownership — that's Phase 3.
+ *
+ *  Reply: +OK <n> slots transferred (slots <first>..<last>, bytes B,
+ *         errors E, done=<ok|fail>)
+ * ====================================================================== */
+
+void rdmaReshardExecCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c, "syntax: RDMA RESHARD-EXEC recipient-host recipient-port n-slots");
+        return;
+    }
+    const char *host = c->argv[2]->ptr;
+    long long port_ll, n_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "port out of range");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &n_slots_ll) != C_OK ||
+        n_slots_ll <= 0 || n_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "n-slots out of range");
+        return;
+    }
+    int port = (int) port_ll;
+    int n_slots = (int) n_slots_ll;
+
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        addReplyError(c, "cluster mode not enabled on this node");
+        return;
+    }
+
+    /* Pick the same N slots as Phase 1: walk own owned, lowest first. */
+    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
+    int picked = 0;
+    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+        if (server.cluster->slots[i] == server.cluster->myself) {
+            chosen[picked++] = i;
+        }
+    }
+    if (picked < n_slots) {
+        zfree(chosen);
+        addReplyErrorFormat(c, "self owns only %d slots, asked for %d", picked, n_slots);
+        return;
+    }
+
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    sdsfree(key);
+    if (L == NULL) {
+        zfree(chosen);
+        addReplyError(c, "no outbound link cached; call RDMA MIGRATE-PREP + RDMA RESHARD first");
+        return;
+    }
+
+    /* Verify ALL chosen slots are pre-registered (source) AND have a
+     * recipient landing target. Atomicity: bail out before doing any RDMA
+     * work if any slot is missing either side. */
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        if (L->source_buffers[slot] == NULL) {
+            zfree(chosen);
+            addReplyErrorFormat(c,
+                "slot %d not pre-registered; call RDMA RESHARD first", slot);
+            return;
+        }
+        if (L->buffers[slot].ptr == 0) {
+            zfree(chosen);
+            addReplyErrorFormat(c,
+                "slot %d has no recipient landing buffer; call RDMA MIGRATE-PREP first", slot);
+            return;
+        }
+    }
+
+    pthread_mutex_lock(&L->mu);
+
+    size_t total_bytes = 0;
+    int errs = 0;
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
+        uint32_t n_entries = rdmaEncodeSlotEntries(c->db, slot, staging,
+                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+        rdmaDebugDumpSlotBytes("SRC", slot, staging);
+        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
+                                           L->buffers[slot].ptr,
+                                           L->buffers[slot].rkey,
+                                           RDMAMIG_BLOCK_SIZE_BYTES);
+        if (rc != 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA RESHARD-EXEC: slot=%d post_write failed rc=%d", slot, rc);
+            continue;
+        }
+        /* wait_send returns # of completions polled (positive on success, <0 on QP error). */
+        int wc_rc = rdmamig_client_wait_send(L->client);
+        if (wc_rc < 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA RESHARD-EXEC: slot=%d wait_send failed rc=%d", slot, wc_rc);
+            continue;
+        }
+        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD-EXEC: slot=%d entries=%u bytes=%d rc=0",
+            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+    }
+
+    /* Notify recipient: "RDMA DONE-SLOTS <s1> <s2> ... <sN>" via cached
+     * hiredis ctrl channel. The recipient's rdmaDoneSlotsCommand walks
+     * its own r_allocator blocks for each slot (now containing the
+     * source's RDMA-written entries) and dbAdd's the keys. */
+    int argc = 2 + n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    argv[0] = "RDMA";       argvlen[0] = 4;
+    argv[1] = "DONE-SLOTS"; argvlen[1] = 10;
+    char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
+    for (int i = 0; i < n_slots; i++) {
+        argvlen[2 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
+        argv  [2 + i] = numbuf[i];
+    }
+    redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+    zfree(argv);
+    zfree(argvlen);
+    zfree(numbuf);
+
+    int done_ok = 1;
+    if (r == NULL || r->type != REDIS_REPLY_STATUS) {
+        done_ok = 0;
+        serverLog(LL_WARNING,
+            "RDMA RESHARD-EXEC: DONE-SLOTS reply not OK (data may still have landed)");
+    }
+    if (r) freeReplyObject(r);
+
+    pthread_mutex_unlock(&L->mu);
+
+    int first = chosen[0], last = chosen[n_slots - 1];
+    zfree(chosen);
+    addReplyStatusFormat(c,
+        "OK %d slots transferred (slots %d..%d, bytes %zu, errors %d, done=%s)",
+        n_slots, first, last, total_bytes, errs, done_ok ? "ok" : "fail");
 }

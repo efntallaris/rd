@@ -3138,6 +3138,7 @@ standardConfig static_configs[] = {
     createBoolConfig("appendonly", NULL, MODIFIABLE_CONFIG, server.aof_enabled, 0, NULL, updateAppendonly),
     createBoolConfig("cluster-rdma-allocator-shadow", NULL, MODIFIABLE_CONFIG, server.rdma_allocator_shadow, 0, NULL, NULL),
     createBoolConfig("cluster-rdma-allocator-skip-lock", NULL, MODIFIABLE_CONFIG, server.rdma_allocator_skip_lock, 0, NULL, NULL),
+    createBoolConfig("cluster-rdma-reshard-debug-bytes", NULL, MODIFIABLE_CONFIG, server.rdma_reshard_debug_bytes, 0, NULL, NULL),
     createIntConfig("rdma-migration-port", NULL, MODIFIABLE_CONFIG, 1, 65535, server.rdma_migration_port, 17777, INTEGER_CONFIG, NULL, NULL), /* Source side picks this; recipient binds it when asked via RDMA INIT-SERVER. */
     createBoolConfig("cluster-allow-reads-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_reads_when_down, 0, NULL, NULL),
     createBoolConfig("cluster-allow-pubsubshard-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_pubsubshard_when_down, 1, NULL, NULL),

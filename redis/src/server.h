@@ -2167,6 +2167,11 @@ struct redisServer {
     int rdma_allocator_skip_lock;   /* If true, allocator skips per-slot mutex when slot
                                        not under migration. UNSAFE for concurrent
                                        intra-slot writers — smoke-test only. */
+    int rdma_reshard_debug_bytes;   /* If true, RDMA RESHARD-EXEC and rdmaApplySlot
+                                       emit per-slot byte dumps (first 32 + last 16)
+                                       on both source and recipient, for cross-checking
+                                       that RDMA writes landed correctly. Off in
+                                       production runs — verbose. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */
@@ -4361,6 +4366,7 @@ void rdmaInitServerCommand(client *c);
 void rdmaRegisterBlockSlotsCommand(client *c);
 void rdmaMigratePrepCommand(client *c);
 void rdmaReshardCommand(client *c);
+void rdmaReshardExecCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
 void restoreCommand(client *c);
