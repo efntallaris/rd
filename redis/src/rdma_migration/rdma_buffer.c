@@ -60,6 +60,10 @@ uint32_t rdmamig_buffer_rkey(rdmamig_buffer *b) {
     return b->mr->rkey;
 }
 
+char *rdmamig_buffer_data(const rdmamig_buffer *b) {
+    return b->buffer;
+}
+
 rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
                                       size_t size, int access)
 {
