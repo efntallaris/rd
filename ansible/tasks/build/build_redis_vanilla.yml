@@ -11,16 +11,16 @@
         chdir: "{{ redis_dir }}/deps/jemalloc"
         creates: "{{ redis_dir }}/deps/jemalloc/configure"
 
-    - name: Build Redis dependencies (hiredis, linenoise, lua, jemalloc, fast_float)
+    - name: Build Redis dependencies (vanilla_redis branch — no fast_float/fpconv/xxhash)
       make:
         chdir: "{{ redis_dir }}/deps"
         target: "{{ item }}"
       loop:
         - hiredis
         - linenoise
+        - hdr_histogram
         - lua
         - jemalloc
-        - fast_float
 
     - name: Install Redis binaries
       make:

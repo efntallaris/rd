@@ -4,6 +4,8 @@
 # vanilla paths + redis_variant=vanilla.
 - import_playbook: ../../tasks/teardown/kill_all.yml
 - import_playbook: ../../tasks/teardown/clean_cluster.yml
-- import_playbook: ../../tasks/build/clone_vanilla_redis.yml
+# Upstream clone disabled — the local `vanilla_redis` branch is checked out
+# at /users/entall/rd/redis-vanilla via `git worktree` in run_vanilla.sh.
+# - import_playbook: ../../tasks/build/clone_vanilla_redis.yml
 - import_playbook: ../../tasks/build/build_redis_vanilla.yml
 - import_playbook: ../../tasks/build/build_ycsb.yml
