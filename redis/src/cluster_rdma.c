@@ -36,6 +36,7 @@
 #include "cluster.h"
 #include "cluster_legacy.h"
 #include "rdma_migration/include/rdma_migration.h"
+#include "rdma_migration/allocator.h"   /* r_allocator_log_slot_stats */
 #include "kvstore.h"
 #include "hiredis.h"
 #include <arpa/inet.h>
@@ -445,7 +446,7 @@ static size_t rdmaDecodeEntry(const char *buf, size_t remaining, robj **key_out,
 }
 
 /* Diagnostic byte dump for RDMA RESHARD-EXEC / rdmaApplySlot. Logs first 32
- * and last 16 bytes of `buf` (length = RDMAMIG_BLOCK_SIZE_BYTES) at LL_NOTICE
+ * and last 32 bytes of `buf` (length = RDMAMIG_BLOCK_SIZE_BYTES) at LL_NOTICE
  * along with the leading u32 entry count, so source/recipient log lines can
  * be cross-checked byte-for-byte. Gated on server.rdma_reshard_debug_bytes
  * (CONFIG SET cluster-rdma-reshard-debug-bytes yes to enable). `tag` is
@@ -454,14 +455,14 @@ static void rdmaDebugDumpSlotBytes(const char *tag, int slot, const char *buf) {
     if (!server.rdma_reshard_debug_bytes) return;
     uint32_t n_entries;
     memcpy(&n_entries, buf, sizeof(n_entries));
-    char hex0[3*32 + 1], hexN[3*16 + 1];
+    char hex0[3*32 + 1], hexN[3*32 + 1];
     for (int k = 0; k < 32; k++)
         snprintf(hex0 + 3*k, 4, "%02x ", (unsigned char) buf[k]);
-    for (int k = 0; k < 16; k++)
+    for (int k = 0; k < 32; k++)
         snprintf(hexN + 3*k, 4, "%02x ",
-                 (unsigned char) buf[RDMAMIG_BLOCK_SIZE_BYTES - 16 + k]);
+                 (unsigned char) buf[RDMAMIG_BLOCK_SIZE_BYTES - 32 + k]);
     serverLog(LL_NOTICE,
-        "RDMA RESHARD-EXEC %s: slot=%d n_entries=%u first32=[%s] last16=[%s]",
+        "RDMA RESHARD-EXEC %s: slot=%d n_entries=%u first32=[%s] last32=[%s]",
         tag, slot, n_entries, hex0, hexN);
 }
 
@@ -957,6 +958,16 @@ void rdmaReshardExecCommand(client *c) {
         uint32_t n_entries = rdmaEncodeSlotEntries(c->db, slot, staging,
                                                    RDMAMIG_BLOCK_SIZE_BYTES);
         rdmaDebugDumpSlotBytes("SRC", slot, staging);
+        if (server.rdma_reshard_debug_bytes) {
+            /* Per-slot r_allocator stats + the RDMA-transferred byte count
+             * (always the full block; payload-relevant bytes are
+             * approximately sizeof(u32) + n_entries * (8 + key+val sizes),
+             * the rest is zero padding). */
+            r_allocator_log_slot_stats(slot);
+            serverLog(LL_NOTICE,
+                "RDMA RESHARD-EXEC TX: slot=%d n_entries=%u rdma_bytes=%d",
+                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+        }
         int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
                                            L->buffers[slot].ptr,
                                            L->buffers[slot].rkey,
