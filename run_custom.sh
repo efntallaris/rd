@@ -20,7 +20,7 @@ WORKLOADS=("$@")
 REPO_ROOT="/users/entall/rd"
 YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
 SHARED_WORKLOADS_DIR="/rd/workloads"
-RECORDCOUNT="${RECORDCOUNT:-100000}"
+RECORDCOUNT="${RECORDCOUNT:-500000}"
 OPERATIONCOUNT="${OPERATIONCOUNT:-1000000}"
 
 # --- one-time prep: scaled workload files at /rd/workloads/ ----------------

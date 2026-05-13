@@ -23,7 +23,7 @@ REDIS_DIR="${REPO_ROOT}/redis"
 VANILLA_DIR="${REPO_ROOT}/redis-vanilla"
 YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
 SHARED_WORKLOADS_DIR="/rd/workloads"
-RECORDCOUNT="${RECORDCOUNT:-100000}"
+RECORDCOUNT="${RECORDCOUNT:-500000}"
 OPERATIONCOUNT="${OPERATIONCOUNT:-1000000}"
 
 # --- prep step 1: vanilla worktree (idempotent) ---------------------------
