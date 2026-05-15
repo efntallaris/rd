@@ -1201,6 +1201,11 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
     int i, slot = 0, migrating_slot = 0, importing_slot = 0, missing_keys = 0,
             existing_keys = 0;
     int pubsubshard_included = 0; /* Flag to indicate if a pubsub shard cmd is included. */
+    /* v2 RDMA reshard: source-side flag — we're a source that already
+     * flipped ownership of this slot (slots[slot] != myself), but we
+     * still hold the locked snapshot and accept ASKING-prefixed reads
+     * for it. See `migrating_slots_to[slot]` being set as the marker. */
+    int v2_src_serving = 0;
 
     /* Allow any key to be set if a module disabled cluster redirections. */
     if (server.cluster_module_flags & CLUSTER_MODULE_FLAG_NO_REDIRECTION)
@@ -1315,6 +1320,15 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
                     migrating_slot = 1;
                 } else if (getImportingSlotSource(slot) != NULL) {
                     importing_slot = 1;
+                } else if (n != myself &&
+                           getMigratingSlotDest(slot) != NULL)
+                {
+                    /* v2 RDMA reshard: we're the source that early-flipped
+                     * this slot to `n` (= recipient). slots[slot] != myself
+                     * (so the standard migrating_slot check above didn't fire),
+                     * but migrating_slots_to[slot] is still set as our v2
+                     * marker. Accept ASKING-prefixed reads for this slot. */
+                    v2_src_serving = 1;
                 }
             } else {
                 /* If it is not the first key/channel, make sure it is exactly
@@ -1340,7 +1354,7 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
              * node until the migration completes with CLUSTER SETSLOT <slot>
              * NODE <node-id>. */
             int flags = LOOKUP_NOTOUCH | LOOKUP_NOSTATS | LOOKUP_NONOTIFY | LOOKUP_NOEXPIRE;
-            if ((migrating_slot || importing_slot) && !pubsubshard_included)
+            if ((migrating_slot || importing_slot || v2_src_serving) && !pubsubshard_included)
             {
                 if (lookupKeyReadWithFlags(&server.db[0], thiskey, flags) == NULL) missing_keys++;
                 else existing_keys++;
@@ -1412,6 +1426,46 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
         } else {
             return myself;
         }
+    }
+
+    /* v2 RDMA reshard — recipient side: ownership has been flipped to
+     * us (slots[slot] == myself) but importing_slots_from[slot] is still
+     * set (the v2 marker). Client did NOT prefix ASKING (i.e. this is the
+     * initial request). If the key is missing locally, the data hasn't
+     * been RDMA-WRITE'd from the source yet — tell the client to retry
+     * against the source with ASKING.
+     *
+     * For multi-key commands where some keys exist locally and some don't,
+     * fall through to the standard UNSTABLE/TRYAGAIN. */
+    if (importing_slot && missing_keys &&
+        !(c->flags & CLIENT_ASKING) && !(cmd_flags & CMD_ASKING))
+    {
+        if (existing_keys) {
+            if (error_code) *error_code = CLUSTER_REDIR_UNSTABLE;
+            return NULL;
+        } else {
+            if (error_code) *error_code = CLUSTER_REDIR_ASK;
+            return getImportingSlotSource(slot);
+        }
+    }
+
+    /* v2 RDMA reshard — source side: we early-flipped this slot to the
+     * recipient (slots[slot] != myself) but we still hold the locked
+     * snapshot (migrating_slots_to[slot] != NULL). The client followed an
+     * -ASK redirect from the recipient and prefixed ASKING. If we have all
+     * the keys, serve the read locally — that's the point of the v2 source
+     * still hanging onto the locked snapshot during the migration window. */
+    if (v2_src_serving &&
+        (c->flags & CLIENT_ASKING || cmd_flags & CMD_ASKING))
+    {
+        if (multiple_keys && missing_keys) {
+            if (error_code) *error_code = CLUSTER_REDIR_UNSTABLE;
+            return NULL;
+        } else if (!missing_keys) {
+            return myself;
+        }
+        /* If we don't have the key either, fall through — return MOVED to
+         * the recipient (the client should give up after that). */
     }
 
     /* Handle the read-only client case reading from a slave: if this

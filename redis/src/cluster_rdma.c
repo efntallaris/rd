@@ -1148,41 +1148,69 @@ void rdmaReshardFlipCommand(client *c) {
         return;
     }
 
+    /* Our own (source's) node id — recipient uses it for SETSLOT IMPORTING. */
+    char src_id[CLUSTER_NAMELEN + 1];
+    memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
+    src_id[CLUSTER_NAMELEN] = '\0';
+
     int flipped = 0;
+
+    /* 1. Lock source blocks for all N slots up-front. */
+    for (int i = 0; i < n_slots; i++) {
+        r_allocator_lock_slot_blocks(chosen[i]);
+    }
+
+    /* 2. Tell recipient to flip its half in a single RDMA RESHARD-RECV-FLIP
+     *    call — bypasses the SETSLOT IMPORTING/NODE safety checks that
+     *    would otherwise refuse (owner + importing-from) simultaneous
+     *    state. This sets importing_slots_from[slot]=<source> AND claims
+     *    ownership on the recipient, atomically per slot. */
+    {
+        /* Build argv: ["RDMA", "RESHARD-RECV-FLIP", <src_id>, <slot1>, ...]. */
+        int argc = 3 + n_slots;
+        const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+        size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+        argv[0] = "RDMA";               argvlen[0] = 4;
+        argv[1] = "RESHARD-RECV-FLIP";  argvlen[1] = 17;
+        argv[2] = src_id;               argvlen[2] = CLUSTER_NAMELEN;
+        char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
+        for (int i = 0; i < n_slots; i++) {
+            argvlen[3 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
+            argv  [3 + i] = numbuf[i];
+        }
+        redisReply *r_recv = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+        zfree(argv);
+        zfree(argvlen);
+        zfree(numbuf);
+
+        if (r_recv == NULL || r_recv->type == REDIS_REPLY_ERROR) {
+            pthread_mutex_unlock(&L->mu);
+            zfree(chosen);
+            addReplyErrorFormat(c,
+                "RESHARD-FLIP: recipient RECV-FLIP failed: %s",
+                r_recv ? r_recv->str : "no reply");
+            if (r_recv) freeReplyObject(r_recv);
+            return;
+        }
+        freeReplyObject(r_recv);
+    }
+
+    /* 3. Locally flip ownership for all N slots: clusterDelSlot +
+     *    clusterAddSlot bypasses the SETSLOT NODE safety check that
+     *    refuses to release a slot while local keys exist. Also set
+     *    migrating_slots_to[slot] = recipient_node so the patched
+     *    getNodeByQuery on the source recognises v2-active slots and
+     *    accepts ASKING reads for them while we still hold the locked
+     *    snapshot. */
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
-
-        /* 1. Lock source slot blocks — makes the source's r_allocator
-         *    blocks for this slot immutable, so the upcoming RDMA-WRITE
-         *    has a stable snapshot. */
-        r_allocator_lock_slot_blocks(slot);
-
-        /* 2. Tell recipient to claim ownership via CLUSTER SETSLOT NODE.
-         *    On the recipient side this is the canonical path and the
-         *    recipient has no local keys for the slot, so the safety
-         *    check passes. */
-        redisReply *r2 = redisCommand(L->ctrl,
-            "CLUSTER SETSLOT %d NODE %s", slot, recipient_id);
-        if (r2 == NULL || r2->type == REDIS_REPLY_ERROR) {
-            serverLog(LL_WARNING,
-                "RDMA RESHARD-FLIP: SETSLOT %d NODE %s on recipient failed: %s",
-                slot, recipient_id, r2 ? r2->str : "no reply");
-            if (r2) freeReplyObject(r2);
-            continue;
-        }
-        freeReplyObject(r2);
-
-        /* 3. Locally release ownership by calling clusterDelSlot +
-         *    clusterAddSlot directly. This bypasses the official
-         *    CLUSTER SETSLOT NODE check that refuses to release a slot
-         *    while local keys exist — which is exactly the state our
-         *    protocol allows during the migration window. */
         clusterDelSlot(slot);
         clusterAddSlot(recipient_node, slot);
+        server.cluster->migrating_slots_to[slot] = recipient_node;
         flipped++;
-
         serverLog(LL_NOTICE,
-            "RDMA RESHARD-FLIP: slot=%d ownership flipped to %s (source locked)",
+            "RDMA RESHARD-FLIP: slot=%d ownership flipped to %s "
+            "(source locked, migrating_slots_to set)",
             slot, recipient_id);
     }
 
@@ -1193,4 +1221,83 @@ void rdmaReshardFlipCommand(client *c) {
     addReplyStatusFormat(c,
         "OK %d slots flipped (slots %d..%d, flipped %d)",
         n_slots, first, last, flipped);
+}
+
+
+/* ====================================================================== *
+ *  RDMA RESHARD-RECV-FLIP  (recipient side, called from source's FLIP)
+ *
+ *      RDMA RESHARD-RECV-FLIP <source-node-id> <slot> [<slot> ...]
+ *
+ *  Replaces the SETSLOT IMPORTING + SETSLOT NODE pair the source would
+ *  otherwise issue via L->ctrl. Reason: standard CLUSTER SETSLOT NODE on
+ *  the recipient clears importing_slots_from[], and re-setting IMPORTING
+ *  afterwards is refused with "I'm already the owner" — so the recipient
+ *  ends up without the IMPORTING marker that the v2 -ASK-on-miss
+ *  predicate in getNodeByQuery() needs.
+ *
+ *  This command sets state directly, atomically per slot:
+ *    1. importing_slots_from[slot] = <source-node>
+ *    2. clusterDelSlot(slot) + clusterAddSlot(myself, slot)
+ *
+ *  Bypasses the standard SETSLOT safety checks because the v2 protocol
+ *  explicitly wants the recipient to be in (owns slot + importing-from
+ *  source) state — exactly what those checks normally forbid.
+ *
+ *  Reply: +OK <n> slots flipped on recipient
+ * ====================================================================== */
+
+void rdmaReshardRecvFlipCommand(client *c) {
+    if (c->argc < 4) {
+        addReplyError(c,
+            "syntax: RDMA RESHARD-RECV-FLIP source-node-id slot [slot ...]");
+        return;
+    }
+    const char *src_id_str = c->argv[2]->ptr;
+    if ((int) strlen(src_id_str) < CLUSTER_NAMELEN) {
+        addReplyErrorFormat(c, "RESHARD-RECV-FLIP: bad source node id: %s",
+                            src_id_str);
+        return;
+    }
+
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        addReplyError(c, "cluster mode not enabled on this node");
+        return;
+    }
+
+    clusterNode *src_node = clusterLookupNode(src_id_str, CLUSTER_NAMELEN);
+    if (src_node == NULL) {
+        addReplyErrorFormat(c,
+            "RESHARD-RECV-FLIP: source %s not in local cluster view "
+            "(have you done CLUSTER MEET?)", src_id_str);
+        return;
+    }
+
+    int flipped = 0;
+    for (int j = 3; j < c->argc; j++) {
+        long long slot_ll;
+        if (getLongLongFromObject(c->argv[j], &slot_ll) != C_OK ||
+            slot_ll < 0 || slot_ll >= CLUSTER_SLOTS) {
+            addReplyErrorFormat(c, "RESHARD-RECV-FLIP: bad slot %s",
+                                (char *) c->argv[j]->ptr);
+            return;
+        }
+        int slot = (int) slot_ll;
+
+        /* 1. Set importing marker first — the v2 -ASK-on-miss predicate
+         *    in getNodeByQuery() keys off getImportingSlotSource(slot). */
+        server.cluster->importing_slots_from[slot] = src_node;
+
+        /* 2. Take ownership of the slot. */
+        clusterDelSlot(slot);
+        clusterAddSlot(server.cluster->myself, slot);
+
+        flipped++;
+
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD-RECV-FLIP: slot=%d imported from %s, ownership claimed",
+            slot, src_id_str);
+    }
+
+    addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }

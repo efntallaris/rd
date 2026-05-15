@@ -1348,6 +1348,29 @@ struct COMMAND_ARG RDMA_RESHARD_FLIP_Args[] = {
 {MAKE_ARG("slot-count",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA RESHARD_RECV_FLIP ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA RESHARD_RECV_FLIP history */
+#define RDMA_RESHARD_RECV_FLIP_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA RESHARD_RECV_FLIP tips */
+#define RDMA_RESHARD_RECV_FLIP_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA RESHARD_RECV_FLIP key specs */
+#define RDMA_RESHARD_RECV_FLIP_Keyspecs NULL
+#endif
+
+/* RDMA RESHARD_RECV_FLIP argument table */
+struct COMMAND_ARG RDMA_RESHARD_RECV_FLIP_Args[] = {
+{MAKE_ARG("source-node-id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
 /********** RDMA TRANSFER_SLOTS ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1382,6 +1405,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("reshard","Source side: Phase 1 of bulk RDMA reshard. Picks N owned slots and registers one 1 MiB staging buffer per slot with the local RNIC (ibv_reg_mr).","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_History,0,RDMA_RESHARD_Tips,0,rdmaReshardCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_Args},
 {MAKE_CMD("reshard-exec","Source side: Phase 2 of bulk RDMA reshard. For each of the N slots that the prior RDMA RESHARD registered, encodes the slot's keys into the source's staging buffer, RDMA-WRITEs the bytes to the recipient's landing buffer, then sends RDMA DONE-SLOTS so the recipient applies the staged entries into its keyspace.","O(N * K) where K is the number of keys per slot.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_EXEC_History,0,RDMA_RESHARD_EXEC_Tips,0,rdmaReshardExecCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_EXEC_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_EXEC_Args},
 {MAKE_CMD("reshard-flip","Source side: early-ownership-flip variant. For each of the N slots that the prior RDMA RESHARD registered, locks source-side r_allocator blocks (immutable), tells the recipient to claim ownership via CLUSTER SETSLOT NODE, then locally releases ownership by directly invoking the slot-table helpers (bypassing the standard SETSLOT NODE safety check that forbids releasing a slot while local keys still exist).","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_FLIP_History,0,RDMA_RESHARD_FLIP_Tips,0,rdmaReshardFlipCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_FLIP_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_FLIP_Args},
+{MAKE_CMD("reshard-recv-flip","Recipient side: receive the v2 early-flip state from the source. Sets importing_slots_from[slot]=<source-node> and takes ownership of the listed slots in a single atomic call, bypassing the standard CLUSTER SETSLOT safety checks that forbid (owner + importing-from) simultaneous state.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_RECV_FLIP_History,0,RDMA_RESHARD_RECV_FLIP_Tips,0,rdmaReshardRecvFlipCommand,-4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_RECV_FLIP_Keyspecs,0,NULL,2),.args=RDMA_RESHARD_RECV_FLIP_Args},
 {MAKE_CMD("transfer-slots","Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_TRANSFER_SLOTS_History,0,RDMA_TRANSFER_SLOTS_Tips,0,rdmaTransferSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_TRANSFER_SLOTS_Keyspecs,0,NULL,3),.args=RDMA_TRANSFER_SLOTS_Args},
 {0}
 };

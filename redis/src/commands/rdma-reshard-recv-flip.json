@@ -1,0 +1,20 @@
+{
+    "RESHARD-RECV-FLIP": {
+        "summary": "Recipient side: receive the v2 early-flip state from the source. Sets importing_slots_from[slot]=<source-node> and takes ownership of the listed slots in a single atomic call, bypassing the standard CLUSTER SETSLOT safety checks that forbid (owner + importing-from) simultaneous state.",
+        "complexity": "O(N) in number of slots.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -4,
+        "container": "RDMA",
+        "function": "rdmaReshardRecvFlipCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "source-node-id", "type": "string" },
+            { "name": "slot", "type": "integer", "multiple": true }
+        ]
+    }
+}
