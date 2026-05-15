@@ -1,0 +1,7 @@
+---
+# custom_reshard_v2: setup — identical to custom_reshard/setup.yml since the
+# new behavior is entirely in the per-workload reshard step, not the build.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/build_redis_custom.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

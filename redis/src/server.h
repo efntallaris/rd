@@ -4367,6 +4367,7 @@ void rdmaRegisterBlockSlotsCommand(client *c);
 void rdmaMigratePrepCommand(client *c);
 void rdmaReshardCommand(client *c);
 void rdmaReshardExecCommand(client *c);
+void rdmaReshardFlipCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
 void restoreCommand(client *c);

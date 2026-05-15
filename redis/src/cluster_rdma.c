@@ -1027,3 +1027,170 @@ void rdmaReshardExecCommand(client *c) {
         "OK %d slots transferred (slots %d..%d, bytes %zu, errors %d, done=%s)",
         n_slots, first, last, total_bytes, errs, done_ok ? "ok" : "fail");
 }
+
+
+/* ====================================================================== *
+ *  RDMA RESHARD-FLIP  (v0 — early ownership flip; parallel-reads NOT yet
+ *                     implemented, tombstones NOT yet implemented)
+ *
+ *      RDMA RESHARD-FLIP <recipient-host> <recipient-port> <n-slots>
+ *
+ *  Source-side. Picks the same N slots a prior RDMA RESHARD registered,
+ *  and for each:
+ *    1. Locks the slot's r_allocator blocks (makes source-side data
+ *       immutable for the upcoming RDMA-WRITE).
+ *    2. Tells the recipient to claim ownership via CLUSTER SETSLOT NODE
+ *       over the cached hiredis ctrl channel (L->ctrl).
+ *    3. Locally releases ownership by calling clusterDelSlot +
+ *       clusterAddSlot(recipient_node, slot) directly — bypassing the
+ *       official CLUSTER SETSLOT NODE safety check that refuses to give
+ *       up a slot while local keys still exist (which is precisely what
+ *       this protocol wants: source keeps the keys until RESHARD-EXEC
+ *       has RDMA-WRITE'd them to the recipient, then the source's copy
+ *       becomes stale and can be released).
+ *
+ *  Known v0 limitations:
+ *    - Reads on the recipient for keys not yet RDMA-WRITE'd from the
+ *      source return NIL. (Parallel-read fallback is the next iteration.)
+ *    - DELETE during the migration window may be resurrected by a later
+ *      RDMA-WRITE. (Tombstone tracking is the next iteration.)
+ *
+ *  Reply: +OK <flipped> slots flipped (slots <first>..<last>)
+ * ====================================================================== */
+
+void rdmaReshardFlipCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c,
+            "syntax: RDMA RESHARD-FLIP recipient-host recipient-port n-slots");
+        return;
+    }
+    const char *host = c->argv[2]->ptr;
+    long long port_ll, n_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "port out of range");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &n_slots_ll) != C_OK ||
+        n_slots_ll <= 0 || n_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "n-slots out of range");
+        return;
+    }
+    int port = (int) port_ll;
+    int n_slots = (int) n_slots_ll;
+
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        addReplyError(c, "cluster mode not enabled on this node");
+        return;
+    }
+
+    /* Pick the same N slots as RESHARD: walk self-owned, lowest first. */
+    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
+    int picked = 0;
+    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+        if (server.cluster->slots[i] == server.cluster->myself) {
+            chosen[picked++] = i;
+        }
+    }
+    if (picked < n_slots) {
+        zfree(chosen);
+        addReplyErrorFormat(c, "self owns only %d slots, asked for %d",
+                            picked, n_slots);
+        return;
+    }
+
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    sdsfree(key);
+    if (L == NULL) {
+        zfree(chosen);
+        addReplyError(c, "no outbound link cached; call RDMA MIGRATE-PREP first");
+        return;
+    }
+
+    pthread_mutex_lock(&L->mu);
+
+    /* Get the recipient's node id via CLUSTER MYID over the ctrl channel.
+     * CLUSTER MYID replies with a bulk string (REDIS_REPLY_STRING). */
+    redisReply *r = redisCommand(L->ctrl, "CLUSTER MYID");
+    if (r == NULL || r->type != REDIS_REPLY_STRING) {
+        pthread_mutex_unlock(&L->mu);
+        zfree(chosen);
+        addReplyErrorFormat(c,
+            "RESHARD-FLIP: CLUSTER MYID failed (type=%d, str=%s)",
+            r ? r->type : -1, r ? r->str : "(null)");
+        if (r) freeReplyObject(r);
+        return;
+    }
+    /* CLUSTER NAMELEN-byte hex node id. */
+    char recipient_id[CLUSTER_NAMELEN + 1];
+    if ((int) strlen(r->str) < CLUSTER_NAMELEN) {
+        pthread_mutex_unlock(&L->mu);
+        zfree(chosen);
+        addReplyErrorFormat(c, "RESHARD-FLIP: bad recipient node id: %s", r->str);
+        freeReplyObject(r);
+        return;
+    }
+    memcpy(recipient_id, r->str, CLUSTER_NAMELEN);
+    recipient_id[CLUSTER_NAMELEN] = '\0';
+    freeReplyObject(r);
+
+    /* Look up the local clusterNode * for the recipient. The recipient must
+     * be known to us via cluster gossip (it joined the cluster as a normal
+     * master earlier via CLUSTER MEET). */
+    clusterNode *recipient_node = clusterLookupNode(recipient_id, CLUSTER_NAMELEN);
+    if (recipient_node == NULL) {
+        pthread_mutex_unlock(&L->mu);
+        zfree(chosen);
+        addReplyErrorFormat(c,
+            "RESHARD-FLIP: recipient %s not in local cluster view "
+            "(have you done CLUSTER MEET?)", recipient_id);
+        return;
+    }
+
+    int flipped = 0;
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+
+        /* 1. Lock source slot blocks — makes the source's r_allocator
+         *    blocks for this slot immutable, so the upcoming RDMA-WRITE
+         *    has a stable snapshot. */
+        r_allocator_lock_slot_blocks(slot);
+
+        /* 2. Tell recipient to claim ownership via CLUSTER SETSLOT NODE.
+         *    On the recipient side this is the canonical path and the
+         *    recipient has no local keys for the slot, so the safety
+         *    check passes. */
+        redisReply *r2 = redisCommand(L->ctrl,
+            "CLUSTER SETSLOT %d NODE %s", slot, recipient_id);
+        if (r2 == NULL || r2->type == REDIS_REPLY_ERROR) {
+            serverLog(LL_WARNING,
+                "RDMA RESHARD-FLIP: SETSLOT %d NODE %s on recipient failed: %s",
+                slot, recipient_id, r2 ? r2->str : "no reply");
+            if (r2) freeReplyObject(r2);
+            continue;
+        }
+        freeReplyObject(r2);
+
+        /* 3. Locally release ownership by calling clusterDelSlot +
+         *    clusterAddSlot directly. This bypasses the official
+         *    CLUSTER SETSLOT NODE check that refuses to release a slot
+         *    while local keys exist — which is exactly the state our
+         *    protocol allows during the migration window. */
+        clusterDelSlot(slot);
+        clusterAddSlot(recipient_node, slot);
+        flipped++;
+
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD-FLIP: slot=%d ownership flipped to %s (source locked)",
+            slot, recipient_id);
+    }
+
+    pthread_mutex_unlock(&L->mu);
+
+    int first = chosen[0], last = chosen[n_slots - 1];
+    zfree(chosen);
+    addReplyStatusFormat(c,
+        "OK %d slots flipped (slots %d..%d, flipped %d)",
+        n_slots, first, last, flipped);
+}

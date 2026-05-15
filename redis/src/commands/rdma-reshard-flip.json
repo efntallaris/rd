@@ -1,0 +1,21 @@
+{
+    "RESHARD-FLIP": {
+        "summary": "Source side: early-ownership-flip variant. For each of the N slots that the prior RDMA RESHARD registered, locks source-side r_allocator blocks (immutable), tells the recipient to claim ownership via CLUSTER SETSLOT NODE, then locally releases ownership by directly invoking the slot-table helpers (bypassing the standard SETSLOT NODE safety check that forbids releasing a slot while local keys still exist).",
+        "complexity": "O(N) in number of slots.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaReshardFlipCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "recipient-host", "type": "string" },
+            { "name": "recipient-port", "type": "integer" },
+            { "name": "slot-count", "type": "integer" }
+        ]
+    }
+}
