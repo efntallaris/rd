@@ -1,0 +1,11 @@
+---
+# vanilla_raft_baseline: per-workload run. RedisRaft 3-shardgroup cluster
+# (3 procs/host on redis0/1/2), single-phase synchronous YCSB. No reshard.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/run_ycsb_sync.yml
+- import_playbook: ../../tasks/results/collect_results.yml

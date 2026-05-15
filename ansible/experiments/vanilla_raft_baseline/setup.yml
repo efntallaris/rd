@@ -1,0 +1,15 @@
+---
+# vanilla_raft_baseline: one-time setup. Clones UPSTREAM Redis at
+# vanilla_redis_tag (default 8.6.2 — overridable via VANILLA_REDIS_TAG)
+# on each redis host, builds it, builds RedisRaft, and builds YCSB.
+#
+# Note: this experiment deliberately does NOT use the local `vanilla_redis`
+# git worktree (run_vanilla.sh uses that, but it's pinned at Redis 6.2.16
+# and RedisRaft requires Redis >= 7.0). Upstream 8.6.2 is the closest
+# vanilla baseline that loads redisraft.so.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/clone_vanilla_redis.yml
+- import_playbook: ../../tasks/build/build_redis_vanilla.yml
+- import_playbook: ../../tasks/build/build_redisraft.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

@@ -1,0 +1,41 @@
+---
+# Build redisraft.so once (only needs to run on the ansible control node,
+# then we distribute the .so to each redis host). CMakeLists puts the final
+# module at the project root, not under build/.
+- name: "Build RedisRaft module"
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Ensure build dir exists
+      file:
+        path: "{{ redisraft_src }}/build"
+        state: directory
+        mode: "0755"
+
+    - name: Configure RedisRaft (cmake)
+      command: cmake -S {{ redisraft_src }} -B {{ redisraft_src }}/build
+      args:
+        creates: "{{ redisraft_src }}/build/Makefile"
+
+    - name: Build redisraft.so
+      command: cmake --build {{ redisraft_src }}/build -j
+      args:
+        creates: "{{ redisraft_module }}"
+
+- name: "Distribute redisraft.so to all redis hosts"
+  hosts: redis_masters
+  become: yes
+  tasks:
+    - name: Stat module on control node
+      stat:
+        path: "{{ redisraft_module }}"
+      delegate_to: "{{ groups['redis_masters'][0] }}"
+      run_once: yes
+      register: module_stat
+
+    - name: Copy redisraft.so to each redis host
+      copy:
+        src: "{{ redisraft_module }}"
+        dest: "{{ redisraft_module }}"
+        mode: "0755"
+      when: inventory_hostname != groups['redis_masters'][0]

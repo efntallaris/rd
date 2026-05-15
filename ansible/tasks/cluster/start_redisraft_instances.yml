@@ -1,0 +1,73 @@
+---
+# Start 3 redis-server processes per redis_masters host (one per shardgroup).
+# Each instance loads redisraft.so with its --raft.* configuration and runs
+# in cluster + sharding mode. Persistence is owned by RedisRaft (raft.db);
+# RDB/AOF are disabled.
+- name: "Start RedisRaft instances (3 per host)"
+  hosts: redis_masters
+  become: yes
+  tasks:
+    - name: Bump open-files ulimit
+      shell: ulimit -n 65535
+
+    - name: Ensure data + log dirs exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ redis_data_dir }}"
+        - "{{ redis_log_dir }}"
+
+    # RedisRaft requires --raft.addr to be an IP, not a hostname.
+    - name: Resolve redis_masters hostnames to IPs
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: host_ip_lookup
+      changed_when: false
+      loop: "{{ groups['redis_masters'] }}"
+
+    - name: Build host->IP map
+      set_fact:
+        host_ip_map: >-
+          {{
+            dict(
+              host_ip_lookup.results
+                | map(attribute='item')
+                | zip(host_ip_lookup.results | map(attribute='stdout'))
+            )
+          }}
+
+    - name: Start one redis-server per shardgroup
+      shell: |
+        {{ redis_bin_dir }}/redis-server \
+          --port {{ sg.port }} \
+          --bind 0.0.0.0 \
+          --protected-mode no \
+          --daemonize yes \
+          --maxclients 100000 \
+          --save "" \
+          --appendonly no \
+          --dir {{ redis_data_dir }} \
+          --dbfilename {{ inventory_hostname }}_{{ sg.id }}.rdb \
+          --logfile {{ redis_log_dir }}/{{ inventory_hostname }}_{{ sg.id }}.log \
+          --pidfile /tmp/redis_{{ inventory_hostname }}_{{ sg.id }}.pid \
+          --loadmodule {{ redisraft_module }} \
+          --raft.id {{ (sg.nodes | selectattr('host', 'equalto', inventory_hostname) | first).raft_id }} \
+          --raft.addr {{ host_ip_map[inventory_hostname] }}:{{ sg.port }} \
+          --raft.log-filename {{ raft_log_dir }}/raft_{{ sg.id }}_{{ inventory_hostname }}.db \
+          --raft.slot-config {{ sg.slot_config }} \
+          --raft.sharding yes \
+          --raft.follower-proxy no \
+          --raft.quorum-reads no
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+
+    - name: Wait for each instance to bind its port
+      wait_for:
+        host: "{{ host_ip_map[inventory_hostname] }}"
+        port: "{{ sg.port }}"
+        timeout: 30
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg

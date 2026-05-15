@@ -1,0 +1,8 @@
+---
+# custom_raft_baseline: setup (build the aqueduct fork in place, build
+# RedisRaft, build YCSB). No upstream clone — the fork lives at {{ redis_dir }}.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/build_redis_custom.yml
+- import_playbook: ../../tasks/build/build_redisraft.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

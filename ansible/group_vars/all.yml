@@ -44,3 +44,47 @@ reshard_timeout: 1200
 if_stat: "_ifstat.txt"
 mp_stat: "_mpstat.txt"
 io_stat: "_iostat.txt"
+
+# ─── RedisRaft (vanilla_raft_baseline / custom_raft_baseline) ──────────────
+# The module artifact lives at the project root after `cmake --build`
+# (CMakeLists places redisraft.so there, not in build/).
+redisraft_src: /users/entall/rd/redisraft
+redisraft_module: /users/entall/rd/redisraft/redisraft.so
+raft_log_dir: /tmp/redis_data   # reuse redis_data_dir so clean_runtime wipes it
+
+# 3 ShardGroups x 3 Raft nodes each, 3 procs per physical host.
+# Leaders deliberately spread across redis0/redis1/redis2 (write-CPU balance).
+# raft_id is the per-shard --raft.id passed at boot; the first node listed
+# under each shardgroup runs RAFT.CLUSTER INIT (becomes initial leader) and
+# the others run RAFT.CLUSTER JOIN pointing at it.
+redisraft_shardgroups:
+  - id: sg1
+    port: 8000
+    slot_config: "0:5460"
+    nodes:
+      - host: redis0
+        raft_id: 1
+      - host: redis1
+        raft_id: 2
+      - host: redis2
+        raft_id: 3
+  - id: sg2
+    port: 8001
+    slot_config: "5461:10921"
+    nodes:
+      - host: redis1
+        raft_id: 1
+      - host: redis2
+        raft_id: 2
+      - host: redis0
+        raft_id: 3
+  - id: sg3
+    port: 8002
+    slot_config: "10922:16383"
+    nodes:
+      - host: redis2
+        raft_id: 1
+      - host: redis0
+        raft_id: 2
+      - host: redis1
+        raft_id: 3

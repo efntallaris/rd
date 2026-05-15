@@ -1,0 +1,34 @@
+---
+# Create the `vanilla_redis` worktree at {{ redis_dir }} on every redis host
+# (not just the controller). Each cloudlab node has its own /users/entall/rd
+# checkout, so the worktree must be created host-locally — there's no
+# shared FS between hosts. Idempotent: skips if the worktree already exists.
+- name: "Create vanilla_redis worktree on each redis host"
+  hosts: redis_masters:redis_migrate
+  become: yes
+  tasks:
+    - name: Mark /users/entall/rd/redis as a safe git directory
+      command: git config --global --add safe.directory /users/entall/rd/redis
+      changed_when: false
+
+    - name: Check whether worktree already exists
+      stat:
+        path: "{{ redis_dir }}/.git"
+      register: vanilla_worktree
+
+    - name: Fetch origin so origin/vanilla_redis is up to date
+      command: git -C /users/entall/rd/redis fetch origin vanilla_redis
+      when: not vanilla_worktree.stat.exists
+      changed_when: false
+
+    - name: Create local vanilla_redis tracking branch if missing
+      shell: |
+        if ! git -C /users/entall/rd/redis show-ref --verify --quiet refs/heads/vanilla_redis; then
+          git -C /users/entall/rd/redis branch vanilla_redis origin/vanilla_redis
+        fi
+      when: not vanilla_worktree.stat.exists
+      changed_when: false
+
+    - name: Add worktree at {{ redis_dir }}
+      command: git -C /users/entall/rd/redis worktree add {{ redis_dir }} vanilla_redis
+      when: not vanilla_worktree.stat.exists

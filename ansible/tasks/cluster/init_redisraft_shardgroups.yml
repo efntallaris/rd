@@ -1,0 +1,159 @@
+---
+# Wire up the 3 RedisRaft ShardGroups:
+#   1. RAFT.CLUSTER INIT on each shardgroup's designated leader (first node
+#      in the shardgroup's `nodes` list — see group_vars/all.yml).
+#   2. RAFT.CLUSTER JOIN one follower at a time (Raft commits one
+#      membership change before accepting the next; back-to-back JOINs
+#      to the same leader silently drop).
+#   3. RAFT.SHARDGROUP LINK in both directions between every pair of
+#      shardgroups so each cluster knows the others' slot ranges.
+- name: "Initialize RedisRaft ShardGroups"
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Resolve redis_masters hostnames to IPs
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: host_ip_lookup
+      changed_when: false
+      loop: "{{ groups['redis_masters'] }}"
+
+    - name: Build host->IP map
+      set_fact:
+        host_ip_map: >-
+          {{
+            dict(
+              host_ip_lookup.results
+                | map(attribute='item')
+                | zip(host_ip_lookup.results | map(attribute='stdout'))
+            )
+          }}
+
+    - name: RAFT.CLUSTER INIT on each shardgroup's leader
+      command: >
+        {{ redis_bin_dir }}/redis-cli
+          -h {{ host_ip_map[(sg.nodes | first).host] }}
+          -p {{ sg.port }}
+          RAFT.CLUSTER INIT
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }} leader={{ (sg.nodes | first).host }}:{{ sg.port }}"
+      register: init_results
+      retries: 10
+      delay: 2
+      until: init_results.rc == 0
+
+    - name: Show INIT results
+      debug:
+        msg: "{{ item.sg.id }}: {{ item.stdout }}"
+      loop: "{{ init_results.results }}"
+      loop_control:
+        label: "{{ item.sg.id }}"
+
+    - name: Brief settle pause after INIT
+      pause:
+        seconds: 3
+
+    # Build a flat list of follower-join specs across all shardgroups so
+    # we can loop sequentially in ansible (one JOIN per iteration with a
+    # built-in pause via wait_for) and avoid Jinja-shell whitespace traps.
+    - name: Initialize join spec list
+      set_fact:
+        join_specs: []
+
+    - name: Build follower-join spec for each shardgroup
+      set_fact:
+        join_specs: >-
+          {{
+            join_specs +
+            [{
+              'sg_id': sg.id,
+              'sg_port': sg.port,
+              'host': nd.host,
+              'leader_host': (sg.nodes | first).host
+            }]
+          }}
+      loop: "{{ redisraft_shardgroups | subelements('nodes') }}"
+      loop_control:
+        label: "{{ sg.id }} {{ nd.host }}"
+      vars:
+        sg: "{{ item[0] }}"
+        nd: "{{ item[1] }}"
+      when: item[1].host != (item[0].nodes | first).host
+
+    - name: RAFT.CLUSTER JOIN each follower (sequential, with settle)
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ host_ip_map[spec.host] }} \
+          -p {{ spec.sg_port }} \
+          RAFT.CLUSTER JOIN {{ host_ip_map[spec.leader_host] }}:{{ spec.sg_port }}
+        sleep 2
+      loop: "{{ join_specs }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.sg_id }}: {{ spec.host }} -> {{ spec.leader_host }}"
+
+    - name: Settle pause after all JOINs
+      pause:
+        seconds: 5
+
+    # Same pattern for LINK — build a flat list of (src_sg, dst_sg) pairs
+    # then loop sequentially.
+    - name: Initialize link spec list
+      set_fact:
+        link_specs: []
+
+    - name: Build link spec for each (src, dst) shardgroup pair
+      set_fact:
+        link_specs: >-
+          {{
+            link_specs +
+            [{
+              'src_id': item[0].id,
+              'src_port': item[0].port,
+              'src_leader_host': (item[0].nodes | first).host,
+              'dst_id': item[1].id,
+              'dst_port': item[1].port,
+              'dst_leader_host': (item[1].nodes | first).host
+            }]
+          }}
+      loop: "{{ redisraft_shardgroups | product(redisraft_shardgroups) | list }}"
+      loop_control:
+        label: "{{ item[0].id }} -> {{ item[1].id }}"
+      when: item[0].id != item[1].id
+
+    - name: RAFT.SHARDGROUP LINK each pair (sequential, with settle)
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ host_ip_map[spec.src_leader_host] }} \
+          -p {{ spec.src_port }} \
+          RAFT.SHARDGROUP LINK {{ host_ip_map[spec.dst_leader_host] }}:{{ spec.dst_port }}
+        sleep 2
+      loop: "{{ link_specs }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.src_id }} -> {{ spec.dst_id }}"
+
+    - name: Settle pause after all LINKs
+      pause:
+        seconds: 5
+
+    - name: Verify CLUSTER SLOTS from each shardgroup's leader
+      command: >
+        {{ redis_bin_dir }}/redis-cli
+          -h {{ host_ip_map[(sg.nodes | first).host] }}
+          -p {{ sg.port }}
+          CLUSTER SLOTS
+      register: slots_check
+      changed_when: false
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }}"
+
+    - name: Show CLUSTER SLOTS for each shardgroup
+      debug:
+        msg: "{{ item.sg.id }}:\n{{ item.stdout }}"
+      loop: "{{ slots_check.results }}"
+      loop_control:
+        label: "{{ item.sg.id }}"
