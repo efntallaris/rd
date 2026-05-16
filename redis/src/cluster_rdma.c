@@ -510,35 +510,109 @@ static int rdmaApplySlot(redisDb *db, int slot) {
     return total_added;
 }
 
-/* RDMA DONE-SLOTS <slot> [<slot> ...]
+/* ====================================================================== *
+ *  RDMA DONE-SLOTS  (recipient side, chunked main-thread apply)
  *
- * Recipient side. For each slot in argv, walk the per-slot RDMA-registered
- * blocks (populated by an earlier REGISTER-BLOCK-SLOTS + RDMA writes from
- * the donor), parse the flat encoded entries, and dbAdd them into the local
- * keyspace.
+ *  Reverted from pthread workers because the kvstore isn't thread-safe at
+ *  the dict-resize / bucket level vs main-thread READ paths (crashed at
+ *  dict.c:892 'bucket != NULL'). Instead we keep everything on the main
+ *  thread BUT process the dbAdd work in small chunks via aeCreateTimeEvent
+ *  — each tick processes SLOTS_PER_TICK slots then yields back to the
+ *  event loop so client traffic is interleaved.
  *
- * NOTE: this is synchronous on the main thread for now. Previous threaded
- * version (4 worker threads with per-slot mutex) crashed the recipient at
- * dict.c:892 'bucket != NULL' because the kvstore isn't thread-safe at the
- * dict-resize / bucket level — main-thread READ paths (lookupKeyRead etc.)
- * aren't mutex-guarded and race with worker writes. Reverted to synchronous
- * apply; the right pattern for non-blocking apply on a single-threaded
- * Redis is main-thread chunked processing via beforeSleep / time events,
- * not pthread workers. Source-side rdmaReshardExecCommand stays threaded
- * because it only touches RDMA verbs (no kvstore). */
+ *  Concretely:
+ *    rdmaDoneSlotsCommand: parse slots → push (db, slot_list) onto a
+ *      pending list → reply +OK immediately. If no timer is running, arm
+ *      a 1 ms time event that calls migrationApplyTick.
+ *    migrationApplyTick: take the head pending item, call rdmaApplySlot
+ *      for the next SLOTS_PER_TICK slots, advance the per-item index.
+ *      When the item is exhausted, free it and try the next. When the list
+ *      is empty, return AE_NOMORE to drop the timer. Otherwise return a
+ *      small reschedule delay so the event loop has time to serve clients.
+ * ====================================================================== */
+
+typedef struct pendingApply {
+    redisDb *db;
+    int *slots;
+    int n_slots;
+    int idx;             /* next slot index to process */
+    long long applied;   /* running total added */
+} pendingApply;
+
+#define MIGRATION_SLOTS_PER_TICK 8     /* small enough to yield often,
+                                         large enough to make progress */
+#define MIGRATION_TICK_DELAY_MS 1      /* 1 ms reschedule; ample for the
+                                         event loop to drain client work */
+
+static list *pending_applies = NULL;
+static long long migration_apply_timer_id = -1;
+
+static int migrationApplyTick(struct aeEventLoop *el, long long id, void *clientData) {
+    UNUSED(el); UNUSED(id); UNUSED(clientData);
+
+    if (pending_applies == NULL || listLength(pending_applies) == 0) {
+        migration_apply_timer_id = -1;
+        return AE_NOMORE;
+    }
+
+    listNode *ln = listFirst(pending_applies);
+    pendingApply *p = listNodeValue(ln);
+
+    int processed = 0;
+    while (processed < MIGRATION_SLOTS_PER_TICK && p->idx < p->n_slots) {
+        p->applied += rdmaApplySlot(p->db, p->slots[p->idx]);
+        p->idx++;
+        processed++;
+    }
+
+    if (p->idx >= p->n_slots) {
+        serverLog(LL_NOTICE,
+            "RDMA DONE-SLOTS (chunked): finished %d slots, applied %lld keys total",
+            p->n_slots, p->applied);
+        zfree(p->slots);
+        zfree(p);
+        listDelNode(pending_applies, ln);
+    }
+
+    return MIGRATION_TICK_DELAY_MS;
+}
+
 void rdmaDoneSlotsCommand(client *c) {
-    long long total_added = 0;
-    for (int j = 2; j < c->argc; j++) {
-        long long slot;
-        if (getLongLongFromObject(c->argv[j], &slot) != C_OK ||
-            slot < 0 || slot >= CLUSTER_SLOTS) {
+    if (c->argc < 3) {
+        addReplyError(c, "DONE-SLOTS: at least one slot required");
+        return;
+    }
+    int n_slots = c->argc - 2;
+
+    pendingApply *p = zmalloc(sizeof(*p));
+    p->db = c->db;
+    p->n_slots = n_slots;
+    p->slots = zmalloc((size_t) n_slots * sizeof(int));
+    p->idx = 0;
+    p->applied = 0;
+    for (int j = 0; j < n_slots; j++) {
+        long long s;
+        if (getLongLongFromObject(c->argv[j + 2], &s) != C_OK ||
+            s < 0 || s >= CLUSTER_SLOTS) {
+            zfree(p->slots);
+            zfree(p);
             addReplyError(c, "slot id out of range");
             return;
         }
-        total_added += rdmaApplySlot(c->db, (int) slot);
+        p->slots[j] = (int) s;
     }
-    serverLog(LL_NOTICE, "RDMA DONE-SLOTS: applied %lld keys across %d slots",
-              total_added, c->argc - 2);
+
+    if (pending_applies == NULL) pending_applies = listCreate();
+    listAddNodeTail(pending_applies, p);
+
+    if (migration_apply_timer_id == -1) {
+        migration_apply_timer_id = aeCreateTimeEvent(server.el,
+            MIGRATION_TICK_DELAY_MS, migrationApplyTick, NULL, NULL);
+    }
+
+    serverLog(LL_NOTICE,
+        "RDMA DONE-SLOTS (chunked): queued %d slots; %lu in-flight item(s)",
+        n_slots, listLength(pending_applies));
     addReply(c, shared.ok);
 }
 
