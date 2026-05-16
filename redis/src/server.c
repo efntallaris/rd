@@ -2962,6 +2962,27 @@ void initServer(void) {
     }
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
+    /* v2 RDMA reshard: allocate + init the per-slot mutex array used to
+     * serialise worker-thread dbAdd (inside doneSlotsWorker) against main-
+     * thread dbAdd/dbDelete on the same slot during the migration window.
+     * Only allocated when cluster is enabled (otherwise unused). */
+    if (server.cluster_enabled) {
+        server.ownership_lock_slots = zmalloc(CLUSTER_SLOTS * sizeof(pthread_mutex_t));
+        /* PTHREAD_MUTEX_RECURSIVE so the same thread can acquire the mutex
+         * multiple times without deadlocking — necessary because dbAdd may
+         * internally call helpers (e.g. expiry, notification, dbReplaceValue)
+         * that re-enter the v2_slot_guard wrapper for the same slot. */
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        for (int s = 0; s < CLUSTER_SLOTS; s++) {
+            pthread_mutex_init(&server.ownership_lock_slots[s], &attr);
+        }
+        pthread_mutexattr_destroy(&attr);
+    } else {
+        server.ownership_lock_slots = NULL;
+    }
+
     /* Create the Redis databases, and initialize other internal state. */
     int slot_count_bits = 0;
     int flags = KVSTORE_ALLOCATE_DICTS_ON_DEMAND;

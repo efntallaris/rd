@@ -24,7 +24,11 @@ VANILLA_DIR="${REPO_ROOT}/redis-vanilla"
 YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
 SHARED_WORKLOADS_DIR="/rd/workloads"
 RECORDCOUNT="${RECORDCOUNT:-500000}"
-OPERATIONCOUNT="${OPERATIONCOUNT:-1000000}"
+# 10M ops: at the ~300K-400K ops/s the cluster sustains in steady-state,
+# this gives a ~25-35s YCSB run — enough for the reshard sweep's 10s
+# pre-migration baseline + ~5s migration band + ~15s post-migration
+# recovery in the timeseries plots.
+OPERATIONCOUNT="${OPERATIONCOUNT:-10000000}"
 
 # --- prep step 1: vanilla worktree (idempotent) ---------------------------
 # Use `git worktree` so the aqueduct fork's `vanilla_redis` branch is checked

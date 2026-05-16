@@ -10,6 +10,29 @@ cd "$(dirname "$0")/../.."
 WORKLOADS=("$@")
 [ ${#WORKLOADS[@]} -eq 0 ] && WORKLOADS=(workloada workloadb workloadc workloadf)
 
+REPO_ROOT="/users/entall/rd"
+YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
+SHARED_WORKLOADS_DIR="/rd/workloads"
+RECORDCOUNT="${RECORDCOUNT:-500000}"
+# 10M ops: at the ~300K-400K ops/s sustained throughput, this gives a
+# ~25-35s YCSB run — enough for the 10s pre-migration baseline + ~5s
+# migration band + ~15s post-migration recovery in the timeseries plots.
+OPERATIONCOUNT="${OPERATIONCOUNT:-10000000}"
+
+echo ">>> ${VARIANT}: staging scaled YCSB workloads (records=${RECORDCOUNT}, ops=${OPERATIONCOUNT})"
+for w in "${WORKLOADS[@]}"; do
+    src="${YCSB_WORKLOADS_SRC}/${w}"
+    if [ ! -f "${src}" ]; then
+        echo "!!! workload source not found: ${src}" >&2
+        exit 1
+    fi
+    sudo cp "${src}" "${SHARED_WORKLOADS_DIR}/${w}"
+    sudo sed -i \
+        -e "s/^recordcount=.*/recordcount=${RECORDCOUNT}/" \
+        -e "s/^operationcount=.*/operationcount=${OPERATIONCOUNT}/" \
+        "${SHARED_WORKLOADS_DIR}/${w}"
+done
+
 EXTRA_VARS=(
   -e "redis_variant=custom"
 )

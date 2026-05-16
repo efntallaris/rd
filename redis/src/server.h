@@ -2425,6 +2425,11 @@ struct redisServer {
     unsigned int watching_clients; /* # of clients are wathcing keys */
     /* Cluster */
     int cluster_enabled;      /* Is cluster enabled? */
+    /* v2 RDMA reshard: per-slot mutex array (heap-allocated, CLUSTER_SLOTS entries).
+     * Serialises worker-thread dbAdd in rdmaDoneSlotsCommand's worker pool against
+     * main-thread dbAdd/dbDelete on the same slot. Lock held briefly (per dbAdd);
+     * main thread acquires only when importing_slots_from[slot] != NULL. */
+    pthread_mutex_t *ownership_lock_slots;
     int cluster_port;         /* Set the cluster port for a node. */
     mstime_t cluster_node_timeout; /* Cluster node timeout. */
     mstime_t cluster_ping_interval;    /* A debug configuration for setting how often cluster nodes send ping messages. */

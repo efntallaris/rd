@@ -1,0 +1,14 @@
+---
+# Insert before the reshard playbook to give YCSB N seconds of steady-state
+# pre-migration baseline. Without this, the reshard playbook fires almost
+# immediately after start_ycsb_async, so the migration band sits at the
+# very start of the YCSB run with no "before" sample.
+#
+# Configurable via -e pre_reshard_pause=N (default 10 seconds).
+- name: "Pre-reshard steady-state pause"
+  hosts: redis_masters[0]
+  gather_facts: no
+  tasks:
+    - name: "Pause {{ pre_reshard_pause | default(10) }} seconds so YCSB has a pre-migration baseline"
+      pause:
+        seconds: "{{ pre_reshard_pause | default(10) }}"

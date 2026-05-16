@@ -21,7 +21,12 @@ REPO_ROOT="/users/entall/rd"
 YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
 SHARED_WORKLOADS_DIR="/rd/workloads"
 RECORDCOUNT="${RECORDCOUNT:-500000}"
-OPERATIONCOUNT="${OPERATIONCOUNT:-1000000}"
+# 10M ops: at the ~300K-400K ops/s the v2-flip cluster sustains in
+# steady-state, this gives a ~25-35s YCSB run — enough for the reshard
+# sweeps' 10s pre-migration baseline + ~5s migration band + ~15s post-
+# migration recovery in the timeseries plots. (3M was too short — at
+# 350K ops/s YCSB completed in 11s, before the migration even started.)
+OPERATIONCOUNT="${OPERATIONCOUNT:-10000000}"
 
 # --- one-time prep: scaled workload files at /rd/workloads/ ----------------
 # build_ycsb.yml copies /rd/workloads/* to each YCSB node, so the scaled

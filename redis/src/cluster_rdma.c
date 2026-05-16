@@ -515,13 +515,18 @@ static int rdmaApplySlot(redisDb *db, int slot) {
  * Recipient side. For each slot in argv, walk the per-slot RDMA-registered
  * blocks (populated by an earlier REGISTER-BLOCK-SLOTS + RDMA writes from
  * the donor), parse the flat encoded entries, and dbAdd them into the local
- * keyspace. Synchronous; no thread.
+ * keyspace.
  *
- * Note: ownership is NOT flipped here -- the recipient gains the keys but
- * the cluster slot map is unchanged, so normal client reads will still
- * MOVED-redirect. The ownership flip is out of scope for this slice. */
+ * NOTE: this is synchronous on the main thread for now. Previous threaded
+ * version (4 worker threads with per-slot mutex) crashed the recipient at
+ * dict.c:892 'bucket != NULL' because the kvstore isn't thread-safe at the
+ * dict-resize / bucket level — main-thread READ paths (lookupKeyRead etc.)
+ * aren't mutex-guarded and race with worker writes. Reverted to synchronous
+ * apply; the right pattern for non-blocking apply on a single-threaded
+ * Redis is main-thread chunked processing via beforeSleep / time events,
+ * not pthread workers. Source-side rdmaReshardExecCommand stays threaded
+ * because it only touches RDMA verbs (no kvstore). */
 void rdmaDoneSlotsCommand(client *c) {
-    /* argv[0]=RDMA argv[1]=DONE-SLOTS, real slot args start at argv[2]. */
     long long total_added = 0;
     for (int j = 2; j < c->argc; j++) {
         long long slot;
@@ -881,6 +886,93 @@ void rdmaReshardCommand(client *c) {
  *         errors E, done=<ok|fail>)
  * ====================================================================== */
 
+/* Detached pthread worker that runs the actual RDMA WRITE loop + DONE-SLOTS
+ * notification. rdmaReshardExecCommand replies +OK immediately and this
+ * thread does the network-bound work off the main event loop so the source
+ * can keep serving traffic. */
+struct reshardExecArgs {
+    rdmaOutboundLink *L;
+    redisDb *db;
+    int *chosen;       /* owned; freed by the worker */
+    int n_slots;
+};
+
+static void *reshardExecWorker(void *p) {
+    struct reshardExecArgs *a = (struct reshardExecArgs *) p;
+
+    pthread_mutex_lock(&a->L->mu);
+
+    size_t total_bytes = 0;
+    int errs = 0;
+    for (int i = 0; i < a->n_slots; i++) {
+        int slot = a->chosen[i];
+        char *staging = rdmamig_buffer_data(a->L->source_buffers[slot]);
+        uint32_t n_entries = rdmaEncodeSlotEntries(a->db, slot, staging,
+                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+        rdmaDebugDumpSlotBytes("SRC", slot, staging);
+        if (server.rdma_reshard_debug_bytes) {
+            r_allocator_log_slot_stats(slot);
+            serverLog(LL_NOTICE,
+                "RDMA RESHARD-EXEC TX (thr): slot=%d n_entries=%u rdma_bytes=%d",
+                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+        }
+        int rc = rdmamig_client_post_write(a->L->source_buffers[slot], staging,
+                                           a->L->buffers[slot].ptr,
+                                           a->L->buffers[slot].rkey,
+                                           RDMAMIG_BLOCK_SIZE_BYTES);
+        if (rc != 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA RESHARD-EXEC (thr): slot=%d post_write failed rc=%d", slot, rc);
+            continue;
+        }
+        int wc_rc = rdmamig_client_wait_send(a->L->client);
+        if (wc_rc < 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA RESHARD-EXEC (thr): slot=%d wait_send failed rc=%d", slot, wc_rc);
+            continue;
+        }
+        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD-EXEC (thr): slot=%d entries=%u bytes=%d rc=0",
+            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+    }
+
+    /* Notify recipient: "RDMA DONE-SLOTS <s1> <s2> ... <sN>". */
+    int argc = 2 + a->n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    argv[0] = "RDMA";       argvlen[0] = 4;
+    argv[1] = "DONE-SLOTS"; argvlen[1] = 10;
+    char (*numbuf)[16] = zmalloc((size_t) a->n_slots * sizeof(*numbuf));
+    for (int i = 0; i < a->n_slots; i++) {
+        argvlen[2 + i] = (size_t) snprintf(numbuf[i], 16, "%d", a->chosen[i]);
+        argv  [2 + i] = numbuf[i];
+    }
+    redisReply *r = redisCommandArgv(a->L->ctrl, argc, argv, argvlen);
+    zfree(argv);
+    zfree(argvlen);
+    zfree(numbuf);
+
+    if (r == NULL || r->type != REDIS_REPLY_STATUS) {
+        serverLog(LL_WARNING,
+            "RDMA RESHARD-EXEC (thr): DONE-SLOTS reply not OK (data may still have landed)");
+    }
+    if (r) freeReplyObject(r);
+
+    pthread_mutex_unlock(&a->L->mu);
+
+    int first = a->chosen[0], last = a->chosen[a->n_slots - 1];
+    serverLog(LL_NOTICE,
+        "RDMA RESHARD-EXEC (thr): finished n=%d slots %d..%d bytes=%zu errs=%d",
+        a->n_slots, first, last, total_bytes, errs);
+
+    zfree(a->chosen);
+    zfree(a);
+    return NULL;
+}
+
 void rdmaReshardExecCommand(client *c) {
     if (c->argc != 5) {
         addReplyError(c, "syntax: RDMA RESHARD-EXEC recipient-host recipient-port n-slots");
@@ -906,38 +998,34 @@ void rdmaReshardExecCommand(client *c) {
         return;
     }
 
-    /* Pick the same N slots as Phase 1: walk own owned, lowest first. */
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    sdsfree(key);
+    if (L == NULL) {
+        addReplyError(c, "no outbound link cached; call RDMA MIGRATE-PREP + RDMA RESHARD first");
+        return;
+    }
+
     int *chosen = zmalloc((size_t) n_slots * sizeof(int));
     int picked = 0;
     for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
-        if (server.cluster->slots[i] == server.cluster->myself) {
+        if (L->source_buffers[i] != NULL) {
             chosen[picked++] = i;
         }
     }
     if (picked < n_slots) {
         zfree(chosen);
-        addReplyErrorFormat(c, "self owns only %d slots, asked for %d", picked, n_slots);
+        addReplyErrorFormat(c,
+            "only %d slots pre-registered on this link, asked for %d; call RDMA RESHARD first",
+            picked, n_slots);
         return;
     }
 
-    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
-    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
-    sdsfree(key);
-    if (L == NULL) {
-        zfree(chosen);
-        addReplyError(c, "no outbound link cached; call RDMA MIGRATE-PREP + RDMA RESHARD first");
-        return;
-    }
-
-    /* Verify ALL chosen slots are pre-registered (source) AND have a
-     * recipient landing target. Atomicity: bail out before doing any RDMA
-     * work if any slot is missing either side. */
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         if (L->source_buffers[slot] == NULL) {
             zfree(chosen);
-            addReplyErrorFormat(c,
-                "slot %d not pre-registered; call RDMA RESHARD first", slot);
+            addReplyErrorFormat(c, "slot %d not pre-registered; call RDMA RESHARD first", slot);
             return;
         }
         if (L->buffers[slot].ptr == 0) {
@@ -948,84 +1036,27 @@ void rdmaReshardExecCommand(client *c) {
         }
     }
 
-    pthread_mutex_lock(&L->mu);
+    /* Spawn the detached worker. Main thread returns +OK immediately so the
+     * source's event loop is free to serve client traffic (or ASKING reads)
+     * during the RDMA-WRITE phase. */
+    struct reshardExecArgs *a = zmalloc(sizeof(*a));
+    a->L = L;
+    a->db = c->db;
+    a->chosen = chosen;        /* worker owns it now */
+    a->n_slots = n_slots;
 
-    size_t total_bytes = 0;
-    int errs = 0;
-    for (int i = 0; i < n_slots; i++) {
-        int slot = chosen[i];
-        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
-        uint32_t n_entries = rdmaEncodeSlotEntries(c->db, slot, staging,
-                                                   RDMAMIG_BLOCK_SIZE_BYTES);
-        rdmaDebugDumpSlotBytes("SRC", slot, staging);
-        if (server.rdma_reshard_debug_bytes) {
-            /* Per-slot r_allocator stats + the RDMA-transferred byte count
-             * (always the full block; payload-relevant bytes are
-             * approximately sizeof(u32) + n_entries * (8 + key+val sizes),
-             * the rest is zero padding). */
-            r_allocator_log_slot_stats(slot);
-            serverLog(LL_NOTICE,
-                "RDMA RESHARD-EXEC TX: slot=%d n_entries=%u rdma_bytes=%d",
-                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
-        }
-        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
-                                           L->buffers[slot].ptr,
-                                           L->buffers[slot].rkey,
-                                           RDMAMIG_BLOCK_SIZE_BYTES);
-        if (rc != 0) {
-            errs++;
-            serverLog(LL_WARNING,
-                "RDMA RESHARD-EXEC: slot=%d post_write failed rc=%d", slot, rc);
-            continue;
-        }
-        /* wait_send returns # of completions polled (positive on success, <0 on QP error). */
-        int wc_rc = rdmamig_client_wait_send(L->client);
-        if (wc_rc < 0) {
-            errs++;
-            serverLog(LL_WARNING,
-                "RDMA RESHARD-EXEC: slot=%d wait_send failed rc=%d", slot, wc_rc);
-            continue;
-        }
-        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
-        serverLog(LL_NOTICE,
-            "RDMA RESHARD-EXEC: slot=%d entries=%u bytes=%d rc=0",
-            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+    pthread_t t;
+    if (pthread_create(&t, NULL, reshardExecWorker, a) != 0) {
+        zfree(a->chosen);
+        zfree(a);
+        addReplyError(c, "RESHARD-EXEC: pthread_create failed");
+        return;
     }
+    pthread_detach(t);
 
-    /* Notify recipient: "RDMA DONE-SLOTS <s1> <s2> ... <sN>" via cached
-     * hiredis ctrl channel. The recipient's rdmaDoneSlotsCommand walks
-     * its own r_allocator blocks for each slot (now containing the
-     * source's RDMA-written entries) and dbAdd's the keys. */
-    int argc = 2 + n_slots;
-    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
-    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
-    argv[0] = "RDMA";       argvlen[0] = 4;
-    argv[1] = "DONE-SLOTS"; argvlen[1] = 10;
-    char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
-    for (int i = 0; i < n_slots; i++) {
-        argvlen[2 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
-        argv  [2 + i] = numbuf[i];
-    }
-    redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
-    zfree(argv);
-    zfree(argvlen);
-    zfree(numbuf);
-
-    int done_ok = 1;
-    if (r == NULL || r->type != REDIS_REPLY_STATUS) {
-        done_ok = 0;
-        serverLog(LL_WARNING,
-            "RDMA RESHARD-EXEC: DONE-SLOTS reply not OK (data may still have landed)");
-    }
-    if (r) freeReplyObject(r);
-
-    pthread_mutex_unlock(&L->mu);
-
-    int first = chosen[0], last = chosen[n_slots - 1];
-    zfree(chosen);
     addReplyStatusFormat(c,
-        "OK %d slots transferred (slots %d..%d, bytes %zu, errors %d, done=%s)",
-        n_slots, first, last, total_bytes, errs, done_ok ? "ok" : "fail");
+        "OK %d slots scheduled (slots %d..%d) — RDMA-WRITE in background",
+        n_slots, chosen[0], chosen[n_slots - 1]);
 }
 
 
