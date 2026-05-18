@@ -1328,7 +1328,10 @@ void rdmaReshardFlipCommand(client *c) {
      *    migrating_slots_to[slot] = recipient_node so the patched
      *    getNodeByQuery on the source recognises v2-active slots and
      *    accepts ASKING reads for them while we still hold the locked
-     *    snapshot. */
+     *    snapshot.
+     *
+     *    Multi-slot mutation; topology wrlock for the whole loop. */
+    clusterTopoLockWrite();
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         clusterDelSlot(slot);
@@ -1340,6 +1343,7 @@ void rdmaReshardFlipCommand(client *c) {
             "(source locked, migrating_slots_to set)",
             slot, recipient_id);
     }
+    clusterTopoUnlock();
 
     pthread_mutex_unlock(&L->mu);
 
@@ -1401,10 +1405,16 @@ void rdmaReshardRecvFlipCommand(client *c) {
     }
 
     int flipped = 0;
+    /* Multi-slot mutation across user-supplied slot list. Topology wrlock
+     * for the whole loop; the early-return on bad-slot must drop the lock
+     * (pre-existing bug: slots already flipped before the bad one stay
+     * flipped — not addressed here). */
+    clusterTopoLockWrite();
     for (int j = 3; j < c->argc; j++) {
         long long slot_ll;
         if (getLongLongFromObject(c->argv[j], &slot_ll) != C_OK ||
             slot_ll < 0 || slot_ll >= CLUSTER_SLOTS) {
+            clusterTopoUnlock();
             addReplyErrorFormat(c, "RESHARD-RECV-FLIP: bad slot %s",
                                 (char *) c->argv[j]->ptr);
             return;
@@ -1425,6 +1435,7 @@ void rdmaReshardRecvFlipCommand(client *c) {
             "RDMA RESHARD-RECV-FLIP: slot=%d imported from %s, ownership claimed",
             slot, src_id_str);
     }
+    clusterTopoUnlock();
 
     addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }

@@ -65,6 +65,7 @@ void clusterDoBeforeSleep(int flags);
 void clusterSendUpdate(clusterLink *link, clusterNode *node);
 void resetManualFailover(void);
 void clusterCloseAllSlots(void);
+static void clusterCloseAllSlotsUnsafe(void);
 void clusterSetNodeAsMaster(clusterNode *n);
 void clusterDelNode(clusterNode *delnode);
 sds representClusterNodeFlags(sds ci, uint16_t flags);
@@ -1131,16 +1132,17 @@ void clusterReset(int hard) {
         emptyData(-1,EMPTYDB_NO_FLAGS,NULL);
     }
 
-    /* Close slots, reset manual failover state. */
-    clusterCloseAllSlots();
+    /* The slot-table teardown (close migrating/importing arrays + unassign all
+     * slots) must look atomic to readers. Hold topology wrlock across both
+     * the close + the for-loop. ASM cancels don't touch slot state but are
+     * cheap; safe to hold the lock through them. */
+    clusterTopoLockWrite();
+    clusterCloseAllSlotsUnsafe();
     resetManualFailover();
-
-    /* Cancel all ASM tasks */
     clusterAsmCancel(NULL, "CLUSTER RESET");
     asmCancelTrimJobs();
-
-    /* Unassign all the slots. */
     for (j = 0; j < CLUSTER_SLOTS; j++) clusterDelSlot(j);
+    clusterTopoUnlock();
 
     /* Recreate shards dict */
     dictEmpty(server.cluster->shards, NULL);
@@ -1603,7 +1605,9 @@ void clusterDelNode(clusterNode *delnode) {
     dictIterator di;
     dictEntry *de;
 
-    /* 1) Mark slots as unassigned. */
+    /* 1) Mark slots as unassigned. Multi-slot mutation across slots[],
+     *    migrating_slots_to[], importing_slots_from[] — hold topology wrlock. */
+    clusterTopoLockWrite();
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (server.cluster->importing_slots_from[j] == delnode)
             server.cluster->importing_slots_from[j] = NULL;
@@ -1612,6 +1616,7 @@ void clusterDelNode(clusterNode *delnode) {
         if (server.cluster->slots[j] == delnode)
             clusterDelSlot(j);
     }
+    clusterTopoUnlock();
 
     /* 2) Remove failure reports. */
     dictInitSafeIterator(&di, server.cluster->nodes);
@@ -2419,6 +2424,12 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
     }
 
     slotRangeArray *sra = NULL;
+    /* Gossip-driven sparse multi-slot rebind. Topology wrlock for the whole
+     * loop — the loop may call clusterDelSlot/clusterAddSlot many times,
+     * each of which expects the caller to hold the appropriate lock.
+     * Released before the clusterSetMaster path below to avoid recursive
+     * acquisition (clusterSetMaster -> clusterCloseAllSlots). */
+    clusterTopoLockWrite();
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (bitmapTestBit(slots,j)) {
             sender_slots++;
@@ -2480,6 +2491,7 @@ void clusterUpdateSlotsConfigWith(clusterNode *sender, uint64_t senderConfigEpoc
             bitmapSetBit(server.cluster->owner_not_claiming_slot, j);
         }
     }
+    clusterTopoUnlock();
 
     /* Notify ASM about the config update */
     struct asmTask *asm_task = NULL;
@@ -3244,6 +3256,9 @@ int clusterProcessPacket(clusterLink *link) {
         if (sender && dirty_slots) {
             int j;
 
+            /* Multi-slot read scan: topology rdlock excludes concurrent
+             * topology mutators (gossip UPDATE, RESET) for the duration. */
+            clusterTopoLockRead();
             for (j = 0; j < CLUSTER_SLOTS; j++) {
                 if (bitmapTestBit(hdr->myslots,j)) {
                     if (server.cluster->slots[j] == sender ||
@@ -3265,6 +3280,7 @@ int clusterProcessPacket(clusterLink *link) {
                     }
                 }
             }
+            clusterTopoUnlock();
         }
 
         /* If our config epoch collides with the sender's try to fix
@@ -4164,7 +4180,8 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
 
     /* The slave requesting the vote must have a configEpoch for the claimed
      * slots that is >= the one of the masters currently serving the same
-     * slots in the current configuration. */
+     * slots in the current configuration. Multi-slot read: topology rdlock. */
+    clusterTopoLockRead();
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (bitmapTestBit(claimed_slots, j) == 0) continue;
         if (isSlotUnclaimed(j) ||
@@ -4181,8 +4198,10 @@ void clusterSendFailoverAuthIfNeeded(clusterNode *node, clusterMsg *request) {
                 node->name, node->human_nodename, j,
                 (unsigned long long) server.cluster->slots[j]->configEpoch,
                 (unsigned long long) requestConfigEpoch);
+        clusterTopoUnlock();
         return;
     }
+    clusterTopoUnlock();
 
     /* We can vote for this slave. */
     server.cluster->lastVoteEpoch = server.cluster->currentEpoch;
@@ -4309,13 +4328,17 @@ void clusterFailoverReplaceYourMaster(void) {
     clusterSetNodeAsMaster(myself);
     replicationUnsetMaster();
 
-    /* 2) Claim all the slots assigned to our master. */
+    /* 2) Claim all the slots assigned to our master. Multi-slot mutation
+     * (per-node bitmap read + slots[]/per-node bitmap writes): topology
+     * wrlock for the whole loop. */
+    clusterTopoLockWrite();
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (clusterNodeCoversSlot(oldmaster, j)) {
             clusterDelSlot(j);
             clusterAddSlot(myself,j);
         }
     }
+    clusterTopoUnlock();
 
     /* 3) Update state and save config. */
     clusterUpdateState();
@@ -5148,6 +5171,8 @@ int clusterDelSlot(int slot) {
 int clusterMoveNodeSlots(clusterNode *from_node, clusterNode *to_node) {
     int processed = 0;
 
+    /* Multi-slot mutation: hold topology wrlock for the whole loop. */
+    clusterTopoLockWrite();
     for (int j = 0; j < CLUSTER_SLOTS; j++) {
         if (clusterNodeCoversSlot(from_node, j)) {
             clusterDelSlot(j);
@@ -5155,6 +5180,7 @@ int clusterMoveNodeSlots(clusterNode *from_node, clusterNode *to_node) {
             processed++;
         }
     }
+    clusterTopoUnlock();
     return processed;
 }
 
@@ -5163,22 +5189,35 @@ int clusterMoveNodeSlots(clusterNode *from_node, clusterNode *to_node) {
 int clusterDelNodeSlots(clusterNode *node) {
     int deleted = 0, j;
 
+    /* Multi-slot mutation: hold topology wrlock for the whole loop. */
+    clusterTopoLockWrite();
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (clusterNodeCoversSlot(node, j)) {
             clusterDelSlot(j);
             deleted++;
         }
     }
+    clusterTopoUnlock();
     return deleted;
 }
 
 /* Clear the migrating / importing state for all the slots.
- * This is useful at initialization and when turning a master into slave. */
-void clusterCloseAllSlots(void) {
+ * This is useful at initialization and when turning a master into slave.
+ *
+ * Internal helper: assumes caller holds cluster_topology_lock in wrlock mode
+ * (or runs single-threaded before any worker exists, e.g. clusterInit). */
+static void clusterCloseAllSlotsUnsafe(void) {
     memset(server.cluster->migrating_slots_to,0,
         sizeof(server.cluster->migrating_slots_to));
     memset(server.cluster->importing_slots_from,0,
         sizeof(server.cluster->importing_slots_from));
+}
+
+/* Public entry: takes topology wrlock around the bulk reset. */
+void clusterCloseAllSlots(void) {
+    clusterTopoLockWrite();
+    clusterCloseAllSlotsUnsafe();
+    clusterTopoUnlock();
 }
 
 /* -----------------------------------------------------------------------------
@@ -5216,8 +5255,9 @@ void clusterUpdateState(void) {
      * are the right conditions. */
     new_state = CLUSTER_OK;
 
-    /* Check if all the slots are covered. */
+    /* Check if all the slots are covered. Multi-slot read scan: topo rdlock. */
     if (server.cluster_require_full_coverage) {
+        clusterTopoLockRead();
         for (j = 0; j < CLUSTER_SLOTS; j++) {
             if (server.cluster->slots[j] == NULL ||
                 server.cluster->slots[j]->flags & (CLUSTER_NODE_FAIL))
@@ -5226,6 +5266,7 @@ void clusterUpdateState(void) {
                 break;
             }
         }
+        clusterTopoUnlock();
     }
 
     /* Compute the cluster size, that is the number of master nodes
@@ -5294,11 +5335,14 @@ void clusterUpdateState(void) {
 static inline void removeAllNotOwnedShardChannelSubscriptions(void) {
     if (!kvstoreSize(server.pubsubshard_channels)) return;
     clusterNode *currmaster = clusterNodeIsMaster(myself) ? myself : myself->slaveof;
+    /* Multi-slot read scan; topology rdlock excludes concurrent mutators. */
+    clusterTopoLockRead();
     for (int j = 0; j < CLUSTER_SLOTS; j++) {
         if (server.cluster->slots[j] != currmaster) {
             removeChannelsInSlot(j);
         }
     }
+    clusterTopoUnlock();
 }
 
 /* This function is called after the node startup in order to check if there
@@ -5308,6 +5352,10 @@ void clusterClaimUnassignedSlots(void) {
     if (nodeIsSlave(myself)) return;
 
     int update_config = 0;
+    /* Multi-slot scan + conditional mutation. Hold topology wrlock for the
+     * whole loop — mutations are sparse so a per-slot upgrade would be
+     * lock-thrashing for ~16k iterations. */
+    clusterTopoLockWrite();
     for (int i = 0; i < CLUSTER_SLOTS; i++) {
         /* Skip if: no keys, already has an owner, or we are importing it. */
         if (!countKeysInSlot(i) ||
@@ -5325,6 +5373,7 @@ void clusterClaimUnassignedSlots(void) {
                              "Taking responsibility for it.", i);
         clusterAddSlot(myself, i);
     }
+    clusterTopoUnlock();
     if (update_config) clusterSaveConfigOrDie(1);
 }
 
@@ -5468,7 +5517,10 @@ sds clusterGenNodeDescription(client *c, clusterNode *node, int tls_primary) {
                     "connected" : "disconnected");
 
     /* Slots served by this instance. If we already have slots info,
-     * append it directly, otherwise, generate slots only if it has. */
+     * append it directly, otherwise, generate slots only if it has.
+     * Multi-slot scan over the per-node bitmap + migrating/importing arrays;
+     * topology rdlock for a consistent snapshot. */
+    clusterTopoLockRead();
     if (node->slot_info_pairs) {
         ci = representSlotInfo(ci, node->slot_info_pairs, node->slot_info_pairs_count);
     } else if (node->numslots > 0) {
@@ -5506,6 +5558,7 @@ sds clusterGenNodeDescription(client *c, clusterNode *node, int tls_primary) {
             }
         }
     }
+    clusterTopoUnlock();
     return ci;
 }
 
@@ -5517,6 +5570,9 @@ void clusterGenNodesSlotsInfo(int filter) {
     clusterNode *n = NULL;
     int start = -1;
 
+    /* Multi-slot read scan for CLUSTER SHARDS / NODES output generation.
+     * Topology rdlock to get a consistent snapshot. */
+    clusterTopoLockRead();
     for (int i = 0; i <= CLUSTER_SLOTS; i++) {
         /* Find start node and slot id. */
         if (n == NULL) {
@@ -5542,6 +5598,7 @@ void clusterGenNodesSlotsInfo(int filter) {
             start = i;
         }
     }
+    clusterTopoUnlock();
 }
 
 void clusterFreeNodesSlotsInfo(clusterNode *n) {
@@ -5677,28 +5734,38 @@ const char *clusterGetMessageTypeString(int type) {
 
 int checkSlotAssignmentsOrReply(client *c, unsigned char *slots, int del, int start_slot, int end_slot) {
     int slot;
+    /* Validation pass over the slot table: a sparse range read. Topology
+     * rdlock excludes mutators for the duration; we don't need per-slot
+     * locks since we're just reading slots[slot] once per index. */
+    clusterTopoLockRead();
     for (slot = start_slot; slot <= end_slot; slot++) {
         if (del && server.cluster->slots[slot] == NULL) {
             addReplyErrorFormat(c,"Slot %d is already unassigned", slot);
+            clusterTopoUnlock();
             return C_ERR;
         } else if (!del && server.cluster->slots[slot]) {
             addReplyErrorFormat(c,"Slot %d is already busy", slot);
+            clusterTopoUnlock();
             return C_ERR;
         }
         if (slots[slot]++ == 1) {
             addReplyErrorFormat(c,"Slot %d specified multiple times",(int)slot);
+            clusterTopoUnlock();
             return C_ERR;
         }
     }
+    clusterTopoUnlock();
     return C_OK;
 }
 
 void clusterUpdateSlots(client *c, unsigned char *slots, int del) {
     int j;
+    /* Multi-slot mutation: topology wrlock for the whole loop. */
+    clusterTopoLockWrite();
     for (j = 0; j < CLUSTER_SLOTS; j++) {
         if (slots[j]) {
             int retval;
-                
+
             /* If this slot was set as importing we can clear this
              * state as now we are the real owner of the slot. */
             if (server.cluster->importing_slots_from[j])
@@ -5712,6 +5779,7 @@ void clusterUpdateSlots(client *c, unsigned char *slots, int del) {
             serverAssertWithInfo(c,NULL,retval == C_OK);
         }
     }
+    clusterTopoUnlock();
 }
 
 int clusterGetShardCount(void) {
@@ -6145,42 +6213,54 @@ int clusterCommandSpecial(client *c) {
         }
 
         if (!strcasecmp(c->argv[3]->ptr,"migrating") && c->argc == 5) {
+            clusterSlotLockWrite(slot);
             if (server.cluster->slots[slot] != myself) {
+                clusterSlotUnlock(slot);
                 addReplyErrorFormat(c,"I'm not the owner of hash slot %u",slot);
                 return 1;
             }
             n = clusterLookupNode(c->argv[4]->ptr, sdslen(c->argv[4]->ptr));
             if (n == NULL) {
+                clusterSlotUnlock(slot);
                 addReplyErrorFormat(c,"I don't know about node %s",
                     (char*)c->argv[4]->ptr);
                 return 1;
             }
             if (nodeIsSlave(n)) {
+                clusterSlotUnlock(slot);
                 addReplyError(c,"Target node is not a master");
                 return 1;
             }
             server.cluster->migrating_slots_to[slot] = n;
+            clusterSlotUnlock(slot);
         } else if (!strcasecmp(c->argv[3]->ptr,"importing") && c->argc == 5) {
+            clusterSlotLockWrite(slot);
             if (server.cluster->slots[slot] == myself) {
+                clusterSlotUnlock(slot);
                 addReplyErrorFormat(c,
                     "I'm already the owner of hash slot %u",slot);
                 return 1;
             }
             n = clusterLookupNode(c->argv[4]->ptr, sdslen(c->argv[4]->ptr));
             if (n == NULL) {
+                clusterSlotUnlock(slot);
                 addReplyErrorFormat(c,"I don't know about node %s",
                     (char*)c->argv[4]->ptr);
                 return 1;
             }
             if (nodeIsSlave(n)) {
+                clusterSlotUnlock(slot);
                 addReplyError(c,"Target node is not a master");
                 return 1;
             }
             server.cluster->importing_slots_from[slot] = n;
+            clusterSlotUnlock(slot);
         } else if (!strcasecmp(c->argv[3]->ptr,"stable") && c->argc == 4) {
             /* CLUSTER SETSLOT <SLOT> STABLE */
+            clusterSlotLockWrite(slot);
             server.cluster->importing_slots_from[slot] = NULL;
             server.cluster->migrating_slots_to[slot] = NULL;
+            clusterSlotUnlock(slot);
         } else if (!strcasecmp(c->argv[3]->ptr,"node") && c->argc == 5) {
             /* CLUSTER SETSLOT <SLOT> NODE <NODE ID> */
             n = clusterLookupNode(c->argv[4]->ptr, sdslen(c->argv[4]->ptr));
@@ -6193,10 +6273,16 @@ int clusterCommandSpecial(client *c) {
                 addReplyError(c,"Target node is not a master");
                 return 1;
             }
+            /* Slot ownership + state mutation under per-slot wrlock. The
+             * lock is released before clusterSetMaster because that path
+             * takes the topology wrlock (via clusterCloseAllSlots), which
+             * would deadlock against our held topology rdlock prefix. */
+            clusterSlotLockWrite(slot);
             /* If this hash slot was served by 'myself' before to switch
              * make sure there are no longer local keys for this hash slot. */
             if (server.cluster->slots[slot] == myself && n != myself) {
                 if (countKeysInSlot(slot) != 0) {
+                    clusterSlotUnlock(slot);
                     addReplyErrorFormat(c,
                         "Can't assign hashslot %d to a different node "
                         "while I still hold keys for this hash slot.", slot);
@@ -6213,6 +6299,7 @@ int clusterCommandSpecial(client *c) {
             int slot_was_mine = server.cluster->slots[slot] == myself;
             clusterDelSlot(slot);
             clusterAddSlot(n,slot);
+            clusterSlotUnlock(slot);
 
             /* If we are a master left without slots, we should turn into a
              * replica of the new master. */
@@ -6232,7 +6319,10 @@ int clusterCommandSpecial(client *c) {
             }
 
             /* If this node was importing this slot, assigning the slot to
-             * itself also clears the importing status. */
+             * itself also clears the importing status. Re-take the slot
+             * lock for this check + clear (we released it above to call
+             * clusterSetMaster safely). */
+            clusterSlotLockWrite(slot);
             if (n == myself &&
                 server.cluster->importing_slots_from[slot]) {
                 /* This slot was manually migrated, set this node configEpoch
@@ -6253,6 +6343,7 @@ int clusterCommandSpecial(client *c) {
                  * soon as possible. */
                 clusterDoBeforeSleep(CLUSTER_TODO_BROADCAST_PONG);
             }
+            clusterSlotUnlock(slot);
         } else {
             addReplyError(c,
                 "Invalid CLUSTER SETSLOT action or number of arguments. Try CLUSTER HELP");
@@ -6529,12 +6620,21 @@ clusterNode *clusterNodeGetSlave(clusterNode *node, int slave_idx) {
     return node->slaves[slave_idx];
 }
 
+/* Single-slot reads on the hot path. Each takes the slot rdlock so we are
+ * consistent with the recipient-apply worker writes. Callers must NOT hold
+ * any cluster lock when entering — these helpers take their own. */
 clusterNode *getMigratingSlotDest(int slot) {
-    return server.cluster->migrating_slots_to[slot];
+    clusterSlotLockRead(slot);
+    clusterNode *n = server.cluster->migrating_slots_to[slot];
+    clusterSlotUnlock(slot);
+    return n;
 }
 
 clusterNode *getImportingSlotSource(int slot) {
-    return server.cluster->importing_slots_from[slot];
+    clusterSlotLockRead(slot);
+    clusterNode *n = server.cluster->importing_slots_from[slot];
+    clusterSlotUnlock(slot);
+    return n;
 }
 
 int isClusterHealthy(void) {
@@ -6542,7 +6642,10 @@ int isClusterHealthy(void) {
 }
 
 clusterNode *getNodeBySlot(int slot) {
-    return server.cluster->slots[slot];
+    clusterSlotLockRead(slot);
+    clusterNode *n = server.cluster->slots[slot];
+    clusterSlotUnlock(slot);
+    return n;
 }
 
 char *clusterNodeHostname(clusterNode *node) {
