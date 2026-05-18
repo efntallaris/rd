@@ -78,6 +78,45 @@ int clusterSlotIsImporting(int slot);
  * itself's responsibility — see e.g. db.c:dbAddInternal. */
 extern __thread int cluster_slot_lock_held_by_thread;
 
+/* ---- Aqueduct slot-state machine (client-side double-read protocol) ----
+ *
+ * Each slot has a migration state. The state and the peer endpoint are
+ * embedded in every GET reply (when server.slot_meta_reply is on) so
+ * cooperative clients can maintain their own slot cache and fan reads out
+ * to both donor and recipient during MIGRATING — avoiding the MOVED / ASK
+ * topology-refresh storm that otherwise stalls workloads for several
+ * seconds per migration.
+ *
+ *   STABLE     — default. Owner serves normally.
+ *   MIGRATING  — migration in flight. Donor and recipient may each hold
+ *                partial data; both serve their local copy. Client must
+ *                fan out reads to both endpoints.
+ *   MIGRATED   — donor has flipped ownership to recipient; donor still
+ *                holds the snapshot. Client should route writes to peer
+ *                (the recipient). Recipient is canonical for reads.
+ */
+typedef enum {
+    SLOT_STATE_STABLE = 0,
+    SLOT_STATE_MIGRATING = 1,
+    SLOT_STATE_MIGRATED = 2,
+} slotMigState;
+
+/* State mutators — acquire slot_locks[s] in write mode internally. The peer
+ * endpoint is the donor's host:port on the recipient side, or the
+ * recipient's host:port on the donor side. Pass NULL endpoint to leave it
+ * unchanged. No-op when cluster mode is disabled. */
+void slotMigStateSet(int slot, slotMigState state, const char *peer_endpoint);
+
+/* State readers — acquire slot_locks[s] in read mode internally. Returns
+ * SLOT_STATE_STABLE in non-cluster mode. peer_out may be NULL; if non-NULL
+ * receives a copy of the snapshotted endpoint (or empty string when STABLE). */
+slotMigState slotMigStateGet(int slot, char *peer_out, size_t peer_out_sz);
+
+/* Reply helper: append `[state, peer_endpoint, value_or_nil]` as a 3-element
+ * array on the wire. Used by GET / GETEX when server.slot_meta_reply is on.
+ * `value` may be NULL (writes a nil bulk). */
+void addReplyGetWithMeta(client *c, int slot, robj *value);
+
 /* Forward decls for the rdma_migration library's opaque types. The full
  * definitions live in redis/src/rdma_migration/. */
 struct rdmamig_server;
@@ -252,6 +291,7 @@ void clusterPromoteSelfToMaster(void);
 int clusterManualFailoverTimeLimit(void);
 
 void clusterCommandSlots(client * c);
+void clusterCommandSlotState(client *c);
 void clusterCommandMyId(client *c);
 void clusterCommandMyShardId(client *c);
 

@@ -1013,6 +1013,46 @@ int clusterSlotIsImporting(int slot) {
     return server.cluster->importing_slots_from[slot] != NULL;
 }
 
+/* Aqueduct slot-state machine — see cluster.h header comment. */
+void slotMigStateSet(int slot, slotMigState state, const char *peer_endpoint) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    clusterSlotLockWrite(slot);
+    server.cluster->slot_mig_state[slot] = (uint8_t) state;
+    if (peer_endpoint != NULL) {
+        size_t n = strlen(peer_endpoint);
+        if (n >= NET_HOST_PORT_STR_LEN) n = NET_HOST_PORT_STR_LEN - 1;
+        memcpy(server.cluster->slot_peer_endpoint[slot], peer_endpoint, n);
+        server.cluster->slot_peer_endpoint[slot][n] = '\0';
+    } else if (state == SLOT_STATE_STABLE) {
+        /* Clear endpoint when returning to STABLE. */
+        server.cluster->slot_peer_endpoint[slot][0] = '\0';
+    }
+    clusterSlotUnlock(slot);
+}
+
+slotMigState slotMigStateGet(int slot, char *peer_out, size_t peer_out_sz) {
+    if (server.cluster == NULL) {
+        if (peer_out && peer_out_sz > 0) peer_out[0] = '\0';
+        return SLOT_STATE_STABLE;
+    }
+    if (slot < 0 || slot >= CLUSTER_SLOTS) {
+        if (peer_out && peer_out_sz > 0) peer_out[0] = '\0';
+        return SLOT_STATE_STABLE;
+    }
+    clusterSlotLockRead(slot);
+    slotMigState s = (slotMigState) server.cluster->slot_mig_state[slot];
+    if (peer_out && peer_out_sz > 0) {
+        size_t n = strnlen(server.cluster->slot_peer_endpoint[slot],
+                           NET_HOST_PORT_STR_LEN);
+        if (n >= peer_out_sz) n = peer_out_sz - 1;
+        memcpy(peer_out, server.cluster->slot_peer_endpoint[slot], n);
+        peer_out[n] = '\0';
+    }
+    clusterSlotUnlock(slot);
+    return s;
+}
+
 void clusterInit(void) {
     int saveconf = 0;
 
@@ -1042,6 +1082,8 @@ void clusterInit(void) {
     server.cluster->stat_cluster_links_buffer_limit_exceeded = 0;
 
     memset(server.cluster->slots,0, sizeof(server.cluster->slots));
+    memset(server.cluster->slot_mig_state, 0, sizeof(server.cluster->slot_mig_state));
+    memset(server.cluster->slot_peer_endpoint, 0, sizeof(server.cluster->slot_peer_endpoint));
     pthread_rwlock_init(&server.cluster->cluster_topology_lock, NULL);
     for (int i = 0; i < CLUSTER_SLOTS; i++) {
         pthread_rwlock_init(&server.cluster->slot_locks[i], NULL);

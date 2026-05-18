@@ -16,6 +16,7 @@
 #define CLUSTER_LEGACY_H
 
 #include <pthread.h>
+#include <stdint.h>
 
 #define CLUSTER_PORT_INCR 10000 /* Cluster port = baseport + PORT_INCR */
 
@@ -368,6 +369,15 @@ struct clusterState {
      * clusterSlotLockWrite(s)/clusterSlotUnlock(s) (see cluster.h). */
     pthread_rwlock_t cluster_topology_lock;
     pthread_rwlock_t slot_locks[CLUSTER_SLOTS];
+    /* Aqueduct slot-state machine — drives the client-side double-read protocol.
+     * Each GET reply embeds (state, peer_endpoint) so YCSB-class clients can
+     * fan out reads to donor + recipient during MIGRATING and route writes to
+     * the canonical owner when MIGRATED. See plan in
+     * /users/entall/.claude/plans/can-you-please-check-twinkling-newell.md.
+     * Mutations under slot_locks[S] write-mode; reads under slot_locks[S]
+     * read-mode (already taken by the existing getNodeBySlot path). */
+    uint8_t slot_mig_state[CLUSTER_SLOTS];
+    char slot_peer_endpoint[CLUSTER_SLOTS][NET_HOST_PORT_STR_LEN];
     char internal_secret[CLUSTER_INTERNALSECRETLEN];
     /* The following fields are used to take the slave state on elections. */
     mstime_t failover_auth_time; /* Time of previous or next election. */

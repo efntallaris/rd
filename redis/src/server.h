@@ -2175,6 +2175,14 @@ struct redisServer {
                                        on both source and recipient, for cross-checking
                                        that RDMA writes landed correctly. Off in
                                        production runs — verbose. */
+    int slot_meta_reply;            /* Aqueduct slot-state machine: when on, GET (and
+                                       GETEX) wrap their reply in a 3-element array
+                                       carrying (state, peer_endpoint, value). Allows
+                                       cooperative clients to drive client-side double
+                                       reads during migration and skip the MOVED/ASK
+                                       topology-refresh dance. Off by default —
+                                       breaks unmodified clients (incl. redis-cli)
+                                       that expect plain bulk replies. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */

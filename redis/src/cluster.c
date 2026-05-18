@@ -1034,6 +1034,9 @@ void clusterCommand(client *c) {
     } else if (!strcasecmp(c->argv[1]->ptr,"slots") && c->argc == 2) {
         /* CLUSTER SLOTS */
         clusterCommandSlots(c);
+    } else if (!strcasecmp(c->argv[1]->ptr,"slotstate") && c->argc == 2) {
+        /* CLUSTER SLOTSTATE — aqueduct: dump every non-STABLE slot. */
+        clusterCommandSlotState(c);
     } else if (!strcasecmp(c->argv[1]->ptr,"shards") && c->argc == 2) {
         /* CLUSTER SHARDS */
         clusterCommandShards(c);
@@ -1307,6 +1310,20 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
                     if (error_code)
                         *error_code = CLUSTER_REDIR_DOWN_UNBOUND;
                     return NULL;
+                }
+
+                /* Aqueduct slot-state machine: for any slot in active migration
+                 * (MIGRATING or MIGRATED), both donor and recipient serve
+                 * locally. The cooperative client (driven by the metadata
+                 * embedded in every GET reply) is responsible for fan-out and
+                 * write routing — no MOVED, no ASK. */
+                if (server.slot_meta_reply) {
+                    slotMigState ms = slotMigStateGet(slot, NULL, 0);
+                    if (ms != SLOT_STATE_STABLE) {
+                        if (!use_cache_keys_result) getKeysFreeResult(&result);
+                        if (hashslot) *hashslot = slot;
+                        return myself;
+                    }
                 }
 
                 /* If we are migrating or importing this slot, we need to check
@@ -1721,6 +1738,48 @@ void clusterCommandSlots(client * c) {
         }
     }
     setDeferredArrayLen(c, slot_replylen, num_masters);
+}
+
+/* Aqueduct slot-state + double-read protocol helpers ---------------------- */
+
+/* Append a 3-element array reply: [state, peer_endpoint, value_or_nil].
+ * Used by GET / GETEX when server.slot_meta_reply is on. Client (e.g. the
+ * YCSB driver) parses the array, refreshes its slot cache from
+ * (state, peer_endpoint), and consumes the third element as the value. */
+void addReplyGetWithMeta(client *c, int slot, robj *value) {
+    char peer[NET_HOST_PORT_STR_LEN];
+    slotMigState s = slotMigStateGet(slot, peer, sizeof(peer));
+    addReplyArrayLen(c, 3);
+    addReplyLongLong(c, (long long) s);
+    if (peer[0] == '\0') {
+        addReplyBulkCBuffer(c, "", 0);
+    } else {
+        addReplyBulkCString(c, peer);
+    }
+    if (value == NULL) {
+        addReplyNull(c);
+    } else {
+        addReplyBulk(c, value);
+    }
+}
+
+/* CLUSTER SLOTSTATE — bootstrap-time dump of every non-STABLE slot. Returned
+ * as an array of 3-element arrays [slot, state, peer_endpoint]. Empty array
+ * when no migration is in flight. */
+void clusterCommandSlotState(client *c) {
+    void *replylen = addReplyDeferredLen(c);
+    int n = 0;
+    for (int s = 0; s < CLUSTER_SLOTS; s++) {
+        char peer[NET_HOST_PORT_STR_LEN];
+        slotMigState st = slotMigStateGet(s, peer, sizeof(peer));
+        if (st == SLOT_STATE_STABLE) continue;
+        addReplyArrayLen(c, 3);
+        addReplyLongLong(c, (long long) s);
+        addReplyLongLong(c, (long long) st);
+        addReplyBulkCString(c, peer[0] ? peer : "");
+        n++;
+    }
+    setDeferredArrayLen(c, replylen, n);
 }
 
 /* -----------------------------------------------------------------------------

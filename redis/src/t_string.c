@@ -8,6 +8,7 @@
  */
 
 #include "server.h"
+#include "cluster.h"
 #include "xxhash.h"
 #include <math.h> /* isnan(), isinf() */
 
@@ -438,6 +439,15 @@ void psetexCommand(client *c) {
 int getGenericCommand(client *c) {
     kvobj *o;
 
+    if (server.slot_meta_reply) {
+        /* Aqueduct: wrap the reply (nil or value) in [state, peer, value]. */
+        o = lookupKeyRead(c->db, c->argv[1]);
+        if (o != NULL && checkType(c, o, OBJ_STRING)) return C_ERR;
+        int slot = keyHashSlot(c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
+        addReplyGetWithMeta(c, slot, o);
+        return C_OK;
+    }
+
     if ((o = lookupKeyReadOrReply(c, c->argv[1], shared.null[c->resp])) == NULL)
         return C_OK;
 
@@ -482,8 +492,19 @@ void getexCommand(client *c) {
 
     kvobj *o;
 
-    if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
-        return;
+    if (server.slot_meta_reply) {
+        /* Aqueduct: defer reply so it can be metadata-wrapped after we
+         * decide whether the key is being expired/deleted. */
+        o = lookupKeyRead(c->db, c->argv[1]);
+        if (o == NULL) {
+            int slot = keyHashSlot(c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
+            addReplyGetWithMeta(c, slot, NULL);
+            return;
+        }
+    } else {
+        if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.null[c->resp])) == NULL)
+            return;
+    }
 
     if (checkType(c,o,OBJ_STRING)) {
         return;
@@ -496,7 +517,12 @@ void getexCommand(client *c) {
     }
 
     /* We need to do this before we expire the key or delete it */
-    addReplyBulk(c,o);
+    if (server.slot_meta_reply) {
+        int slot = keyHashSlot(c->argv[1]->ptr, sdslen(c->argv[1]->ptr));
+        addReplyGetWithMeta(c, slot, o);
+    } else {
+        addReplyBulk(c,o);
+    }
 
     /* This command is never propagated as is. It is either propagated as PEXPIRE[AT],DEL,UNLINK or PERSIST.
      * This why it doesn't need special handling in feedAppendOnlyFile to convert relative expire time to absolute one. */

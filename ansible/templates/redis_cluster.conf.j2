@@ -18,5 +18,11 @@ logfile {{ redis_log_dir }}/{{ inventory_hostname }}__
 # because the directive doesn't exist upstream.
 cluster-rdma-allocator-shadow yes
 cluster-rdma-allocator-skip-lock {{ "yes" if (rdma_allocator_skip_lock | default(false) | bool) else "no" }}
+# Aqueduct slot-state machine: wrap GET / GETEX replies in
+# [state, peer_endpoint, value] so cooperative clients (e.g. the YCSB
+# driver in ycsb_client/) can drive client-side double reads during
+# migration and skip the MOVED/ASK topology refresh storm. Off by default
+# upstream; on for the custom_reshard_v2 experiment.
+slot-meta-reply {{ "yes" if (slot_meta_reply | default(true) | bool) else "no" }}
 {% endif %}
 save ""

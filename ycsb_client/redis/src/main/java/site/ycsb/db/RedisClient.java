@@ -16,18 +16,24 @@
  */
 
 /**
- * Redis client binding for YCSB.
+ * Redis client binding for YCSB — Aqueduct double-read variant.
  *
- * Records are mapped to *Redis string values* (SET/GET) rather than hashes.
- * The string body is the concatenation of all field byte-values that YCSB
- * generates, so the on-wire / on-disk size is exactly fieldcount *
- * fieldlength (the values defined by the YCSB workload). This matches the
- * single-buffer layout that the aqueduct fork's RDMA reshard data plane
- * encodes (rdmaEncodeSlotEntries currently only handles OBJ_STRING).
+ * Bypasses Jedis's automatic MOVED/ASK handling by maintaining its own
+ * slot->endpoint cache and slot-state cache, both kept fresh by metadata
+ * piggybacked on every GET reply (when server.slot_meta_reply is on).
  *
- * The legacy hash-field representation lives upstream; switch back to it by
- * reverting this file. For scanning, all keys are still recorded in a
- * sorted-set index keyed by an arbitrary hash.
+ * Read path (workload-c hot path):
+ *   - STABLE slot:    1 RTT to the owner.
+ *   - MIGRATING slot: 1 RTT to the owner; if the value comes back nil and
+ *                     the slot still says non-STABLE, 1 RTT to the peer.
+ *                     This is the "double read" — keeps clients off the
+ *                     -MOVED/-ASK redirect ping-pong that otherwise stalls
+ *                     YCSB throughput for ~5 s per migration.
+ *
+ * Write path (workload-load): SET/DEL still go through JedisCluster, which
+ * handles MOVED on its own. Workload c has no writes after the load phase,
+ * and the load happens before any migration, so this is safe for the
+ * experiment scope.
  */
 
 package site.ycsb.db;
@@ -43,17 +49,22 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisCluster;
 import redis.clients.jedis.JedisCommands;
 import redis.clients.jedis.Protocol;
+import redis.clients.jedis.exceptions.JedisException;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.util.JedisClusterCRC16;
+import redis.clients.util.SafeEncoder;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.Vector;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * YCSB binding for <a href="http://redis.io/">Redis</a>.
@@ -62,8 +73,6 @@ import java.util.Vector;
  */
 public class RedisClient extends DB {
 
-  private JedisCommands jedis;
-
   public static final String HOST_PROPERTY = "redis.host";
   public static final String PORT_PROPERTY = "redis.port";
   public static final String PASSWORD_PROPERTY = "redis.password";
@@ -71,6 +80,36 @@ public class RedisClient extends DB {
   public static final String TIMEOUT_PROPERTY = "redis.timeout";
 
   public static final String INDEX_KEY = "_indices";
+
+  // ---- aqueduct slot-state ----
+
+  /** Per-slot migration state — mirrors the server-side slotMigState enum. */
+  private static final int SLOT_STABLE    = 0;
+  private static final int SLOT_MIGRATING = 1;
+  private static final int SLOT_MIGRATED  = 2;
+
+  /** Per-slot record. Volatile, no synchronization: per-reply self-healing
+   *  via the metadata in every GET response. */
+  private static final class SlotEntry {
+    volatile int state;
+    volatile HostAndPort peer;
+    SlotEntry() { this.state = SLOT_STABLE; this.peer = null; }
+  }
+
+  // ---- writes ----
+  private JedisCommands jedisWrites;   // JedisCluster: drives SET/DEL/ZADD during load
+
+  // ---- reads (per-thread state) ----
+  /** One Jedis connection per cluster master, lazily built in init(). */
+  private Map<HostAndPort, Jedis> conns;
+  /** slot -> bootstrap owner (from CLUSTER SLOTS at init). */
+  private HostAndPort[] slotOwner;
+  /** slot -> migration state + peer endpoint (refreshed on every reply). */
+  private SlotEntry[] slotCache;
+
+  // ---- bootstrap seed ----
+  private HostAndPort seedHostPort;
+  private Integer timeoutMs;
 
   public void init() throws DBException {
     Properties props = getProperties();
@@ -83,31 +122,122 @@ public class RedisClient extends DB {
       port = Protocol.DEFAULT_PORT;
     }
     String host = props.getProperty(HOST_PROPERTY);
+    String redisTimeout = props.getProperty(TIMEOUT_PROPERTY);
+    if (redisTimeout != null) {
+      timeoutMs = Integer.parseInt(redisTimeout);
+    }
+    seedHostPort = new HostAndPort(host, port);
 
     boolean clusterEnabled = Boolean.parseBoolean(props.getProperty(CLUSTER_PROPERTY));
     if (clusterEnabled) {
-      Set<HostAndPort> jedisClusterNodes = new HashSet<>();
-      jedisClusterNodes.add(new HostAndPort(host, port));
-      jedis = new JedisCluster(jedisClusterNodes);
+      Set<HostAndPort> seeds = new HashSet<>();
+      seeds.add(seedHostPort);
+      // JedisCluster drives writes (workload-load inserts). Reads bypass it.
+      jedisWrites = new JedisCluster(seeds);
+      bootstrapDoubleReadState();
     } else {
-      String redisTimeout = props.getProperty(TIMEOUT_PROPERTY);
-      if (redisTimeout != null){
-        jedis = new Jedis(host, port, Integer.parseInt(redisTimeout));
-      } else {
-        jedis = new Jedis(host, port);
+      Jedis j = (timeoutMs != null) ? new Jedis(host, port, timeoutMs) : new Jedis(host, port);
+      j.connect();
+      jedisWrites = j;
+      // Non-cluster mode: keep a single-connection setup.
+      slotOwner = new HostAndPort[16384];
+      slotCache = new SlotEntry[16384];
+      for (int i = 0; i < 16384; i++) {
+        slotOwner[i] = seedHostPort;
+        slotCache[i] = new SlotEntry();
       }
-      ((Jedis) jedis).connect();
+      conns = new ConcurrentHashMap<>();
+      conns.put(seedHostPort, j);
     }
 
     String password = props.getProperty(PASSWORD_PROPERTY);
     if (password != null) {
-      ((BasicCommands) jedis).auth(password);
+      ((BasicCommands) jedisWrites).auth(password);
     }
+  }
+
+  /** Populate slotOwner[] from CLUSTER SLOTS and slotCache[] from CLUSTER
+   *  SLOTSTATE. Open one Jedis per master observed in CLUSTER SLOTS. */
+  @SuppressWarnings("unchecked")
+  private void bootstrapDoubleReadState() throws DBException {
+    slotOwner = new HostAndPort[16384];
+    slotCache = new SlotEntry[16384];
+    for (int i = 0; i < 16384; i++) slotCache[i] = new SlotEntry();
+    conns = new ConcurrentHashMap<>();
+
+    Jedis seed = (timeoutMs != null)
+        ? new Jedis(seedHostPort.getHost(), seedHostPort.getPort(), timeoutMs)
+        : new Jedis(seedHostPort.getHost(), seedHostPort.getPort());
+    seed.connect();
+
+    // CLUSTER SLOTS -> slotOwner[] + initial conns
+    try {
+      seed.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
+      Object reply = seed.getClient().getOne();
+      List<Object> ranges = (List<Object>) reply;
+      for (Object rangeObj : ranges) {
+        List<Object> range = (List<Object>) rangeObj;
+        long startSlot = (Long) range.get(0);
+        long endSlot = (Long) range.get(1);
+        List<Object> masterInfo = (List<Object>) range.get(2);
+        String masterHost = SafeEncoder.encode((byte[]) masterInfo.get(0));
+        long masterPort = (Long) masterInfo.get(1);
+        HostAndPort hp = new HostAndPort(masterHost, (int) masterPort);
+        for (int s = (int) startSlot; s <= (int) endSlot; s++) {
+          slotOwner[s] = hp;
+        }
+        getOrOpen(hp);
+      }
+    } catch (Exception e) {
+      throw new DBException("CLUSTER SLOTS bootstrap failed: " + e.getMessage());
+    }
+
+    // CLUSTER SLOTSTATE -> slotCache[]. Optional: may be empty / unsupported.
+    try {
+      seed.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTSTATE")});
+      Object reply = seed.getClient().getOne();
+      if (reply instanceof List) {
+        List<Object> entries = (List<Object>) reply;
+        for (Object e : entries) {
+          List<Object> tup = (List<Object>) e;
+          int slot = (int) (long) (Long) tup.get(0);
+          int state = (int) (long) (Long) tup.get(1);
+          byte[] peerBytes = (byte[]) tup.get(2);
+          String peer = (peerBytes != null) ? SafeEncoder.encode(peerBytes) : "";
+          SlotEntry se = slotCache[slot];
+          se.state = state;
+          se.peer = peer.isEmpty() ? null : HostAndPort.parseString(peer);
+          if (se.peer != null) getOrOpen(se.peer);
+        }
+      }
+    } catch (Exception e) {
+      System.err.println("WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): "
+          + e.getMessage());
+    }
+
+    seed.close();
+  }
+
+  private synchronized Jedis getOrOpen(HostAndPort hp) {
+    Jedis j = conns.get(hp);
+    if (j != null) return j;
+    j = (timeoutMs != null) ? new Jedis(hp.getHost(), hp.getPort(), timeoutMs)
+                            : new Jedis(hp.getHost(), hp.getPort());
+    j.connect();
+    conns.put(hp, j);
+    return j;
   }
 
   public void cleanup() throws DBException {
     try {
-      ((Closeable) jedis).close();
+      if (jedisWrites instanceof Closeable) {
+        ((Closeable) jedisWrites).close();
+      }
+      if (conns != null) {
+        for (Jedis j : conns.values()) {
+          try { j.close(); } catch (Exception ignore) { /* drain */ }
+        }
+      }
     } catch (IOException e) {
       throw new DBException("Closing connection failed.");
     }
@@ -123,8 +253,6 @@ public class RedisClient extends DB {
     return key.hashCode();
   }
 
-  // XXX jedis.select(int index) to switch to `table`
-
   /* Concatenate all field byte-values, in iteration order, into a single
    * string. With fieldcount=N and fieldlength=L (YCSB defaults: 10 / 100),
    * the result is exactly N*L bytes — the value size the workload defines. */
@@ -136,24 +264,125 @@ public class RedisClient extends DB {
     return sb.toString();
   }
 
+  /** Reply from one GET attempt — value plus metadata for cache refresh. */
+  private static final class GetReply {
+    int state;        // SLOT_STABLE | SLOT_MIGRATING | SLOT_MIGRATED
+    HostAndPort peer; // null when STABLE
+    String value;     // null when key missing
+    boolean ok;       // false on connection / parse failure
+  }
+
+  /** Issue GET and parse either the slot-meta-wrapped array reply or a
+   *  plain bulk reply (when slot_meta_reply is off on the server). */
+  @SuppressWarnings("unchecked")
+  private GetReply sendGet(Jedis j, String key) {
+    GetReply r = new GetReply();
+    r.state = SLOT_STABLE;
+    r.peer = null;
+    r.value = null;
+    r.ok = false;
+    try {
+      j.getClient().get(SafeEncoder.encode(key));
+      Object reply = j.getClient().getOne();
+      if (reply == null) {
+        // Plain $-1 nil bulk — server.slot_meta_reply is off.
+        r.ok = true;
+        return r;
+      }
+      if (reply instanceof byte[]) {
+        // Plain bulk reply (knob off).
+        r.value = new String((byte[]) reply, StandardCharsets.UTF_8);
+        r.ok = true;
+        return r;
+      }
+      if (reply instanceof List) {
+        List<Object> tup = (List<Object>) reply;
+        if (tup.size() >= 3) {
+          Object stateO = tup.get(0);
+          Object peerO  = tup.get(1);
+          Object valueO = tup.get(2);
+          r.state = (stateO instanceof Long) ? (int) (long) (Long) stateO : SLOT_STABLE;
+          if (peerO instanceof byte[]) {
+            byte[] pb = (byte[]) peerO;
+            if (pb.length > 0) {
+              try {
+                r.peer = HostAndPort.parseString(new String(pb, StandardCharsets.UTF_8));
+              } catch (Exception ignore) {
+                r.peer = null;
+              }
+            }
+          }
+          if (valueO instanceof byte[]) {
+            r.value = new String((byte[]) valueO, StandardCharsets.UTF_8);
+          }
+          r.ok = true;
+          return r;
+        }
+      }
+      // Unknown shape — treat as a miss.
+      r.ok = true;
+      return r;
+    } catch (JedisConnectionException ce) {
+      return r;
+    } catch (JedisException je) {
+      return r;
+    }
+  }
+
+  /** Update the slot cache from a successful GET reply's metadata. */
+  private void updateSlotCache(int slot, GetReply r) {
+    if (!r.ok) return;
+    SlotEntry se = slotCache[slot];
+    se.state = r.state;
+    se.peer = r.peer;
+    if (r.peer != null) getOrOpen(r.peer);
+  }
+
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
-    /* Records are stored as a single string. There is no per-field
-     * structure to project; YCSB just measures the latency of the GET. */
-    String val = jedis.get(key);
-    if (val == null) {
-      return Status.ERROR;
+    if (slotOwner == null) {
+      String val = ((JedisCommands) jedisWrites).get(key);
+      if (val == null) return Status.ERROR;
+      result.put("value", new StringByteIterator(val));
+      return Status.OK;
     }
-    result.put("value", new StringByteIterator(val));
-    return Status.OK;
+
+    int slot = JedisClusterCRC16.getSlot(key);
+    SlotEntry s = slotCache[slot];
+
+    // 1) Always try the bootstrap owner first.
+    HostAndPort ownerHp = slotOwner[slot];
+    Jedis ownerJ = (ownerHp != null) ? getOrOpen(ownerHp) : null;
+    GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;
+    if (ra != null) updateSlotCache(slot, ra);
+
+    if (ra != null && ra.value != null) {
+      result.put("value", new StringByteIterator(ra.value));
+      return Status.OK;
+    }
+
+    // 2) If owner returned nil and the slot is in a migration state, double-read
+    //    the peer (= the other side of the migration).
+    if (s.state != SLOT_STABLE && s.peer != null) {
+      Jedis peerJ = getOrOpen(s.peer);
+      GetReply rb = sendGet(peerJ, key);
+      updateSlotCache(slot, rb);
+      if (rb.value != null) {
+        result.put("value", new StringByteIterator(rb.value));
+        return Status.OK;
+      }
+    }
+
+    return Status.ERROR;
   }
 
   @Override
   public Status insert(String table, String key,
       Map<String, ByteIterator> values) {
-    if (jedis.set(key, concatFields(values)).equals("OK")) {
-      jedis.zadd(INDEX_KEY, hash(key), key);
+    String reply = ((JedisCommands) jedisWrites).set(key, concatFields(values));
+    if (reply != null && reply.equals("OK")) {
+      ((JedisCommands) jedisWrites).zadd(INDEX_KEY, hash(key), key);
       return Status.OK;
     }
     return Status.ERROR;
@@ -161,7 +390,8 @@ public class RedisClient extends DB {
 
   @Override
   public Status delete(String table, String key) {
-    return jedis.del(key) == 0 && jedis.zrem(INDEX_KEY, key) == 0 ? Status.ERROR
+    return ((JedisCommands) jedisWrites).del(key) == 0
+        && ((JedisCommands) jedisWrites).zrem(INDEX_KEY, key) == 0 ? Status.ERROR
         : Status.OK;
   }
 
@@ -170,18 +400,16 @@ public class RedisClient extends DB {
       Map<String, ByteIterator> values) {
     /* YCSB update sends only the modified fields (typically 1 of N). With
      * the single-string representation we just SET the new concatenated
-     * payload, replacing the prior contents. The wire-bytes-per-op match
-     * what the workload describes; the logical fields-merge that a hash
-     * would have provided is intentionally dropped. */
-    return jedis.set(key, concatFields(values)).equals("OK")
-        ? Status.OK : Status.ERROR;
+     * payload, replacing the prior contents. */
+    String reply = ((JedisCommands) jedisWrites).set(key, concatFields(values));
+    return (reply != null && reply.equals("OK")) ? Status.OK : Status.ERROR;
   }
 
   @Override
   public Status scan(String table, String startkey, int recordcount,
       Set<String> fields, Vector<HashMap<String, ByteIterator>> result) {
-    Set<String> keys = jedis.zrangeByScore(INDEX_KEY, hash(startkey),
-        Double.POSITIVE_INFINITY, 0, recordcount);
+    Set<String> keys = ((JedisCommands) jedisWrites).zrangeByScore(INDEX_KEY,
+        hash(startkey), Double.POSITIVE_INFINITY, 0, recordcount);
 
     HashMap<String, ByteIterator> values;
     for (String key : keys) {
@@ -192,5 +420,4 @@ public class RedisClient extends DB {
 
     return Status.OK;
   }
-
 }

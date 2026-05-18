@@ -231,6 +231,17 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         job->n_blocks_per_slot[pi] = (int) n_blocks;
     }
 
+    /* Aqueduct slot-state: flip each slot to MIGRATING with the donor's
+     * host:port as the peer endpoint *before* replying +OK, so the donor
+     * sees the recipient already in MIGRATING when it sets its own state
+     * (closes the PREP race). */
+    char donor_endpoint[NET_HOST_PORT_STR_LEN];
+    snprintf(donor_endpoint, sizeof(donor_endpoint), "%s:%lld",
+             src_host, src_port_ll);
+    for (int i = 0; i < n_pairs; i++) {
+        slotMigStateSet(job->slot_ids[i], SLOT_STATE_MIGRATING, donor_endpoint);
+    }
+
     /* Spawn the detached worker thread. */
     pthread_t tid;
     int err = pthread_create(&tid, NULL, registerWorkerThread, job);
@@ -1926,6 +1937,16 @@ void rdmaReshardRecvFlipCommand(client *c) {
     }
     clusterTopoUnlock();
 
+    /* Aqueduct slot-state: recipient now owns the slots cleanly, clear
+     * MIGRATING and return to STABLE. Done outside the topology wrlock to
+     * avoid deadlocking against slotMigStateSet's internal rdlock acquire. */
+    for (int j = 3; j < c->argc; j++) {
+        long long slot_ll;
+        if (getLongLongFromObject(c->argv[j], &slot_ll) != C_OK) continue;
+        if (slot_ll < 0 || slot_ll >= CLUSTER_SLOTS) continue;
+        slotMigStateSet((int) slot_ll, SLOT_STATE_STABLE, NULL);
+    }
+
     addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }
 
@@ -2497,6 +2518,24 @@ static void *migrationWorker(void *arg) {
         return NULL;
     }
 
+    /* Aqueduct slot-state: PREP returned successfully, which means the
+     * recipient has already flipped its own state to MIGRATING (see the
+     * recipient-side hook in rdmaRegisterBlockSlotsCommand). Donor flips
+     * MIGRATING now, with the recipient's host:port as the peer endpoint.
+     * Ordering matters: recipient first (inside the PREP RPC handler),
+     * donor second (here, after the RPC returns). This guarantees a client
+     * that sees "MIGRATING" on either side knows the other side is also
+     * in-flight. */
+    {
+        char recipient_endpoint[NET_HOST_PORT_STR_LEN];
+        snprintf(recipient_endpoint, sizeof(recipient_endpoint), "%s:%d",
+                 mig->host, mig->port);
+        for (int i = 0; i < mig->n_slots; i++) {
+            slotMigStateSet(mig->chosen[i], SLOT_STATE_MIGRATING,
+                            recipient_endpoint);
+        }
+    }
+
     /* REGISTERING: ibv_reg_mr each source-side staging buffer. */
     migSetState(mig, RDMA_MIG_REGISTERING);
     if (rdmaReshardRegisterHelper(mig->L, mig->chosen, mig->n_slots,
@@ -2601,6 +2640,16 @@ static void *migrationWorker(void *arg) {
     if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
         migFail(mig, err);
         return NULL;
+    }
+
+    /* Aqueduct slot-state: donor flips MIGRATING → MIGRATED. Recipient
+     * flipped MIGRATING → STABLE inside its RECV-FLIP handler — by the
+     * time we reach here the recipient is fully serving. Donor stays in
+     * MIGRATED long enough for the slowest client to refresh its cache
+     * via the next reply (a follow-up GC timer transitions MIGRATED →
+     * STABLE; for the YCSB rig the next teardown reclusters the donor). */
+    for (int i = 0; i < mig->n_slots; i++) {
+        slotMigStateSet(mig->chosen[i], SLOT_STATE_MIGRATED, NULL);
     }
 
     pthread_mutex_lock(&mig->mu);
