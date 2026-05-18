@@ -4382,6 +4382,7 @@ void rdmaDoneSlotsCommand(client *c);
 void rdmaMigrateCommand(client *c);
 void rdmaMigrateStatusCommand(client *c);
 void rdmaApplyStatusCommand(client *c);
+void rdmaRegisterResultCommand(client *c);
 void restoreCommand(client *c);
 void migrateCommand(client *c);
 void askingCommand(client *c);

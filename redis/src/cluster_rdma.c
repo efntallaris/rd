@@ -120,10 +120,12 @@ void rdmaInitServerCommand(client *c) {
 
 /* ---- REGISTER-BLOCK-SLOTS ----------------------------------------------- */
 
-/* Phase 4d: registerJob + globals + forward declarations needed by
- * rdmaRegisterBlockSlotsCommand below. The function bodies for
- * registerWorkerThread, registerDonePipeHandler, registerThreadInfraInit
- * live further down in the file (near the apply thread). */
+/* Phase 4d (callback-RPC variant): registerJob carries the source's call-back
+ * host:port + a register_id so the recipient's worker thread, after finishing
+ * the heavy ibv_reg_mr loop, can dial back to the source and deliver the
+ * results via a fresh hiredis connection issuing `RDMA REGISTER-RESULT`.
+ * No blockClient on the recipient — the recipient just replies +OK
+ * immediately. */
 typedef struct registerJob {
     rdmaCachedConnection *conn;
     int        n_pairs;
@@ -133,24 +135,23 @@ typedef struct registerJob {
     int        total_buffers;
     int        has_error;
     char       err_msg[256];
-    uint64_t   client_id;
+    /* Callback target on the source side (parsed from REGISTER-BLOCK-SLOTS). */
+    char       register_id[64];     /* unique correlation id */
+    char       src_host[128];       /* source's host */
+    int        src_port;            /* source's master Redis port */
 } registerJob;
 
-extern int register_done_pipe[2];
-extern list *register_done_list;
 static void *registerWorkerThread(void *arg);
-static void registerThreadInfraInit(void);
 
-/* RDMA REGISTER-BLOCK-SLOTS SLOTS <slot> <nblocks> [<slot> <nblocks> ...]
+/* RDMA REGISTER-BLOCK-SLOTS <register_id> <src-host> <src-port>
+ *                            SLOTS <slot> <nblocks> [<slot> <nblocks> ...]
  *
- * Recipient side: for each (slot, nblocks) pair, allocate that many
- * RDMA-registered landing buffers via the slot-keyed allocator and reply
- * with the resulting (VA, rkey) array as a single binary bulk string.
- * The donor consumes that array verbatim during TRANSFER-SLOTS to
- * populate its post_write_at_address calls.
- *
- * Phase 4d: the heavy ibv_reg_mr loop is deferred to a detached worker
- * thread; the reply is sent later via registerDonePipeHandler. */
+ * Recipient side (Phase 4d callback-RPC variant): records the callback
+ * coordinates (register_id + src-host + src-port), enqueues a worker job
+ * to do the heavy ibv_reg_mr loop, and replies +OK immediately. The
+ * worker thread, when done, opens a fresh TCP connection back to
+ * src-host:src-port and issues `RDMA REGISTER-RESULT <register_id>
+ * <binary-VA-rkey-tuples>` to deliver the result. */
 void rdmaRegisterBlockSlotsCommand(client *c) {
     rdmaCachedConnection *cs = rdmaGetConnection(c);
     if (cs == NULL) {
@@ -158,18 +159,22 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         return;
     }
 
-    /* argv[0]=RDMA argv[1]=REGISTER-BLOCK-SLOTS, scan from argv[2]. */
-    int start_idx = 0;
-    for (int j = 2; j < c->argc; j++) {
-        if (!strcasecmp(c->argv[j]->ptr, "SLOTS")) {
-            start_idx = j + 1;
-            break;
-        }
-    }
-    if (start_idx == 0 || start_idx >= c->argc) {
-        addReplyError(c, "missing SLOTS keyword or no slot/nblocks pairs");
+    /* Phase 4d wire format:
+     *   argv[0]=RDMA argv[1]=REGISTER-BLOCK-SLOTS
+     *   argv[2]=<register_id> argv[3]=<src-host> argv[4]=<src-port>
+     *   argv[5]=SLOTS argv[6..]=<slot> <nblocks> ... */
+    if (c->argc < 7 || strcasecmp(c->argv[5]->ptr, "SLOTS") != 0) {
+        addReplyError(c,
+            "syntax: RDMA REGISTER-BLOCK-SLOTS register_id src_host src_port SLOTS slot nblocks ...");
         return;
     }
+    long long src_port_ll;
+    if (getLongLongFromObject(c->argv[4], &src_port_ll) != C_OK ||
+        src_port_ll <= 0 || src_port_ll > 65535) {
+        addReplyError(c, "src_port out of range");
+        return;
+    }
+    int start_idx = 6;
     if (((c->argc - start_idx) % 2) != 0) {
         addReplyError(c, "expected an even number of arguments after SLOTS");
         return;
@@ -186,12 +191,13 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
     }
 
     int n_pairs = (c->argc - start_idx) / 2;
+    const char *register_id = c->argv[2]->ptr;
+    const char *src_host    = c->argv[3]->ptr;
     serverLog(LL_NOTICE,
-        "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu deferring %d blocks across %d pairs to worker thread",
-        (unsigned long long) c->id, total_requested_blocks, n_pairs);
+        "RDMA REGISTER-BLOCK-SLOTS: register_id=%s src=%s:%lld enqueueing %d blocks across %d pairs",
+        register_id, src_host, src_port_ll, total_requested_blocks, n_pairs);
 
-    /* Build the job and parse all args BEFORE blocking so we can reply with
-     * a synchronous syntax error if the args are malformed. */
+    /* Build the job. */
     registerJob *job = zmalloc(sizeof(*job));
     job->conn = cs;
     job->n_pairs = n_pairs;
@@ -201,7 +207,9 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
     job->total_buffers = 0;
     job->has_error = 0;
     job->err_msg[0] = '\0';
-    job->client_id = c->id;
+    snprintf(job->register_id, sizeof(job->register_id), "%s", register_id);
+    snprintf(job->src_host, sizeof(job->src_host), "%s", src_host);
+    job->src_port = (int) src_port_ll;
 
     int pi = 0;
     for (int idx = start_idx; idx + 1 < c->argc; idx += 2, pi++) {
@@ -223,57 +231,10 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         job->n_blocks_per_slot[pi] = (int) n_blocks;
     }
 
-    /* If the infra never came up (pipe init failed, very rare), fall back to
-     * the synchronous main-thread path. Keeps the worst case correct. */
-    if (register_done_pipe[1] == -1 || register_done_list == NULL) {
-        serverLog(LL_WARNING,
-            "RDMA REGISTER-BLOCK-SLOTS: deferred-worker infra not initialized, falling back inline");
-        for (int i = 0; i < job->n_pairs; i++) {
-            int slot = job->slot_ids[i];
-            int n = job->n_blocks_per_slot[i];
-            for (int k = 0; k < n; k++) {
-                void *block_ptr = r_allocator_alloc_new_empty_block(slot);
-                if (block_ptr == NULL) {
-                    zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
-                    zfree(job->result); zfree(job);
-                    addReplyError(c, "r_allocator_alloc_new_empty_block returned NULL");
-                    return;
-                }
-                struct rdmamig_buffer *rb = rdmamig_buffer_create(
-                    rdmamig_server_cm_id(cs->s), block_ptr, RDMAMIG_BLOCK_SIZE_BYTES, 0);
-                if (rb == NULL) {
-                    zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
-                    zfree(job->result); zfree(job);
-                    addReplyError(c, "rdmamig_buffer_create failed");
-                    return;
-                }
-                job->result[job->total_buffers].ptr = (uint64_t) block_ptr;
-                job->result[job->total_buffers].rkey = rdmamig_buffer_rkey(rb);
-                job->total_buffers++;
-            }
-        }
-        addReplyBulkCBuffer(c, (char *) job->result,
-            (size_t) job->total_buffers * sizeof(rdmaRemoteBufferInfo));
-        zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
-        zfree(job->result); zfree(job);
-        return;
-    }
-
-    /* Defer the heavy ibv_reg_mr loop to a dedicated detached worker thread.
-     * Pattern lifted from flushallSyncBgDone (db.c:1450) — set
-     * CLIENT_PENDING_COMMAND so processCommand defers completion correctly
-     * across the block window; registerDonePipeHandler later clears it +
-     * calls commandProcessed(). */
-    c->bstate.timeout = 0;
-    c->flags |= CLIENT_PENDING_COMMAND;
-    blockClient(c, BLOCKED_LAZYFREE);
-
+    /* Spawn the detached worker thread. */
     pthread_t tid;
     int err = pthread_create(&tid, NULL, registerWorkerThread, job);
     if (err != 0) {
-        /* Spawn failed — unblock + reply with error inline. */
-        c->flags &= ~CLIENT_PENDING_COMMAND;
-        unblockClient(c, 1);
         addReplyErrorFormat(c, "RDMA REGISTER-BLOCK-SLOTS: pthread_create failed: %s",
                             strerror(err));
         zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
@@ -281,7 +242,11 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         return;
     }
     pthread_detach(tid);
-    /* Reply is deferred to registerDonePipeHandler. */
+
+    /* Reply immediately. The actual result lands on the source later via
+     * RDMA REGISTER-RESULT delivered by the worker on a fresh connection. */
+    addReplyStatusFormat(c, "OK register_id=%s enqueued n_pairs=%d total_blocks=%d",
+                         register_id, n_pairs, total_requested_blocks);
 }
 
 /* ---- TRANSFER-SLOTS (donor) --------------------------------------------- */
@@ -677,14 +642,10 @@ static int migrationApplyTick(struct aeEventLoop *el, long long id, void *client
 /* Same value bio.c uses for its worker threads. */
 #define APPLY_THREAD_STACK_SIZE (1024*1024*4)
 
-/* ---- Recipient-side REGISTER-BLOCK-SLOTS async deferral (Phase 4d) ----
- *
- * Struct + forward decls live up near rdmaRegisterBlockSlotsCommand
- * (line ~120). Definitions of registerWorkerThread,
- * registerDonePipeHandler, registerThreadInfraInit live further down. */
-int register_done_pipe[2] = {-1, -1};
-static pthread_mutex_t register_done_mu = PTHREAD_MUTEX_INITIALIZER;
-list *register_done_list = NULL;
+/* Phase 4d callback-RPC variant: no shared globals needed on the recipient
+ * for the deferred REGISTER-BLOCK-SLOTS path — each worker thread owns its
+ * own job struct end-to-end (parse → ibv_reg_mr → callback hiredis to source
+ * → free) without main-thread coordination after enqueue. */
 
 /* dictType for apply_batches_by_key: sds key, applyBatch* value (free
  * the key sds, leave the value to the dispose path). */
@@ -981,7 +942,8 @@ void recipientApplyThreadStart(void) {
     apply_batches_by_key = dictCreate(&sdsHashDictType);
 
     /* Register-job pipe + list for deferred REGISTER-BLOCK-SLOTS replies. */
-    registerThreadInfraInit();
+    /* No infra init for the REGISTER-BLOCK-SLOTS path — see comment near the
+     * registerJob struct: each worker is self-contained. */
 
     pthread_attr_t attr;
     size_t stacksize;
@@ -1013,6 +975,15 @@ void recipientApplyThreadStop(void) {
 
 /* ---- Recipient REGISTER-BLOCK-SLOTS deferred worker (Phase 4d) ---------- */
 
+/* Recipient-side worker for the deferred REGISTER-BLOCK-SLOTS. Does the heavy
+ * ibv_reg_mr loop, then opens a hiredis TCP connection BACK to the source
+ * (src_host:src_port saved on the job) and delivers the result via:
+ *
+ *   RDMA REGISTER-RESULT <register_id> <"OK"|"ERR errmsg"> [<binary-payload>]
+ *
+ * Source-side rdmaRegisterResultCommand looks up the pending registration
+ * by register_id, populates L->buffers[], and signals the source's worker
+ * (which is condvar-waiting). */
 static void *registerWorkerThread(void *arg) {
     registerJob *job = arg;
 
@@ -1025,7 +996,7 @@ static void *registerWorkerThread(void *arg) {
                 job->has_error = 1;
                 snprintf(job->err_msg, sizeof(job->err_msg),
                     "r_allocator_alloc_new_empty_block returned NULL (slot=%d)", slot);
-                goto done;
+                goto deliver;
             }
             struct rdmamig_buffer *rb = rdmamig_buffer_create(
                 rdmamig_server_cm_id(job->conn->s),
@@ -1034,7 +1005,7 @@ static void *registerWorkerThread(void *arg) {
                 job->has_error = 1;
                 snprintf(job->err_msg, sizeof(job->err_msg),
                     "rdmamig_buffer_create failed (slot=%d block=%d)", slot, k);
-                goto done;
+                goto deliver;
             }
             job->result[job->total_buffers].ptr  = (uint64_t) block_ptr;
             job->result[job->total_buffers].rkey = rdmamig_buffer_rkey(rb);
@@ -1042,82 +1013,58 @@ static void *registerWorkerThread(void *arg) {
         }
     }
 
-done:
-    pthread_mutex_lock(&register_done_mu);
-    listAddNodeTail(register_done_list, job);
-    pthread_mutex_unlock(&register_done_mu);
-    char tick = 1;
-    ssize_t w = write(register_done_pipe[1], &tick, 1);
-    (void) w;
-    return NULL;
-}
+deliver:
+    {
+        serverLog(LL_NOTICE,
+            "RDMA REGISTER-RESULT: register_id=%s total_buffers=%d, dialing back to %s:%d",
+            job->register_id, job->total_buffers, job->src_host, job->src_port);
 
-/* Main-thread pipe handler: drain completed register jobs, deliver replies
- * to their (still-blocked) clients, unblock. */
-static void registerDonePipeHandler(aeEventLoop *el, int fd, void *priv, int mask) {
-    UNUSED(el); UNUSED(priv); UNUSED(mask);
-    char buf[64];
-    while (read(fd, buf, sizeof(buf)) > 0) { /* drain tickles */ }
-
-    for (;;) {
-        pthread_mutex_lock(&register_done_mu);
-        listNode *ln = listFirst(register_done_list);
-        registerJob *job = ln ? listNodeValue(ln) : NULL;
-        if (job) listDelNode(register_done_list, ln);
-        pthread_mutex_unlock(&register_done_mu);
-        if (!job) break;
-
-        client *c = lookupClientByID(job->client_id);
-        if (c && (c->flags & CLIENT_BLOCKED) &&
-            c->bstate.btype == BLOCKED_LAZYFREE)
-        {
-            client *old_client = server.current_client;
-            server.current_client = c;
-            if (job->has_error) {
-                addReplyError(c, job->err_msg);
-            } else {
-                serverLog(LL_NOTICE,
-                    "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu returning %d (VA, rkey) tuples (off-thread)",
-                    (unsigned long long) job->client_id, job->total_buffers);
-                addReplyBulkCBuffer(c, (char *) job->result,
-                    (size_t) job->total_buffers * sizeof(rdmaRemoteBufferInfo));
-            }
-            /* Mirror flushallSyncBgDone: unblock with reprocessing queued,
-             * then clear PENDING_COMMAND + commandProcessed to complete the
-             * command lifecycle WITHOUT actually rerunning the handler. */
-            unblockClient(c, 1);
-            if (c->flags & CLIENT_PENDING_COMMAND) {
-                c->flags &= ~CLIENT_PENDING_COMMAND;
-                commandProcessed(c);
-            }
-            server.current_client = old_client;
+        redisContext *ctx = redisConnect(job->src_host, job->src_port);
+        if (ctx == NULL || ctx->err) {
+            serverLog(LL_WARNING,
+                "RDMA REGISTER-RESULT: redisConnect(%s:%d) failed: %s",
+                job->src_host, job->src_port,
+                ctx ? ctx->errstr : "(null ctx)");
+            if (ctx) redisFree(ctx);
+            goto cleanup;
         }
-        zfree(job->slot_ids);
-        zfree(job->n_blocks_per_slot);
-        zfree(job->result);
-        zfree(job);
-    }
-}
 
-/* Called from recipientApplyThreadStart() — sets up the pipe + list + file
- * event used by the deferred REGISTER-BLOCK-SLOTS worker. */
-static void registerThreadInfraInit(void) {
-    if (pipe(register_done_pipe) != 0) {
-        serverLog(LL_WARNING,
-            "RDMA REGISTER infra: pipe() failed: %s", strerror(errno));
-        return;
+        const char *status = job->has_error ? job->err_msg : "OK";
+        size_t bin_len = job->has_error ? 0 :
+            (size_t) job->total_buffers * sizeof(rdmaRemoteBufferInfo);
+        const void *bin_ptr = job->has_error ? "" : (const void *) job->result;
+
+        /* 5-element form: RDMA REGISTER-RESULT <id> <status> <binary>. */
+        const char *argv5[5];
+        size_t      argvlen5[5];
+        argv5[0] = "RDMA";              argvlen5[0] = 4;
+        argv5[1] = "REGISTER-RESULT";   argvlen5[1] = 15;
+        argv5[2] = job->register_id;    argvlen5[2] = strlen(job->register_id);
+        argv5[3] = status;              argvlen5[3] = strlen(status);
+        argv5[4] = bin_ptr;             argvlen5[4] = bin_len;
+
+        redisReply *r = redisCommandArgv(ctx, 5, argv5, argvlen5);
+        if (r == NULL || r->type == REDIS_REPLY_ERROR) {
+            serverLog(LL_WARNING,
+                "RDMA REGISTER-RESULT: bad reply from source %s:%d: %s (ctxerr=%s)",
+                job->src_host, job->src_port,
+                (r && r->str) ? r->str : "(null)",
+                ctx->errstr[0] ? ctx->errstr : "(no ctxerr)");
+        } else {
+            serverLog(LL_NOTICE,
+                "RDMA REGISTER-RESULT: register_id=%s delivered (%zu bytes)",
+                job->register_id, bin_len);
+        }
+        if (r) freeReplyObject(r);
+        redisFree(ctx);
     }
-    int flags = fcntl(register_done_pipe[0], F_GETFL, 0);
-    fcntl(register_done_pipe[0], F_SETFL, flags | O_NONBLOCK);
-    if (aeCreateFileEvent(server.el, register_done_pipe[0], AE_READABLE,
-                          registerDonePipeHandler, NULL) == AE_ERR) {
-        serverLog(LL_WARNING, "RDMA REGISTER infra: aeCreateFileEvent failed");
-        close(register_done_pipe[0]);
-        close(register_done_pipe[1]);
-        register_done_pipe[0] = register_done_pipe[1] = -1;
-        return;
-    }
-    register_done_list = listCreate();
+
+cleanup:
+    zfree(job->slot_ids);
+    zfree(job->n_blocks_per_slot);
+    zfree(job->result);
+    zfree(job);
+    return NULL;
 }
 
 /* RDMA APPLY-STATUS <src_node_id> <src_mig_id>
@@ -2011,66 +1958,232 @@ __thread int cluster_slot_lock_held_by_thread = 0;
 /* ---- helpers (shared by the legacy command handlers above and the new
  *      autonomous worker below) ---------------------------------------- */
 
+/* ====================================================================== *
+ *  Phase 4d callback-RPC: source-side pendingRegistration table.
+ *
+ *  Source's PREP step sends `RDMA REGISTER-BLOCK-SLOTS <register_id> ...`
+ *  to the recipient, then waits (on a condvar) for the recipient to dial
+ *  back with `RDMA REGISTER-RESULT <register_id> <status> <payload>`.
+ *  Source's main thread receives that RPC (rdmaRegisterResultCommand),
+ *  looks up the table entry by register_id, copies the payload, and
+ *  signals the condvar. The PREP-thread wakes, parses the payload into
+ *  L->buffers[], frees the entry. */
+typedef struct pendingRegistration {
+    int               done;
+    int               error;
+    sds               err_msg;          /* set when error==1 */
+    rdmaRemoteBufferInfo *payload;      /* len total_buffers (worker fills) */
+    int               total_buffers;
+    pthread_mutex_t   mu;
+    pthread_cond_t    cond;
+} pendingRegistration;
+
+static dict *pending_registrations = NULL;
+static pthread_mutex_t pending_registrations_mu = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic long long register_id_counter = 0;
+
+static void pendingRegistrationsInit(void) {
+    if (pending_registrations == NULL) {
+        extern dictType sdsHashDictType;
+        pending_registrations = dictCreate(&sdsHashDictType);
+    }
+}
+
+/* Source-side: receive the recipient's callback delivery of the registration
+ * result. Looks up the pending entry by register_id, copies payload, signals
+ * the waiting PREP-helper. */
+void rdmaRegisterResultCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c,
+            "syntax: RDMA REGISTER-RESULT register_id status payload");
+        return;
+    }
+    sds reg_id = c->argv[2]->ptr;
+    sds status = c->argv[3]->ptr;
+    robj *payload_obj = c->argv[4];
+    size_t payload_len = sdslen(payload_obj->ptr);
+
+    pendingRegistrationsInit();
+
+    pthread_mutex_lock(&pending_registrations_mu);
+    pendingRegistration *p = dictFetchValue(pending_registrations, reg_id);
+    pthread_mutex_unlock(&pending_registrations_mu);
+    if (p == NULL) {
+        addReplyErrorFormat(c, "unknown register_id: %s", reg_id);
+        return;
+    }
+
+    pthread_mutex_lock(&p->mu);
+    if (strcmp(status, "OK") == 0) {
+        if (payload_len % sizeof(rdmaRemoteBufferInfo) != 0) {
+            p->error = 1;
+            p->err_msg = sdscatfmt(sdsempty(),
+                "REGISTER-RESULT payload len %U not a multiple of tuple size %U",
+                (uint64_t) payload_len, (uint64_t) sizeof(rdmaRemoteBufferInfo));
+        } else {
+            p->total_buffers = (int) (payload_len / sizeof(rdmaRemoteBufferInfo));
+            p->payload = zmalloc(payload_len);
+            memcpy(p->payload, payload_obj->ptr, payload_len);
+        }
+    } else {
+        /* Recipient reported an error. */
+        p->error = 1;
+        p->err_msg = sdsnew(status);
+    }
+    p->done = 1;
+    pthread_cond_signal(&p->cond);
+    pthread_mutex_unlock(&p->mu);
+
+    serverLog(LL_NOTICE,
+        "RDMA REGISTER-RESULT: register_id=%s received (%zu bytes, status=%s)",
+        reg_id, payload_len, status);
+    addReply(c, shared.ok);
+}
+
 /* PREP-helper: REGISTER-BLOCK-SLOTS RPC over L->ctrl, fills L->buffers[slot].
- * Mirrors the in-line body of rdmaMigratePrepCommand (lines ~776-811).
- * Caller already holds the link in `L`. Returns 0 on success, -1 with
- * `*err_out` set on failure. */
+ * Phase 4d callback-RPC variant: the recipient replies +OK immediately to
+ * the REGISTER-BLOCK-SLOTS RPC and dials back later with REGISTER-RESULT.
+ * This helper allocates a pendingRegistration, sends the request with
+ * call-back coordinates, then condvar-waits for the result. The waiting
+ * happens on the migration worker thread — source's main event loop stays
+ * free to serve YCSB throughout. */
 static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
                                   const int *slots, int n_slots,
                                   sds *err_out) {
+    pendingRegistrationsInit();
+
+    /* Build a unique register_id for the callback-RPC correlation. */
+    long long counter = atomic_fetch_add_explicit(&register_id_counter, 1,
+                                                  memory_order_relaxed);
+    char register_id[64];
+    snprintf(register_id, sizeof(register_id), "%d-%lld",
+             (int) getpid(), counter);
+
+    /* Allocate the pending entry + register it. */
+    pendingRegistration *p = zmalloc(sizeof(*p));
+    p->done = 0;
+    p->error = 0;
+    p->err_msg = NULL;
+    p->payload = NULL;
+    p->total_buffers = 0;
+    pthread_mutex_init(&p->mu, NULL);
+    pthread_cond_init(&p->cond, NULL);
+
+    sds key = sdsnew(register_id);
+    pthread_mutex_lock(&pending_registrations_mu);
+    dictReplace(pending_registrations, key, p);
+    pthread_mutex_unlock(&pending_registrations_mu);
+
+    /* Figure out which host:port the recipient should call back. */
+    const char *src_host = (server.cluster && server.cluster->myself &&
+                            server.cluster->myself->ip[0]) ?
+                           server.cluster->myself->ip : "127.0.0.1";
+    int src_port = (int) server.port;
+
     pthread_mutex_lock(&L->mu);
 
-    int argc = 3 + 2 * n_slots;
+    /* Build the wire command:
+     *   RDMA REGISTER-BLOCK-SLOTS <register_id> <src-host> <src-port>
+     *                             SLOTS <slot> <nblocks> ... */
+    int argc = 6 + 2 * n_slots;
     const char **argv = zmalloc((size_t) argc * sizeof(*argv));
     size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    char src_port_buf[16];
+    snprintf(src_port_buf, sizeof(src_port_buf), "%d", src_port);
     argv[0] = "RDMA";                       argvlen[0] = 4;
     argv[1] = "REGISTER-BLOCK-SLOTS";       argvlen[1] = 20;
-    argv[2] = "SLOTS";                      argvlen[2] = 5;
+    argv[2] = register_id;                  argvlen[2] = strlen(register_id);
+    argv[3] = src_host;                     argvlen[3] = strlen(src_host);
+    argv[4] = src_port_buf;                 argvlen[4] = strlen(src_port_buf);
+    argv[5] = "SLOTS";                      argvlen[5] = 5;
 
     char (*numbuf)[16] = zmalloc((size_t)(2 * n_slots) * sizeof(*numbuf));
     for (int i = 0; i < n_slots; i++) {
-        argvlen[3 + 2*i]     = (size_t) snprintf(numbuf[2*i],     16, "%d", slots[i]);
-        argv  [3 + 2*i]      = numbuf[2*i];
-        argvlen[3 + 2*i + 1] = (size_t) snprintf(numbuf[2*i + 1], 16, "%d", 1);
-        argv  [3 + 2*i + 1]  = numbuf[2*i + 1];
+        argvlen[6 + 2*i]     = (size_t) snprintf(numbuf[2*i],     16, "%d", slots[i]);
+        argv  [6 + 2*i]      = numbuf[2*i];
+        argvlen[6 + 2*i + 1] = (size_t) snprintf(numbuf[2*i + 1], 16, "%d", 1);
+        argv  [6 + 2*i + 1]  = numbuf[2*i + 1];
     }
     redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
     zfree(argv);
     zfree(argvlen);
     zfree(numbuf);
 
-    if (r == NULL || r->type != REDIS_REPLY_STRING ||
-        r->len != (size_t) n_slots * sizeof(rdmaRemoteBufferInfo)) {
-        /* Diagnostic: show what hiredis actually got. */
+    if (r == NULL || r->type != REDIS_REPLY_STATUS) {
         const char *type_name =
-            r == NULL                           ? "NULL"          :
-            r->type == REDIS_REPLY_STRING       ? "STRING"        :
-            r->type == REDIS_REPLY_ARRAY        ? "ARRAY"         :
-            r->type == REDIS_REPLY_INTEGER      ? "INTEGER"       :
-            r->type == REDIS_REPLY_NIL          ? "NIL"           :
-            r->type == REDIS_REPLY_STATUS       ? "STATUS"        :
-            r->type == REDIS_REPLY_ERROR        ? "ERROR"         :
+            r == NULL                           ? "NULL"    :
+            r->type == REDIS_REPLY_ERROR        ? "ERROR"   :
                                                    "other";
-        size_t got_len   = r ? r->len : 0;
-        size_t want_len  = (size_t) n_slots * sizeof(rdmaRemoteBufferInfo);
         const char *body = (r && r->str) ? r->str : "(no body)";
         const char *ctxerr = (L->ctrl && L->ctrl->errstr[0]) ? L->ctrl->errstr : "(no ctxerr)";
-        serverLog(LL_WARNING,
-            "RDMA REGISTER-BLOCK-SLOTS: bad reply (type=%s len=%zu want=%zu body=\"%.80s\" ctxerr=\"%s\")",
-            type_name, got_len, want_len, body, ctxerr);
         if (err_out) *err_out = sdscatfmt(sdsempty(),
-            "RDMA REGISTER-BLOCK-SLOTS: bad reply (type=%s len=%U want=%U)",
-            type_name, (uint64_t) got_len, (uint64_t) want_len);
+            "REGISTER-BLOCK-SLOTS dispatch failed (type=%s body=\"%s\" ctxerr=\"%s\")",
+            type_name, body, ctxerr);
         if (r) freeReplyObject(r);
         pthread_mutex_unlock(&L->mu);
+        /* Drop the pending entry. */
+        pthread_mutex_lock(&pending_registrations_mu);
+        dictDelete(pending_registrations, key);
+        pthread_mutex_unlock(&pending_registrations_mu);
+        pthread_mutex_destroy(&p->mu);
+        pthread_cond_destroy(&p->cond);
+        zfree(p);
         return -1;
-    }
-    const rdmaRemoteBufferInfo *bufs = (const rdmaRemoteBufferInfo *) r->str;
-    for (int i = 0; i < n_slots; i++) {
-        L->buffers[slots[i]] = bufs[i];
     }
     freeReplyObject(r);
     pthread_mutex_unlock(&L->mu);
+
+    /* Wait on the condvar — release the main thread fully; only this worker
+     * thread sleeps. The recipient's worker will dial back to our main port
+     * via RDMA REGISTER-RESULT, which signals p->cond from
+     * rdmaRegisterResultCommand. */
+    serverLog(LL_NOTICE,
+        "RDMA REGISTER-BLOCK-SLOTS: dispatched register_id=%s, waiting for callback...",
+        register_id);
+    pthread_mutex_lock(&p->mu);
+    while (!p->done) pthread_cond_wait(&p->cond, &p->mu);
+    int got_error = p->error;
+    sds err_copy = p->err_msg ? sdsdup(p->err_msg) : NULL;
+    int total = p->total_buffers;
+    rdmaRemoteBufferInfo *buf_copy = NULL;
+    if (!got_error && p->payload) {
+        size_t bytes = (size_t) total * sizeof(rdmaRemoteBufferInfo);
+        buf_copy = zmalloc(bytes);
+        memcpy(buf_copy, p->payload, bytes);
+    }
+    pthread_mutex_unlock(&p->mu);
+
+    /* Free the pending entry. */
+    pthread_mutex_lock(&pending_registrations_mu);
+    dictDelete(pending_registrations, key);
+    pthread_mutex_unlock(&pending_registrations_mu);
+    if (p->payload) zfree(p->payload);
+    if (p->err_msg) sdsfree(p->err_msg);
+    pthread_mutex_destroy(&p->mu);
+    pthread_cond_destroy(&p->cond);
+    zfree(p);
+
+    if (got_error) {
+        if (err_out) *err_out = err_copy ? err_copy : sdsnew("REGISTER-RESULT: error");
+        if (buf_copy) zfree(buf_copy);
+        return -1;
+    }
+    if (total != n_slots) {
+        if (err_out) *err_out = sdscatfmt(sdsempty(),
+            "REGISTER-RESULT: got %i tuples, expected %i", total, n_slots);
+        if (buf_copy) zfree(buf_copy);
+        if (err_copy) sdsfree(err_copy);
+        return -1;
+    }
+
+    /* Populate L->buffers[slot]. */
+    pthread_mutex_lock(&L->mu);
+    for (int i = 0; i < n_slots; i++) {
+        L->buffers[slots[i]] = buf_copy[i];
+    }
+    pthread_mutex_unlock(&L->mu);
+    zfree(buf_copy);
+    if (err_copy) sdsfree(err_copy);
     return 0;
 }
 

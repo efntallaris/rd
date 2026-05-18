@@ -1,0 +1,21 @@
+{
+    "REGISTER-RESULT": {
+        "summary": "Source side (Phase 4d callback-RPC): receive the (VA, rkey) tuple payload from the recipient after a deferred REGISTER-BLOCK-SLOTS completes. Looks up the pending registration by register_id and signals the waiting PREP worker. Internal RPC; not intended for operator use.",
+        "complexity": "O(N) in payload size.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaRegisterResultCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "register-id", "type": "string" },
+            { "name": "status", "type": "string" },
+            { "name": "payload", "type": "string" }
+        ]
+    }
+}

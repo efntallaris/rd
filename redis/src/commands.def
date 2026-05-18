@@ -1345,6 +1345,30 @@ struct COMMAND_ARG RDMA_REGISTER_BLOCK_SLOTS_Args[] = {
 {MAKE_ARG("slot-spec",ARG_TYPE_BLOCK,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,2,NULL),.subargs=RDMA_REGISTER_BLOCK_SLOTS_slot_spec_Subargs},
 };
 
+/********** RDMA REGISTER_RESULT ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA REGISTER_RESULT history */
+#define RDMA_REGISTER_RESULT_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA REGISTER_RESULT tips */
+#define RDMA_REGISTER_RESULT_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA REGISTER_RESULT key specs */
+#define RDMA_REGISTER_RESULT_Keyspecs NULL
+#endif
+
+/* RDMA REGISTER_RESULT argument table */
+struct COMMAND_ARG RDMA_REGISTER_RESULT_Args[] = {
+{MAKE_ARG("register-id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("status",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("payload",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA RESHARD ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1474,6 +1498,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("migrate-prep","Source side: open (or reuse) an RDMA control link to the recipient and pre-register one landing block per listed slot.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_PREP_History,0,RDMA_MIGRATE_PREP_Tips,0,rdmaMigratePrepCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_PREP_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_PREP_Args},
 {MAKE_CMD("migrate-status","Source side: report the state of an in-flight or recently-finished RDMA MIGRATE. With no argument returns the latest migration's state. Reply is an 8-element array: state (string), registered, n_slots, slot_first, slot_last, elapsed_seconds, ended_flag, err.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_STATUS_History,0,RDMA_MIGRATE_STATUS_Tips,0,rdmaMigrateStatusCommand,-2,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_STATUS_Keyspecs,0,NULL,1),.args=RDMA_MIGRATE_STATUS_Args},
 {MAKE_CMD("register-block-slots","Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.","O(N) where N is the total number of blocks requested.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_BLOCK_SLOTS_History,0,RDMA_REGISTER_BLOCK_SLOTS_Tips,0,rdmaRegisterBlockSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_BLOCK_SLOTS_Keyspecs,0,NULL,2),.args=RDMA_REGISTER_BLOCK_SLOTS_Args},
+{MAKE_CMD("register-result","Source side (Phase 4d callback-RPC): receive the (VA, rkey) tuple payload from the recipient after a deferred REGISTER-BLOCK-SLOTS completes. Looks up the pending registration by register_id and signals the waiting PREP worker. Internal RPC; not intended for operator use.","O(N) in payload size.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_RESULT_History,0,RDMA_REGISTER_RESULT_Tips,0,rdmaRegisterResultCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_RESULT_Keyspecs,0,NULL,3),.args=RDMA_REGISTER_RESULT_Args},
 {MAKE_CMD("reshard","Source side: Phase 1 of bulk RDMA reshard. Picks N owned slots and registers one 1 MiB staging buffer per slot with the local RNIC (ibv_reg_mr).","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_History,0,RDMA_RESHARD_Tips,0,rdmaReshardCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_Args},
 {MAKE_CMD("reshard-exec","Source side: Phase 2 of bulk RDMA reshard. For each of the N slots that the prior RDMA RESHARD registered, encodes the slot's keys into the source's staging buffer, RDMA-WRITEs the bytes to the recipient's landing buffer, then sends RDMA DONE-SLOTS so the recipient applies the staged entries into its keyspace.","O(N * K) where K is the number of keys per slot.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_EXEC_History,0,RDMA_RESHARD_EXEC_Tips,0,rdmaReshardExecCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_EXEC_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_EXEC_Args},
 {MAKE_CMD("reshard-flip","Source side: early-ownership-flip variant. For each of the N slots that the prior RDMA RESHARD registered, locks source-side r_allocator blocks (immutable), tells the recipient to claim ownership via CLUSTER SETSLOT NODE, then locally releases ownership by directly invoking the slot-table helpers (bypassing the standard SETSLOT NODE safety check that forbids releasing a slot while local keys still exist).","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_FLIP_History,0,RDMA_RESHARD_FLIP_Tips,0,rdmaReshardFlipCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_FLIP_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_FLIP_Args},
