@@ -135,3 +135,19 @@ Once that document exists, the implementing PR (Phase 4a → 4d on a new branch 
 ## Branch
 
 Phase 4 audit lands on `aqueduct-thread-migration` as a docs-only commit. Implementing PR lands on `aqueduct-recipient-apply-thread` off the audit's tip commit.
+
+---
+
+## Reference notes — RedisRaft internals (research, no action yet)
+
+Researched 2026-05-17; saved here so future planning can cross-reference without re-mapping the redisraft tree at `/users/entall/rd/redisraft/`. These notes are research only — they do **not** change Phase 4's scope, which is aqueduct's `migrationApplyTick` keyspace-lock audit, not redisraft.
+
+- **Dump the raft log**: no `RAFT.DEBUG DUMPLOG` exists. Debug subcommands at [`redisraft.c:1296-1320`](redisraft/src/redisraft.c#L1296) are COMPACT, NODECFG, USED_NODE_IDS, EXEC, COMMANDSPEC. The on-disk log is RESP multibulk; format at [`log.c:23-49`](redisraft/src/log.c#L23); append site at [`LogAppend log.c:660`](redisraft/src/log.c#L660). To dump live, either add a new debug subcommand or hook `serverLog` from `LogAppend`.
+
+- **Leader's view of followers**: emitted by `INFO raft` at [`redisraft.c:1761-1787`](redisraft/src/redisraft.c#L1761). Iterates `raft_get_node_from_idx` and prints `id`, `state` (`ConnGetStateStr`), `voting`, `addr`, `port`, `last_conn_secs`, `conn_errors`, `conn_oks`. No dedicated `RAFT.NODE LIST` command.
+
+- **AppendEntries**:
+  - Follower recv handler: [`cmdRaftAppendEntries redisraft.c:897`](redisraft/src/redisraft.c#L897); parses fields at lines 937-943, deserializes entries at 953-965, calls libraft's [`raft_recv_appendentries` raft.h:1032](redisraft/deps/raft/include/raft.h#L1032).
+  - Leader send callback: [`raftSendAppendEntries raft.c:896`](redisraft/src/raft.c#L896); builds `RAFT.AE` and dispatches via `redisAsyncCommandArgv` (line 948); wired into libraft's callback table at [`raft.c:1339`](redisraft/src/raft.c#L1339).
+  - Send-loop driver: timer [`callRaftPeriodic raft.c:1484`](redisraft/src/raft.c#L1484) at `rr->config.periodic_interval` (typically 100 ms), calls `raft_periodic` at line 1518 which triggers outbound AppendEntries. Also event-driven on log append + leadership changes.
+  - Response handler: [`handleAppendEntriesResponse raft.c:853`](redisraft/src/raft.c#L853).
