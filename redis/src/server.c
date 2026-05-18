@@ -722,6 +722,19 @@ dictType rdmaOutboundLinksDictType = {
     NULL                        /* allow to expand */
 };
 
+/* Source-side autonomous-thread migration registry. Key is sds decimal of
+ * the migration id; value is rdmaMigration* owned by the dict, freed via
+ * rdmaMigrationFree (cluster_rdma.c). */
+dictType rdmaMigrationsDictType = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor,          /* key destructor */
+    rdmaMigrationFree,          /* val destructor */
+    NULL                        /* allow to expand */
+};
+
 /* Dict for for case-insensitive search using null terminated C strings.
  * The keys stored in dict are sds though. */
 dictType stringSetDictType = {
@@ -2365,6 +2378,9 @@ void initServerConfig(void) {
     server.rdma_client = NULL;
     server.rdma_server = NULL;
     server.rdma_outbound_links = dictCreate(&rdmaOutboundLinksDictType);
+    server.rdma_migrations = dictCreate(&rdmaMigrationsDictType);
+    server.rdma_migration_next_id = 1;
+    server.rdma_migration_last_id = 0;
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.page_size = sysconf(_SC_PAGESIZE);
     server.pause_cron = 0;

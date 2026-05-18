@@ -2012,6 +2012,9 @@ struct redisServer {
     struct rdmamig_server *rdma_server; /* Recipient side: listening RDMA endpoint */
     dict *rdma_outbound_links;         /* Source side: per-recipient RDMA bootstrap cache, keyed "host:port" */
     int rdma_migration_port;           /* Port the recipient binds for RDMA when asked via INIT-SERVER */
+    dict *rdma_migrations;             /* Source side: in-flight + recently-finished RDMA MIGRATE state, keyed by migration id as decimal sds */
+    long long rdma_migration_next_id;  /* Monotonic counter for new migrations. */
+    long long rdma_migration_last_id;  /* Id of the most-recently-dispatched migration (for RDMA MIGRATE-STATUS with no arg). */
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
     int io_threads_num;         /* Number of IO threads to use. */
@@ -4376,6 +4379,8 @@ void rdmaReshardFlipCommand(client *c);
 void rdmaReshardRecvFlipCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
+void rdmaMigrateCommand(client *c);
+void rdmaMigrateStatusCommand(client *c);
 void restoreCommand(client *c);
 void migrateCommand(client *c);
 void askingCommand(client *c);

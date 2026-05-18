@@ -15,6 +15,8 @@
 #ifndef CLUSTER_LEGACY_H
 #define CLUSTER_LEGACY_H
 
+#include <pthread.h>
+
 #define CLUSTER_PORT_INCR 10000 /* Cluster port = baseport + PORT_INCR */
 
 /* The following defines are amount of time, sometimes expressed as
@@ -343,6 +345,14 @@ struct clusterState {
     clusterNode *migrating_slots_to[CLUSTER_SLOTS];
     clusterNode *importing_slots_from[CLUSTER_SLOTS];
     clusterNode *slots[CLUSTER_SLOTS];
+    /* Protects slots[]/migrating_slots_to[]/importing_slots_from[] for
+     * cross-thread access from the RDMA migration worker (cluster_rdma.c).
+     * Readers (event-loop command dispatch via getNodeByQuery) take
+     * pthread_rwlock_rdlock; the migration worker's FLIP step takes
+     * pthread_rwlock_wrlock briefly around the clusterDelSlot/Addslot loop.
+     * Other slot-table mutators (gossip, CLUSTER SETSLOT, manual reset)
+     * also take the write lock. */
+    pthread_rwlock_t slots_lock;
     char internal_secret[CLUSTER_INTERNALSECRETLEN];
     /* The following fields are used to take the slave state on elections. */
     mstime_t failover_auth_time; /* Time of previous or next election. */
@@ -381,5 +391,11 @@ struct clusterState {
     unsigned char owner_not_claiming_slot[CLUSTER_SLOTS / 8];
 };
 
+/* Slot-table mutators used by the RDMA migration code (cluster_rdma.c).
+ * Declared file-locally in cluster_legacy.c at the top of the file too,
+ * but we want them as a public prototype so other TUs (cluster_rdma.c)
+ * can call them without an implicit-declaration warning. */
+int clusterAddSlot(struct _clusterNode *n, int slot);
+int clusterDelSlot(int slot);
 
 #endif //CLUSTER_LEGACY_H

@@ -1,0 +1,19 @@
+{
+    "MIGRATE-STATUS": {
+        "summary": "Source side: report the state of an in-flight or recently-finished RDMA MIGRATE. With no argument returns the latest migration's state. Reply is an 8-element array: state (string), registered, n_slots, slot_first, slot_last, elapsed_seconds, ended_flag, err.",
+        "complexity": "O(1).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -2,
+        "container": "RDMA",
+        "function": "rdmaMigrateStatusCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "migration-id", "type": "integer", "optional": true }
+        ]
+    }
+}

@@ -1,26 +1,27 @@
 ---
-# RDMA-based reshard step v2 — early-ownership-flip variant.
+# RDMA-based reshard step v2 — autonomous-thread migration variant.
 # Used by experiments/custom_reshard_v2/.
 #
-# Sequence (per source master, in order):
+# Per source master:
 #   1. CONFIG SET rdma-migration-port <per-source-port>     (avoid recipient port collision)
-#   2. RDMA MIGRATE-PREP <recipient> <port> <slots...>      (bootstrap RDMA QP + recipient bufs)
-#   3. RDMA RESHARD     <recipient> <port> <n-slots>        (register source MRs)
-#   4. RDMA RESHARD-FLIP <recipient> <port> <n-slots>       ← NEW: lock + flip ownership
-#   5. RDMA RESHARD-EXEC <recipient> <port> <n-slots>       (RDMA-WRITE + DONE-SLOTS apply)
+#   2. RDMA MIGRATE  <recipient> <port> <n-slots>           (kicks off a detached
+#                                                            worker thread that
+#                                                            walks PREP →
+#                                                            REGISTER → FLIP →
+#                                                            EXEC off the event
+#                                                            loop; returns +OK
+#                                                            migration_id=<N>
+#                                                            immediately)
+#   3. Poll RDMA MIGRATE-STATUS <id> until state ∈ {DONE,FAILED}.
 #
-# vs. reshard_cluster_rdma.yml (v1): ownership flip moves from a (deferred)
-# post-EXEC SETSLOT broadcast to a pre-EXEC RDMA RESHARD-FLIP. After step 4,
-# clients hitting the source for any of the migrated slots get -MOVED to the
-# recipient; the recipient is the new owner and serves them.
-#
-# Known v0 limitations (see PHASE3_PLAN.md and the C-level comment on
-# rdmaReshardFlipCommand): the recipient does NOT yet have the source's
-# data when ownership flips. Between the FLIP and the EXEC-driven RDMA WRITE
-# delivery, reads on the recipient for not-yet-migrated keys return NIL. The
-# window is short (single-digit seconds typical) but real. Parallel-read
-# fallback to source is the next iteration.
-- name: "RDMA reshard v2: register + early-flip + transfer on each master"
+# The dispatch of step 2 happens in parallel across all source masters via
+# `async:+poll:0`. The wait loop in step 3 polls each source independently.
+# Previously this playbook fired four blocking commands serially per host
+# (MIGRATE-PREP → RESHARD → RESHARD-FLIP → RESHARD-EXEC); the registration
+# step stalled the source's event loop for ~1.4s per source (1365 × ibv_reg_mr).
+# The new flow runs registration off the event loop so YCSB throughput stays
+# flat across the migration window.
+- name: "RDMA reshard v2: autonomous-thread migration on each master"
   hosts: redis_masters
   become: yes
   vars:
@@ -43,67 +44,51 @@
       register: cfg_set
       changed_when: false
 
-    - name: "Get this source's owned slot range"
+    - name: "Dispatch RDMA MIGRATE (autonomous thread, returns +OK immediately)"
       shell: |
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER NODES \
-          | awk '$3 ~ /myself/ {print $9}'
-      register: my_slot_range
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: migrate_result
+      changed_when: "'OK' in migrate_result.stdout"
+
+    - name: Show MIGRATE dispatch result
+      debug:
+        var: migrate_result.stdout
+
+    - name: "Parse migration_id from dispatch reply"
+      set_fact:
+        migration_id: "{{ migrate_result.stdout
+                          | regex_search('migration_id=([0-9]+)', '\\1')
+                          | first }}"
+
+    - name: "Poll RDMA MIGRATE-STATUS until DONE or FAILED"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE-STATUS {{ migration_id }}
+      register: mig_status
       changed_when: false
+      retries: 600                 # at delay=1, up to 10 minutes
+      delay: 1
+      until: >
+        mig_status.stdout is defined and
+        (mig_status.stdout_lines | first | default('')) in ['DONE','FAILED']
 
-    - name: "Bootstrap RDMA link + register {{ reshard_slots_per_source }} recipient buffers"
-      shell: |
-        START=$(echo '{{ my_slot_range.stdout }}' | cut -d- -f1)
-        END=$((START + {{ reshard_slots_per_source }} - 1))
-        SLOTS=$(seq $START $END | tr '\n' ' ')
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
-          RDMA MIGRATE-PREP {{ reshard_target }} {{ master_port }} $SLOTS
-      register: prep_result
-      changed_when: "'OK' in prep_result.stdout"
-
-    - name: Show MIGRATE-PREP result
+    - name: Show final MIGRATE-STATUS reply
       debug:
-        var: prep_result.stdout
+        var: mig_status.stdout_lines
 
-    - name: "RDMA RESHARD: register MRs on source for {{ reshard_slots_per_source }} slots"
-      shell: |
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
-          RDMA RESHARD {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
-      register: reshard_result
-      changed_when: "'OK' in reshard_result.stdout"
+    - name: "Fail loudly if migration ended in FAILED state"
+      fail:
+        msg: "[{{ inventory_hostname }}] RDMA MIGRATE id={{ migration_id }} FAILED: {{ mig_status.stdout_lines | last }}"
+      when: (mig_status.stdout_lines | first | default('')) == 'FAILED'
 
-    - name: Show RDMA RESHARD result
-      debug:
-        var: reshard_result.stdout
-
-    - name: "RDMA RESHARD-FLIP: lock source blocks + flip ownership to recipient"
-      shell: |
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
-          RDMA RESHARD-FLIP {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
-      register: reshard_flip_result
-      changed_when: "'OK' in reshard_flip_result.stdout"
-
-    - name: Show RDMA RESHARD-FLIP result
-      debug:
-        var: reshard_flip_result.stdout
-
-    - name: "RDMA RESHARD-EXEC: encode + RDMA-WRITE + DONE-SLOTS for {{ reshard_slots_per_source }} slots"
-      shell: |
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
-          RDMA RESHARD-EXEC {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
-      register: reshard_exec_result
-      changed_when: "'OK' in reshard_exec_result.stdout"
-
-    - name: Show RDMA RESHARD-EXEC result
-      debug:
-        var: reshard_exec_result.stdout
-
-    - name: "Post-reshard: dump VmPin on source"
+    - name: "Post-migration: dump VmPin on source"
       shell: |
         PID=$(pgrep -f 'redis-server.*:{{ master_port }}' | head -1)
         if [ -n "$PID" ]; then grep -E 'VmPin|VmRSS' /proc/$PID/status; else echo "pid not found"; fi
       register: vmpin
       changed_when: false
 
-    - name: Show pinned memory after RDMA RESHARD-EXEC
+    - name: Show pinned memory after RDMA MIGRATE
       debug:
         var: vmpin.stdout_lines

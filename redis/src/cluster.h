@@ -84,6 +84,52 @@ typedef struct rdmaOutboundLink {
 
 void rdmaOutboundLinkFree(void *v);
 
+/* ====================================================================== *
+ *  Autonomous-thread RDMA migration (RDMA MIGRATE + RDMA MIGRATE-STATUS)
+ *
+ *  One rdmaMigration is allocated per `RDMA MIGRATE host port n-slots`
+ *  invocation. The dispatching command handler validates args, picks
+ *  self-owned slots, resolves the outbound link, allocates this struct,
+ *  inserts it into `server.rdma_migrations`, spawns a detached worker
+ *  thread (`migrationWorker`), and returns `+OK migration_id=<id> running`
+ *  immediately so the event loop is free.
+ *
+ *  The worker walks the state machine inline on its thread: PREP →
+ *  REGISTERING → FLIPPING → EXECUTING → DONE (or FAILED on first error).
+ *
+ *  Lock ordering: mig->mu < L->mu < cluster->slots_lock.
+ * ====================================================================== */
+typedef enum {
+    RDMA_MIG_INIT          = 0,
+    RDMA_MIG_PREP          = 1,
+    RDMA_MIG_REGISTERING   = 2,
+    RDMA_MIG_FLIPPING      = 3,
+    RDMA_MIG_EXECUTING     = 4,
+    RDMA_MIG_DONE          = 5,
+    RDMA_MIG_FAILED        = 6
+} rdmaMigrationState;
+
+typedef struct rdmaMigration {
+    long long id;
+    sds       addr;                /* "host:port" */
+    sds       host;
+    int       port;
+    int       n_slots;
+    int      *chosen;              /* slot ids picked at dispatch time */
+    rdmaOutboundLink *L;           /* resolved/created by dispatch */
+
+    /* All fields below are guarded by mu. */
+    pthread_mutex_t mu;
+    rdmaMigrationState state;
+    int             registered;    /* progress counter for STATUS */
+    sds             err;           /* set when state==FAILED, NULL otherwise */
+    time_t          t_started;
+    time_t          t_ended;
+    pthread_t       thr;
+} rdmaMigration;
+
+void rdmaMigrationFree(dict *d, void *v);
+
 /* Flags that a module can set in order to prevent certain Redis Cluster
  * features to be enabled. Useful when implementing a different distributed
  * system on top of Redis Cluster message bus, using modules. */

@@ -1,0 +1,21 @@
+{
+    "MIGRATE": {
+        "summary": "Source side: kick off an autonomous-thread RDMA slot migration that runs the full PREP → REGISTER → FLIP → EXEC pipeline off the event loop. Returns +OK migration_id=<N> running immediately; poll RDMA MIGRATE-STATUS for progress.",
+        "complexity": "O(N) in number of slots (registration is the dominant cost).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaMigrateCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "recipient-host", "type": "string" },
+            { "name": "recipient-port", "type": "integer" },
+            { "name": "slot-count", "type": "integer" }
+        ]
+    }
+}

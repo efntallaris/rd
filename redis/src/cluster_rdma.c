@@ -1406,3 +1406,535 @@ void rdmaReshardRecvFlipCommand(client *c) {
 
     addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }
+
+
+/* ======================================================================== *
+ *                                                                          *
+ *  RDMA MIGRATE — single autonomous-thread migration                       *
+ *                                                                          *
+ *  Replaces the four-command Ansible-driven sequence (MIGRATE-PREP →       *
+ *  RESHARD → RESHARD-FLIP → RESHARD-EXEC) with a single command that       *
+ *  spawns a detached worker thread to walk the full pipeline off the       *
+ *  event loop.                                                             *
+ *                                                                          *
+ *      RDMA MIGRATE  <recipient-host> <recipient-port> <n-slots>           *
+ *      RDMA MIGRATE-STATUS [migration_id]                                  *
+ *                                                                          *
+ *  Lock ordering inside the worker:                                        *
+ *      mig->mu   <   L->mu   <   cluster->slots_lock                       *
+ *                                                                          *
+ *  Stale legacy commands (MIGRATE-PREP / RESHARD / RESHARD-FLIP /          *
+ *  RESHARD-EXEC) remain available, calling shared helpers below.           *
+ * ======================================================================== */
+
+#include "cluster_legacy.h"  /* for clusterState slots_lock + clusterAddSlot/Del proto */
+
+/* ---- helpers (shared by the legacy command handlers above and the new
+ *      autonomous worker below) ---------------------------------------- */
+
+/* PREP-helper: REGISTER-BLOCK-SLOTS RPC over L->ctrl, fills L->buffers[slot].
+ * Mirrors the in-line body of rdmaMigratePrepCommand (lines ~776-811).
+ * Caller already holds the link in `L`. Returns 0 on success, -1 with
+ * `*err_out` set on failure. */
+static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
+                                  const int *slots, int n_slots,
+                                  sds *err_out) {
+    pthread_mutex_lock(&L->mu);
+
+    int argc = 3 + 2 * n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    argv[0] = "RDMA";                       argvlen[0] = 4;
+    argv[1] = "REGISTER-BLOCK-SLOTS";       argvlen[1] = 20;
+    argv[2] = "SLOTS";                      argvlen[2] = 5;
+
+    char (*numbuf)[16] = zmalloc((size_t)(2 * n_slots) * sizeof(*numbuf));
+    for (int i = 0; i < n_slots; i++) {
+        argvlen[3 + 2*i]     = (size_t) snprintf(numbuf[2*i],     16, "%d", slots[i]);
+        argv  [3 + 2*i]      = numbuf[2*i];
+        argvlen[3 + 2*i + 1] = (size_t) snprintf(numbuf[2*i + 1], 16, "%d", 1);
+        argv  [3 + 2*i + 1]  = numbuf[2*i + 1];
+    }
+    redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+    zfree(argv);
+    zfree(argvlen);
+    zfree(numbuf);
+
+    if (r == NULL || r->type != REDIS_REPLY_STRING ||
+        r->len != (size_t) n_slots * sizeof(rdmaRemoteBufferInfo)) {
+        if (err_out) *err_out = sdsnew(
+            "RDMA REGISTER-BLOCK-SLOTS: malformed or error reply from recipient");
+        if (r) freeReplyObject(r);
+        pthread_mutex_unlock(&L->mu);
+        return -1;
+    }
+    const rdmaRemoteBufferInfo *bufs = (const rdmaRemoteBufferInfo *) r->str;
+    for (int i = 0; i < n_slots; i++) {
+        L->buffers[slots[i]] = bufs[i];
+    }
+    freeReplyObject(r);
+    pthread_mutex_unlock(&L->mu);
+    return 0;
+}
+
+/* REGISTER-helper: the hot ibv_reg_mr loop. Mirrors rdmaReshardCommand's
+ * inline body (lines ~883-923). `progress` is bumped under L->mu each time
+ * a slot is registered, so RDMA MIGRATE-STATUS can read progress without
+ * waiting for the worker to finish. */
+static int rdmaReshardRegisterHelper(rdmaOutboundLink *L,
+                                      const int *chosen, int n_slots,
+                                      int *progress, sds *err_out) {
+    pthread_mutex_lock(&L->mu);
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        if (L->source_buffers[slot] != NULL) {
+            /* already registered — count as progress and skip */
+            if (progress) (*progress)++;
+            continue;
+        }
+        void *staging = zmalloc(RDMAMIG_BLOCK_SIZE_BYTES);
+        if (staging == NULL) {
+            pthread_mutex_unlock(&L->mu);
+            if (err_out) *err_out = sdsnew("zmalloc failed for staging buffer");
+            return -1;
+        }
+        memset(staging, 0, RDMAMIG_BLOCK_SIZE_BYTES);
+        struct rdmamig_buffer *rb = rdmamig_buffer_create(
+            rdmamig_client_cm_id(L->client),
+            staging, RDMAMIG_BLOCK_SIZE_BYTES, 0);
+        if (rb == NULL) {
+            zfree(staging);
+            pthread_mutex_unlock(&L->mu);
+            if (err_out) *err_out = sdsnew("rdmamig_buffer_create failed");
+            return -1;
+        }
+        L->source_buffers[slot] = rb;
+        if (progress) (*progress)++;
+        /* Same per-slot log line as the legacy handler so existing log
+         * scrapers and the throughput-vs-registration cross-reference
+         * still work. */
+        serverLog(LL_NOTICE,
+                  "RDMA RESHARD: registered slot=%d buf=%p rkey=0x%x size=%d",
+                  slot, staging, rdmamig_buffer_rkey(rb), RDMAMIG_BLOCK_SIZE_BYTES);
+    }
+    pthread_mutex_unlock(&L->mu);
+    return 0;
+}
+
+/* FLIP-helper: hiredis RECV-FLIP RPC + local slot-table mutation under the
+ * cluster slots_lock. Mirrors rdmaReshardFlipCommand (lines ~1216-1322). */
+static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
+                                  const int *chosen, int n_slots,
+                                  sds *err_out) {
+    pthread_mutex_lock(&L->mu);
+
+    redisReply *r = redisCommand(L->ctrl, "CLUSTER MYID");
+    if (r == NULL || r->type != REDIS_REPLY_STRING ||
+        (int) strlen(r->str) < CLUSTER_NAMELEN) {
+        if (err_out) *err_out = sdsnew("FLIP: CLUSTER MYID failed");
+        if (r) freeReplyObject(r);
+        pthread_mutex_unlock(&L->mu);
+        return -1;
+    }
+    char recipient_id[CLUSTER_NAMELEN + 1];
+    memcpy(recipient_id, r->str, CLUSTER_NAMELEN);
+    recipient_id[CLUSTER_NAMELEN] = '\0';
+    freeReplyObject(r);
+
+    clusterNode *recipient_node = clusterLookupNode(recipient_id, CLUSTER_NAMELEN);
+    if (recipient_node == NULL) {
+        if (err_out) *err_out = sdscatfmt(sdsempty(),
+            "FLIP: recipient %s not in local cluster view (CLUSTER MEET?)",
+            recipient_id);
+        pthread_mutex_unlock(&L->mu);
+        return -1;
+    }
+
+    char src_id[CLUSTER_NAMELEN + 1];
+    memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
+    src_id[CLUSTER_NAMELEN] = '\0';
+
+    /* Lock source blocks for all N slots up front. */
+    for (int i = 0; i < n_slots; i++) {
+        r_allocator_lock_slot_blocks(chosen[i]);
+    }
+
+    /* Recipient flips its half atomically per slot. */
+    int argc = 3 + n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    argv[0] = "RDMA";               argvlen[0] = 4;
+    argv[1] = "RESHARD-RECV-FLIP";  argvlen[1] = 17;
+    argv[2] = src_id;               argvlen[2] = CLUSTER_NAMELEN;
+    char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
+    for (int i = 0; i < n_slots; i++) {
+        argvlen[3 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
+        argv  [3 + i] = numbuf[i];
+    }
+    redisReply *r_recv = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+    zfree(argv);
+    zfree(argvlen);
+    zfree(numbuf);
+
+    if (r_recv == NULL || r_recv->type == REDIS_REPLY_ERROR) {
+        if (err_out) *err_out = sdscatfmt(sdsempty(),
+            "FLIP: recipient RECV-FLIP failed: %s",
+            r_recv ? r_recv->str : "no reply");
+        if (r_recv) freeReplyObject(r_recv);
+        pthread_mutex_unlock(&L->mu);
+        return -1;
+    }
+    freeReplyObject(r_recv);
+
+    /* Local slot-table mutation under the cluster slots write lock — short
+     * critical section (microseconds), event-loop readers stall only here. */
+    pthread_rwlock_wrlock(&server.cluster->slots_lock);
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        clusterDelSlot(slot);
+        clusterAddSlot(recipient_node, slot);
+        server.cluster->migrating_slots_to[slot] = recipient_node;
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: slot=%d ownership flipped to %s",
+            slot, recipient_id);
+    }
+    pthread_rwlock_unlock(&server.cluster->slots_lock);
+
+    pthread_mutex_unlock(&L->mu);
+    return 0;
+}
+
+/* EXEC-helper: encode + RDMA-WRITE + DONE-SLOTS. Mirrors reshardExecWorker
+ * (lines ~974-1048). */
+static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
+                                  const int *chosen, int n_slots,
+                                  sds *err_out) {
+    pthread_mutex_lock(&L->mu);
+
+    size_t total_bytes = 0;
+    int errs = 0;
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
+        uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
+                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+        rdmaDebugDumpSlotBytes("SRC", slot, staging);
+        if (server.rdma_reshard_debug_bytes) {
+            r_allocator_log_slot_stats(slot);
+            serverLog(LL_NOTICE,
+                "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
+                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+        }
+        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
+                                           L->buffers[slot].ptr,
+                                           L->buffers[slot].rkey,
+                                           RDMAMIG_BLOCK_SIZE_BYTES);
+        if (rc != 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: slot=%d post_write failed rc=%d", slot, rc);
+            continue;
+        }
+        int wc_rc = rdmamig_client_wait_send(L->client);
+        if (wc_rc < 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: slot=%d wait_send failed rc=%d", slot, wc_rc);
+            continue;
+        }
+        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: slot=%d entries=%u bytes=%d rc=0",
+            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+    }
+
+    /* Notify recipient: "RDMA DONE-SLOTS <s1> <s2> ... <sN>". */
+    int argc = 2 + n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    argv[0] = "RDMA";       argvlen[0] = 4;
+    argv[1] = "DONE-SLOTS"; argvlen[1] = 10;
+    char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
+    for (int i = 0; i < n_slots; i++) {
+        argvlen[2 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
+        argv  [2 + i] = numbuf[i];
+    }
+    redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+    zfree(argv);
+    zfree(argvlen);
+    zfree(numbuf);
+
+    if (r == NULL || r->type != REDIS_REPLY_STATUS) {
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: DONE-SLOTS reply not OK (data may still have landed)");
+    }
+    if (r) freeReplyObject(r);
+
+    pthread_mutex_unlock(&L->mu);
+
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE worker: EXEC finished n=%d bytes=%zu errs=%d",
+        n_slots, total_bytes, errs);
+
+    if (errs > 0 && err_out) {
+        *err_out = sdscatfmt(sdsempty(), "EXEC: %i slot writes failed", errs);
+        return -1;
+    }
+    return 0;
+}
+
+/* ---- worker thread state transitions -------------------------------- */
+
+static const char *migStateName(rdmaMigrationState s) {
+    switch (s) {
+    case RDMA_MIG_INIT:        return "INIT";
+    case RDMA_MIG_PREP:        return "PREP";
+    case RDMA_MIG_REGISTERING: return "REGISTERING";
+    case RDMA_MIG_FLIPPING:    return "FLIPPING";
+    case RDMA_MIG_EXECUTING:   return "EXECUTING";
+    case RDMA_MIG_DONE:        return "DONE";
+    case RDMA_MIG_FAILED:      return "FAILED";
+    }
+    return "?";
+}
+
+/* Worker-side state setter — single point so logging stays consistent.
+ * Worker holds mig->mu only briefly across the assignment. */
+static void migSetState(rdmaMigration *mig, rdmaMigrationState s) {
+    pthread_mutex_lock(&mig->mu);
+    mig->state = s;
+    pthread_mutex_unlock(&mig->mu);
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE worker: id=%lld state=%s n_slots=%d",
+        mig->id, migStateName(s), mig->n_slots);
+}
+
+/* Worker-side failure setter. Caller passes ownership of `err` (sds). */
+static void migFail(rdmaMigration *mig, sds err) {
+    pthread_mutex_lock(&mig->mu);
+    mig->state = RDMA_MIG_FAILED;
+    if (mig->err) sdsfree(mig->err);
+    mig->err = err ? err : sdsnew("unknown error");
+    mig->t_ended = time(NULL);
+    pthread_mutex_unlock(&mig->mu);
+    serverLog(LL_WARNING,
+        "RDMA MIGRATE worker: id=%lld FAILED: %s", mig->id, mig->err);
+}
+
+static void *migrationWorker(void *arg) {
+    rdmaMigration *mig = (rdmaMigration *) arg;
+    sds err = NULL;
+
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE worker: started id=%lld addr=%s n_slots=%d",
+        mig->id, mig->addr, mig->n_slots);
+
+    /* PREP: register recipient landing buffers for the chosen slots. */
+    migSetState(mig, RDMA_MIG_PREP);
+    if (rdmaMigratePrepHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
+    }
+
+    /* REGISTERING: ibv_reg_mr each source-side staging buffer. */
+    migSetState(mig, RDMA_MIG_REGISTERING);
+    if (rdmaReshardRegisterHelper(mig->L, mig->chosen, mig->n_slots,
+                                  &mig->registered, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
+    }
+
+    /* FLIPPING: tell recipient + locally flip ownership. */
+    migSetState(mig, RDMA_MIG_FLIPPING);
+    if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
+    }
+
+    /* EXECUTING: RDMA-WRITE + DONE-SLOTS. */
+    migSetState(mig, RDMA_MIG_EXECUTING);
+    /* Use db 0 — same as the legacy reshardExecWorker path (DB selection
+     * comes from the dispatching client; cluster mode is single-DB). */
+    if (rdmaReshardExecHelper(mig->L, &server.db[0], mig->chosen, mig->n_slots, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
+    }
+
+    pthread_mutex_lock(&mig->mu);
+    mig->state = RDMA_MIG_DONE;
+    mig->t_ended = time(NULL);
+    pthread_mutex_unlock(&mig->mu);
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE worker: id=%lld DONE n_slots=%d", mig->id, mig->n_slots);
+    return NULL;
+}
+
+/* ---- public commands ------------------------------------------------- */
+
+/* RDMA MIGRATE recipient-host recipient-port n-slots */
+void rdmaMigrateCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c, "syntax: RDMA MIGRATE recipient-host recipient-port n-slots");
+        return;
+    }
+    const char *host = c->argv[2]->ptr;
+    long long port_ll, n_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "port out of range");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &n_slots_ll) != C_OK ||
+        n_slots_ll <= 0 || n_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "n-slots out of range");
+        return;
+    }
+    int port = (int) port_ll;
+    int n_slots = (int) n_slots_ll;
+
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        addReplyError(c, "cluster mode not enabled on this node");
+        return;
+    }
+
+    /* Pick n_slots self-owned slots, lowest first. Read under the slots_lock
+     * read lock so we don't race with a concurrent FLIP from another
+     * migration on the same source. */
+    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
+    int picked = 0;
+    pthread_rwlock_rdlock(&server.cluster->slots_lock);
+    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+        if (server.cluster->slots[i] == server.cluster->myself) {
+            chosen[picked++] = i;
+        }
+    }
+    pthread_rwlock_unlock(&server.cluster->slots_lock);
+    if (picked < n_slots) {
+        zfree(chosen);
+        addReplyErrorFormat(c, "self owns only %d slots, asked for %d",
+                            picked, n_slots);
+        return;
+    }
+
+    /* Resolve or create the outbound link (event-loop owned dict mutation,
+     * so do it here, not in the worker). */
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    if (L == NULL) {
+        L = rdmaOutboundLinkOpen(host, port);
+        if (L == NULL) {
+            sdsfree(key);
+            zfree(chosen);
+            addReplyError(c, "could not establish outbound RDMA link (see server log)");
+            return;
+        }
+        dictAdd(server.rdma_outbound_links, key, L);
+    } else {
+        sdsfree(key);
+    }
+
+    /* Allocate the migration record. */
+    rdmaMigration *mig = zcalloc(sizeof(*mig));
+    mig->id        = server.rdma_migration_next_id++;
+    mig->addr      = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    mig->host      = sdsnew(host);
+    mig->port      = port;
+    mig->n_slots   = n_slots;
+    mig->chosen    = chosen;        /* worker reads but does not free */
+    mig->L         = L;
+    pthread_mutex_init(&mig->mu, NULL);
+    mig->state     = RDMA_MIG_INIT;
+    mig->registered = 0;
+    mig->err       = NULL;
+    mig->t_started = time(NULL);
+    mig->t_ended   = 0;
+
+    sds dict_key = sdsfromlonglong(mig->id);
+    dictAdd(server.rdma_migrations, dict_key, mig);
+    server.rdma_migration_last_id = mig->id;
+
+    if (pthread_create(&mig->thr, NULL, migrationWorker, mig) != 0) {
+        /* dict owns mig; remove + free via dictDelete which triggers our destructor */
+        dictDelete(server.rdma_migrations, dict_key);
+        /* dict_key was consumed by dictDelete -> sdsDestructor */
+        addReplyError(c, "RDMA MIGRATE: pthread_create failed");
+        return;
+    }
+    pthread_detach(mig->thr);
+
+    addReplyStatusFormat(c, "OK migration_id=%lld running (n_slots=%d, %s:%d)",
+                         mig->id, n_slots, host, port);
+}
+
+/* RDMA MIGRATE-STATUS [migration_id] */
+void rdmaMigrateStatusCommand(client *c) {
+    if (c->argc > 3) {
+        addReplyError(c, "syntax: RDMA MIGRATE-STATUS [migration_id]");
+        return;
+    }
+
+    long long want_id;
+    if (c->argc == 3) {
+        if (getLongLongFromObject(c->argv[2], &want_id) != C_OK || want_id <= 0) {
+            addReplyError(c, "migration_id must be a positive integer");
+            return;
+        }
+    } else {
+        want_id = server.rdma_migration_last_id;
+        if (want_id == 0) {
+            addReplyError(c, "no migrations have been dispatched yet");
+            return;
+        }
+    }
+
+    sds key = sdsfromlonglong(want_id);
+    rdmaMigration *mig = dictFetchValue(server.rdma_migrations, key);
+    sdsfree(key);
+    if (mig == NULL) {
+        addReplyErrorFormat(c, "no such migration id: %lld", want_id);
+        return;
+    }
+
+    pthread_mutex_lock(&mig->mu);
+    const char *state = migStateName(mig->state);
+    int registered   = mig->registered;
+    int n_slots      = mig->n_slots;
+    sds err_copy     = mig->err ? sdsdup(mig->err) : sdsempty();
+    time_t t_started = mig->t_started;
+    time_t t_ended   = mig->t_ended;
+    int slot_first   = (n_slots > 0) ? mig->chosen[0] : -1;
+    int slot_last    = (n_slots > 0) ? mig->chosen[n_slots - 1] : -1;
+    pthread_mutex_unlock(&mig->mu);
+
+    long long elapsed = (long long) ((t_ended ? t_ended : time(NULL)) - t_started);
+
+    /* 8-element flat reply: state, registered, n_slots, slot_first, slot_last,
+     * elapsed_seconds, ended (0 if still running), err (empty if none). */
+    addReplyArrayLen(c, 8);
+    addReplyBulkCString(c, state);
+    addReplyLongLong(c, registered);
+    addReplyLongLong(c, n_slots);
+    addReplyLongLong(c, slot_first);
+    addReplyLongLong(c, slot_last);
+    addReplyLongLong(c, elapsed);
+    addReplyLongLong(c, t_ended ? 1 : 0);
+    addReplyBulkSds(c, err_copy);
+    /* err_copy is consumed by addReplyBulkSds (it takes ownership of the sds). */
+}
+
+/* Dict valDestructor for server.rdma_migrations. */
+void rdmaMigrationFree(dict *d, void *v) {
+    (void) d;
+    rdmaMigration *mig = v;
+    if (mig == NULL) return;
+    /* mig->chosen is freed here; the worker only reads it. By the time the
+     * dict frees this entry (server shutdown, manual eviction), the worker
+     * has either DONE or FAILED — we don't attempt to cancel in-flight
+     * threads. */
+    if (mig->chosen) zfree(mig->chosen);
+    if (mig->addr)   sdsfree(mig->addr);
+    if (mig->host)   sdsfree(mig->host);
+    if (mig->err)    sdsfree(mig->err);
+    pthread_mutex_destroy(&mig->mu);
+    zfree(mig);
+}

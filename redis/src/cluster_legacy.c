@@ -985,6 +985,7 @@ void clusterInit(void) {
     server.cluster->stat_cluster_links_buffer_limit_exceeded = 0;
 
     memset(server.cluster->slots,0, sizeof(server.cluster->slots));
+    pthread_rwlock_init(&server.cluster->slots_lock, NULL);
     clusterCloseAllSlots();
 
     memset(server.cluster->owner_not_claiming_slot, 0, sizeof(server.cluster->owner_not_claiming_slot));
