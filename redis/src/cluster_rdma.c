@@ -813,26 +813,16 @@ static void drainApplyRing(void) {
             "RDMA apply-thread: starting batch from %.*s mig_id=%lld n_slots=%d",
             CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots);
 
-        /* PHASE 4d INVESTIGATION STUB: skip the real rdmaApplySlot work and
-         * usleep(1000) per slot instead. Keeps the slot wrlock acquire so
-         * we still exercise the lock-contention path against main-thread
-         * Path B wraps, but bypasses the dbAdd inside rdmaApplySlot — the
-         * suspected source of the hang. If this stub completes cleanly
-         * (APPLY-STATUS reports done, dip is gone), the SPSC ring + status
-         * flow + lock infra are sound and the issue is inside the dbAdd
-         * path (signalKeyAsReady / notifyKeyspaceEvent / kvstore rehash
-         * race). If this stub also hangs, the SPSC / status / lock
-         * machinery is broken. */
-        for (int i = 0; i < b->n_slots; i++) {
-            int slot = b->slots[i];
-            clusterSlotLockWrite(slot);
-            cluster_slot_lock_held_by_thread++;
-            usleep(1000);
-            cluster_slot_lock_held_by_thread--;
-            clusterSlotUnlock(slot);
-            atomic_store_explicit(&b->idx, i + 1, memory_order_release);
-            /* Stub: no keys applied; b->applied stays at 0. */
-        }
+        /* PHASE 4d STUB v2: NO per-slot work at all. No slot wrlocks. No
+         * loop. Just sleep for a token duration to simulate "the apply took
+         * some time" and mark all slots applied. If the YCSB dip persists
+         * even with this — there's no apply-thread keyspace touch, no slot
+         * lock contention — then the dip is NOT caused by the apply thread.
+         * Either the RECV-FLIP topology wrlock (contributor #1) or the
+         * client-side TCP recovery aftermath (contributor #3) carries it. */
+        usleep(100000);  /* 100 ms — much less than the 1.5 s "real work" */
+        atomic_store_explicit(&b->idx, b->n_slots, memory_order_release);
+        /* Stub: no keys applied; b->applied stays at 0. */
 
         atomic_store_explicit(&b->state, APPLY_DONE, memory_order_release);
         b->t_ended = time(NULL);
