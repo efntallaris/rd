@@ -120,13 +120,37 @@ void rdmaInitServerCommand(client *c) {
 
 /* ---- REGISTER-BLOCK-SLOTS ----------------------------------------------- */
 
+/* Phase 4d: registerJob + globals + forward declarations needed by
+ * rdmaRegisterBlockSlotsCommand below. The function bodies for
+ * registerWorkerThread, registerDonePipeHandler, registerThreadInfraInit
+ * live further down in the file (near the apply thread). */
+typedef struct registerJob {
+    rdmaCachedConnection *conn;
+    int        n_pairs;
+    int       *slot_ids;
+    int       *n_blocks_per_slot;
+    rdmaRemoteBufferInfo *result;
+    int        total_buffers;
+    int        has_error;
+    char       err_msg[256];
+    uint64_t   client_id;
+} registerJob;
+
+extern int register_done_pipe[2];
+extern list *register_done_list;
+static void *registerWorkerThread(void *arg);
+static void registerThreadInfraInit(void);
+
 /* RDMA REGISTER-BLOCK-SLOTS SLOTS <slot> <nblocks> [<slot> <nblocks> ...]
  *
  * Recipient side: for each (slot, nblocks) pair, allocate that many
  * RDMA-registered landing buffers via the slot-keyed allocator and reply
  * with the resulting (VA, rkey) array as a single binary bulk string.
  * The donor consumes that array verbatim during TRANSFER-SLOTS to
- * populate its post_write_at_address calls. */
+ * populate its post_write_at_address calls.
+ *
+ * Phase 4d: the heavy ibv_reg_mr loop is deferred to a detached worker
+ * thread; the reply is sent later via registerDonePipeHandler. */
 void rdmaRegisterBlockSlotsCommand(client *c) {
     rdmaCachedConnection *cs = rdmaGetConnection(c);
     if (cs == NULL) {
@@ -161,53 +185,101 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         total_requested_blocks += (int) n;
     }
 
-    serverLog(LL_NOTICE, "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu starting (%d total blocks across %d pairs)",
-              (unsigned long long) c->id, total_requested_blocks, (c->argc - start_idx) / 2);
-    rdmaRemoteBufferInfo *remote_buffers = zmalloc(total_requested_blocks * sizeof(rdmaRemoteBufferInfo));
-    int total_remote_buffers = 0;
+    int n_pairs = (c->argc - start_idx) / 2;
+    serverLog(LL_NOTICE,
+        "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu deferring %d blocks across %d pairs to worker thread",
+        (unsigned long long) c->id, total_requested_blocks, n_pairs);
 
-    for (int idx = start_idx; idx + 1 < c->argc; idx += 2) {
+    /* Build the job and parse all args BEFORE blocking so we can reply with
+     * a synchronous syntax error if the args are malformed. */
+    registerJob *job = zmalloc(sizeof(*job));
+    job->conn = cs;
+    job->n_pairs = n_pairs;
+    job->slot_ids = zmalloc((size_t) n_pairs * sizeof(int));
+    job->n_blocks_per_slot = zmalloc((size_t) n_pairs * sizeof(int));
+    job->result = zmalloc((size_t) total_requested_blocks * sizeof(rdmaRemoteBufferInfo));
+    job->total_buffers = 0;
+    job->has_error = 0;
+    job->err_msg[0] = '\0';
+    job->client_id = c->id;
+
+    int pi = 0;
+    for (int idx = start_idx; idx + 1 < c->argc; idx += 2, pi++) {
         long long slot_id, n_blocks;
         if (getLongLongFromObject(c->argv[idx], &slot_id) != C_OK ||
             slot_id < 0 || slot_id >= CLUSTER_SLOTS) {
-            zfree(remote_buffers);
+            zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
+            zfree(job->result); zfree(job);
             addReplyError(c, "slot id out of range");
             return;
         }
         if (getLongLongFromObject(c->argv[idx + 1], &n_blocks) != C_OK || n_blocks < 0) {
-            zfree(remote_buffers);
+            zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
+            zfree(job->result); zfree(job);
             addReplyError(c, "n-blocks must be a non-negative integer");
             return;
         }
-
-        for (int i = 0; i < n_blocks; i++) {
-            void *block_ptr = r_allocator_alloc_new_empty_block((int) slot_id);
-            if (block_ptr == NULL) {
-                zfree(remote_buffers);
-                addReplyError(c, "r_allocator_alloc_new_empty_block returned NULL");
-                return;
-            }
-            struct rdmamig_buffer *rb = rdmamig_buffer_create(
-                rdmamig_server_cm_id(cs->s), block_ptr, RDMAMIG_BLOCK_SIZE_BYTES, 0);
-            if (rb == NULL) {
-                zfree(remote_buffers);
-                addReplyError(c, "rdmamig_buffer_create failed");
-                return;
-            }
-            remote_buffers[total_remote_buffers].ptr = (uint64_t) block_ptr;
-            remote_buffers[total_remote_buffers].rkey = rdmamig_buffer_rkey(rb);
-            serverLog(LL_NOTICE, "RDMA REGISTER-BLOCK-SLOTS: slot=%lld block=%d VA=0x%llx rkey=0x%x",
-                      slot_id, i,
-                      (unsigned long long) remote_buffers[total_remote_buffers].ptr,
-                      remote_buffers[total_remote_buffers].rkey);
-            total_remote_buffers++;
-        }
+        job->slot_ids[pi] = (int) slot_id;
+        job->n_blocks_per_slot[pi] = (int) n_blocks;
     }
 
-    serverLog(LL_NOTICE, "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu returning %d (VA, rkey) tuples",
-              (unsigned long long) c->id, total_remote_buffers);
-    addReplyBulkCBuffer(c, (char *) remote_buffers, total_remote_buffers * sizeof(rdmaRemoteBufferInfo));
-    zfree(remote_buffers);
+    /* If the infra never came up (pipe init failed, very rare), fall back to
+     * the synchronous main-thread path. Keeps the worst case correct. */
+    if (register_done_pipe[1] == -1 || register_done_list == NULL) {
+        serverLog(LL_WARNING,
+            "RDMA REGISTER-BLOCK-SLOTS: deferred-worker infra not initialized, falling back inline");
+        for (int i = 0; i < job->n_pairs; i++) {
+            int slot = job->slot_ids[i];
+            int n = job->n_blocks_per_slot[i];
+            for (int k = 0; k < n; k++) {
+                void *block_ptr = r_allocator_alloc_new_empty_block(slot);
+                if (block_ptr == NULL) {
+                    zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
+                    zfree(job->result); zfree(job);
+                    addReplyError(c, "r_allocator_alloc_new_empty_block returned NULL");
+                    return;
+                }
+                struct rdmamig_buffer *rb = rdmamig_buffer_create(
+                    rdmamig_server_cm_id(cs->s), block_ptr, RDMAMIG_BLOCK_SIZE_BYTES, 0);
+                if (rb == NULL) {
+                    zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
+                    zfree(job->result); zfree(job);
+                    addReplyError(c, "rdmamig_buffer_create failed");
+                    return;
+                }
+                job->result[job->total_buffers].ptr = (uint64_t) block_ptr;
+                job->result[job->total_buffers].rkey = rdmamig_buffer_rkey(rb);
+                job->total_buffers++;
+            }
+        }
+        addReplyBulkCBuffer(c, (char *) job->result,
+            (size_t) job->total_buffers * sizeof(rdmaRemoteBufferInfo));
+        zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
+        zfree(job->result); zfree(job);
+        return;
+    }
+
+    /* Defer the heavy ibv_reg_mr loop to a dedicated detached worker thread.
+     * Block this client until the worker writes back via the completion
+     * pipe (registerDonePipeHandler sends the reply + unblocks). The
+     * client's hiredis context on the source side keeps waiting on its
+     * recv() until our reply lands, so no source-side change needed. */
+    blockClient(c, BLOCKED_LAZYFREE);
+    c->bstate.timeout = 0;
+
+    pthread_t tid;
+    int err = pthread_create(&tid, NULL, registerWorkerThread, job);
+    if (err != 0) {
+        /* Spawn failed — unblock + reply with error inline. */
+        unblockClient(c, 1);
+        addReplyErrorFormat(c, "RDMA REGISTER-BLOCK-SLOTS: pthread_create failed: %s",
+                            strerror(err));
+        zfree(job->slot_ids); zfree(job->n_blocks_per_slot);
+        zfree(job->result); zfree(job);
+        return;
+    }
+    pthread_detach(tid);
+    /* Reply is deferred to registerDonePipeHandler. */
 }
 
 /* ---- TRANSFER-SLOTS (donor) --------------------------------------------- */
@@ -603,6 +675,15 @@ static int migrationApplyTick(struct aeEventLoop *el, long long id, void *client
 /* Same value bio.c uses for its worker threads. */
 #define APPLY_THREAD_STACK_SIZE (1024*1024*4)
 
+/* ---- Recipient-side REGISTER-BLOCK-SLOTS async deferral (Phase 4d) ----
+ *
+ * Struct + forward decls live up near rdmaRegisterBlockSlotsCommand
+ * (line ~120). Definitions of registerWorkerThread,
+ * registerDonePipeHandler, registerThreadInfraInit live further down. */
+int register_done_pipe[2] = {-1, -1};
+static pthread_mutex_t register_done_mu = PTHREAD_MUTEX_INITIALIZER;
+list *register_done_list = NULL;
+
 /* dictType for apply_batches_by_key: sds key, applyBatch* value (free
  * the key sds, leave the value to the dispose path). */
 extern dictType sdsHashDictType;
@@ -897,6 +978,9 @@ void recipientApplyThreadStart(void) {
      * value (we don't auto-free it — the dispose path owns the lifetime). */
     apply_batches_by_key = dictCreate(&sdsHashDictType);
 
+    /* Register-job pipe + list for deferred REGISTER-BLOCK-SLOTS replies. */
+    registerThreadInfraInit();
+
     pthread_attr_t attr;
     size_t stacksize;
     pthread_attr_init(&attr);
@@ -923,6 +1007,108 @@ void recipientApplyThreadStop(void) {
     sem_post(&apply_wake);
     pthread_join(apply_thread_tid, NULL);
     apply_thread_started = 0;
+}
+
+/* ---- Recipient REGISTER-BLOCK-SLOTS deferred worker (Phase 4d) ---------- */
+
+static void *registerWorkerThread(void *arg) {
+    registerJob *job = arg;
+
+    for (int i = 0; i < job->n_pairs; i++) {
+        int slot = job->slot_ids[i];
+        int n = job->n_blocks_per_slot[i];
+        for (int k = 0; k < n; k++) {
+            void *block_ptr = r_allocator_alloc_new_empty_block(slot);
+            if (block_ptr == NULL) {
+                job->has_error = 1;
+                snprintf(job->err_msg, sizeof(job->err_msg),
+                    "r_allocator_alloc_new_empty_block returned NULL (slot=%d)", slot);
+                goto done;
+            }
+            struct rdmamig_buffer *rb = rdmamig_buffer_create(
+                rdmamig_server_cm_id(job->conn->s),
+                block_ptr, RDMAMIG_BLOCK_SIZE_BYTES, 0);
+            if (rb == NULL) {
+                job->has_error = 1;
+                snprintf(job->err_msg, sizeof(job->err_msg),
+                    "rdmamig_buffer_create failed (slot=%d block=%d)", slot, k);
+                goto done;
+            }
+            job->result[job->total_buffers].ptr  = (uint64_t) block_ptr;
+            job->result[job->total_buffers].rkey = rdmamig_buffer_rkey(rb);
+            job->total_buffers++;
+        }
+    }
+
+done:
+    pthread_mutex_lock(&register_done_mu);
+    listAddNodeTail(register_done_list, job);
+    pthread_mutex_unlock(&register_done_mu);
+    char tick = 1;
+    ssize_t w = write(register_done_pipe[1], &tick, 1);
+    (void) w;
+    return NULL;
+}
+
+/* Main-thread pipe handler: drain completed register jobs, deliver replies
+ * to their (still-blocked) clients, unblock. */
+static void registerDonePipeHandler(aeEventLoop *el, int fd, void *priv, int mask) {
+    UNUSED(el); UNUSED(priv); UNUSED(mask);
+    char buf[64];
+    while (read(fd, buf, sizeof(buf)) > 0) { /* drain tickles */ }
+
+    for (;;) {
+        pthread_mutex_lock(&register_done_mu);
+        listNode *ln = listFirst(register_done_list);
+        registerJob *job = ln ? listNodeValue(ln) : NULL;
+        if (job) listDelNode(register_done_list, ln);
+        pthread_mutex_unlock(&register_done_mu);
+        if (!job) break;
+
+        client *c = lookupClientByID(job->client_id);
+        if (c && (c->flags & CLIENT_BLOCKED) &&
+            c->bstate.btype == BLOCKED_LAZYFREE)
+        {
+            client *old_client = server.current_client;
+            server.current_client = c;
+            if (job->has_error) {
+                addReplyError(c, job->err_msg);
+            } else {
+                serverLog(LL_NOTICE,
+                    "RDMA REGISTER-BLOCK-SLOTS: client_id=%llu returning %d (VA, rkey) tuples (off-thread)",
+                    (unsigned long long) job->client_id, job->total_buffers);
+                addReplyBulkCBuffer(c, (char *) job->result,
+                    (size_t) job->total_buffers * sizeof(rdmaRemoteBufferInfo));
+            }
+            unblockClient(c, 1);
+            server.current_client = old_client;
+        }
+        zfree(job->slot_ids);
+        zfree(job->n_blocks_per_slot);
+        zfree(job->result);
+        zfree(job);
+    }
+}
+
+/* Called from recipientApplyThreadStart() — sets up the pipe + list + file
+ * event used by the deferred REGISTER-BLOCK-SLOTS worker. */
+static void registerThreadInfraInit(void) {
+    if (pipe(register_done_pipe) != 0) {
+        serverLog(LL_WARNING,
+            "RDMA REGISTER infra: pipe() failed: %s", strerror(errno));
+        return;
+    }
+    int flags = fcntl(register_done_pipe[0], F_GETFL, 0);
+    fcntl(register_done_pipe[0], F_SETFL, flags | O_NONBLOCK);
+    if (aeCreateFileEvent(server.el, register_done_pipe[0], AE_READABLE,
+                          registerDonePipeHandler, NULL) == AE_ERR) {
+        serverLog(LL_WARNING, "RDMA REGISTER infra: aeCreateFileEvent failed");
+        close(register_done_pipe[0]);
+        close(register_done_pipe[1]);
+        register_done_pipe[0] = register_done_pipe[1] = -1;
+        return;
+    }
+    register_done_list = listCreate();
 }
 
 /* RDMA APPLY-STATUS <src_node_id> <src_mig_id>
