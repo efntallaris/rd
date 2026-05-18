@@ -130,6 +130,11 @@ typedef struct rdmaMigration {
 
 void rdmaMigrationFree(dict *d, void *v);
 
+void recipientApplyWorkerStart(void);
+void recipientApplyWorkerStop(void);
+void recipientApplyMuLock(void);
+void recipientApplyMuUnlock(void);
+
 /* Flags that a module can set in order to prevent certain Redis Cluster
  * features to be enabled. Useful when implementing a different distributed
  * system on top of Redis Cluster message bus, using modules. */

@@ -1,0 +1,9 @@
+---
+# Bring up cluster + add migrate node, run small YCSB load, then leave the
+# cluster running. Test driver fires RDMA MIGRATE from the controller.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redis_instances.yml
+- import_playbook: ../../tasks/cluster/create_cluster.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/cluster/add_migrate_nodes.yml

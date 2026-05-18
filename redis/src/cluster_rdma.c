@@ -511,70 +511,161 @@ static int rdmaApplySlot(redisDb *db, int slot) {
 }
 
 /* ====================================================================== *
- *  RDMA DONE-SLOTS  (recipient side, chunked main-thread apply)
+ *  RDMA DONE-SLOTS  (recipient side, autonomous-thread apply)
  *
- *  Reverted from pthread workers because the kvstore isn't thread-safe at
- *  the dict-resize / bucket level vs main-thread READ paths (crashed at
- *  dict.c:892 'bucket != NULL'). Instead we keep everything on the main
- *  thread BUT process the dbAdd work in small chunks via aeCreateTimeEvent
- *  — each tick processes SLOTS_PER_TICK slots then yields back to the
- *  event loop so client traffic is interleaved.
+ *  rdmaDoneSlotsCommand enqueues a pendingApply onto apply_inbox and
+ *  signals apply_inbox_cond, then replies +OK immediately. The dedicated
+ *  recipientApplyWorker thread pops work off the queue and applies it
+ *  off the event loop via rdmaApplySlot (which calls dbAdd per entry).
  *
- *  Concretely:
- *    rdmaDoneSlotsCommand: parse slots → push (db, slot_list) onto a
- *      pending list → reply +OK immediately. If no timer is running, arm
- *      a 1 ms time event that calls migrationApplyTick.
- *    migrationApplyTick: take the head pending item, call rdmaApplySlot
- *      for the next SLOTS_PER_TICK slots, advance the per-item index.
- *      When the item is exhausted, free it and try the next. When the list
- *      is empty, return AE_NOMORE to drop the timer. Otherwise return a
- *      small reschedule delay so the event loop has time to serve clients.
+ *  Diagnostics: worker activity is also written to /tmp/apply_worker.log
+ *  (line-buffered fprintf) so we can prove worker liveness even if
+ *  serverLog from worker threads doesn't reach the configured logfile.
+ *  This file is overwritten each run; safe to leave on for now.
+ *
+ *  Concurrency: dbAdd from the worker races with main-thread command
+ *  handlers reading/writing the same keyspace slot. We serialize via
+ *  recipient_apply_mu held briefly per-slot by the worker, and (in
+ *  processCommand, server.c) by main-thread commands ONLY when their
+ *  target slot is in importing_slots_from[] (i.e. currently being
+ *  migrated in). After the worker finishes a slot it clears the
+ *  importing marker so post-migration traffic pays no mutex cost.
  * ====================================================================== */
+
+#include <stdio.h>
+#include <stdarg.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <time.h>
 
 typedef struct pendingApply {
     redisDb *db;
     int *slots;
     int n_slots;
-    int idx;             /* next slot index to process */
-    long long applied;   /* running total added */
+    long long applied;       /* running total added — set by worker */
 } pendingApply;
 
-#define MIGRATION_SLOTS_PER_TICK 8     /* small enough to yield often,
-                                         large enough to make progress */
-#define MIGRATION_TICK_DELAY_MS 1      /* 1 ms reschedule; ample for the
-                                         event loop to drain client work */
+static list *apply_inbox = NULL;
+static pthread_mutex_t apply_inbox_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  apply_inbox_cond = PTHREAD_COND_INITIALIZER;
+static pthread_t       apply_worker_thr;
+static int             apply_worker_started = 0;
+static volatile int    apply_worker_quit = 0;
+static FILE           *apply_diag_fp = NULL;
 
-static list *pending_applies = NULL;
-static long long migration_apply_timer_id = -1;
+/* recipient_apply_mu — serializes worker dbAdd against main-thread
+ * processCommand on importing slots. */
+pthread_mutex_t recipient_apply_mu = PTHREAD_MUTEX_INITIALIZER;
 
-static int migrationApplyTick(struct aeEventLoop *el, long long id, void *clientData) {
-    UNUSED(el); UNUSED(id); UNUSED(clientData);
+void recipientApplyMuLock(void)   { pthread_mutex_lock(&recipient_apply_mu); }
+void recipientApplyMuUnlock(void) { pthread_mutex_unlock(&recipient_apply_mu); }
 
-    if (pending_applies == NULL || listLength(pending_applies) == 0) {
-        migration_apply_timer_id = -1;
-        return AE_NOMORE;
-    }
+static void diag(const char *fmt, ...) {
+    if (apply_diag_fp == NULL) return;
+    va_list ap;
+    va_start(ap, fmt);
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    fprintf(apply_diag_fp, "%ld.%06ld [tid=%ld] ",
+            (long) ts.tv_sec, ts.tv_nsec / 1000, (long) syscall(SYS_gettid));
+    vfprintf(apply_diag_fp, fmt, ap);
+    fputc('\n', apply_diag_fp);
+    fflush(apply_diag_fp);
+    va_end(ap);
+}
 
-    listNode *ln = listFirst(pending_applies);
-    pendingApply *p = listNodeValue(ln);
+static void *recipientApplyWorker(void *arg) {
+    UNUSED(arg);
+    diag("worker thread starting");
+    serverLog(LL_NOTICE, "recipient apply worker: started");
 
-    int processed = 0;
-    while (processed < MIGRATION_SLOTS_PER_TICK && p->idx < p->n_slots) {
-        p->applied += rdmaApplySlot(p->db, p->slots[p->idx]);
-        p->idx++;
-        processed++;
-    }
+    for (;;) {
+        pthread_mutex_lock(&apply_inbox_mu);
+        while (!apply_worker_quit &&
+               (apply_inbox == NULL || listLength(apply_inbox) == 0)) {
+            pthread_cond_wait(&apply_inbox_cond, &apply_inbox_mu);
+        }
+        if (apply_worker_quit &&
+            (apply_inbox == NULL || listLength(apply_inbox) == 0)) {
+            pthread_mutex_unlock(&apply_inbox_mu);
+            break;
+        }
+        listNode *ln = listFirst(apply_inbox);
+        pendingApply *p = listNodeValue(ln);
+        listDelNode(apply_inbox, ln);
+        pthread_mutex_unlock(&apply_inbox_mu);
 
-    if (p->idx >= p->n_slots) {
+        diag("worker dequeued n_slots=%d", p->n_slots);
+
+        long long total = 0;
+        for (int i = 0; i < p->n_slots; i++) {
+            int slot = p->slots[i];
+            pthread_mutex_lock(&recipient_apply_mu);
+            long long added = rdmaApplySlot(p->db, slot);
+            total += added;
+            /* Migration of this slot is complete: clear the importing
+             * marker so future commands targeting it skip the mutex gate
+             * in processCommand. */
+            if (server.cluster && server.cluster->myself != NULL) {
+                server.cluster->importing_slots_from[slot] = NULL;
+            }
+            pthread_mutex_unlock(&recipient_apply_mu);
+            if (i == 0 || i == p->n_slots - 1 || (i % 256) == 0) {
+                diag("worker slot=%d added=%lld running_total=%lld", slot, added, total);
+            }
+        }
+
+        diag("worker finished n_slots=%d total=%lld", p->n_slots, total);
         serverLog(LL_NOTICE,
-            "RDMA DONE-SLOTS (chunked): finished %d slots, applied %lld keys total",
-            p->n_slots, p->applied);
+            "recipient apply worker: finished n=%d slots, applied %lld keys",
+            p->n_slots, total);
+
         zfree(p->slots);
         zfree(p);
-        listDelNode(pending_applies, ln);
     }
 
-    return MIGRATION_TICK_DELAY_MS;
+    diag("worker thread exiting");
+    serverLog(LL_NOTICE, "recipient apply worker: stopped");
+    return NULL;
+}
+
+void recipientApplyWorkerStart(void) {
+    if (apply_worker_started) return;
+    if (apply_diag_fp == NULL) {
+        apply_diag_fp = fopen("/tmp/apply_worker.log", "w");
+        if (apply_diag_fp) setvbuf(apply_diag_fp, NULL, _IOLBF, 0);
+    }
+    diag("recipientApplyWorkerStart: pre pthread_create");
+    apply_inbox = listCreate();
+    apply_worker_quit = 0;
+    int rc = pthread_create(&apply_worker_thr, NULL, recipientApplyWorker, NULL);
+    if (rc != 0) {
+        serverLog(LL_WARNING, "recipient apply worker: pthread_create failed rc=%d", rc);
+        diag("pthread_create FAILED rc=%d", rc);
+        listRelease(apply_inbox);
+        apply_inbox = NULL;
+        return;
+    }
+    apply_worker_started = 1;
+    diag("recipientApplyWorkerStart: thread created OK");
+}
+
+void recipientApplyWorkerStop(void) {
+    if (!apply_worker_started) return;
+    pthread_mutex_lock(&apply_inbox_mu);
+    apply_worker_quit = 1;
+    pthread_cond_signal(&apply_inbox_cond);
+    pthread_mutex_unlock(&apply_inbox_mu);
+    pthread_join(apply_worker_thr, NULL);
+    if (apply_inbox) {
+        listRelease(apply_inbox);
+        apply_inbox = NULL;
+    }
+    apply_worker_started = 0;
+    if (apply_diag_fp) {
+        fclose(apply_diag_fp);
+        apply_diag_fp = NULL;
+    }
 }
 
 void rdmaDoneSlotsCommand(client *c) {
@@ -588,7 +679,6 @@ void rdmaDoneSlotsCommand(client *c) {
     p->db = c->db;
     p->n_slots = n_slots;
     p->slots = zmalloc((size_t) n_slots * sizeof(int));
-    p->idx = 0;
     p->applied = 0;
     for (int j = 0; j < n_slots; j++) {
         long long s;
@@ -602,17 +692,19 @@ void rdmaDoneSlotsCommand(client *c) {
         p->slots[j] = (int) s;
     }
 
-    if (pending_applies == NULL) pending_applies = listCreate();
-    listAddNodeTail(pending_applies, p);
+    if (!apply_worker_started) recipientApplyWorkerStart();
 
-    if (migration_apply_timer_id == -1) {
-        migration_apply_timer_id = aeCreateTimeEvent(server.el,
-            MIGRATION_TICK_DELAY_MS, migrationApplyTick, NULL, NULL);
-    }
+    pthread_mutex_lock(&apply_inbox_mu);
+    if (apply_inbox == NULL) apply_inbox = listCreate();
+    listAddNodeTail(apply_inbox, p);
+    size_t queued = listLength(apply_inbox);
+    pthread_cond_signal(&apply_inbox_cond);
+    pthread_mutex_unlock(&apply_inbox_mu);
 
+    diag("rdmaDoneSlotsCommand: enqueued n_slots=%d queue_depth=%zu", n_slots, queued);
     serverLog(LL_NOTICE,
-        "RDMA DONE-SLOTS (chunked): queued %d slots; %lu in-flight item(s)",
-        n_slots, listLength(pending_applies));
+        "RDMA DONE-SLOTS: enqueued %d slots to worker (queue depth %zu)",
+        n_slots, queued);
     addReply(c, shared.ok);
 }
 
