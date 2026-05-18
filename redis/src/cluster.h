@@ -142,8 +142,9 @@ typedef enum {
     RDMA_MIG_REGISTERING   = 2,
     RDMA_MIG_FLIPPING      = 3,
     RDMA_MIG_EXECUTING     = 4,
-    RDMA_MIG_DONE          = 5,
-    RDMA_MIG_FAILED        = 6
+    RDMA_MIG_APPLYING      = 5,  /* Phase 4d: poll recipient APPLY-STATUS */
+    RDMA_MIG_DONE          = 6,
+    RDMA_MIG_FAILED        = 7
 } rdmaMigrationState;
 
 typedef struct rdmaMigration {
@@ -171,6 +172,13 @@ void recipientApplyWorkerStart(void);
 void recipientApplyWorkerStop(void);
 void recipientApplyMuLock(void);
 void recipientApplyMuUnlock(void);
+
+/* Phase 4d: recipient apply worker thread. Started by InitServerLast(); stops
+ * on server shutdown. The thread drains the SPSC ring populated by
+ * rdmaDoneSlotsCommand and applies migrated slots into the keyspace under
+ * clusterSlotLockWrite(slot). */
+void recipientApplyThreadStart(void);
+void recipientApplyThreadStop(void);
 
 /* Flags that a module can set in order to prevent certain Redis Cluster
  * features to be enabled. Useful when implementing a different distributed

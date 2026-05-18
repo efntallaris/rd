@@ -1,0 +1,20 @@
+{
+    "APPLY-STATUS": {
+        "summary": "Recipient side (Phase 4d): report state of a batch the apply thread is processing. Reply is a 6-element array: state (string), idx, n_slots, applied_keys, elapsed_seconds, err.",
+        "complexity": "O(1).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaApplyStatusCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "source-node-id", "type": "string" },
+            { "name": "source-migration-id", "type": "integer" }
+        ]
+    }
+}

@@ -3236,6 +3236,11 @@ void InitServerLast(void) {
     bioInit();
     initThreadedIO();
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
+    /* Phase 4d: recipient apply worker thread. Started post-fork (this
+     * function runs after daemonize() returns and after modules load) so
+     * the pthread survives into the daemonized child — the lesson from
+     * Attempt-1 in cluster_rdma.c history. */
+    recipientApplyThreadStart();
     server.initial_memory_usage = zmalloc_used_memory();
 }
 
