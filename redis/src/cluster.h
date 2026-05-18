@@ -41,6 +41,26 @@
 typedef struct _clusterNode clusterNode;
 struct clusterState;
 
+/* Two-tier slot lock helpers. See clusterState.cluster_topology_lock /
+ * slot_locks[] in cluster_legacy.h and PHASE4_PLAN.md for the design.
+ *
+ * Discipline:
+ *   - clusterTopoLockRead / clusterTopoLockWrite acquire the topology lock.
+ *   - clusterSlotLockRead(s) / clusterSlotLockWrite(s) acquire the topology
+ *     lock in rdlock mode and then the per-slot lock in the requested mode.
+ *   - clusterTopoUnlock / clusterSlotUnlock release the locks acquired by
+ *     the matching helper. (Use clusterTopoUnlock after a Topo* acquire,
+ *     clusterSlotUnlock(s) after a Slot* acquire — they release different
+ *     sets of locks.)
+ *
+ * No-ops when server.cluster is NULL (cluster mode disabled). */
+void clusterTopoLockRead(void);
+void clusterTopoLockWrite(void);
+void clusterTopoUnlock(void);
+void clusterSlotLockRead(int slot);
+void clusterSlotLockWrite(int slot);
+void clusterSlotUnlock(int slot);
+
 /* Forward decls for the rdma_migration library's opaque types. The full
  * definitions live in redis/src/rdma_migration/. */
 struct rdmamig_server;
@@ -97,7 +117,7 @@ void rdmaOutboundLinkFree(void *v);
  *  The worker walks the state machine inline on its thread: PREP →
  *  REGISTERING → FLIPPING → EXECUTING → DONE (or FAILED on first error).
  *
- *  Lock ordering: mig->mu < L->mu < cluster->slots_lock.
+ *  Lock ordering: mig->mu < L->mu < cluster_topology_lock < slot_locks[S].
  * ====================================================================== */
 typedef enum {
     RDMA_MIG_INIT          = 0,

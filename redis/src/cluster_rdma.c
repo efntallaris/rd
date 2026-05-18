@@ -1443,13 +1443,13 @@ void rdmaReshardRecvFlipCommand(client *c) {
  *      RDMA MIGRATE-STATUS [migration_id]                                  *
  *                                                                          *
  *  Lock ordering inside the worker:                                        *
- *      mig->mu   <   L->mu   <   cluster->slots_lock                       *
+ *      mig->mu  <  L->mu  <  cluster_topology_lock  <  slot_locks[S]       *
  *                                                                          *
  *  Stale legacy commands (MIGRATE-PREP / RESHARD / RESHARD-FLIP /          *
  *  RESHARD-EXEC) remain available, calling shared helpers below.           *
  * ======================================================================== */
 
-#include "cluster_legacy.h"  /* for clusterState slots_lock + clusterAddSlot/Del proto */
+#include "cluster_legacy.h"  /* for clusterState slot_locks + clusterAddSlot/Del proto */
 
 /* ---- helpers (shared by the legacy command handlers above and the new
  *      autonomous worker below) ---------------------------------------- */
@@ -1544,7 +1544,7 @@ static int rdmaReshardRegisterHelper(rdmaOutboundLink *L,
 }
 
 /* FLIP-helper: hiredis RECV-FLIP RPC + local slot-table mutation under the
- * cluster slots_lock. Mirrors rdmaReshardFlipCommand (lines ~1216-1322). */
+ * topology wrlock. Mirrors rdmaReshardFlipCommand (lines ~1216-1322). */
 static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
                                   const int *chosen, int n_slots,
                                   sds *err_out) {
@@ -1616,9 +1616,11 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
     }
     freeReplyObject(r_recv);
 
-    /* Local slot-table mutation under the cluster slots write lock — short
-     * critical section (microseconds), event-loop readers stall only here. */
-    pthread_rwlock_wrlock(&server.cluster->slots_lock);
+    /* Local slot-table mutation under the topology write lock — multi-slot
+     * mutation, so we take topology-wrlock (excludes all readers + per-slot
+     * writers) instead of per-slot wrlocks. Short critical section
+     * (microseconds per slot); event-loop readers stall for the loop. */
+    clusterTopoLockWrite();
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         clusterDelSlot(slot);
@@ -1628,7 +1630,7 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
             "RDMA MIGRATE worker: slot=%d ownership flipped to %s",
             slot, recipient_id);
     }
-    pthread_rwlock_unlock(&server.cluster->slots_lock);
+    clusterTopoUnlock();
 
     pthread_mutex_unlock(&L->mu);
     return 0;
@@ -1827,18 +1829,19 @@ void rdmaMigrateCommand(client *c) {
         return;
     }
 
-    /* Pick n_slots self-owned slots, lowest first. Read under the slots_lock
-     * read lock so we don't race with a concurrent FLIP from another
-     * migration on the same source. */
+    /* Pick n_slots self-owned slots, lowest first. Multi-slot scan; take
+     * topology rdlock so we don't race with a concurrent FLIP wrlock from
+     * another migration on the same source. Per-slot rdlocks would be
+     * 16384 acquires for a one-shot read — overkill. */
     int *chosen = zmalloc((size_t) n_slots * sizeof(int));
     int picked = 0;
-    pthread_rwlock_rdlock(&server.cluster->slots_lock);
+    clusterTopoLockRead();
     for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
         if (server.cluster->slots[i] == server.cluster->myself) {
             chosen[picked++] = i;
         }
     }
-    pthread_rwlock_unlock(&server.cluster->slots_lock);
+    clusterTopoUnlock();
     if (picked < n_slots) {
         zfree(chosen);
         addReplyErrorFormat(c, "self owns only %d slots, asked for %d",

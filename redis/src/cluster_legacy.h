@@ -345,14 +345,29 @@ struct clusterState {
     clusterNode *migrating_slots_to[CLUSTER_SLOTS];
     clusterNode *importing_slots_from[CLUSTER_SLOTS];
     clusterNode *slots[CLUSTER_SLOTS];
-    /* Protects slots[]/migrating_slots_to[]/importing_slots_from[] for
-     * cross-thread access from the RDMA migration worker (cluster_rdma.c).
-     * Readers (event-loop command dispatch via getNodeByQuery) take
-     * pthread_rwlock_rdlock; the migration worker's FLIP step takes
-     * pthread_rwlock_wrlock briefly around the clusterDelSlot/Addslot loop.
-     * Other slot-table mutators (gossip, CLUSTER SETSLOT, manual reset)
-     * also take the write lock. */
-    pthread_rwlock_t slots_lock;
+    /* Two-tier lock protecting cluster slot state for cross-thread access
+     * from the RDMA migration recipient-apply worker (cluster_rdma.c).
+     * See PHASE4_PLAN.md "Recommended lock design" and
+     * docs/recipient-apply-thread-safety-audit.md for the call-site map.
+     *
+     *   cluster_topology_lock — wrlock held by multi-slot mutators
+     *     (clusterResetAllSlots, clusterMoveNodeSlots, gossip UPDATE,
+     *     clusterUpdateSlots, RDMA FLIP loop). Rdlock held by every other
+     *     accessor as a prefix to slot_locks[].
+     *
+     *   slot_locks[CLUSTER_SLOTS] — per-slot rwlock. Protects slots[S],
+     *     migrating_slots_to[S], importing_slots_from[S], and the per-node
+     *     bitmap bit for slot S in clusterNode->slots[].
+     *
+     * Lock-order rule: cluster_topology_lock is acquired BEFORE any
+     * slot_locks[]. A caller holding slot_locks[S] in any mode must already
+     * hold cluster_topology_lock in rdlock mode. A caller holding
+     * cluster_topology_lock in wrlock mode must NOT hold any slot_locks[].
+     *
+     * Helpers: clusterTopoLockRead/Write/Unlock and clusterSlotLockRead(s)/
+     * clusterSlotLockWrite(s)/clusterSlotUnlock(s) (see cluster.h). */
+    pthread_rwlock_t cluster_topology_lock;
+    pthread_rwlock_t slot_locks[CLUSTER_SLOTS];
     char internal_secret[CLUSTER_INTERNALSECRETLEN];
     /* The following fields are used to take the slave state on elections. */
     mstime_t failover_auth_time; /* Time of previous or next election. */

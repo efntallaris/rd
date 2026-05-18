@@ -956,6 +956,47 @@ void clusterUpdateMyselfHumanNodename(void) {
     updateAnnouncedHumanNodename(myself, server.cluster_announce_human_nodename);
 }
 
+/* -------------------------------------------------------------------------- *
+ *  Slot lock helpers (Phase 4a). See cluster.h for the contract and
+ *  cluster_legacy.h for the underlying rwlock declarations.                  *
+ * -------------------------------------------------------------------------- */
+
+void clusterTopoLockRead(void) {
+    if (server.cluster == NULL) return;
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+}
+
+void clusterTopoLockWrite(void) {
+    if (server.cluster == NULL) return;
+    pthread_rwlock_wrlock(&server.cluster->cluster_topology_lock);
+}
+
+void clusterTopoUnlock(void) {
+    if (server.cluster == NULL) return;
+    pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
+}
+
+void clusterSlotLockRead(int slot) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+    pthread_rwlock_rdlock(&server.cluster->slot_locks[slot]);
+}
+
+void clusterSlotLockWrite(int slot) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+    pthread_rwlock_wrlock(&server.cluster->slot_locks[slot]);
+}
+
+void clusterSlotUnlock(int slot) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
+    pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
+}
+
 void clusterInit(void) {
     int saveconf = 0;
 
@@ -985,7 +1026,10 @@ void clusterInit(void) {
     server.cluster->stat_cluster_links_buffer_limit_exceeded = 0;
 
     memset(server.cluster->slots,0, sizeof(server.cluster->slots));
-    pthread_rwlock_init(&server.cluster->slots_lock, NULL);
+    pthread_rwlock_init(&server.cluster->cluster_topology_lock, NULL);
+    for (int i = 0; i < CLUSTER_SLOTS; i++) {
+        pthread_rwlock_init(&server.cluster->slot_locks[i], NULL);
+    }
     clusterCloseAllSlots();
 
     memset(server.cluster->owner_not_claiming_slot, 0, sizeof(server.cluster->owner_not_claiming_slot));
