@@ -2381,7 +2381,6 @@ void initServerConfig(void) {
     server.rdma_migrations = dictCreate(&rdmaMigrationsDictType);
     server.rdma_migration_next_id = 1;
     server.rdma_migration_last_id = 0;
-    recipientApplyWorkerStart();
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.page_size = sysconf(_SC_PAGESIZE);
     server.pause_cron = 0;
@@ -4727,14 +4726,7 @@ int processCommand(client *c) {
         addReply(c,shared.queued);
     } else {
         int flags = CMD_CALL_FULL;
-        int rdma_apply_locked = 0;
-        if (server.cluster_enabled && c->slot >= 0 && c->slot < CLUSTER_SLOTS &&
-            getImportingSlotSource(c->slot) != NULL) {
-            recipientApplyMuLock();
-            rdma_apply_locked = 1;
-        }
         call(c,flags);
-        if (rdma_apply_locked) recipientApplyMuUnlock();
         if (listLength(server.ready_keys) && !isInsideYieldingLongCommand())
             handleClientsBlockedOnKeys();
     }
