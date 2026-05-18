@@ -260,17 +260,19 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
     }
 
     /* Defer the heavy ibv_reg_mr loop to a dedicated detached worker thread.
-     * Block this client until the worker writes back via the completion
-     * pipe (registerDonePipeHandler sends the reply + unblocks). The
-     * client's hiredis context on the source side keeps waiting on its
-     * recv() until our reply lands, so no source-side change needed. */
-    blockClient(c, BLOCKED_LAZYFREE);
+     * Pattern lifted from flushallSyncBgDone (db.c:1450) — set
+     * CLIENT_PENDING_COMMAND so processCommand defers completion correctly
+     * across the block window; registerDonePipeHandler later clears it +
+     * calls commandProcessed(). */
     c->bstate.timeout = 0;
+    c->flags |= CLIENT_PENDING_COMMAND;
+    blockClient(c, BLOCKED_LAZYFREE);
 
     pthread_t tid;
     int err = pthread_create(&tid, NULL, registerWorkerThread, job);
     if (err != 0) {
         /* Spawn failed — unblock + reply with error inline. */
+        c->flags &= ~CLIENT_PENDING_COMMAND;
         unblockClient(c, 1);
         addReplyErrorFormat(c, "RDMA REGISTER-BLOCK-SLOTS: pthread_create failed: %s",
                             strerror(err));
@@ -1080,7 +1082,14 @@ static void registerDonePipeHandler(aeEventLoop *el, int fd, void *priv, int mas
                 addReplyBulkCBuffer(c, (char *) job->result,
                     (size_t) job->total_buffers * sizeof(rdmaRemoteBufferInfo));
             }
+            /* Mirror flushallSyncBgDone: unblock with reprocessing queued,
+             * then clear PENDING_COMMAND + commandProcessed to complete the
+             * command lifecycle WITHOUT actually rerunning the handler. */
             unblockClient(c, 1);
+            if (c->flags & CLIENT_PENDING_COMMAND) {
+                c->flags &= ~CLIENT_PENDING_COMMAND;
+                commandProcessed(c);
+            }
             server.current_client = old_client;
         }
         zfree(job->slot_ids);
