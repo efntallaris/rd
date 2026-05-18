@@ -1,0 +1,18 @@
+{
+    "SLOTSTATE": {
+        "summary": "Aqueduct: returns every non-STABLE slot's migration state and peer endpoint.",
+        "complexity": "O(N) where N is CLUSTER_SLOTS.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 2,
+        "container": "CLUSTER",
+        "function": "clusterCommand",
+        "command_flags": [
+            "LOADING",
+            "STALE"
+        ],
+        "command_tips": [
+            "NONDETERMINISTIC_OUTPUT"
+        ]
+    }
+}
