@@ -2356,15 +2356,40 @@ static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
 
     size_t total_bytes = 0;
     int errs = 0;
-    /* DIAGNOSTIC STUB: per-slot RDMA write loop commented out, replaced with
-     * a 4-second sleep. Lets us see how a 4-second EXEC phase maps onto the
-     * YCSB dip — if the dip lengthens by ~4 s, the transfer wall-clock is
-     * directly proportional to the dip; if it doesn't grow, the dip is
-     * dominated by something else (FLIP / topology refresh).               */
-    (void)db; (void)rdmaEncodeSlotEntries; (void)rdmaDebugDumpSlotBytes;
-    serverLog(LL_NOTICE,
-        "RDMA MIGRATE worker: EXEC stubbed — sleeping 4s instead of RDMA writes");
-    sleep(4);
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
+        uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
+                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+        rdmaDebugDumpSlotBytes("SRC", slot, staging);
+        if (server.rdma_reshard_debug_bytes) {
+            r_allocator_log_slot_stats(slot);
+            serverLog(LL_NOTICE,
+                "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
+                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+        }
+        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
+                                           L->buffers[slot].ptr,
+                                           L->buffers[slot].rkey,
+                                           RDMAMIG_BLOCK_SIZE_BYTES);
+        if (rc != 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: slot=%d post_write failed rc=%d", slot, rc);
+            continue;
+        }
+        int wc_rc = rdmamig_client_wait_send(L->client);
+        if (wc_rc < 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: slot=%d wait_send failed rc=%d", slot, wc_rc);
+            continue;
+        }
+        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: slot=%d entries=%u bytes=%d rc=0",
+            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+    }
 
     /* Notify recipient (Phase 4d):
      *   "RDMA DONE-SLOTS <src_node_id> <src_mig_id> <s1> ... <sN>"
@@ -2480,14 +2505,17 @@ static void *migrationWorker(void *arg) {
         return NULL;
     }
 
-    /* FLIPPING: tell recipient + locally flip ownership. */
-    migSetState(mig, RDMA_MIG_FLIPPING);
-    if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
-        migFail(mig, err);
-        return NULL;
-    }
+    /* Option 2: FLIP is deferred to after the recipient has applied the data.
+     * The old order (FLIP before EXEC) created a window where the recipient
+     * owned the slots but didn't yet have any data — clients hitting either
+     * end during that window triggered a -MOVED / -ASK ping-pong that stalled
+     * YCSB for ~5 s per migration. New order keeps the source serving reads
+     * from its live keyspace all the way through transfer + recipient-apply;
+     * FLIP is the final microsecond ownership swap once the recipient
+     * already has the data.                                                  */
 
-    /* EXECUTING: RDMA-WRITE + DONE-SLOTS. */
+    /* EXECUTING: RDMA-WRITE + DONE-SLOTS. Source still owns the slots, so
+     * client traffic continues to hit the source's live keyspace.           */
     migSetState(mig, RDMA_MIG_EXECUTING);
     /* Use db 0 — same as the legacy reshardExecWorker path (DB selection
      * comes from the dispatching client; cluster mode is single-DB). */
@@ -2562,6 +2590,17 @@ static void *migrationWorker(void *arg) {
             migFail(mig, sdsnew("recipient apply timed out after 60s of polling"));
             return NULL;
         }
+    }
+
+    /* FLIPPING (Option 2): now that the data is on the recipient, atomically
+     * swap ownership. RECV-FLIP runs on the recipient, then we update our
+     * local slot table. By the time clients see the MOVED, the recipient
+     * already has the data — no -MOVED / -ASK ping-pong, no YCSB dip from
+     * topology refresh storms.                                              */
+    migSetState(mig, RDMA_MIG_FLIPPING);
+    if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
     }
 
     pthread_mutex_lock(&mig->mu);
