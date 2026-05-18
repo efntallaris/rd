@@ -2356,15 +2356,40 @@ static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
 
     size_t total_bytes = 0;
     int errs = 0;
-    /* STUB: skip per-slot RDMA write (encode + post_write + wait_send). Sleeps
-     * 50 ms once to leave a recognizable EXEC duration in the timeline; the
-     * recipient's apply is also stubbed so the data being garbage is fine.
-     * Used to isolate whether the YCSB dip is caused by the RDMA data
-     * transfer itself or by FLIP / topology-refresh effects.               */
-    (void)db; (void)rdmaEncodeSlotEntries; (void)rdmaDebugDumpSlotBytes;
-    usleep(50 * 1000);
-    serverLog(LL_NOTICE,
-        "RDMA MIGRATE worker: EXEC stubbed — no per-slot RDMA writes, slept 50ms");
+    for (int i = 0; i < n_slots; i++) {
+        int slot = chosen[i];
+        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
+        uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
+                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+        rdmaDebugDumpSlotBytes("SRC", slot, staging);
+        if (server.rdma_reshard_debug_bytes) {
+            r_allocator_log_slot_stats(slot);
+            serverLog(LL_NOTICE,
+                "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
+                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+        }
+        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
+                                           L->buffers[slot].ptr,
+                                           L->buffers[slot].rkey,
+                                           RDMAMIG_BLOCK_SIZE_BYTES);
+        if (rc != 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: slot=%d post_write failed rc=%d", slot, rc);
+            continue;
+        }
+        int wc_rc = rdmamig_client_wait_send(L->client);
+        if (wc_rc < 0) {
+            errs++;
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: slot=%d wait_send failed rc=%d", slot, wc_rc);
+            continue;
+        }
+        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: slot=%d entries=%u bytes=%d rc=0",
+            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+    }
 
     /* Notify recipient (Phase 4d):
      *   "RDMA DONE-SLOTS <src_node_id> <src_mig_id> <s1> ... <sN>"
