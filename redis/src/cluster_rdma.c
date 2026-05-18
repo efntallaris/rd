@@ -2041,8 +2041,26 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
 
     if (r == NULL || r->type != REDIS_REPLY_STRING ||
         r->len != (size_t) n_slots * sizeof(rdmaRemoteBufferInfo)) {
-        if (err_out) *err_out = sdsnew(
-            "RDMA REGISTER-BLOCK-SLOTS: malformed or error reply from recipient");
+        /* Diagnostic: show what hiredis actually got. */
+        const char *type_name =
+            r == NULL                           ? "NULL"          :
+            r->type == REDIS_REPLY_STRING       ? "STRING"        :
+            r->type == REDIS_REPLY_ARRAY        ? "ARRAY"         :
+            r->type == REDIS_REPLY_INTEGER      ? "INTEGER"       :
+            r->type == REDIS_REPLY_NIL          ? "NIL"           :
+            r->type == REDIS_REPLY_STATUS       ? "STATUS"        :
+            r->type == REDIS_REPLY_ERROR        ? "ERROR"         :
+                                                   "other";
+        size_t got_len   = r ? r->len : 0;
+        size_t want_len  = (size_t) n_slots * sizeof(rdmaRemoteBufferInfo);
+        const char *body = (r && r->str) ? r->str : "(no body)";
+        const char *ctxerr = (L->ctrl && L->ctrl->errstr[0]) ? L->ctrl->errstr : "(no ctxerr)";
+        serverLog(LL_WARNING,
+            "RDMA REGISTER-BLOCK-SLOTS: bad reply (type=%s len=%zu want=%zu body=\"%.80s\" ctxerr=\"%s\")",
+            type_name, got_len, want_len, body, ctxerr);
+        if (err_out) *err_out = sdscatfmt(sdsempty(),
+            "RDMA REGISTER-BLOCK-SLOTS: bad reply (type=%s len=%U want=%U)",
+            type_name, (uint64_t) got_len, (uint64_t) want_len);
         if (r) freeReplyObject(r);
         pthread_mutex_unlock(&L->mu);
         return -1;
