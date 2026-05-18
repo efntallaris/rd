@@ -1978,14 +1978,34 @@ typedef struct pendingRegistration {
     pthread_cond_t    cond;
 } pendingRegistration;
 
+/* Custom dictType for pending_registrations: sds keys (we free them via
+ * sdsfree on remove), opaque pointer values (caller owns the lifetime —
+ * dict NEVER auto-frees them). Using a stock dictType with dictVanillaFree
+ * as the val destructor would cause a use-after-free when dictDelete frees
+ * `p` while the worker thread still holds a pointer to it. */
+/* Prototypes: live in server.h but include guard ordering means we declare
+ * them locally to keep this section self-contained. */
+uint64_t dictSdsCaseHash(const void *key);
+int dictSdsKeyCaseCompare(dictCmpCache *cache, const void *key1, const void *key2);
+void dictSdsDestructor(dict *d, void *val);
+
+static dictType pendingRegistrationsDictType = {
+    dictSdsCaseHash,
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCaseCompare,
+    dictSdsDestructor,          /* key destructor frees the sds */
+    NULL,                       /* val destructor — caller frees p */
+    NULL
+};
+
 static dict *pending_registrations = NULL;
 static pthread_mutex_t pending_registrations_mu = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic long long register_id_counter = 0;
 
 static void pendingRegistrationsInit(void) {
     if (pending_registrations == NULL) {
-        extern dictType sdsHashDictType;
-        pending_registrations = dictCreate(&sdsHashDictType);
+        pending_registrations = dictCreate(&pendingRegistrationsDictType);
     }
 }
 
@@ -2153,10 +2173,13 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     }
     pthread_mutex_unlock(&p->mu);
 
-    /* Free the pending entry. */
+    /* Remove from the dict first (key is freed by dictDelete via the
+     * key destructor; val destructor is NULL so `p` is NOT touched). */
     pthread_mutex_lock(&pending_registrations_mu);
     dictDelete(pending_registrations, key);
     pthread_mutex_unlock(&pending_registrations_mu);
+
+    /* Now safely free p's owned memory + p itself. */
     if (p->payload) zfree(p->payload);
     if (p->err_msg) sdsfree(p->err_msg);
     pthread_mutex_destroy(&p->mu);
