@@ -998,6 +998,21 @@ void clusterSlotUnlock(int slot) {
     pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
 }
 
+/* Phase 4d hot-path predicate: is this slot currently being imported from
+ * another node? Used by main-thread keyspace accessors (lookupKey, dbAdd,
+ * etc.) to decide whether to take clusterSlotLockRead/Write around the
+ * access. Most slots are not importing, so this is a cheap dirty read of
+ * the importing_slots_from[] entry without any lock; the worst case is a
+ * false negative right at the moment the entry is being set, which is a
+ * benign race (the import is fresh and the apply thread has no data
+ * staged yet). The slot lock itself fences any read that actually
+ * matters. */
+int clusterSlotIsImporting(int slot) {
+    if (server.cluster == NULL) return 0;
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
+    return server.cluster->importing_slots_from[slot] != NULL;
+}
+
 void clusterInit(void) {
     int saveconf = 0;
 

@@ -1462,6 +1462,10 @@ void rdmaReshardRecvFlipCommand(client *c) {
 
 #include "cluster_legacy.h"  /* for clusterState slot_locks + clusterAddSlot/Del proto */
 
+/* Phase 4d: TLS flag — see cluster.h. Default 0 on every thread, set to 1
+ * by recipientApplyThreadMain while it holds clusterSlotLockWrite(s). */
+__thread int cluster_slot_lock_held_by_thread = 0;
+
 /* ---- helpers (shared by the legacy command handlers above and the new
  *      autonomous worker below) ---------------------------------------- */
 

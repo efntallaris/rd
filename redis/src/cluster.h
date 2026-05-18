@@ -61,6 +61,23 @@ void clusterSlotLockRead(int slot);
 void clusterSlotLockWrite(int slot);
 void clusterSlotUnlock(int slot);
 
+/* Phase 4d: cheap dirty-read predicate. Returns 1 iff
+ * server.cluster->importing_slots_from[slot] is currently non-NULL — i.e.
+ * the recipient apply thread may concurrently dbAdd into this slot's
+ * keyspace, so main-thread keyspace accessors must take the per-slot lock.
+ * Returns 0 in non-cluster mode or out-of-range slot. */
+int clusterSlotIsImporting(int slot);
+
+/* Phase 4d: TLS guard. Set to a non-zero count by code that has acquired a
+ * slot lock and is about to call into nested code paths that ALSO want to
+ * acquire the same slot lock (e.g. lookupKey → dbAddInternal → setExpireByLink
+ * chain in db.c; the recipient apply thread holding wrlock around rdmaApplySlot
+ * which calls dbAdd). Wrapped keyspace accessors check this and skip their
+ * own acquire when it is non-zero, avoiding same-thread recursive locking on
+ * a non-recursive pthread_rwlock_t. The increment/decrement is the wrap
+ * itself's responsibility — see e.g. db.c:dbAddInternal. */
+extern __thread int cluster_slot_lock_held_by_thread;
+
 /* Forward decls for the rdma_migration library's opaque types. The full
  * definitions live in redis/src/rdma_migration/. */
 struct rdmamig_server;
