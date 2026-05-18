@@ -804,18 +804,18 @@ void rdmaDoneSlotsCommand(client *c) {
         pthread_mutex_unlock(&apply_batches_mu);
     }
 
-    /* Try to enqueue on the SPSC ring. */
+    /* SPSC + worker-thread apply hits known kvstore thread-safety issues
+     * documented in PHASE4_PLAN.md and docs/recipient-apply-thread-safety-audit.md
+     * (per-slot dict resize, kvstore rehashing list, allocated_dicts counter,
+     * r_allocator slot_blocks list — none fully protected by clusterSlotLockWrite
+     * alone). Without a full Phase 4b/4c retrofit the apply thread crashes in
+     * dict resize. Route to the main-thread chunked apply (1ms timer, 8 slots/
+     * tick) instead — naturally thread-safe with all other main-thread work.
+     * The chunked-apply stall on YCSB throughput is masked by the slot-state
+     * + client-side double-read protocol (clients fall back to the donor
+     * during MIGRATING, so the recipient's slower apply doesn't translate
+     * into a YCSB dip). */
     int enqueued = 0;
-    if (apply_thread_started) {
-        uint64_t head = atomic_load_explicit(&apply_ring_head, memory_order_relaxed);
-        uint64_t tail = atomic_load_explicit(&apply_ring_tail, memory_order_acquire);
-        if (head - tail < APPLY_RING_CAPACITY) {
-            apply_ring[head & (APPLY_RING_CAPACITY - 1)] = b;
-            atomic_store_explicit(&apply_ring_head, head + 1, memory_order_release);
-            sem_post(&apply_wake);
-            enqueued = 1;
-        }
-    }
 
     if (!enqueued) {
         /* Ring full or thread not running — fall back to the chunked main-
