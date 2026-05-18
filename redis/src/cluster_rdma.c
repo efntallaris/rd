@@ -231,6 +231,15 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         job->n_blocks_per_slot[pi] = (int) n_blocks;
     }
 
+    /* Aqueduct: pause databasesCron on this recipient while the apply is in
+     * flight. databasesCron's expire/defrag/resize/rehash all iterate the
+     * recipient's kvstore internals (kvs->rehashing list, per-slot dict
+     * resize, allocator slot_blocks) that the apply thread is concurrently
+     * mutating via dbAdd. Per-slot rwlock doesn't cover this cross-slot
+     * shared state. Reset in rdmaReshardRecvFlipCommand once the apply
+     * completes and ownership swaps. */
+    atomicIncr(server.recipient_apply_in_progress, 1);
+
     /* Aqueduct slot-state: flip each slot to MIGRATING with the donor's
      * host:port as the peer endpoint *before* replying +OK, so the donor
      * sees the recipient already in MIGRATING when it sets its own state
@@ -804,18 +813,22 @@ void rdmaDoneSlotsCommand(client *c) {
         pthread_mutex_unlock(&apply_batches_mu);
     }
 
-    /* SPSC + worker-thread apply hits known kvstore thread-safety issues
-     * documented in PHASE4_PLAN.md and docs/recipient-apply-thread-safety-audit.md
-     * (per-slot dict resize, kvstore rehashing list, allocated_dicts counter,
-     * r_allocator slot_blocks list — none fully protected by clusterSlotLockWrite
-     * alone). Without a full Phase 4b/4c retrofit the apply thread crashes in
-     * dict resize. Route to the main-thread chunked apply (1ms timer, 8 slots/
-     * tick) instead — naturally thread-safe with all other main-thread work.
-     * The chunked-apply stall on YCSB throughput is masked by the slot-state
-     * + client-side double-read protocol (clients fall back to the donor
-     * during MIGRATING, so the recipient's slower apply doesn't translate
-     * into a YCSB dip). */
+    /* Try to enqueue on the SPSC ring. Safe to run on a dedicated apply
+     * thread now that databasesCron is paused for the migration window
+     * (see server.recipient_apply_in_progress in databasesCron). Main-
+     * thread reads on importing slots still serialize against the apply
+     * thread's dbAdd via the per-slot rwlock (Path B narrow wraps in db.c). */
     int enqueued = 0;
+    if (apply_thread_started) {
+        uint64_t head = atomic_load_explicit(&apply_ring_head, memory_order_relaxed);
+        uint64_t tail = atomic_load_explicit(&apply_ring_tail, memory_order_acquire);
+        if (head - tail < APPLY_RING_CAPACITY) {
+            apply_ring[head & (APPLY_RING_CAPACITY - 1)] = b;
+            atomic_store_explicit(&apply_ring_head, head + 1, memory_order_release);
+            sem_post(&apply_wake);
+            enqueued = 1;
+        }
+    }
 
     if (!enqueued) {
         /* Ring full or thread not running — fall back to the chunked main-
@@ -1979,6 +1992,11 @@ void rdmaReshardRecvFlipCommand(client *c) {
         if (slot_ll < 0 || slot_ll >= CLUSTER_SLOTS) continue;
         slotMigStateSet((int) slot_ll, SLOT_STATE_STABLE, NULL);
     }
+
+    /* Aqueduct: re-enable databasesCron on this recipient. Apply is done
+     * and ownership has swapped; the kvstore is back to a single-writer
+     * state where main-thread cron is safe again. */
+    atomicDecr(server.recipient_apply_in_progress, 1);
 
     addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }

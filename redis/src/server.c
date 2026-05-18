@@ -1273,6 +1273,18 @@ void clientsCron(void) {
  * incrementally in Redis databases, such as active key expiring, resizing,
  * rehashing. */
 void databasesCron(void) {
+    /* Aqueduct: pause main-thread kvstore maintenance while a recipient apply
+     * thread is in flight. activeExpireCycle / activeDefragCycle /
+     * kvstoreTryResizeDicts / kvstoreIncrementallyRehash all iterate kvstore
+     * internals (per-slot dicts, kvs->rehashing list, allocator slot_blocks)
+     * that the apply thread is concurrently mutating via dbAdd. Per-slot
+     * rwlock doesn't protect the cross-slot shared state. Apply windows are
+     * sub-second per migration; skipping cron for that brief window is
+     * harmless. */
+    int apply_running;
+    atomicGet(server.recipient_apply_in_progress, apply_running);
+    if (apply_running > 0) return;
+
     /* Expire keys by random sampling. Not required for slaves
      * as master will synthesize DELs for us. */
     if (server.active_expire_enabled) {

@@ -2183,6 +2183,15 @@ struct redisServer {
                                        topology-refresh dance. Off by default —
                                        breaks unmodified clients (incl. redis-cli)
                                        that expect plain bulk replies. */
+    int recipient_apply_in_progress; /* Counter (number of in-flight migrations
+                                       being applied on this node as recipient).
+                                       databasesCron skips its body when non-zero —
+                                       avoids activeExpireCycle / activeDefragCycle /
+                                       kvstoreTryResizeDicts / kvstoreIncrementallyRehash
+                                       all racing the recipient apply thread's dbAdd
+                                       on shared kvstore state (kvs->rehashing list,
+                                       per-slot dict resize, etc.). Apply thread is
+                                       the only kvstore writer during the window. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */
