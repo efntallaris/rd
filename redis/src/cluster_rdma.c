@@ -234,12 +234,38 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
     /* Aqueduct slot-state: flip each slot to MIGRATING with the donor's
      * host:port as the peer endpoint *before* replying +OK, so the donor
      * sees the recipient already in MIGRATING when it sets its own state
-     * (closes the PREP race). */
+     * (closes the PREP race). Also set importing_slots_from[slot] so
+     * Path B narrow keyspace wraps in db.c kick in for the apply window —
+     * main-thread reads/writes on the recipient take clusterSlotLockRead
+     * (or Write) while the apply thread holds clusterSlotLockWrite for its
+     * dbAdd, serializing kvstore mutations through the per-slot rwlock. */
     char donor_endpoint[NET_HOST_PORT_STR_LEN];
     snprintf(donor_endpoint, sizeof(donor_endpoint), "%s:%lld",
              src_host, src_port_ll);
+
+    /* Find the donor clusterNode by addr — needed for importing_slots_from. */
+    clusterNode *donor_node = NULL;
+    if (server.cluster != NULL && server.cluster->nodes != NULL) {
+        dictIterator *di = dictGetSafeIterator(server.cluster->nodes);
+        dictEntry *de;
+        while ((de = dictNext(di)) != NULL) {
+            clusterNode *n = dictGetVal(de);
+            if (n != NULL && strcmp(n->ip, src_host) == 0 &&
+                (int) n->tcp_port == (int) src_port_ll) {
+                donor_node = n;
+                break;
+            }
+        }
+        dictReleaseIterator(di);
+    }
     for (int i = 0; i < n_pairs; i++) {
-        slotMigStateSet(job->slot_ids[i], SLOT_STATE_MIGRATING, donor_endpoint);
+        int slot = job->slot_ids[i];
+        slotMigStateSet(slot, SLOT_STATE_MIGRATING, donor_endpoint);
+        if (donor_node != NULL) {
+            clusterSlotLockWrite(slot);
+            server.cluster->importing_slots_from[slot] = donor_node;
+            clusterSlotUnlock(slot);
+        }
     }
 
     /* Spawn the detached worker thread. */
@@ -868,22 +894,29 @@ static void drainApplyRing(void) {
             "RDMA apply-thread: starting batch from %.*s mig_id=%lld n_slots=%d",
             CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots);
 
-        /* PHASE 4d STUB v2: NO per-slot work at all. No slot wrlocks. No
-         * loop. Just sleep for a token duration to simulate "the apply took
-         * some time" and mark all slots applied. If the YCSB dip persists
-         * even with this — there's no apply-thread keyspace touch, no slot
-         * lock contention — then the dip is NOT caused by the apply thread.
-         * Either the RECV-FLIP topology wrlock (contributor #1) or the
-         * client-side TCP recovery aftermath (contributor #3) carries it. */
-        usleep(100000);  /* 100 ms — much less than the 1.5 s "real work" */
-        atomic_store_explicit(&b->idx, b->n_slots, memory_order_release);
-        /* Stub: no keys applied; b->applied stays at 0. */
+        /* Real apply: walk each slot under clusterSlotLockWrite(slot), call
+         * rdmaApplySlot which dbAdds the migrated (key, value) pairs from
+         * the registered RDMA block into the recipient's keyspace. The TLS
+         * guard tells Path B keyspace wraps in db.c to skip their own
+         * acquire (avoids same-thread recursive rwlock). */
+        long long applied_total = 0;
+        for (int i = 0; i < b->n_slots; i++) {
+            int slot = b->slots[i];
+            clusterSlotLockWrite(slot);
+            cluster_slot_lock_held_by_thread++;
+            int added = rdmaApplySlot(b->db, slot);
+            cluster_slot_lock_held_by_thread--;
+            clusterSlotUnlock(slot);
+            atomic_store_explicit(&b->idx, i + 1, memory_order_release);
+            applied_total += added;
+            atomic_fetch_add_explicit(&b->applied, added, memory_order_relaxed);
+        }
 
         atomic_store_explicit(&b->state, APPLY_DONE, memory_order_release);
         b->t_ended = time(NULL);
         serverLog(LL_NOTICE,
-            "RDMA apply-thread: batch DONE from %.*s mig_id=%lld n_slots=%d (stub)",
-            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots);
+            "RDMA apply-thread: batch DONE from %.*s mig_id=%lld n_slots=%d applied=%lld",
+            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots, applied_total);
 
         /* Notify main thread to free old completed batches. We push onto the
          * dispose list under a mutex and tickle the pipe. */
