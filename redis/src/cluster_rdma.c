@@ -2356,40 +2356,15 @@ static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
 
     size_t total_bytes = 0;
     int errs = 0;
-    for (int i = 0; i < n_slots; i++) {
-        int slot = chosen[i];
-        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
-        uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
-                                                   RDMAMIG_BLOCK_SIZE_BYTES);
-        rdmaDebugDumpSlotBytes("SRC", slot, staging);
-        if (server.rdma_reshard_debug_bytes) {
-            r_allocator_log_slot_stats(slot);
-            serverLog(LL_NOTICE,
-                "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
-                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
-        }
-        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
-                                           L->buffers[slot].ptr,
-                                           L->buffers[slot].rkey,
-                                           RDMAMIG_BLOCK_SIZE_BYTES);
-        if (rc != 0) {
-            errs++;
-            serverLog(LL_WARNING,
-                "RDMA MIGRATE worker: slot=%d post_write failed rc=%d", slot, rc);
-            continue;
-        }
-        int wc_rc = rdmamig_client_wait_send(L->client);
-        if (wc_rc < 0) {
-            errs++;
-            serverLog(LL_WARNING,
-                "RDMA MIGRATE worker: slot=%d wait_send failed rc=%d", slot, wc_rc);
-            continue;
-        }
-        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
-        serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: slot=%d entries=%u bytes=%d rc=0",
-            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
-    }
+    /* DIAGNOSTIC STUB: per-slot RDMA write loop commented out, replaced with
+     * a 4-second sleep. Lets us see how a 4-second EXEC phase maps onto the
+     * YCSB dip — if the dip lengthens by ~4 s, the transfer wall-clock is
+     * directly proportional to the dip; if it doesn't grow, the dip is
+     * dominated by something else (FLIP / topology refresh).               */
+    (void)db; (void)rdmaEncodeSlotEntries; (void)rdmaDebugDumpSlotBytes;
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE worker: EXEC stubbed — sleeping 4s instead of RDMA writes");
+    sleep(4);
 
     /* Notify recipient (Phase 4d):
      *   "RDMA DONE-SLOTS <src_node_id> <src_mig_id> <s1> ... <sN>"
