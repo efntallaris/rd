@@ -24,6 +24,11 @@
 - name: "RDMA reshard v2: autonomous-thread migration on each master"
   hosts: redis_masters
   become: yes
+  # Sequential: one source completes its full PREP/REGISTER/FLIP/EXEC/APPLY
+  # cycle before the next source starts. Isolates per-migration behavior so
+  # the YCSB dip measurement is one-source-at-a-time rather than all three
+  # concurrent.
+  serial: 1
   vars:
     reshard_target: "{{ groups['redis_migrate'][0] }}"
     reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
