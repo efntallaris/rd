@@ -809,22 +809,36 @@ static void drainApplyRing(void) {
     while (tail != head) {
         applyBatch *b = apply_ring[tail & (APPLY_RING_CAPACITY - 1)];
         atomic_store_explicit(&b->state, APPLY_RUNNING, memory_order_relaxed);
+        serverLog(LL_NOTICE,
+            "RDMA apply-thread: starting batch from %.*s mig_id=%lld n_slots=%d",
+            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots);
 
-        /* Take the slot wrlock around each slot's apply. The TLS guard tells
-         * Path B wraps in db.c to skip their own acquire. */
+        /* PHASE 4d INVESTIGATION STUB: skip the real rdmaApplySlot work and
+         * usleep(1000) per slot instead. Keeps the slot wrlock acquire so
+         * we still exercise the lock-contention path against main-thread
+         * Path B wraps, but bypasses the dbAdd inside rdmaApplySlot — the
+         * suspected source of the hang. If this stub completes cleanly
+         * (APPLY-STATUS reports done, dip is gone), the SPSC ring + status
+         * flow + lock infra are sound and the issue is inside the dbAdd
+         * path (signalKeyAsReady / notifyKeyspaceEvent / kvstore rehash
+         * race). If this stub also hangs, the SPSC / status / lock
+         * machinery is broken. */
         for (int i = 0; i < b->n_slots; i++) {
             int slot = b->slots[i];
             clusterSlotLockWrite(slot);
             cluster_slot_lock_held_by_thread++;
-            int added = rdmaApplySlot(b->db, slot);
+            usleep(1000);
             cluster_slot_lock_held_by_thread--;
             clusterSlotUnlock(slot);
             atomic_store_explicit(&b->idx, i + 1, memory_order_release);
-            atomic_fetch_add_explicit(&b->applied, added, memory_order_relaxed);
+            /* Stub: no keys applied; b->applied stays at 0. */
         }
 
         atomic_store_explicit(&b->state, APPLY_DONE, memory_order_release);
         b->t_ended = time(NULL);
+        serverLog(LL_NOTICE,
+            "RDMA apply-thread: batch DONE from %.*s mig_id=%lld n_slots=%d (stub)",
+            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots);
 
         /* Notify main thread to free old completed batches. We push onto the
          * dispose list under a mutex and tickle the pipe. */
