@@ -25,14 +25,71 @@ from pathlib import Path
 from typing import Optional
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import shutil
+
+# Use LaTeX rendering when available; otherwise fall back to mathtext
+# rendering with the same Computer-Modern-style serif font.
+_HAS_LATEX = shutil.which("latex") is not None and shutil.which("dvipng") is not None
 
 plt.rcParams.update({
-    "font.family": "sans-serif",
-    "font.size": 9,
-    "axes.linewidth": 0.6,
+    "text.usetex":     _HAS_LATEX,
+    "font.family":     "serif",
+    "font.serif":      ["CMU Serif", "Computer Modern Roman",
+                        "Latin Modern Roman", "STIX Two Text", "DejaVu Serif"],
+    "mathtext.fontset": "cm",
+    # Paper-style hierarchy: body 13 anchors title (~1.5x), axis (~1.2x),
+    # legend (1.0x), tick (~0.85x).
+    "font.size":       13,
+    "axes.titlesize":  14,
+    "axes.labelsize":  15,
+    "legend.fontsize": 13,
+    "xtick.labelsize": 11,
+    "ytick.labelsize": 11,
+    "axes.linewidth":  0.6,
     "xtick.direction": "out",
     "ytick.direction": "out",
 })
+
+# Inline annotation font sizes (band labels, vertical-line labels, summary).
+_FS_BAND_LABEL = 12   # "M1\n7.4s" centered above each migration band
+_FS_VLINE      = 11   # rotated FLIP label next to vertical line
+_FS_SUMMARY    = 11   # "Total migration: 34.7s (3 sources, serial)"
+
+# Crop the x-axis so the YCSB ramp-up (no ops in seconds 0-8) is hidden.
+PLOT_X_MIN = 10
+
+# Grayscale palette — differentiate by line style + marker shape, not color.
+THROUGHPUT_COLOR = "#1A1A1A"     # near-black throughput line
+THROUGHPUT_FILL  = "#4A4A4A"     # mid-dark gray for area shading under tp
+AQUEDUCT_STYLE = dict(
+    color=THROUGHPUT_COLOR, marker="D", markersize=5, markevery=6,
+    linewidth=2.0, linestyle="-",
+    markerfacecolor=THROUGHPUT_COLOR, markeredgecolor="white",
+    markeredgewidth=0.6,
+)
+LATENCY_READ_STYLE = dict(
+    color="#1a1a1a", marker="o", markersize=6, markevery=4,
+    linewidth=1.6, linestyle=(0, (6, 2)),       # long-dash
+    markerfacecolor="white", markeredgecolor="#1a1a1a", markeredgewidth=1.2,
+)
+LATENCY_UPDATE_STYLE = dict(
+    color="#1a1a1a", marker="^", markersize=7, markevery=4,
+    linewidth=1.6, linestyle=(0, (1, 2)),       # dotted
+    markerfacecolor="#1a1a1a", markeredgecolor="white", markeredgewidth=0.6,
+)
+
+# Migration-band palette — neutral gray fill + dark gray edges / labels.
+PHASE_COLORS = {
+    "FLIP":      "#3A3A3A",     # dark gray (legacy vline)
+    "BAND_FILL": "#9E9E9E",     # mid-gray band fill (used with low alpha)
+    "BAND_EDGE": "#333333",     # dark gray edge / label color
+    "DONE":      "#666666",     # gray
+}
+
+# Pure white backgrounds.
+FIG_BG  = "#FFFFFF"
+AXES_BG = "#FFFFFF"
 
 # YCSB per-second status line. Example:
 #   2026-05-15 21:32:04:362 3 sec: 85555 operations; 85726.45 current ops/sec; \
@@ -124,6 +181,42 @@ def find_first_marker(expdir: Path, *needles: str) -> Optional[datetime]:
     return earliest
 
 
+def find_per_source_migration_windows(expdir: Path) -> list[tuple[str, datetime, datetime]]:
+    """Per-source (PREP-start, DONE-end) for each source master that did a
+    migration in this experiment. One tuple per source. Returns
+    [(source-id, start_dt, end_dt), ...] sorted by start time. Source ID is
+    just the redis log filename stem (e.g. "redis0"). Uses these markers:
+        start: "RDMA MIGRATE-PREP: new outbound link"
+        end:   "RDMA MIGRATE worker: id=*  DONE n_slots="
+    """
+    windows: list[tuple[str, datetime, datetime]] = []
+    log_root = expdir / "logs"
+    if not log_root.exists():
+        return windows
+    for log_path in log_root.rglob("redis_logs/redis*"):
+        # The recipient (redis3) also has "DONE" lines from its apply thread,
+        # but no "MIGRATE-PREP" line — skip silently if PREP isn't found.
+        prep_t: Optional[datetime] = None
+        done_t: Optional[datetime] = None
+        try:
+            with open(log_path, "r", errors="replace") as f:
+                for line in f:
+                    if "RDMA MIGRATE-PREP: new outbound link" in line and prep_t is None:
+                        m = RE_REDIS_TS.search(line)
+                        if m:
+                            prep_t = parse_redis_ts(m.group("ts"))
+                    if "RDMA MIGRATE worker:" in line and "DONE n_slots=" in line:
+                        m = RE_REDIS_TS.search(line)
+                        if m:
+                            done_t = parse_redis_ts(m.group("ts"))  # keep latest
+        except Exception:
+            continue
+        if prep_t and done_t and done_t > prep_t:
+            windows.append((log_path.name, prep_t, done_t))
+    windows.sort(key=lambda w: w[1])
+    return windows
+
+
 def find_last_marker(expdir: Path, *needles: str) -> Optional[datetime]:
     """Latest timestamp across all redis logs whose line contains any needle."""
     latest: Optional[datetime] = None
@@ -166,6 +259,33 @@ def to_rel(t: Optional[datetime], t0: datetime) -> Optional[float]:
     return None if t is None else (t - t0).total_seconds()
 
 
+def _k_formatter(v: float, _pos) -> str:
+    """Format throughput ticks as `200K`, `1M`, etc."""
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.1f}M" if v % 1_000_000 else f"{int(v // 1_000_000)}M"
+    if v >= 1_000:
+        return f"{int(v / 1_000)}K"
+    return f"{int(v)}"
+
+
+def _annotate_vline(ax, x: Optional[float], color: str, label: str) -> None:
+    if x is None:
+        return
+    ax.axvline(x, color=color, ls="--", lw=1.0, alpha=0.85, zorder=2)
+    _, ymax = ax.get_ylim()
+    ax.annotate(
+        label,
+        xy=(x, ymax),
+        xytext=(3, -3),
+        textcoords="offset points",
+        rotation=90,
+        va="top",
+        ha="left",
+        color=color,
+        fontsize=_FS_VLINE,
+    )
+
+
 def plot(expdir: Path, output: Path) -> None:
     ycsb_path = expdir / "ycsb" / "ycsb0" / "tmp" / "ycsb_output_ycsb0"
     if not ycsb_path.exists():
@@ -190,54 +310,134 @@ def plot(expdir: Path, output: Path) -> None:
     exec_last_rel  = to_rel(auto_tz_offset(find_last_marker (expdir, "RDMA RESHARD-EXEC: slot="), t0), t0)
     done_rel       = to_rel(auto_tz_offset(find_first_marker(expdir, "RDMA DONE-SLOTS: applied"), t0), t0)
 
+    # Per-source migration windows (PREP -> DONE per source). One band per
+    # migration, plus the overall span.
+    raw_windows = find_per_source_migration_windows(expdir)
+    migration_bands: list[tuple[str, float, float]] = []
+    for src, p, d in raw_windows:
+        ps = auto_tz_offset(p, t0)
+        ds = auto_tz_offset(d, t0)
+        if ps is None or ds is None:
+            continue
+        s_rel = to_rel(ps, t0)
+        e_rel = to_rel(ds, t0)
+        if s_rel is None or e_rel is None or e_rel <= s_rel:
+            continue
+        migration_bands.append((src, s_rel, e_rel))
+
+    # Workload nickname: strip the experiment prefix for the panel titles.
+    workload = expdir.name
+    for prefix in ("custom_reshard_v2_", "custom_reshard_"):
+        if workload.startswith(prefix):
+            workload = workload[len(prefix):]
+            break
+
     fig, (ax_tp, ax_lat) = plt.subplots(
-        2, 1, figsize=(11, 6), sharex=True,
-        gridspec_kw={"height_ratios": [2, 2], "hspace": 0.18}
+        2, 1, figsize=(11.5, 4.0), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1], "hspace": 0.75},
+        facecolor=FIG_BG,
     )
 
-    ax_tp.plot(t_rel, tp, color="#1f3a5e", lw=1.6)
-    ax_tp.fill_between(t_rel, 0, tp, color="#1f3a5e", alpha=0.10)
-    ax_tp.set_ylabel("Throughput (ops/sec)")
-    ax_tp.grid(True, axis="y", alpha=0.3, lw=0.4)
-    ax_tp.set_title(f"YCSB throughput + latency — {expdir.name}",
-                    fontsize=11, fontweight="bold")
+    def _stylize_axes(ax):
+        ax.set_facecolor(AXES_BG)
+        for side in ("top", "right", "left", "bottom"):
+            ax.spines[side].set_visible(False)
+        ax.tick_params(direction="out", length=0, color="0.55")
+        ax.grid(False)
+        ax.set_axisbelow(True)
 
-    ax_lat.plot(t_rel, rd_lat, color="#2a7f3f", lw=1.4, label="READ avg latency (μs)")
-    ax_lat.plot(t_rel, up_lat, color="#c44400", lw=1.4, label="UPDATE avg latency (μs)")
-    ax_lat.set_ylabel("Avg latency (μs)")
+    _stylize_axes(ax_tp)
+    _stylize_axes(ax_lat)
+
+    # ---- Panel (a): Throughput --------------------------------------------------
+    ax_tp.plot(t_rel, tp, label="Aqueduct", zorder=3, **AQUEDUCT_STYLE)
+    ax_tp.set_title(f"Th/put — {workload}", pad=8)
+    ax_tp.set_ylabel("Th/put (Kops/s)")
+    # Y-axis in Kops/s with exactly 3 ticks framing the data range (no 0 tick).
+    ax_tp.yaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}"))
+    if tp:
+        ax_tp.set_ylim(bottom=max(0, min(tp) * 0.95), top=max(tp) * 1.05)
+    ax_tp.yaxis.set_major_locator(mticker.MaxNLocator(nbins=3, prune="lower"))
+
+    # ---- Panel (b): Avg latency -------------------------------------------------
+    ax_lat.plot(t_rel, rd_lat, label="READ", zorder=3, **LATENCY_READ_STYLE)
+    ax_lat.plot(t_rel, up_lat, label="UPDATE", zorder=3, **LATENCY_UPDATE_STYLE)
+    ax_lat.set_title("Average Latency", pad=8)
     ax_lat.set_xlabel("Time since YCSB start (seconds)")
-    ax_lat.grid(True, axis="y", alpha=0.3, lw=0.4)
-    ax_lat.legend(loc="upper right", fontsize=8, frameon=False)
+    ax_lat.set_ylabel(r"Avg latency ($\mu$s)")
+    if t_rel:
+        ax_tp.set_xlim(PLOT_X_MIN, t_rel[-1])
+        ax_lat.set_xlim(PLOT_X_MIN, t_rel[-1])
+    # Legend moved to the figure footer (below both panels and below the
+    # x-axis title) so it never overlaps data or labels.
+    handles, labels = ax_lat.get_legend_handles_labels()
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.07),
+        ncol=len(labels),
+        frameon=False,
+        handlelength=2.0,
+        handletextpad=0.5,
+        columnspacing=1.8,
+    )
 
-    # Migration-window shaded band (FLIP → DONE-SLOTS, or fallback to EXEC span).
-    band_start = flip_rel if flip_rel is not None else exec_first_rel
-    band_end   = done_rel if done_rel is not None else exec_last_rel
-    if band_start is not None and band_end is not None and band_end > band_start:
+    # Per-source migration bands. Shade each PREP->DONE window with a soft
+    # olive fill and a thin olive border on the left/right edges so the band
+    # reads as a panel guide rather than a blob.
+    for src, s_rel, e_rel in migration_bands:
         for ax in (ax_tp, ax_lat):
-            ax.axvspan(band_start, band_end, alpha=0.10, color="#c44400")
+            ax.axvspan(s_rel, e_rel, alpha=0.20,
+                       color=PHASE_COLORS["BAND_FILL"], zorder=1)
 
-    # Compute y-limits before annotating.
-    ax_tp.relim(); ax_tp.autoscale_view()
+    # Recompute y-limits before annotating so labels sit at correct height.
     ax_lat.relim(); ax_lat.autoscale_view()
+    # ax_tp y-limits were set just-above to bracket the actual data range
+    # (no 0 tick); do not relim/autoscale here — that would re-include 0.
 
-    def vline(ax, x: Optional[float], color: str, label: str):
-        if x is None:
-            return
-        ax.axvline(x, color=color, ls="--", lw=1.0, alpha=0.85)
-        _, ymax = ax.get_ylim()
-        ax.annotate(label, xy=(x, ymax * 0.95),
-                    xytext=(2, 0), textcoords="offset points",
-                    rotation=90, va="top", ha="left",
-                    color=color, fontsize=7.5)
+    # Duration labels in white rounded boxes with olive border, centered above
+    # each migration band so they pop out of the band fill.
+    if migration_bands:
+        _, ymax_tp = ax_tp.get_ylim()
+        label_bbox = dict(
+            boxstyle="round,pad=0.30,rounding_size=0.20",
+            facecolor="white", edgecolor=PHASE_COLORS["BAND_EDGE"],
+            linewidth=1.0, alpha=0.95,
+        )
+        for i, (src, s_rel, e_rel) in enumerate(migration_bands, start=1):
+            dur = e_rel - s_rel
+            mid = (s_rel + e_rel) / 2.0
+            ax_tp.annotate(
+                f"M{i}\n{dur:.1f}s",
+                xy=(mid, ymax_tp * 0.78),
+                xytext=(0, 0),
+                textcoords="offset points",
+                ha="center", va="center",
+                color=PHASE_COLORS["BAND_EDGE"],
+                fontsize=_FS_BAND_LABEL,
+                fontweight="bold",
+                bbox=label_bbox,
+            )
+        # Overall span summary, bottom-right corner of throughput panel.
+        total_start = migration_bands[0][1]
+        total_end   = migration_bands[-1][2]
+        total       = total_end - total_start
+        ax_tp.annotate(
+            f"Total migration: {total:.1f}s\n({len(migration_bands)} sources, serial)",
+            xy=(0.99, 0.06), xycoords="axes fraction",
+            ha="right", va="bottom",
+            color=PHASE_COLORS["BAND_EDGE"],
+            fontsize=_FS_SUMMARY,
+            fontweight="bold",
+            bbox=label_bbox,
+        )
 
-    for ax in (ax_tp, ax_lat):
-        vline(ax, flip_rel,       "#c44400", "FLIP")
-        vline(ax, exec_first_rel, "#a16524", "EXEC start")
-        vline(ax, exec_last_rel,  "#a16524", "EXEC end")
-        vline(ax, done_rel,       "#6c4a96", "DONE-SLOTS")
+    # FLIP vline intentionally not drawn — the M1 band's left edge already
+    # marks the first FLIP. Keep _annotate_vline available for future use.
 
-    plt.tight_layout()
-    plt.savefig(output, dpi=160, bbox_inches="tight")
+    plt.subplots_adjust(left=0.08, right=0.97, top=0.92, bottom=0.18)
+    plt.savefig(output, dpi=300, bbox_inches="tight")
     print(f"wrote {output}")
     print(f"  samples: {len(samples)}    span: {t_rel[-1]:.1f}s")
     if flip_rel       is not None: print(f"  FLIP:         t+{flip_rel:.2f}s")
@@ -246,13 +446,302 @@ def plot(expdir: Path, output: Path) -> None:
     if done_rel       is not None: print(f"  DONE-SLOTS:   t+{done_rel:.2f}s")
 
 
+# ============================================================================ #
+#  System-resource parsers (mpstat / iostat / ifstat) + plot_resources         #
+# ============================================================================ #
+
+# mpstat / iostat line prefix: "HH:MM:SS AM" or "HH:MM:SS PM"
+RE_HHMMSS_AMPM = re.compile(r"^(\d{1,2}:\d{2}:\d{2})\s+(AM|PM)\b")
+# ifstat line prefix: "HH:MM:SS"
+RE_HHMMSS = re.compile(r"^(\d{2}:\d{2}:\d{2})\s+")
+
+
+def _parse_hhmmss_ampm(date_anchor: datetime, hhmmss: str, ampm: str) -> datetime:
+    """Combine an HH:MM:SS [AM|PM] time-of-day with a same-day date anchor."""
+    h, m, s = (int(x) for x in hhmmss.split(":"))
+    if ampm == "PM" and h != 12:
+        h += 12
+    elif ampm == "AM" and h == 12:
+        h = 0
+    return date_anchor.replace(hour=h, minute=m, second=s, microsecond=0)
+
+
+def parse_mpstat(path: Path, date_anchor: datetime) -> list[tuple[datetime, float, float]]:
+    """Return list of (t, cpu_used_pct, iowait_pct) per second from `mpstat 1`.
+    cpu_used_pct = 100 - %idle from the `all` CPU row."""
+    out: list[tuple[datetime, float, float]] = []
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            m = RE_HHMMSS_AMPM.match(line)
+            if not m:
+                continue
+            parts = line.split()
+            # `HH:MM:SS PM all %usr %nice %sys %iowait %irq %soft %steal %guest %gnice %idle`
+            if len(parts) < 13 or parts[2] != "all":
+                continue
+            try:
+                iowait = float(parts[6])
+                idle = float(parts[-1])
+                t = _parse_hhmmss_ampm(date_anchor, m.group(1), m.group(2))
+                out.append((t, 100.0 - idle, iowait))
+            except (ValueError, IndexError):
+                continue
+    return out
+
+
+def parse_iostat(path: Path, date_anchor: datetime,
+                 device: str = "sda") -> list[tuple[datetime, float, float, float]]:
+    """Return list of (t, tps, kB_read_per_s, kB_wrtn_per_s) per interval from
+    `iostat 1`. iostat dumps a multi-line block per interval; we anchor to the
+    `MM/DD/YYYY HH:MM:SS PM` header line and then read the `device` row that
+    follows. The first block is the boot-time cumulative — we skip it."""
+    RE_BLOCK_TS = re.compile(
+        r"^(\d{2}/\d{2}/\d{4})\s+(\d{1,2}:\d{2}:\d{2})\s+(AM|PM)\s*$"
+    )
+    out: list[tuple[datetime, float, float, float]] = []
+    cur_t: Optional[datetime] = None
+    seen_blocks = 0
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            m = RE_BLOCK_TS.match(line.rstrip())
+            if m:
+                seen_blocks += 1
+                try:
+                    cur_t = _parse_hhmmss_ampm(date_anchor, m.group(2), m.group(3))
+                except Exception:
+                    cur_t = None
+                continue
+            if cur_t is None or seen_blocks <= 1:
+                continue
+            parts = line.split()
+            if not parts or parts[0] != device:
+                continue
+            # `device tps kB_read/s kB_wrtn/s ...` (newer iostat may add kB_dscd/s)
+            try:
+                tps = float(parts[1])
+                kb_read = float(parts[2])
+                kb_wrtn = float(parts[3])
+                out.append((cur_t, tps, kb_read, kb_wrtn))
+            except (ValueError, IndexError):
+                continue
+    return out
+
+
+def parse_ifstat(path: Path, date_anchor: datetime,
+                 interface: str = "ens1f1np1") -> list[tuple[datetime, float, float]]:
+    """Return list of (t, kB_in, kB_out) per second from `ifstat 1` for the
+    chosen interface. The header line lists interfaces; we find which column
+    pair belongs to `interface`. Time-of-day prefix is HH:MM:SS without AM/PM —
+    we infer AM/PM from the date_anchor (the first sample is assumed to be on
+    the same wall-clock half as the anchor)."""
+    out: list[tuple[datetime, float, float]] = []
+    iface_col: Optional[int] = None
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            stripped = line.rstrip()
+            if iface_col is None:
+                # Header lines: first lists interface names, second lists units.
+                cols = stripped.split()
+                if interface in cols:
+                    iface_col = cols.index(interface)
+                continue
+            m = RE_HHMMSS.match(stripped)
+            if not m:
+                continue
+            parts = stripped.split()
+            # Header tokens: ['Time', iface0, iface1, ...]. Data tokens:
+            # [HH:MM:SS, in0, out0, in1, out1, ...]. For interface at header
+            # index k (k >= 1), data columns are 2*k - 1 and 2*k.
+            data_idx_in = 2 * iface_col - 1
+            data_idx_out = 2 * iface_col
+            if len(parts) <= data_idx_out:
+                continue
+            try:
+                h, mi, s = (int(x) for x in parts[0].split(":"))
+                t = date_anchor.replace(hour=h, minute=mi, second=s, microsecond=0)
+                kb_in = float(parts[data_idx_in])
+                kb_out = float(parts[data_idx_out])
+                out.append((t, kb_in, kb_out))
+            except (ValueError, IndexError):
+                continue
+    return out
+
+
+def _stylize_axes(ax) -> None:
+    """Apply consistent panel styling — borderless: no spines, no gridlines,
+    no tick marks; tick labels and titles remain. Mirrors the inline helper
+    in plot() so plot_resources uses the same look."""
+    ax.set_facecolor(AXES_BG)
+    for side in ("top", "right", "left", "bottom"):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(direction="out", length=0, color="0.55")
+    ax.grid(False)
+    ax.set_axisbelow(True)
+
+
+def plot_resources(expdir: Path, output: Path, host: str) -> None:
+    """Three-panel CPU / Network / Disk timeseries for one redis host, with
+    the same migration-band shading as the YCSB plot for visual alignment."""
+    systat_dir = expdir / "logs" / host / "users" / "entall" / "systat_logs"
+    if not systat_dir.is_dir():
+        # Some collected layouts use a flat directory; try that.
+        cands = list(expdir.rglob(f"{host}_mpstat.txt"))
+        if not cands:
+            sys.exit(f"No systat logs for {host} under {expdir}")
+        systat_dir = cands[0].parent
+    mpstat_p = systat_dir / f"{host}_mpstat.txt"
+    iostat_p = systat_dir / f"{host}_iostat.txt"
+    ifstat_p = systat_dir / f"{host}_ifstat.txt"
+
+    # Align timestamps using the YCSB t0 (same anchor as the YCSB plot).
+    ycsb_path = expdir / "ycsb" / "ycsb0" / "tmp" / "ycsb_output_ycsb0"
+    if not ycsb_path.exists():
+        cands = list(expdir.rglob("ycsb_output_*"))
+        if not cands:
+            sys.exit(f"No YCSB output file found under {expdir}")
+        ycsb_path = cands[0]
+    samples = parse_ycsb_log(ycsb_path)
+    if not samples:
+        sys.exit(f"No YCSB samples parsed; cannot anchor resource timeline")
+    t0 = samples[0].t
+
+    # mpstat / iostat / ifstat all log HH:MM:SS in the redis-host local-time
+    # frame (UTC-offset from YCSB on this cloudlab rig). Use the same TZ
+    # heuristic the YCSB plot uses to translate the first observable redis-
+    # log timestamp into the YCSB frame, then anchor parsing to the same
+    # calendar date as the YCSB t0.
+    date_anchor = t0.replace(microsecond=0)
+
+    mpstat = parse_mpstat(mpstat_p, date_anchor) if mpstat_p.exists() else []
+    iostat = parse_iostat(iostat_p, date_anchor) if iostat_p.exists() else []
+    ifstat = parse_ifstat(ifstat_p, date_anchor) if ifstat_p.exists() else []
+
+    def _to_rel_series(seq, k):
+        ts = [auto_tz_offset(row[0], t0) for row in seq]
+        xs = [to_rel(t, t0) for t in ts]
+        ys = [row[k] for row in seq]
+        # Filter out None/negative-large entries.
+        return ([x for x in xs if x is not None],
+                [y for x, y in zip(xs, ys) if x is not None])
+
+    x_cpu, y_cpu_used = _to_rel_series(mpstat, 1)
+    _,     y_cpu_iow  = _to_rel_series(mpstat, 2)
+    x_io,  y_io_read  = _to_rel_series(iostat, 2)
+    _,     y_io_wrtn  = _to_rel_series(iostat, 3)
+    x_if,  y_if_in    = _to_rel_series(ifstat, 1)
+    _,     y_if_out   = _to_rel_series(ifstat, 2)
+
+    # Migration windows (relative seconds) for shading.
+    raw_windows = find_per_source_migration_windows(expdir)
+    migration_bands: list[tuple[float, float]] = []
+    for src, p, d in raw_windows:
+        ps = auto_tz_offset(p, t0)
+        ds = auto_tz_offset(d, t0)
+        if ps is None or ds is None:
+            continue
+        s_rel = to_rel(ps, t0)
+        e_rel = to_rel(ds, t0)
+        if s_rel is not None and e_rel is not None and e_rel > s_rel:
+            migration_bands.append((s_rel, e_rel))
+
+    workload = expdir.name
+    for prefix in ("custom_reshard_v2_", "custom_reshard_"):
+        if workload.startswith(prefix):
+            workload = workload[len(prefix):]
+            break
+
+    fig, axes = plt.subplots(
+        3, 1, figsize=(11.5, 5.0), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1, 1], "hspace": 0.65},
+        facecolor=FIG_BG,
+    )
+    ax_cpu, ax_net, ax_disk = axes
+    for ax in axes:
+        _stylize_axes(ax)
+
+    # Two distinct dash + marker patterns so paired lines remain visually
+    # separable even when they overlap in value.
+    PRIMARY = dict(color="#1a1a1a", linewidth=1.6, linestyle=(0, (6, 2)),
+                   marker="o", markersize=6, markevery=4,
+                   markerfacecolor="white", markeredgecolor="#1a1a1a",
+                   markeredgewidth=1.2)
+    SECONDARY = dict(color="#1a1a1a", linewidth=1.6, linestyle=(0, (1, 2)),
+                     marker="^", markersize=7, markevery=4,
+                     markerfacecolor="#1a1a1a", markeredgecolor="white",
+                     markeredgewidth=0.6)
+
+    # ---- (a) CPU --------------------------------------------------------------
+    ax_cpu.plot(x_cpu, y_cpu_used, label="CPU used (%)", **PRIMARY)
+    ax_cpu.plot(x_cpu, y_cpu_iow,  label="iowait (%)",  **SECONDARY)
+    ax_cpu.set_ylabel("CPU (%)")
+    ax_cpu.set_ylim(0, 100)
+    ax_cpu.set_title(f"CPU utilization — {host} ({workload})", pad=8)
+
+    # ---- (b) Network ----------------------------------------------------------
+    def _mb(v):
+        return [x / 1024.0 for x in v]
+    ax_net.plot(x_if, _mb(y_if_in),  label="RX (MB/s)", **PRIMARY)
+    ax_net.plot(x_if, _mb(y_if_out), label="TX (MB/s)", **SECONDARY)
+    ax_net.set_ylabel("Net throughput (MB/s)")
+    ax_net.set_title(f"Network — {host} (RDMA NIC ens1f1np1)", pad=8)
+
+    # ---- (c) Disk -------------------------------------------------------------
+    ax_disk.plot(x_io, _mb(y_io_read), label="Read (MB/s)",  **PRIMARY)
+    ax_disk.plot(x_io, _mb(y_io_wrtn), label="Write (MB/s)", **SECONDARY)
+    ax_disk.set_ylabel("Disk I/O (MB/s)")
+    ax_disk.set_xlabel("Time since YCSB start (seconds)")
+    ax_disk.set_title(f"Disk — {host} (sda)", pad=8)
+
+    # Migration bands across all panels.
+    for s_rel, e_rel in migration_bands:
+        for ax in axes:
+            ax.axvspan(s_rel, e_rel, alpha=0.20,
+                       color=PHASE_COLORS["BAND_FILL"], zorder=1)
+
+    # Clip x-axis to the YCSB run window so the resource plots align with the
+    # YCSB throughput/latency timeline.
+    t_rel = [(s.t - t0).total_seconds() for s in samples]
+    if t_rel:
+        for ax in axes:
+            ax.set_xlim(PLOT_X_MIN, t_rel[-1])
+
+    # Footer legend — one per panel below each axis is noisy; use a single
+    # figure-level legend that lists the per-panel colors and dashed/solid.
+    handles_all = []
+    labels_all  = []
+    for ax in axes:
+        h, l = ax.get_legend_handles_labels()
+        for hi, li in zip(h, l):
+            if li not in labels_all:
+                handles_all.append(hi); labels_all.append(li)
+    fig.legend(
+        handles_all, labels_all,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.04),
+        ncol=min(len(labels_all), 6),
+        frameon=False,
+        handlelength=2.0,
+        handletextpad=0.5,
+        columnspacing=1.6,
+    )
+
+    plt.subplots_adjust(left=0.08, right=0.97, top=0.95, bottom=0.13)
+    plt.savefig(output, dpi=300, bbox_inches="tight")
+    print(f"wrote {output}")
+    print(f"  mpstat samples: {len(mpstat)}  iostat: {len(iostat)}  ifstat: {len(ifstat)}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("expdir", type=Path,
                    help="experiment result directory under /tmp/experiments/")
     p.add_argument("--output", "-o", type=Path, default=None,
-                   help="output PNG path (default: <expdir>/ycsb_timeseries.png)")
+                   help="output path for YCSB plot (default: <expdir>/ycsb_timeseries.png)")
+    p.add_argument("--with-resources", action="store_true",
+                   help="also emit per-host CPU/network/disk plots from systat logs")
+    p.add_argument("--hosts", nargs="+", default=["redis0", "redis3"],
+                   help="hosts to plot resources for (default: redis0 redis3)")
     args = p.parse_args()
 
     expdir = args.expdir.resolve()
@@ -260,6 +749,16 @@ def main() -> None:
         sys.exit(f"Not a directory: {expdir}")
     output = args.output or (expdir / "ycsb_timeseries.png")
     plot(expdir, output)
+
+    if args.with_resources:
+        for host in args.hosts:
+            # Output filename matches YCSB output extension.
+            ext = output.suffix or ".png"
+            res_out = expdir / f"resources_{host}{ext}"
+            try:
+                plot_resources(expdir, res_out, host=host)
+            except SystemExit as e:
+                print(f"WARN: {e}")
 
 
 if __name__ == "__main__":
