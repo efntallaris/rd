@@ -52,7 +52,7 @@ void rdmamig_set_logger(rdmamig_log_fn fn);
 
 /* Default block size used by the per-slot allocator. Buffers exchanged
  * across the channel are sized in multiples of this. */
-#define RDMAMIG_BLOCK_SIZE_BYTES  (1u << 20)   /* 1 MiB */
+#define RDMAMIG_BLOCK_SIZE_BYTES  (2u << 20)   /* 2 MiB */
 
 /* ------------------------------------------------------------------------- *
  * Buffers (memory regions registered with the local NIC)

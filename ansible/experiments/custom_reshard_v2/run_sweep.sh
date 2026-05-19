@@ -13,7 +13,7 @@ WORKLOADS=("$@")
 REPO_ROOT="/users/entall/rd"
 YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
 SHARED_WORKLOADS_DIR="/rd/workloads"
-RECORDCOUNT="${RECORDCOUNT:-10000000}"
+RECORDCOUNT="${RECORDCOUNT:-50000000}"
 # 18M ops: at the ~300K-400K ops/s sustained throughput, this gives a
 # ~50s YCSB run — enough for the 18s pre-migration baseline (so the first
 # migration starts at YCSB second ~20) + ~20s migration band (three
