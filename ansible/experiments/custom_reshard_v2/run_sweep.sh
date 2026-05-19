@@ -14,10 +14,13 @@ REPO_ROOT="/users/entall/rd"
 YCSB_WORKLOADS_SRC="${REPO_ROOT}/ycsb_client/workloads"
 SHARED_WORKLOADS_DIR="/rd/workloads"
 RECORDCOUNT="${RECORDCOUNT:-500000}"
-# 10M ops: at the ~300K-400K ops/s sustained throughput, this gives a
-# ~25-35s YCSB run — enough for the 10s pre-migration baseline + ~5s
-# migration band + ~15s post-migration recovery in the timeseries plots.
-OPERATIONCOUNT="${OPERATIONCOUNT:-10000000}"
+# 18M ops: at the ~300K-400K ops/s sustained throughput, this gives a
+# ~50s YCSB run — enough for the 18s pre-migration baseline (so the first
+# migration starts at YCSB second ~20) + ~20s migration band (three
+# sequential sources at ~7s spacing each via serial:1) + ~10s post-
+# migration recovery in the timeseries plots. Bumped from 10M when
+# pre_reshard_pause shifted from 10 to 18.
+OPERATIONCOUNT="${OPERATIONCOUNT:-18000000}"
 
 echo ">>> ${VARIANT}: staging scaled YCSB workloads (records=${RECORDCOUNT}, ops=${OPERATIONCOUNT})"
 for w in "${WORKLOADS[@]}"; do
