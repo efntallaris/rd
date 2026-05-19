@@ -18,9 +18,12 @@
 // #define BLOCK_SIZE_BYTES 3984588 //1024//192//4000000//256//224//1024//256
 // #define BLOCK_SIZE_BYTES 3984588
 // #define BLOCK_SIZE_BYTES 3145728
-// #define BLOCK_SIZE_BYTES 2097152
-#define BLOCK_SIZE_BYTES 1048576
 //#define BLOCK_SIZE_BYTES 786432
+// MUST match RDMAMIG_BLOCK_SIZE_BYTES in rdma_migration.h — the source
+// RDMA-writes RDMAMIG_BLOCK_SIZE_BYTES per slot into the recipient's
+// r_allocator block; if they diverge, the recipient's landing buffer
+// overflows and the heap gets corrupted.
+#define BLOCK_SIZE_BYTES 2097152  /* 2 MiB */
 
 
 typedef struct allocated_block alloc_bloc_t;
