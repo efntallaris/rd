@@ -1273,17 +1273,17 @@ void clientsCron(void) {
  * incrementally in Redis databases, such as active key expiring, resizing,
  * rehashing. */
 void databasesCron(void) {
-    /* Aqueduct: pause main-thread kvstore maintenance while a recipient apply
+    /* Aqueduct: pause main-thread kvstore maintenance while a recipient backpatch
      * thread is in flight. activeExpireCycle / activeDefragCycle /
      * kvstoreTryResizeDicts / kvstoreIncrementallyRehash all iterate kvstore
      * internals (per-slot dicts, kvs->rehashing list, allocator slot_blocks)
-     * that the apply thread is concurrently mutating via dbAdd. Per-slot
-     * rwlock doesn't protect the cross-slot shared state. Apply windows are
-     * sub-second per migration; skipping cron for that brief window is
+     * that the backpatch thread is concurrently mutating via dbAdd. Per-slot
+     * rwlock doesn't protect the cross-slot shared state. Backpatch windows
+     * are sub-second per migration; skipping cron for that brief window is
      * harmless. */
-    int apply_running;
-    atomicGet(server.recipient_apply_in_progress, apply_running);
-    if (apply_running > 0) return;
+    int backpatch_running;
+    atomicGet(server.recipient_backpatch_in_progress, backpatch_running);
+    if (backpatch_running > 0) return;
 
     /* Expire keys by random sampling. Not required for slaves
      * as master will synthesize DELs for us. */
@@ -3248,11 +3248,11 @@ void InitServerLast(void) {
     bioInit();
     initThreadedIO();
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
-    /* Phase 4d: recipient apply worker thread. Started post-fork (this
+    /* Phase 4d: recipient backpatch worker thread. Started post-fork (this
      * function runs after daemonize() returns and after modules load) so
      * the pthread survives into the daemonized child — the lesson from
      * Attempt-1 in cluster_rdma.c history. */
-    recipientApplyThreadStart();
+    recipientBackpatchThreadStart();
     server.initial_memory_usage = zmalloc_used_memory();
 }
 

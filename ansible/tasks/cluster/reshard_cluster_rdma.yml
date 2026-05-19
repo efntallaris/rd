@@ -38,7 +38,7 @@
       register: cfg_set
       changed_when: false
 
-    # MIGRATE-PREP's 3rd arg is slot COUNT (not slot id). Phase 2 RESHARD-EXEC
+    # MIGRATE-PREP's 3rd arg is slot COUNT (not slot id). Phase 2 RESHARD-TRANSFER
     # needs the recipient's landing buffer for each slot the source registered,
     # so this count must match `reshard_slots_per_source`. Earlier Phase 1
     # versions passed 0 — Phase 1 only needed the QP up, not the recipient
@@ -78,16 +78,16 @@
       debug:
         var: reshard_result.stdout
 
-    - name: "RDMA RESHARD-EXEC: encode + RDMA-WRITE + DONE-SLOTS for {{ reshard_slots_per_source }} slots"
+    - name: "RDMA RESHARD-TRANSFER: encode + RDMA-WRITE + DONE-SLOTS for {{ reshard_slots_per_source }} slots"
       shell: |
         {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
-          RDMA RESHARD-EXEC {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
-      register: reshard_exec_result
-      changed_when: "'OK' in reshard_exec_result.stdout"
+          RDMA RESHARD-TRANSFER {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: reshard_transfer_result
+      changed_when: "'OK' in reshard_transfer_result.stdout"
 
-    - name: Show RDMA RESHARD-EXEC result
+    - name: Show RDMA RESHARD-TRANSFER result
       debug:
-        var: reshard_exec_result.stdout
+        var: reshard_transfer_result.stdout
 
     - name: "Post-reshard: dump VmPin on source (pinned MR pages)"
       shell: |

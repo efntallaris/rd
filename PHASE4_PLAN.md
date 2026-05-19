@@ -1,13 +1,13 @@
-# Phase 4 Plan — Keyspace-lock audit for thread-safe RDMA recipient apply
+# Phase 4 Plan — Keyspace-lock audit for thread-safe RDMA recipient backpatch
 
 ## Context
 
-The source-side migration thread (commit `7654b280`) is shipped and verified: registration, FLIP, and EXEC all run on a dedicated worker thread, eliminating the ~4 s event-loop stall that the chunked-tick design used to expose. The recipient-side apply, however, **still runs on the main event loop** via `migrationApplyTick` (1 ms timer, ~8 slots/tick).
+The source-side migration thread (commit `7654b280`) is shipped and verified: registration, FLIP, and TRANSFER all run on a dedicated worker thread, eliminating the ~4 s event-loop stall that the chunked-tick design used to expose. The recipient-side apply, however, **still runs on the main event loop** via `migrationBackpatchTick` (1 ms timer, ~8 slots/tick).
 
 Two attempts to thread the recipient (commits `7f2045a1` and the recent revert in `b2c57b77`) both failed under multi-source load:
 
-1. **Attempt 1** placed `recipientApplyWorkerStart()` in `initServerConfig`, which runs *before* `daemonize()` forks. Pthreads do not survive `fork()`; the worker was created in the parent and lost when the daemon child took over. The 10-slot smoke test masked it because the migration "completed" from the source's perspective.
-2. **Attempt 2** fixed (1) by moving the start call into `initServer` (post-fork). The worker came alive, smoke test passed (`DBSIZE = 66`), but the full `custom_reshard_v2` workloada sweep at threads=32 **segfaulted** in the worker: `dmesg: redis-server[529802]: segfault at 48 ip ... error 4` — a NULL field deref from a partially-torn dict bucket. The worker had applied slot ~1120 / 1365 when a *different* source's `RDMA RESHARD-RECV-FLIP` RPC arrived on the recipient's main thread. That handler mutates `importing_slots_from[]` + calls `clusterDelSlot/AddSlot` for slots the worker was concurrently `dbAdd`-ing into. Our `recipient_apply_mu` only covered `processCommand`'s dispatch path; it did **not** cover the RPC handler, `clusterCron`, AOF replay, expiration, replication, or the many other event-loop callbacks that also touch `db->keys` / `migrating_slots_to[]` / `importing_slots_from[]`.
+1. **Attempt 1** placed `recipientBackpatchWorkerStart()` in `initServerConfig`, which runs *before* `daemonize()` forks. Pthreads do not survive `fork()`; the worker was created in the parent and lost when the daemon child took over. The 10-slot smoke test masked it because the migration "completed" from the source's perspective.
+2. **Attempt 2** fixed (1) by moving the start call into `initServer` (post-fork). The worker came alive, smoke test passed (`DBSIZE = 66`), but the full `custom_reshard_v2` workloada sweep at threads=32 **segfaulted** in the worker: `dmesg: redis-server[529802]: segfault at 48 ip ... error 4` — a NULL field deref from a partially-torn dict bucket. The worker had applied slot ~1120 / 1365 when a *different* source's `RDMA RESHARD-RECV-FLIP` RPC arrived on the recipient's main thread. That handler mutates `importing_slots_from[]` + calls `clusterDelSlot/AddSlot` for slots the worker was concurrently `dbAdd`-ing into. Our `recipient_backpatch_mu` only covered `processCommand`'s dispatch path; it did **not** cover the RPC handler, `clusterCron`, AOF replay, expiration, replication, or the many other event-loop callbacks that also touch `db->keys` / `migrating_slots_to[]` / `importing_slots_from[]`.
 
 This matches the original author's note in `cluster_rdma.c`: "Reverted from pthread workers because the kvstore isn't thread-safe at the dict-resize / bucket level vs main-thread READ paths."
 
@@ -106,7 +106,7 @@ Each phase is independently shippable + testable:
 1. **Phase 4a** — introduce **both** lock tiers in one shot: `cluster_topology_lock` (single rwlock) **and** `slot_locks[CLUSTER_SLOTS]` array. Add `topoLockRead/Write` and `slotLockRead(slot)/slotLockWrite(slot)` helpers (slot variants take the topology rdlock internally). Wrap the existing slot-table read/write sites in `cluster_legacy.c`, including the four multi-slot loops listed under "Topology lock tier" (these take the topology wrlock). Without both tiers 4a cannot ship coherently — the multi-slot loops break under per-slot locking alone. **No recipient threading yet.**
 2. **Phase 4b** — extend the lock to `db->keys` **and** `db->expires` (separate per-slot kvstore). Wrap `lookupKey*` + `dbAdd*` + `dbDelete*` + `setExpire`/`removeExpire` + key-iteration sites. Apply the starvation-mitigation strategy chosen below to `activeExpireCycle` and `beginDefragCycle`. Apply stays on the main thread; goal is to land the lock infrastructure without behavior change.
 3. **Phase 4c** — extend to `blocking_keys`, `server.ready_keys` (global), `watched_keys`, `signalKeyAsReady`. Introduce the **mandatory** module-callback queue (see Risks G3): worker queues `keyspace_event` records onto an SPSC ring, main thread drains and fires `moduleNotifyKeyspaceEvent` under main-thread serialization. `notifyKeyspaceEvent` itself splits into "main-thread direct call" and "worker enqueue" variants. Also covers `kvstoreDictMetadata` stat counters.
-4. **Phase 4d** — finally move `migrationApplyTick` to a worker thread. Worker takes the topology rdlock + per-slot wrlock pair; enqueues notifications to the main thread; everything else is already covered by 4a-c.
+4. **Phase 4d** — finally move `migrationBackpatchTick` to a worker thread. Worker takes the topology rdlock + per-slot wrlock pair; enqueues notifications to the main thread; everything else is already covered by 4a-c.
 
 Verification gates:
 
@@ -149,19 +149,19 @@ Default recommendation: batch-and-drop. Re-evaluate if it shows up in profiling.
   - **Different-slot lookup** → AB-BA potential against the main thread.
   
   **Mandatory mitigation** (not "may need" — verified): worker enqueues `keyspace_event` records onto an SPSC ring; main thread drains and fires the module callback under main-thread serialization. Scoped into Phase 4c, validated by the module-callback test in 4c's verification gate.
-- **AOF / replication** generate side effects (writes to the AOF buffer in `feedAppendOnlyFile` / [aof.c:1409,1444](redis/src/aof.c#L1409); `server.slaveseldb` mutation in `replicationFeedSlaves` / [replication.c:588,629](redis/src/replication.c#L588)). Single-threaded today; cannot be safely called from a worker. The current `rdmaApplySlot` ([cluster_rdma.c:500](redis/src/cluster_rdma.c#L500)) correctly does **not** call `propagate()`, so 4d's worker is already AOF-safe for the apply itself; the risk reappears in 4c if a notification fires command propagation. Module-callback queue + the "no propagate from worker" invariant together close this.
+- **AOF / replication** generate side effects (writes to the AOF buffer in `feedAppendOnlyFile` / [aof.c:1409,1444](redis/src/aof.c#L1409); `server.slaveseldb` mutation in `replicationFeedSlaves` / [replication.c:588,629](redis/src/replication.c#L588)). Single-threaded today; cannot be safely called from a worker. The current `rdmaBackpatchSlot` ([cluster_rdma.c:500](redis/src/cluster_rdma.c#L500)) correctly does **not** call `propagate()`, so 4d's worker is already AOF-safe for the apply itself; the risk reappears in 4c if a notification fires command propagation. Module-callback queue + the "no propagate from worker" invariant together close this.
 - **Slow-path starvation** (`activeExpireCycle`, `defrag`) holding rdlock for ms at a time can stall the apply worker. Addressed by the batch-and-drop scaffolding in 4b; flagged here so the audit doesn't forget it during the field-by-field walk.
 - **The original chunked-tick stays as a fallback** until Phase 4d ships and passes verification. We will not remove `MIGRATION_SLOTS_PER_TICK` until the threaded path is proven.
 
 ## Out of scope
 
-- Threading any other path beyond `migrationApplyTick` (no general multi-threaded Redis).
+- Threading any other path beyond `migrationBackpatchTick` (no general multi-threaded Redis).
 - Removing the chunked-tick fallback until 4d is verified.
 - Refactoring kvstore internals — we lock above kvstore, not inside it.
 
 ## Phase 4 deliverable
 
-A single document at `docs/recipient-apply-thread-safety-audit.md` containing:
+A single document at `docs/recipient-backpatch-thread-safety-audit.md` containing:
 
 1. Every grep hit (~80-120 entries), classified hot-read / slow / mutation.
 2. Per call site, the proposed lock instruction + a risk score (Low / Medium / High).
@@ -172,13 +172,13 @@ Once that document exists, the implementing PR (Phase 4a → 4d on a new branch 
 
 ## Branch
 
-`aqueduct-thread-migration` has been merged into `aqueduct` (tip `df636734`) and the branch deleted. Phase 4 audit lands directly on `aqueduct` as a docs-only commit, or on a fresh `aqueduct-recipient-apply-audit` branch off `aqueduct` if we want CI isolation. Implementing PR (4a → 4d) lands on `aqueduct-recipient-apply-thread` off the audit's tip commit.
+`aqueduct-thread-migration` has been merged into `aqueduct` (tip `df636734`) and the branch deleted. Phase 4 audit lands directly on `aqueduct` as a docs-only commit, or on a fresh `aqueduct-recipient-backpatch-audit` branch off `aqueduct` if we want CI isolation. Implementing PR (4a → 4d) lands on `aqueduct-recipient-backpatch-thread` off the audit's tip commit.
 
 ---
 
 ## Reference notes — RedisRaft internals (research, no action yet)
 
-Researched 2026-05-17; saved here so future planning can cross-reference without re-mapping the redisraft tree at `/users/entall/rd/redisraft/`. These notes are research only — they do **not** change Phase 4's scope, which is aqueduct's `migrationApplyTick` keyspace-lock audit, not redisraft.
+Researched 2026-05-17; saved here so future planning can cross-reference without re-mapping the redisraft tree at `/users/entall/rd/redisraft/`. These notes are research only — they do **not** change Phase 4's scope, which is aqueduct's `migrationBackpatchTick` keyspace-lock audit, not redisraft.
 
 - **Dump the raft log**: no `RAFT.DEBUG DUMPLOG` exists. Debug subcommands at [`redisraft.c:1296-1320`](redisraft/src/redisraft.c#L1296) are COMPACT, NODECFG, USED_NODE_IDS, EXEC, COMMANDSPEC. The on-disk log is RESP multibulk; format at [`log.c:23-49`](redisraft/src/log.c#L23); append site at [`LogAppend log.c:660`](redisraft/src/log.c#L660). To dump live, either add a new debug subcommand or hook `serverLog` from `LogAppend`.
 

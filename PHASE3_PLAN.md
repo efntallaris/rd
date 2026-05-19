@@ -2,7 +2,7 @@
 
 ## Where Phase 2 left us
 
-After `RDMA MIGRATE-PREP` + `RDMA RESHARD` + `RDMA RESHARD-EXEC`:
+After `RDMA MIGRATE-PREP` + `RDMA RESHARD` + `RDMA RESHARD-TRANSFER`:
 - The recipient's r_allocator slot blocks contain the source's slot data (verified byte-for-byte against `cluster-rdma-reshard-debug-bytes`).
 - The recipient's `rdmaDoneSlotsCommand` has applied those bytes into its keyspace via `dbAdd`.
 - **But the cluster slot map is unchanged.** `CLUSTER SHARDS` / `CLUSTER NODES` on every node still says the source owns the slots — every client request for those keys still routes to the source; the recipient's copy is invisible.
@@ -17,7 +17,7 @@ After Phase 3, the sequence used in `reshard_cluster_rdma.yml` becomes:
 RDMA MIGRATE-PREP   <recipient> <port> <slot> [<slot> ...]
 RDMA RESHARD        <recipient> <port> <n-slots>
 RDMA RESHARD-PRE    <recipient> <port> <n-slots>      ← NEW: SETSLOT MIGRATING + IMPORTING
-RDMA RESHARD-EXEC   <recipient> <port> <n-slots>      (Phase 2, unchanged)
+RDMA RESHARD-TRANSFER   <recipient> <port> <n-slots>      (Phase 2, unchanged)
 RDMA RESHARD-COMMIT <recipient> <port> <n-slots>      ← NEW: SETSLOT NODE + broadcast
 ```
 
@@ -27,14 +27,14 @@ After `RESHARD-COMMIT` returns, the cluster's authoritative routing for those N 
 
 ## Surface
 
-Two new source-side subcommands, mirroring the args of `RDMA RESHARD-EXEC`:
+Two new source-side subcommands, mirroring the args of `RDMA RESHARD-TRANSFER`:
 
 ```
 RDMA RESHARD-PRE    <recipient-host> <recipient-port> <n-slots>
 RDMA RESHARD-COMMIT <recipient-host> <recipient-port> <n-slots>
 ```
 
-- Picked slots: same algorithm as `rdmaReshardCommand` / `rdmaReshardExecCommand` — walk self's owned slots, lowest first, take N.
+- Picked slots: same algorithm as `rdmaReshardCommand` / `rdmaReshardTransferCommand` — walk self's owned slots, lowest first, take N.
 - Precondition for PRE: `RDMA RESHARD` already registered the source MRs (so the slot list is stable across PRE/EXEC/COMMIT for this call).
 - Precondition for COMMIT: PRE must have been called (slot must be in `MIGRATING` state). Optionally also require EXEC to have completed, but enforcing that requires extra per-slot state.
 - Reply on each: `+OK <n> slots <pre|committed> (slots A..B)`.
@@ -43,7 +43,7 @@ RDMA RESHARD-COMMIT <recipient-host> <recipient-port> <n-slots>
 
 ### `rdmaReshardPreCommand` (~80 lines)
 
-1. Parse args (host, port, n_slots) — verbatim from existing `rdmaReshardExecCommand`.
+1. Parse args (host, port, n_slots) — verbatim from existing `rdmaReshardTransferCommand`.
 2. Pick N lowest owned slots.
 3. Look up `L = dictFetchValue(server.rdma_outbound_links, "host:port")`. Look up the recipient's cluster node-id from `L->ctrl` via `CLUSTER MYID` (cache after first use).
 4. For each chosen slot:
@@ -67,9 +67,9 @@ RDMA RESHARD-COMMIT <recipient-host> <recipient-port> <n-slots>
 
 | File | Change |
 |---|---|
-| `src/cluster_rdma.c` | Add `rdmaReshardPreCommand` + `rdmaReshardCommitCommand` after `rdmaReshardExecCommand`. ~200 lines total. Reuse the slot-walk + argv-build patterns already established. |
-| `src/server.h` | Add prototypes `void rdmaReshardPreCommand(client *c);` and `void rdmaReshardCommitCommand(client *c);` next to `rdmaReshardExecCommand`. |
-| `src/commands/rdma-reshard-pre.json` | New file. Container=RDMA, function=`rdmaReshardPreCommand`, arity=5, mirror `rdma-reshard-exec.json`. |
+| `src/cluster_rdma.c` | Add `rdmaReshardPreCommand` + `rdmaReshardCommitCommand` after `rdmaReshardTransferCommand`. ~200 lines total. Reuse the slot-walk + argv-build patterns already established. |
+| `src/server.h` | Add prototypes `void rdmaReshardPreCommand(client *c);` and `void rdmaReshardCommitCommand(client *c);` next to `rdmaReshardTransferCommand`. |
+| `src/commands/rdma-reshard-pre.json` | New file. Container=RDMA, function=`rdmaReshardPreCommand`, arity=5, mirror `rdma-reshard-transfer.json`. |
 | `src/commands/rdma-reshard-commit.json` | Same, function=`rdmaReshardCommitCommand`. |
 | `src/cluster_legacy.c` (read-only inspect) | Locate the internal SETSLOT helper that `clusterCommand` uses. Probably `clusterSetSlot` or similar. Don't modify — just call from cluster_rdma.c. |
 | `src/cluster.h` | Add `sds recipient_id;` field to `rdmaOutboundLink` to cache the recipient's cluster node id (set lazily on first PRE call). |
@@ -80,7 +80,7 @@ RDMA RESHARD-COMMIT <recipient-host> <recipient-port> <n-slots>
 - `clusterLookupNodeByName` / `server.cluster->myself` / `server.cluster->nodes` — for resolving node ids and iterating peers.
 - `redisCommandArgv` over `L->ctrl` — same pattern as `rdmaMigratePrepCommand`'s REGISTER-BLOCK-SLOTS round-trip.
 - `clusterBumpConfigEpochWithoutConsensus`, `clusterSaveConfigOrDie` — already used elsewhere in cluster_legacy.c for SETSLOT NODE handling.
-- Slot-walk + lookup-L + atomicity-check pattern — copy directly from `rdmaReshardExecCommand`.
+- Slot-walk + lookup-L + atomicity-check pattern — copy directly from `rdmaReshardTransferCommand`.
 - `cluster-rdma-reshard-debug-bytes` (existing) — repurpose: when on, also log per-slot SETSLOT transitions (`"RDMA RESHARD-PRE: slot=X local=MIGRATING remote=IMPORTING ok"`) so we can trace ownership flips.
 
 ## What changes in the ansible reshard_cluster_rdma.yml
@@ -93,7 +93,7 @@ Order after Phase 3:
 - RDMA MIGRATE-PREP <recipient> <port> <slot ids>     # existing
 - RDMA RESHARD      <recipient> <port> <n>            # existing
 - RDMA RESHARD-PRE  <recipient> <port> <n>            # NEW (Phase 3)
-- RDMA RESHARD-EXEC <recipient> <port> <n>            # existing (Phase 2)
+- RDMA RESHARD-TRANSFER <recipient> <port> <n>            # existing (Phase 2)
 - RDMA RESHARD-COMMIT <recipient> <port> <n>          # NEW (Phase 3)
 ```
 
@@ -109,7 +109,7 @@ Order after Phase 3:
    redis-cli -p 8000 RDMA RESHARD-PRE  redis3 8000 10
    # at this point CLUSTER NODES on redis0 should show slots 0..9 with
    # '[->-recipient_id]' (migrating), and on redis3 show '[<-source_id]'
-   redis-cli -p 8000 RDMA RESHARD-EXEC redis3 8000 10
+   redis-cli -p 8000 RDMA RESHARD-TRANSFER redis3 8000 10
    redis-cli -p 8000 RDMA RESHARD-COMMIT redis3 8000 10
    # after this:
    #   redis-cli -p 8000 CLUSTER SLOTS  shows redis3 as owner of 0..9

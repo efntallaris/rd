@@ -63,7 +63,7 @@ void clusterSlotUnlock(int slot);
 
 /* Phase 4d: cheap dirty-read predicate. Returns 1 iff
  * server.cluster->importing_slots_from[slot] is currently non-NULL — i.e.
- * the recipient apply thread may concurrently dbAdd into this slot's
+ * the recipient backpatch thread may concurrently dbAdd into this slot's
  * keyspace, so main-thread keyspace accessors must take the per-slot lock.
  * Returns 0 in non-cluster mode or out-of-range slot. */
 int clusterSlotIsImporting(int slot);
@@ -71,7 +71,7 @@ int clusterSlotIsImporting(int slot);
 /* Phase 4d: TLS guard. Set to a non-zero count by code that has acquired a
  * slot lock and is about to call into nested code paths that ALSO want to
  * acquire the same slot lock (e.g. lookupKey → dbAddInternal → setExpireByLink
- * chain in db.c; the recipient apply thread holding wrlock around rdmaApplySlot
+ * chain in db.c; the recipient backpatch thread holding wrlock around rdmaBackpatchSlot
  * which calls dbAdd). Wrapped keyspace accessors check this and skip their
  * own acquire when it is non-zero, avoiding same-thread recursive locking on
  * a non-recursive pthread_rwlock_t. The increment/decrement is the wrap
@@ -171,7 +171,8 @@ void rdmaOutboundLinkFree(void *v);
  *  immediately so the event loop is free.
  *
  *  The worker walks the state machine inline on its thread: PREP →
- *  REGISTERING → FLIPPING → EXECUTING → DONE (or FAILED on first error).
+ *  REGISTERING → TRANSFER → BACKPATCH → FLIPPING → DONE (or FAILED on first
+ *  error).
  *
  *  Lock ordering: mig->mu < L->mu < cluster_topology_lock < slot_locks[S].
  * ====================================================================== */
@@ -180,8 +181,8 @@ typedef enum {
     RDMA_MIG_PREP          = 1,
     RDMA_MIG_REGISTERING   = 2,
     RDMA_MIG_FLIPPING      = 3,
-    RDMA_MIG_EXECUTING     = 4,
-    RDMA_MIG_APPLYING      = 5,  /* Phase 4d: poll recipient APPLY-STATUS */
+    RDMA_MIG_TRANSFER      = 4,
+    RDMA_MIG_BACKPATCH     = 5,  /* Phase 4d: poll recipient BACKPATCH-STATUS */
     RDMA_MIG_DONE          = 6,
     RDMA_MIG_FAILED        = 7
 } rdmaMigrationState;
@@ -207,17 +208,17 @@ typedef struct rdmaMigration {
 
 void rdmaMigrationFree(dict *d, void *v);
 
-void recipientApplyWorkerStart(void);
-void recipientApplyWorkerStop(void);
-void recipientApplyMuLock(void);
-void recipientApplyMuUnlock(void);
+void recipientBackpatchWorkerStart(void);
+void recipientBackpatchWorkerStop(void);
+void recipientBackpatchMuLock(void);
+void recipientBackpatchMuUnlock(void);
 
-/* Phase 4d: recipient apply worker thread. Started by InitServerLast(); stops
- * on server shutdown. The thread drains the SPSC ring populated by
+/* Phase 4d: recipient backpatch worker thread. Started by InitServerLast();
+ * stops on server shutdown. The thread drains the SPSC ring populated by
  * rdmaDoneSlotsCommand and applies migrated slots into the keyspace under
  * clusterSlotLockWrite(slot). */
-void recipientApplyThreadStart(void);
-void recipientApplyThreadStop(void);
+void recipientBackpatchThreadStart(void);
+void recipientBackpatchThreadStop(void);
 
 /* Flags that a module can set in order to prevent certain Redis Cluster
  * features to be enabled. Useful when implementing a different distributed

@@ -7,9 +7,10 @@
 #   2. RDMA MIGRATE  <recipient> <port> <n-slots>           (kicks off a detached
 #                                                            worker thread that
 #                                                            walks PREP →
-#                                                            REGISTER → FLIP →
-#                                                            EXEC off the event
-#                                                            loop; returns +OK
+#                                                            REGISTER → TRANSFER
+#                                                            → BACKPATCH → FLIP
+#                                                            off the event loop;
+#                                                            returns +OK
 #                                                            migration_id=<N>
 #                                                            immediately)
 #   3. Poll RDMA MIGRATE-STATUS <id> until state ∈ {DONE,FAILED}.
@@ -17,14 +18,14 @@
 # The dispatch of step 2 happens in parallel across all source masters via
 # `async:+poll:0`. The wait loop in step 3 polls each source independently.
 # Previously this playbook fired four blocking commands serially per host
-# (MIGRATE-PREP → RESHARD → RESHARD-FLIP → RESHARD-EXEC); the registration
+# (MIGRATE-PREP → RESHARD → RESHARD-FLIP → RESHARD-TRANSFER); the registration
 # step stalled the source's event loop for ~1.4s per source (1365 × ibv_reg_mr).
 # The new flow runs registration off the event loop so YCSB throughput stays
 # flat across the migration window.
 - name: "RDMA reshard v2: autonomous-thread migration on each master"
   hosts: redis_masters
   become: yes
-  # Sequential: one source completes its full PREP/REGISTER/FLIP/EXEC/APPLY
+  # Sequential: one source completes its full PREP/REGISTER/TRANSFER/BACKPATCH/FLIP
   # cycle before the next source starts. Isolates per-migration behavior so
   # the YCSB dip measurement is one-source-at-a-time rather than all three
   # concurrent.

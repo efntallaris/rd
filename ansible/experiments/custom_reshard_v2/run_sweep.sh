@@ -1,7 +1,7 @@
 #!/bin/bash -e
 # custom_reshard_v2: aqueduct fork Redis with concurrent reshard during YCSB,
 # using the early-ownership-flip protocol (RDMA RESHARD-FLIP between RESHARD
-# and RESHARD-EXEC).
+# and RESHARD-TRANSFER).
 
 set -o pipefail
 VARIANT="custom_reshard_v2"
@@ -39,9 +39,13 @@ done
 EXTRA_VARS=(
   -e "redis_variant=custom"
 )
+if [ -n "${BACKPATCH_POOL_SIZE:-}" ]; then
+    EXTRA_VARS+=( -e "rdma_backpatch_pool_size=${BACKPATCH_POOL_SIZE}" )
+fi
 
 TS="$(date +%Y%m%d_%H%M%S)"
-LOG_DIR="/tmp/${VARIANT}_sweep_${TS}"
+TAG_SUFFIX="${BACKPATCH_POOL_SIZE:+_pool${BACKPATCH_POOL_SIZE}}"
+LOG_DIR="/tmp/${VARIANT}_sweep_${TS}${TAG_SUFFIX}"
 mkdir -p "${LOG_DIR}"
 
 echo ">>> ${VARIANT} sweep starting at ${TS}"

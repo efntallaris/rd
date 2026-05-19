@@ -1,8 +1,8 @@
-# Recipient-apply thread-safety audit
+# Recipient-backpatch thread-safety audit
 
 ## Purpose
 
-This document is the Phase 4 deliverable from [PHASE4_PLAN.md](../PHASE4_PLAN.md). It enumerates every call site in the Redis 8.6.2 tree (vendored at `redis/src/`) plus the aqueduct extensions (`r_allocator`, `cluster_rdma.c`) that reads or writes the 11 protected fields the recipient-apply worker must coexist with. Each row carries the lock instruction the implementing PR (Phase 4a → 4d) will apply.
+This document is the Phase 4 deliverable from [PHASE4_PLAN.md](../PHASE4_PLAN.md). It enumerates every call site in the Redis 8.6.2 tree (vendored at `redis/src/`) plus the aqueduct extensions (`r_allocator`, `cluster_rdma.c`) that reads or writes the 11 protected fields the recipient-backpatch worker must coexist with. Each row carries the lock instruction the implementing PR (Phase 4a → 4d) will apply.
 
 This is **first-pass output**: ~216 call sites enumerated by structured grep + per-site classification. The Phase 4a / 4b / 4c PRs each consume their relevant subset and verify line-by-line before touching code. Misclassifications are expected at this scale — the audit's job is completeness, not perfection. Flag anything that looks wrong during the implementing PR's review.
 
@@ -117,8 +117,8 @@ Each row has 8 columns:
 | cluster_rdma.c:1218 | migrateToFinalizePrep | cluster->slots | R | Slow | topo-rdlock | L | check my slot coverage (existing) |
 | cluster_rdma.c:1336 | rdmaReshardFlipCommand | migrating_slots_to | W | Slow | topo-rdlock+slot-wrlock | H | source-side FLIP (existing) |
 | cluster_rdma.c:1416 | rdmaReshardRecvFlipCommand | importing_slots_from | W | Slow | topo-rdlock+slot-wrlock | H | recipient-side FLIP (existing) |
-| cluster_rdma.c:1626 | rdmaReshardExecCommand | migrating_slots_to | W | Slow | topo-rdlock+slot-wrlock | H | source socket finalize (existing) |
-| cluster_rdma.c:472 | rdmaApplySlot (worker) | cluster->slots | W | Slow | topo-rdlock+slot-wrlock | H | recipient worker apply — primary motivation |
+| cluster_rdma.c:1626 | rdmaReshardTransferCommand | migrating_slots_to | W | Slow | topo-rdlock+slot-wrlock | H | source socket finalize (existing) |
+| cluster_rdma.c:472 | rdmaBackpatchSlot (worker) | cluster->slots | W | Slow | topo-rdlock+slot-wrlock | H | recipient worker apply — primary motivation |
 | cluster_asm.c:3174 | asmCheckOwnedByMaster | clusterNode.slots | R | Slow | topo-rdlock | L | ASM task validation |
 | cluster_slot_stats.c:42 | markSlotsAssignedToMyShard | clusterNode.slots | R | Slow | topo-rdlock | L | slot stats reporting |
 | cluster_slot_stats.c:89 | markSlotsAssignedToMyShard | clusterNode.slots | R | Slow | topo-rdlock | L | slot stats reporting |
@@ -223,8 +223,8 @@ Each row has 8 columns:
 | object.c:1397 | getMemoryStats | db->keys | R | Slow | slot-rdlock+batch-release | L | key count |
 | object.c:1403 | getMemoryStats | db->keys | R | Slow | slot-rdlock+batch-release | L | kvstore mem usage |
 | object.c:1408 | getMemoryStats | db->expires | R | Slow | slot-rdlock+batch-release | L | expires mem usage |
-| cluster_rdma.c:498 | rdmaApplySlot (worker) | db->keys | R | Hot | topo-rdlock+slot-wrlock | H | worker: lookup before add |
-| cluster_rdma.c:500 | rdmaApplySlot (worker) | db->keys | W | Hot | topo-rdlock+slot-wrlock | H | worker: dbAdd into keys |
+| cluster_rdma.c:498 | rdmaBackpatchSlot (worker) | db->keys | R | Hot | topo-rdlock+slot-wrlock | H | worker: lookup before add |
+| cluster_rdma.c:500 | rdmaBackpatchSlot (worker) | db->keys | W | Hot | topo-rdlock+slot-wrlock | H | worker: dbAdd into keys |
 | cluster_slot_stats.c:57 | getSlotStat | kvstoreDictMetadata | R | Slow | slot-rdlock | L | read cpu_usec |
 | cluster_slot_stats.c:59 | getSlotStat | kvstoreDictMetadata | R | Slow | slot-rdlock | L | read network_bytes_in |
 | cluster_slot_stats.c:60 | getSlotStat | kvstoreDictMetadata | R | Slow | slot-rdlock | L | read network_bytes_out |
@@ -273,7 +273,7 @@ Each row has 8 columns:
 | server.c:6155 | totalNumberOfStatefulKeys | blocking_keys | R | Slow | none | L | INFO command |
 | server.c:6157 | totalNumberOfStatefulKeys | watched_keys | R | Slow | none | L | INFO command |
 | cluster_rdma.c:184 | rdmaMigrateInitServerCommand | r_allocator | W | Slow | slot-wrlock | L | source-side init |
-| cluster_rdma.c:474 | rdmaApplySlot (worker) | r_allocator | R | Hot | slot-rdlock | H | worker reads blocks during apply |
+| cluster_rdma.c:474 | rdmaBackpatchSlot (worker) | r_allocator | R | Hot | slot-rdlock | H | worker reads blocks during apply |
 | cluster_rdma.c:1010 | rdmaReshardsplitCommand | r_allocator | R | Slow | slot-rdlock | L | stats logging |
 | cluster_rdma.c:1287 | reshardPrepCommand | r_allocator | W | Slow | slot-wrlock | L | source locks slot |
 | cluster_rdma.c:1589 | reshardExecCommand | r_allocator | W | Slow | slot-wrlock | L | source locks slot |
@@ -413,7 +413,7 @@ Question: is the topology-tier writer high-priority enough to interrupt the scan
 
 - `kvstore.c` internals (dict resize, incremental rehash) — covered by lock-above-kvstore everywhere; the audit doesn't enumerate hits inside `kvstore.c`.
 - Module ABI changes — Phase 4c assumes the existing module notification API stays; no new public functions.
-- AOF + replication propagation from the worker — already not called from the worker today (`rdmaApplySlot` skips `propagate()`).
+- AOF + replication propagation from the worker — already not called from the worker today (`rdmaBackpatchSlot` skips `propagate()`).
 - The chunked-tick fallback (`MIGRATION_SLOTS_PER_TICK = 8`) stays in place until 4d verification passes.
 
 ---
@@ -423,6 +423,6 @@ Question: is the topology-tier writer high-priority enough to interrupt the scan
 1. **Phase 4a PR**: consume rows for `cluster->slots`, `migrating_slots_to`, `importing_slots_from`, `clusterNode.slots` (~75 rows in cluster_legacy.c + cluster.c + cluster_rdma.c). Implement `cluster_topology_lock` + `slot_locks[CLUSTER_SLOTS]` + helpers; wrap every call site listed.
 2. **Phase 4b PR**: consume rows for `db->keys`, `db->expires`, `kvstoreDictMetadata` (~110 rows across db.c, expire.c, t_*.c, defrag.c, rdb.c, aof.c, cluster_slot_stats.c, geo.c, sort.c, object.c, debug.c). Add the batch-release helper for slow paths. Resolve Q1, Q2 before merging.
 3. **Phase 4c PR**: consume rows for `blocking_keys`, `ready_keys`, `watched_keys`, `notifyKeyspaceEvent`, `moduleNotifyKeyspaceEvent` (~30 rows). Implement the SPSC defer-to-main queue. Resolve Q3, Q9 before merging.
-4. **Phase 4d PR**: consume `r_allocator` rows + flip `migrationApplyTick` to a worker thread. ~12 rows of allocator changes; the worker plumbing is the bulk of the diff.
+4. **Phase 4d PR**: consume `r_allocator` rows + flip `migrationBackpatchTick` to a worker thread. ~12 rows of allocator changes; the worker plumbing is the bulk of the diff.
 
 Each PR's verification gates are listed in [PHASE4_PLAN.md](../PHASE4_PLAN.md#phased-implementation-out-of-scope-for-phase-4-scoped-here-for-the-follow-up-pr).

@@ -231,22 +231,22 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
         job->n_blocks_per_slot[pi] = (int) n_blocks;
     }
 
-    /* Aqueduct: pause databasesCron on this recipient while the apply is in
+    /* Aqueduct: pause databasesCron on this recipient while the backpatch is in
      * flight. databasesCron's expire/defrag/resize/rehash all iterate the
      * recipient's kvstore internals (kvs->rehashing list, per-slot dict
-     * resize, allocator slot_blocks) that the apply thread is concurrently
+     * resize, allocator slot_blocks) that the backpatch thread is concurrently
      * mutating via dbAdd. Per-slot rwlock doesn't cover this cross-slot
-     * shared state. Reset in rdmaReshardRecvFlipCommand once the apply
+     * shared state. Reset in rdmaReshardRecvFlipCommand once the backpatch
      * completes and ownership swaps. */
-    atomicIncr(server.recipient_apply_in_progress, 1);
+    atomicIncr(server.recipient_backpatch_in_progress, 1);
 
     /* Aqueduct slot-state: flip each slot to MIGRATING with the donor's
      * host:port as the peer endpoint *before* replying +OK, so the donor
      * sees the recipient already in MIGRATING when it sets its own state
      * (closes the PREP race). Also set importing_slots_from[slot] so
-     * Path B narrow keyspace wraps in db.c kick in for the apply window —
+     * Path B narrow keyspace wraps in db.c kick in for the backpatch window —
      * main-thread reads/writes on the recipient take clusterSlotLockRead
-     * (or Write) while the apply thread holds clusterSlotLockWrite for its
+     * (or Write) while the backpatch thread holds clusterSlotLockWrite for its
      * dbAdd, serializing kvstore mutations through the per-slot rwlock. */
     char donor_endpoint[NET_HOST_PORT_STR_LEN];
     snprintf(donor_endpoint, sizeof(donor_endpoint), "%s:%lld",
@@ -371,7 +371,7 @@ static int rdmaSendAndReadLine(connection *conn, sds buf, char *reply, size_t re
  *   3. RPC: RDMA REGISTER-BLOCK-SLOTS SLOTS <slot> 1 ... to the recipient
  *      (one block per slot). Receive the (VA, rkey) array back.
  *   4. RDMA-write each staging block into the corresponding recipient buffer.
- *   5. RPC: RDMA DONE-SLOTS <slot> ... to trigger the apply.
+ *   5. RPC: RDMA DONE-SLOTS <slot> ... to trigger the backpatch.
  *   6. Reply +OK to the original caller.
  *
  * No ownership flip, no thread, no batching. */
@@ -490,7 +490,7 @@ void rdmaTransferSlotsCommand(client *c) {
         return;
     }
 
-    /* Send DONE-SLOTS to trigger apply. */
+    /* Send DONE-SLOTS to trigger backpatch. */
     rioInitWithBuffer(&cmd, sdsempty());
     rioWriteBulkCount(&cmd, '*', 2 + n_slots);
     rioWriteBulkString(&cmd, "RDMA", 4);
@@ -509,7 +509,7 @@ void rdmaTransferSlotsCommand(client *c) {
     addReply(c, shared.ok);
 }
 
-/* ---- DONE-SLOTS (recipient apply) --------------------------------------- */
+/* ---- DONE-SLOTS (recipient backpatch) --------------------------------------- */
 
 /* Parse one entry from the buffer. Returns the number of bytes consumed,
  * or 0 if the buffer is malformed / truncated. On success *key_out and
@@ -530,7 +530,7 @@ static size_t rdmaDecodeEntry(const char *buf, size_t remaining, robj **key_out,
     return sizeof(uint32_t) + klen + sizeof(uint32_t) + vlen;
 }
 
-/* Diagnostic byte dump for RDMA RESHARD-EXEC / rdmaApplySlot. Logs first 32
+/* Diagnostic byte dump for RDMA RESHARD-TRANSFER / rdmaBackpatchSlot. Logs first 32
  * and last 32 bytes of `buf` (length = RDMAMIG_BLOCK_SIZE_BYTES) at LL_NOTICE
  * along with the leading u32 entry count, so source/recipient log lines can
  * be cross-checked byte-for-byte. Gated on server.rdma_reshard_debug_bytes
@@ -547,14 +547,14 @@ static void rdmaDebugDumpSlotBytes(const char *tag, int slot, const char *buf) {
         snprintf(hexN + 3*k, 4, "%02x ",
                  (unsigned char) buf[RDMAMIG_BLOCK_SIZE_BYTES - 32 + k]);
     serverLog(LL_NOTICE,
-        "RDMA RESHARD-EXEC %s: slot=%d n_entries=%u first32=[%s] last32=[%s]",
+        "RDMA RESHARD-TRANSFER %s: slot=%d n_entries=%u first32=[%s] last32=[%s]",
         tag, slot, n_entries, hex0, hexN);
 }
 
 /* Iterate the donor-staged blocks for a single slot from the recipient's
  * slot-keyed allocator, decode the flat-format entries, and dbAdd new keys
  * into the keyspace. Returns the number of keys added. */
-static int rdmaApplySlot(redisDb *db, int slot) {
+static int rdmaBackpatchSlot(redisDb *db, int slot) {
     int n_blocks = 0;
     char **block_buffers = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
     if (block_buffers == NULL || n_blocks == 0) return 0;
@@ -575,7 +575,7 @@ static int rdmaApplySlot(redisDb *db, int slot) {
             size_t consumed = rdmaDecodeEntry(buf + cursor, cap - cursor, &key, &val);
             if (consumed == 0) {
                 serverLog(LL_WARNING,
-                    "RDMA apply: malformed entry at slot=%d block=%d entry=%u offset=%zu",
+                    "RDMA backpatch: malformed entry at slot=%d block=%d entry=%u offset=%zu",
                     slot, b, i, cursor);
                 break;
             }
@@ -596,7 +596,7 @@ static int rdmaApplySlot(redisDb *db, int slot) {
 }
 
 /* ====================================================================== *
- *  RDMA DONE-SLOTS  (recipient side, chunked main-thread apply)
+ *  RDMA DONE-SLOTS  (recipient side, chunked main-thread backpatch)
  *
  *  Reverted from pthread workers because the kvstore isn't thread-safe at
  *  the dict-resize / bucket level vs main-thread READ paths.
@@ -606,7 +606,7 @@ static int rdmaApplySlot(redisDb *db, int slot) {
  *    Attempt 1: worker started in initServerConfig — silently lost because
  *      that runs BEFORE daemonize() forks. Pthreads don't survive fork.
  *    Attempt 2: worker started in initServer (post-fork) with a
- *      `recipient_apply_mu` that processCommand acquires for commands
+ *      `recipient_backpatch_mu` that processCommand acquires for commands
  *      hitting importing slots. The worker reached slot ~1120 on the first
  *      DONE-SLOTS batch, then segfaulted at address 0x48 (NULL field
  *      access) — a race against one of the many non-`processCommand`
@@ -615,7 +615,7 @@ static int rdmaApplySlot(redisDb *db, int slot) {
  *      RPC handler, AOF, expiration, replication. The mutex only covered
  *      the command-dispatch path.
  *
- *  Properly threading the apply requires either (a) a broad audit + lock
+ *  Properly threading the backpatch requires either (a) a broad audit + lock
  *  on every keyspace mutation path, or (b) a kvstore redesign with per-
  *  slot mutexes. Both are out of scope for this PR. Sticking with the
  *  chunked-tick approach in the meantime.
@@ -623,20 +623,20 @@ static int rdmaApplySlot(redisDb *db, int slot) {
  *  Concretely:
  *    rdmaDoneSlotsCommand: parse slots → push (db, slot_list) onto a
  *      pending list → reply +OK immediately. If no timer is running, arm
- *      a 1 ms time event that calls migrationApplyTick.
- *    migrationApplyTick: take the head pending item, call rdmaApplySlot
+ *      a 1 ms time event that calls migrationBackpatchTick.
+ *    migrationBackpatchTick: take the head pending item, call rdmaBackpatchSlot
  *      for the next SLOTS_PER_TICK slots, advance the per-item index.
  *      When the item is exhausted, free it and try the next. When the list
  *      is empty, return AE_NOMORE to drop the timer.
  * ====================================================================== */
 
-typedef struct pendingApply {
+typedef struct pendingBackpatch {
     redisDb *db;
     int *slots;
     int n_slots;
     int idx;             /* next slot index to process */
     long long applied;   /* running total added */
-} pendingApply;
+} pendingBackpatch;
 
 #define MIGRATION_SLOTS_PER_TICK 8     /* small enough to yield often,
                                          large enough to make progress */
@@ -644,22 +644,22 @@ typedef struct pendingApply {
                                          event loop to drain client work */
 
 static list *pending_applies = NULL;
-static long long migration_apply_timer_id = -1;
+static long long migration_backpatch_timer_id = -1;
 
-static int migrationApplyTick(struct aeEventLoop *el, long long id, void *clientData) {
+static int migrationBackpatchTick(struct aeEventLoop *el, long long id, void *clientData) {
     UNUSED(el); UNUSED(id); UNUSED(clientData);
 
     if (pending_applies == NULL || listLength(pending_applies) == 0) {
-        migration_apply_timer_id = -1;
+        migration_backpatch_timer_id = -1;
         return AE_NOMORE;
     }
 
     listNode *ln = listFirst(pending_applies);
-    pendingApply *p = listNodeValue(ln);
+    pendingBackpatch *p = listNodeValue(ln);
 
     int processed = 0;
     while (processed < MIGRATION_SLOTS_PER_TICK && p->idx < p->n_slots) {
-        p->applied += rdmaApplySlot(p->db, p->slots[p->idx]);
+        p->applied += rdmaBackpatchSlot(p->db, p->slots[p->idx]);
         p->idx++;
         processed++;
     }
@@ -678,7 +678,7 @@ static int migrationApplyTick(struct aeEventLoop *el, long long id, void *client
 
 /* ====================================================================== *
  *  Phase 4d types + statics (definitions used by rdmaDoneSlotsCommand
- *  below and the apply-thread / status code further down).               *
+ *  below and the backpatch-thread / status code further down).               *
  * ====================================================================== */
 
 #include <semaphore.h>
@@ -686,57 +686,85 @@ static int migrationApplyTick(struct aeEventLoop *el, long long id, void *client
 #include <unistd.h>
 
 /* Same value bio.c uses for its worker threads. */
-#define APPLY_THREAD_STACK_SIZE (1024*1024*4)
+#define BACKPATCH_THREAD_STACK_SIZE (1024*1024*4)
 
 /* Phase 4d callback-RPC variant: no shared globals needed on the recipient
  * for the deferred REGISTER-BLOCK-SLOTS path — each worker thread owns its
  * own job struct end-to-end (parse → ibv_reg_mr → callback hiredis to source
  * → free) without main-thread coordination after enqueue. */
 
-/* dictType for apply_batches_by_key: sds key, applyBatch* value (free
+/* dictType for backpatch_batches_by_key: sds key, backpatchBatch* value (free
  * the key sds, leave the value to the dispose path). */
 extern dictType sdsHashDictType;
 
 typedef enum {
-    APPLY_QUEUED   = 0,
-    APPLY_RUNNING  = 1,
-    APPLY_DONE     = 2,
-    APPLY_FAILED   = 3
-} applyBatchState;
+    BACKPATCH_QUEUED   = 0,
+    BACKPATCH_RUNNING  = 1,
+    BACKPATCH_DONE     = 2,
+    BACKPATCH_FAILED   = 3
+} backpatchBatchState;
 
-typedef struct applyBatch {
+typedef struct backpatchBatch {
     redisDb *db;
     int     *slots;
     int      n_slots;
     char     src_node_id[CLUSTER_NAMELEN + 1];
     long long src_mig_id;
-    _Atomic int          idx;
+    _Atomic int          idx;        /* Slots completed so far (pool path); was in-order
+                                        position in the single-thread path. */
     _Atomic long long    applied;
     _Atomic int          state;
+    _Atomic int          remaining;  /* Slots still to complete. Init = n_slots; the
+                                        pool worker that decrements to 0 transitions
+                                        the batch to BACKPATCH_DONE and disposes. */
     sds                  err;
     pthread_mutex_t      err_mu;
     time_t               t_started;
     time_t               t_ended;
-} applyBatch;
+} backpatchBatch;
 
-#define APPLY_RING_CAPACITY 64u
+#define BACKPATCH_RING_CAPACITY 64u
 
-static applyBatch *apply_ring[APPLY_RING_CAPACITY];
-static _Atomic uint64_t apply_ring_head = 0;
-static _Atomic uint64_t apply_ring_tail = 0;
-static sem_t apply_wake;
-static pthread_t apply_thread_tid;
-static _Atomic int apply_thread_shutdown = 0;
-static int apply_thread_started = 0;
+static backpatchBatch *backpatch_ring[BACKPATCH_RING_CAPACITY];
+static _Atomic uint64_t backpatch_ring_head = 0;
+static _Atomic uint64_t backpatch_ring_tail = 0;
+static sem_t backpatch_wake;
+static pthread_t backpatch_thread_tid;
+static _Atomic int backpatch_thread_shutdown = 0;
+static int backpatch_thread_started = 0;
 
-static int apply_dispose_pipe[2] = {-1, -1};
-static pthread_mutex_t apply_dispose_mu = PTHREAD_MUTEX_INITIALIZER;
-static list *apply_dispose_list = NULL;
+static int backpatch_dispose_pipe[2] = {-1, -1};
+static pthread_mutex_t backpatch_dispose_mu = PTHREAD_MUTEX_INITIALIZER;
+static list *backpatch_dispose_list = NULL;
 
-static dict *apply_batches_by_key = NULL;
-static pthread_mutex_t apply_batches_mu = PTHREAD_MUTEX_INITIALIZER;
+/* Aqueduct: per-slot work threadpool. The dispatcher (the single consumer of
+ * the SPSC backpatch_ring) fans a batch's slots out across N pool workers;
+ * the worker that decrements backpatchBatch.remaining to 0 transitions the
+ * batch to DONE and hands it to the dispose pipe.
+ *
+ * Pool size is server.rdma_backpatch_pool_size, read at thread-start time
+ * and stored in backpatch_pool_size (config range is 1..BACKPATCH_POOL_MAX,
+ * enforced by the config layer). */
+#define BACKPATCH_POOL_MAX 32
 
-static sds applyBatchKey(const char *src_node_id, long long src_mig_id) {
+typedef struct backpatchSlotWork {
+    backpatchBatch *batch;   /* parent batch (back-pointer for completion accounting) */
+    redisDb        *db;      /* cached from batch->db (avoids load in tight loop) */
+    int             slot;
+} backpatchSlotWork;
+
+static list            *backpatch_work_queue = NULL;          /* list of backpatchSlotWork* */
+static pthread_mutex_t  backpatch_work_mu    = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t   backpatch_work_cv    = PTHREAD_COND_INITIALIZER;
+
+static pthread_t        backpatch_pool_tids[BACKPATCH_POOL_MAX];
+static int              backpatch_pool_size  = 0;     /* Snapshot of config at start. */
+static int              backpatch_pool_started = 0;
+
+static dict *backpatch_batches_by_key = NULL;
+static pthread_mutex_t backpatch_batches_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static sds backpatchBatchKey(const char *src_node_id, long long src_mig_id) {
     return sdscatfmt(sdsempty(), "%s:%I", src_node_id, src_mig_id);
 }
 
@@ -774,9 +802,9 @@ void rdmaDoneSlotsCommand(client *c) {
         return;
     }
 
-    /* Allocate the applyBatch up front; ownership transfers to the apply
-     * thread on successful enqueue. */
-    applyBatch *b = zmalloc(sizeof(*b));
+    /* Allocate the backpatchBatch up front; ownership transfers to the
+     * backpatch thread on successful enqueue. */
+    backpatchBatch *b = zmalloc(sizeof(*b));
     b->db = c->db;
     b->n_slots = n_slots;
     b->slots = zmalloc((size_t) n_slots * sizeof(int));
@@ -785,7 +813,8 @@ void rdmaDoneSlotsCommand(client *c) {
     b->src_mig_id = src_mig_id;
     atomic_store(&b->idx, 0);
     atomic_store(&b->applied, 0);
-    atomic_store(&b->state, APPLY_QUEUED);
+    atomic_store(&b->state, BACKPATCH_QUEUED);
+    atomic_store(&b->remaining, n_slots);
     b->err = NULL;
     pthread_mutex_init(&b->err_mu, NULL);
     b->t_started = time(NULL);
@@ -803,38 +832,38 @@ void rdmaDoneSlotsCommand(client *c) {
         b->slots[j] = (int) s;
     }
 
-    /* Index by (src_node_id, src_mig_id) for APPLY-STATUS lookups. The dict
+    /* Index by (src_node_id, src_mig_id) for BACKPATCH-STATUS lookups. The dict
      * stores the batch under the key sds; we drop+re-add if a previous
      * batch with the same key is still hanging around (rare; admin retry). */
-    if (apply_batches_by_key != NULL && strlen(src_node_id) == CLUSTER_NAMELEN) {
-        sds key = applyBatchKey(src_node_id, src_mig_id);
-        pthread_mutex_lock(&apply_batches_mu);
-        dictReplace(apply_batches_by_key, key, b);
-        pthread_mutex_unlock(&apply_batches_mu);
+    if (backpatch_batches_by_key != NULL && strlen(src_node_id) == CLUSTER_NAMELEN) {
+        sds key = backpatchBatchKey(src_node_id, src_mig_id);
+        pthread_mutex_lock(&backpatch_batches_mu);
+        dictReplace(backpatch_batches_by_key, key, b);
+        pthread_mutex_unlock(&backpatch_batches_mu);
     }
 
-    /* Try to enqueue on the SPSC ring. Safe to run on a dedicated apply
+    /* Try to enqueue on the SPSC ring. Safe to run on a dedicated backpatch
      * thread now that databasesCron is paused for the migration window
-     * (see server.recipient_apply_in_progress in databasesCron). Main-
-     * thread reads on importing slots still serialize against the apply
+     * (see server.recipient_backpatch_in_progress in databasesCron). Main-
+     * thread reads on importing slots still serialize against the backpatch
      * thread's dbAdd via the per-slot rwlock (Path B narrow wraps in db.c). */
     int enqueued = 0;
-    if (apply_thread_started) {
-        uint64_t head = atomic_load_explicit(&apply_ring_head, memory_order_relaxed);
-        uint64_t tail = atomic_load_explicit(&apply_ring_tail, memory_order_acquire);
-        if (head - tail < APPLY_RING_CAPACITY) {
-            apply_ring[head & (APPLY_RING_CAPACITY - 1)] = b;
-            atomic_store_explicit(&apply_ring_head, head + 1, memory_order_release);
-            sem_post(&apply_wake);
+    if (backpatch_thread_started) {
+        uint64_t head = atomic_load_explicit(&backpatch_ring_head, memory_order_relaxed);
+        uint64_t tail = atomic_load_explicit(&backpatch_ring_tail, memory_order_acquire);
+        if (head - tail < BACKPATCH_RING_CAPACITY) {
+            backpatch_ring[head & (BACKPATCH_RING_CAPACITY - 1)] = b;
+            atomic_store_explicit(&backpatch_ring_head, head + 1, memory_order_release);
+            sem_post(&backpatch_wake);
             enqueued = 1;
         }
     }
 
     if (!enqueued) {
         /* Ring full or thread not running — fall back to the chunked main-
-         * thread tick path. Convert applyBatch into pendingApply and let
-         * migrationApplyTick handle it. */
-        pendingApply *p = zmalloc(sizeof(*p));
+         * thread tick path. Convert backpatchBatch into pendingBackpatch and let
+         * migrationBackpatchTick handle it. */
+        pendingBackpatch *p = zmalloc(sizeof(*p));
         p->db = c->db;
         p->n_slots = n_slots;
         p->slots = zmalloc((size_t) n_slots * sizeof(int));
@@ -843,160 +872,209 @@ void rdmaDoneSlotsCommand(client *c) {
         p->applied = 0;
         if (pending_applies == NULL) pending_applies = listCreate();
         listAddNodeTail(pending_applies, p);
-        if (migration_apply_timer_id == -1) {
-            migration_apply_timer_id = aeCreateTimeEvent(server.el,
-                MIGRATION_TICK_DELAY_MS, migrationApplyTick, NULL, NULL);
+        if (migration_backpatch_timer_id == -1) {
+            migration_backpatch_timer_id = aeCreateTimeEvent(server.el,
+                MIGRATION_TICK_DELAY_MS, migrationBackpatchTick, NULL, NULL);
         }
-        /* The applyBatch we allocated for tracking is left in the index
-         * dict; mark it as APPLY_DONE inline so APPLY-STATUS reports it
+        /* The backpatchBatch we allocated for tracking is left in the index
+         * dict; mark it as BACKPATCH_DONE inline so BACKPATCH-STATUS reports it
          * correctly once the chunked tick finishes the work. Note: this
          * inline state transition is unsynchronized with the actual
-         * chunked apply progress — it's a coarse "queued / done" view in
+         * chunked backpatch progress — it's a coarse "queued / done" view in
          * the fallback path. The fallback is taken only on overflow, so
          * this is best-effort. */
-        atomic_store(&b->state, APPLY_DONE);
+        atomic_store(&b->state, BACKPATCH_DONE);
+        atomic_store(&b->remaining, 0);  /* No pool worker will touch this batch. */
         b->t_ended = time(NULL);
         serverLog(LL_NOTICE,
             "RDMA DONE-SLOTS (chunked fallback): queued %d slots; %lu in-flight",
             n_slots, listLength(pending_applies));
     } else {
         serverLog(LL_NOTICE,
-            "RDMA DONE-SLOTS (apply-thread): enqueued %d slots from %.*s mig_id=%lld",
+            "RDMA DONE-SLOTS (backpatch-thread): enqueued %d slots from %.*s mig_id=%lld",
             n_slots, CLUSTER_NAMELEN, src_node_id, src_mig_id);
     }
     addReply(c, shared.ok);
 }
 
-/* Legacy stubs kept for server.c init-time call; the new recipientApply
+/* Legacy stubs kept for server.c init-time call; the new recipientBackpatch
  * thread API below replaces these in functionality. */
-void recipientApplyWorkerStart(void)  {}
-void recipientApplyWorkerStop(void)   {}
-void recipientApplyMuLock(void)       {}
-void recipientApplyMuUnlock(void)     {}
+void recipientBackpatchWorkerStart(void)  {}
+void recipientBackpatchWorkerStop(void)   {}
+void recipientBackpatchMuLock(void)       {}
+void recipientBackpatchMuUnlock(void)     {}
 
 /* ====================================================================== *
- *  Phase 4d: Recipient apply thread + SPSC lock-free ring                 *
+ *  Phase 4d: Recipient backpatch thread + SPSC lock-free ring                 *
  *                                                                          *
- *  Replaces the main-thread chunked migrationApplyTick. Producer is the    *
+ *  Replaces the main-thread chunked migrationBackpatchTick. Producer is the    *
  *  main event loop (rdmaDoneSlotsCommand) when a DONE-SLOTS RPC lands;     *
  *  consumer is a single dedicated pthread that walks each batch's slots    *
- *  under clusterSlotLockWrite(slot) and calls rdmaApplySlot — the same     *
- *  apply primitive the chunked path uses, just on a different thread.     *
+ *  under clusterSlotLockWrite(slot) and calls rdmaBackpatchSlot — the same     *
+ *  backpatch primitive the chunked path uses, just on a different thread.     *
  *                                                                          *
  *  Concurrency invariants:                                                 *
- *    - Single producer (main thread) → single consumer (apply thread).     *
- *    - Ring slots are applyBatch* pointers; ownership transfers on enqueue.*
- *    - apply thread sets cluster_slot_lock_held_by_thread = 1 around the   *
+ *    - Single producer (main thread) → single consumer (backpatch thread).     *
+ *    - Ring slots are backpatchBatch* pointers; ownership transfers on enqueue.*
+ *    - backpatch thread sets cluster_slot_lock_held_by_thread = 1 around the   *
  *      slot wrlock so Path B keyspace wraps in db.c skip their own lock    *
  *      (no same-thread recursive rwlock).                                  *
- *    - applyBatch is freed by the apply thread via a 1-byte pipe message   *
+ *    - backpatchBatch is freed by the backpatch thread via a 1-byte pipe message   *
  *      to the main thread; main thread does the zfree to keep             *
  *      malloc/free pairs single-threaded (jemalloc arena friendliness).   *
  *    - On ring overflow the producer falls back to the existing chunked    *
- *      migrationApplyTick path so DONE-SLOTS never blocks.                 *
+ *      migrationBackpatchTick path so DONE-SLOTS never blocks.                 *
  * ====================================================================== */
 
-/* Drain the SPSC ring; called by recipientApplyThreadMain after sem_wait. */
-static void drainApplyRing(void) {
-    uint64_t tail = atomic_load_explicit(&apply_ring_tail, memory_order_relaxed);
-    uint64_t head = atomic_load_explicit(&apply_ring_head, memory_order_acquire);
-    while (tail != head) {
-        applyBatch *b = apply_ring[tail & (APPLY_RING_CAPACITY - 1)];
-        atomic_store_explicit(&b->state, APPLY_RUNNING, memory_order_relaxed);
-        serverLog(LL_NOTICE,
-            "RDMA apply-thread: starting batch from %.*s mig_id=%lld n_slots=%d",
-            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots);
-
-        /* Real apply: walk each slot under clusterSlotLockWrite(slot), call
-         * rdmaApplySlot which dbAdds the migrated (key, value) pairs from
-         * the registered RDMA block into the recipient's keyspace. The TLS
-         * guard tells Path B keyspace wraps in db.c to skip their own
-         * acquire (avoids same-thread recursive rwlock). */
-        long long applied_total = 0;
-        for (int i = 0; i < b->n_slots; i++) {
-            int slot = b->slots[i];
-            clusterSlotLockWrite(slot);
-            cluster_slot_lock_held_by_thread++;
-            int added = rdmaApplySlot(b->db, slot);
-            cluster_slot_lock_held_by_thread--;
-            clusterSlotUnlock(slot);
-            atomic_store_explicit(&b->idx, i + 1, memory_order_release);
-            applied_total += added;
-            atomic_fetch_add_explicit(&b->applied, added, memory_order_relaxed);
+/* Pool worker: pull per-slot work items from backpatch_work_queue and apply
+ * them. The dispatcher (drainBackpatchRing) pushes one item per slot when a
+ * batch lands on the SPSC ring. The worker that decrements b->remaining to 0
+ * transitions the batch to BACKPATCH_DONE and pushes to the dispose pipe,
+ * inheriting the bookkeeping that the single-thread dispatcher used to do. */
+static void *backpatchPoolWorkerMain(void *arg) {
+    long worker_idx = (long) arg;
+    while (1) {
+        pthread_mutex_lock(&backpatch_work_mu);
+        while (listLength(backpatch_work_queue) == 0 &&
+               !atomic_load_explicit(&backpatch_thread_shutdown, memory_order_acquire)) {
+            pthread_cond_wait(&backpatch_work_cv, &backpatch_work_mu);
         }
-
-        atomic_store_explicit(&b->state, APPLY_DONE, memory_order_release);
-        b->t_ended = time(NULL);
-        serverLog(LL_NOTICE,
-            "RDMA apply-thread: batch DONE from %.*s mig_id=%lld n_slots=%d applied=%lld",
-            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots, applied_total);
-
-        /* Notify main thread to free old completed batches. We push onto the
-         * dispose list under a mutex and tickle the pipe. */
-        pthread_mutex_lock(&apply_dispose_mu);
-        listAddNodeTail(apply_dispose_list, b);
-        pthread_mutex_unlock(&apply_dispose_mu);
-        char tick = 1;
-        ssize_t w = write(apply_dispose_pipe[1], &tick, 1);
-        (void) w;  /* best-effort; main thread will catch up on next tickle. */
-
-        atomic_store_explicit(&apply_ring_tail, tail + 1, memory_order_release);
-        tail++;
-        head = atomic_load_explicit(&apply_ring_head, memory_order_acquire);
-    }
-}
-
-static void *recipientApplyThreadMain(void *arg) {
-    UNUSED(arg);
-    while (!atomic_load_explicit(&apply_thread_shutdown, memory_order_acquire)) {
-        sem_wait(&apply_wake);
-        if (atomic_load_explicit(&apply_thread_shutdown, memory_order_acquire))
+        if (atomic_load_explicit(&backpatch_thread_shutdown, memory_order_acquire) &&
+            listLength(backpatch_work_queue) == 0) {
+            pthread_mutex_unlock(&backpatch_work_mu);
             break;
-        drainApplyRing();
+        }
+        listNode *ln = listFirst(backpatch_work_queue);
+        backpatchSlotWork *w = listNodeValue(ln);
+        listDelNode(backpatch_work_queue, ln);
+        pthread_mutex_unlock(&backpatch_work_mu);
+
+        clusterSlotLockWrite(w->slot);
+        cluster_slot_lock_held_by_thread++;       /* __thread, per worker */
+        int added = rdmaBackpatchSlot(w->db, w->slot);
+        cluster_slot_lock_held_by_thread--;
+        clusterSlotUnlock(w->slot);
+
+        backpatchBatch *b = w->batch;
+        atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
+        atomic_fetch_add_explicit(&b->applied, added, memory_order_relaxed);
+
+        /* Last slot finishes the batch. acq_rel so the DONE store happens-after
+         * every worker's per-slot updates on this batch. */
+        int prev = atomic_fetch_sub_explicit(&b->remaining, 1, memory_order_acq_rel);
+        if (prev == 1) {
+            atomic_store_explicit(&b->state, BACKPATCH_DONE, memory_order_release);
+            b->t_ended = time(NULL);
+            serverLog(LL_NOTICE,
+                "RDMA backpatch-thread: batch DONE from %.*s mig_id=%lld "
+                "n_slots=%d applied=%lld (closed by pool worker=%ld)",
+                CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots,
+                (long long) atomic_load(&b->applied), worker_idx);
+
+            pthread_mutex_lock(&backpatch_dispose_mu);
+            listAddNodeTail(backpatch_dispose_list, b);
+            pthread_mutex_unlock(&backpatch_dispose_mu);
+            char tick = 1;
+            ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+            (void) wr;
+        }
+        zfree(w);
     }
     return NULL;
 }
 
-/* Main-thread pipe handler: free completed batches. The applyBatch records
- * are kept in apply_batches_by_key (the APPLY-STATUS handler may still read
- * them); we only ack the pipe tickle here so the apply thread can write more.
+/* Drain the SPSC ring; called by recipientBackpatchThreadMain after sem_wait.
+ * For each batch pulled off the ring, fan its slots out to the pool work queue
+ * and advance the tail immediately — the last pool worker to finish a slot
+ * transitions the batch to DONE and disposes it. */
+static void drainBackpatchRing(void) {
+    uint64_t tail = atomic_load_explicit(&backpatch_ring_tail, memory_order_relaxed);
+    uint64_t head = atomic_load_explicit(&backpatch_ring_head, memory_order_acquire);
+    while (tail != head) {
+        backpatchBatch *b = backpatch_ring[tail & (BACKPATCH_RING_CAPACITY - 1)];
+        atomic_store_explicit(&b->state, BACKPATCH_RUNNING, memory_order_relaxed);
+        serverLog(LL_NOTICE,
+            "RDMA backpatch-thread: dispatching batch from %.*s mig_id=%lld "
+            "n_slots=%d pool=%d",
+            CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots,
+            backpatch_pool_size);
+
+        /* Build all items outside the queue lock so we hold the lock only long
+         * enough to splice the tail. */
+        backpatchSlotWork **items = zmalloc((size_t) b->n_slots * sizeof(*items));
+        for (int i = 0; i < b->n_slots; i++) {
+            backpatchSlotWork *w = zmalloc(sizeof(*w));
+            w->batch = b;
+            w->db    = b->db;
+            w->slot  = b->slots[i];
+            items[i] = w;
+        }
+
+        pthread_mutex_lock(&backpatch_work_mu);
+        for (int i = 0; i < b->n_slots; i++)
+            listAddNodeTail(backpatch_work_queue, items[i]);
+        pthread_cond_broadcast(&backpatch_work_cv);
+        pthread_mutex_unlock(&backpatch_work_mu);
+        zfree(items);
+
+        atomic_store_explicit(&backpatch_ring_tail, tail + 1, memory_order_release);
+        tail++;
+        head = atomic_load_explicit(&backpatch_ring_head, memory_order_acquire);
+    }
+}
+
+static void *recipientBackpatchThreadMain(void *arg) {
+    UNUSED(arg);
+    while (!atomic_load_explicit(&backpatch_thread_shutdown, memory_order_acquire)) {
+        sem_wait(&backpatch_wake);
+        if (atomic_load_explicit(&backpatch_thread_shutdown, memory_order_acquire))
+            break;
+        drainBackpatchRing();
+    }
+    return NULL;
+}
+
+/* Main-thread pipe handler: free completed batches. The backpatchBatch records
+ * are kept in backpatch_batches_by_key (the BACKPATCH-STATUS handler may still read
+ * them); we only ack the pipe tickle here so the backpatch thread can write more.
  * Actual eviction of stale records is via a TTL sweep in clusterCron — kept
  * simple for now: keep last N completed batches indexed by key. */
-static void applyDisposePipeHandler(aeEventLoop *el, int fd, void *priv, int mask) {
+static void backpatchDisposePipeHandler(aeEventLoop *el, int fd, void *priv, int mask) {
     UNUSED(el); UNUSED(priv); UNUSED(mask);
     char buf[64];
     while (read(fd, buf, sizeof(buf)) > 0) { /* drain */ }
-    /* The completed batches stay in apply_batches_by_key until cleanup.
-     * For now we don't free here — APPLY-STATUS needs them. Future:
+    /* The completed batches stay in backpatch_batches_by_key until cleanup.
+     * For now we don't free here — BACKPATCH-STATUS needs them. Future:
      * TTL sweep based on (now - b->t_ended). */
 }
 
-void recipientApplyThreadStart(void) {
-    if (apply_thread_started) return;
+void recipientBackpatchThreadStart(void) {
+    if (backpatch_thread_started) return;
 
-    sem_init(&apply_wake, 0, 0);
+    sem_init(&backpatch_wake, 0, 0);
 
-    if (pipe(apply_dispose_pipe) != 0) {
-        serverLog(LL_WARNING, "recipientApplyThreadStart: pipe() failed: %s",
+    if (pipe(backpatch_dispose_pipe) != 0) {
+        serverLog(LL_WARNING, "recipientBackpatchThreadStart: pipe() failed: %s",
                   strerror(errno));
         return;
     }
     /* Non-blocking on the read end so the handler's drain loop terminates. */
-    int flags = fcntl(apply_dispose_pipe[0], F_GETFL, 0);
-    fcntl(apply_dispose_pipe[0], F_SETFL, flags | O_NONBLOCK);
-    if (aeCreateFileEvent(server.el, apply_dispose_pipe[0], AE_READABLE,
-                          applyDisposePipeHandler, NULL) == AE_ERR) {
-        serverLog(LL_WARNING, "recipientApplyThreadStart: aeCreateFileEvent failed");
-        close(apply_dispose_pipe[0]);
-        close(apply_dispose_pipe[1]);
-        apply_dispose_pipe[0] = apply_dispose_pipe[1] = -1;
+    int flags = fcntl(backpatch_dispose_pipe[0], F_GETFL, 0);
+    fcntl(backpatch_dispose_pipe[0], F_SETFL, flags | O_NONBLOCK);
+    if (aeCreateFileEvent(server.el, backpatch_dispose_pipe[0], AE_READABLE,
+                          backpatchDisposePipeHandler, NULL) == AE_ERR) {
+        serverLog(LL_WARNING, "recipientBackpatchThreadStart: aeCreateFileEvent failed");
+        close(backpatch_dispose_pipe[0]);
+        close(backpatch_dispose_pipe[1]);
+        backpatch_dispose_pipe[0] = backpatch_dispose_pipe[1] = -1;
         return;
     }
 
-    apply_dispose_list  = listCreate();
+    backpatch_dispose_list  = listCreate();
     /* sdsHashDictType: sds key (we free it via dictSdsDestructor), opaque
      * value (we don't auto-free it — the dispose path owns the lifetime). */
-    apply_batches_by_key = dictCreate(&sdsHashDictType);
+    backpatch_batches_by_key = dictCreate(&sdsHashDictType);
+    backpatch_work_queue     = listCreate();
 
     /* Register-job pipe + list for deferred REGISTER-BLOCK-SLOTS replies. */
     /* No infra init for the REGISTER-BLOCK-SLOTS path — see comment near the
@@ -1007,27 +1085,78 @@ void recipientApplyThreadStart(void) {
     pthread_attr_init(&attr);
     pthread_attr_getstacksize(&attr, &stacksize);
     if (!stacksize) stacksize = 1;
-    while (stacksize < APPLY_THREAD_STACK_SIZE) stacksize *= 2;
+    while (stacksize < BACKPATCH_THREAD_STACK_SIZE) stacksize *= 2;
     pthread_attr_setstacksize(&attr, stacksize);
 
-    int err = pthread_create(&apply_thread_tid, &attr, recipientApplyThreadMain, NULL);
+    /* Snapshot the config (clamped to the static array bound) so the rest of
+     * this function and Stop see a consistent value. */
+    backpatch_pool_size = server.rdma_backpatch_pool_size;
+    if (backpatch_pool_size < 1) backpatch_pool_size = 1;
+    if (backpatch_pool_size > BACKPATCH_POOL_MAX) backpatch_pool_size = BACKPATCH_POOL_MAX;
+
+    /* Start the pool workers BEFORE the dispatcher so the work queue has
+     * consumers before the dispatcher can begin enqueueing. */
+    for (long i = 0; i < backpatch_pool_size; i++) {
+        int perr = pthread_create(&backpatch_pool_tids[i], &attr,
+                                  backpatchPoolWorkerMain, (void *)(long) i);
+        if (perr) {
+            serverLog(LL_WARNING,
+                "recipientBackpatchThreadStart: pool worker %ld pthread_create failed: %s",
+                i, strerror(perr));
+            /* Tear down whatever pool workers did start. */
+            atomic_store_explicit(&backpatch_thread_shutdown, 1, memory_order_release);
+            pthread_mutex_lock(&backpatch_work_mu);
+            pthread_cond_broadcast(&backpatch_work_cv);
+            pthread_mutex_unlock(&backpatch_work_mu);
+            for (long j = 0; j < i; j++) pthread_join(backpatch_pool_tids[j], NULL);
+            pthread_attr_destroy(&attr);
+            return;
+        }
+    }
+    backpatch_pool_started = 1;
+
+    int err = pthread_create(&backpatch_thread_tid, &attr, recipientBackpatchThreadMain, NULL);
     pthread_attr_destroy(&attr);
     if (err) {
         serverLog(LL_WARNING,
-                  "recipientApplyThreadStart: pthread_create failed: %s",
+                  "recipientBackpatchThreadStart: pthread_create failed: %s",
                   strerror(err));
+        /* Pool workers are already running; tear them down so the call site
+         * doesn't end up with half-initialized state. */
+        atomic_store_explicit(&backpatch_thread_shutdown, 1, memory_order_release);
+        pthread_mutex_lock(&backpatch_work_mu);
+        pthread_cond_broadcast(&backpatch_work_cv);
+        pthread_mutex_unlock(&backpatch_work_mu);
+        for (int i = 0; i < backpatch_pool_size; i++)
+            pthread_join(backpatch_pool_tids[i], NULL);
+        backpatch_pool_started = 0;
         return;
     }
-    apply_thread_started = 1;
-    serverLog(LL_NOTICE, "Recipient apply thread started (Phase 4d).");
+    backpatch_thread_started = 1;
+    serverLog(LL_NOTICE,
+        "Recipient backpatch dispatcher + %d pool workers started (Phase 4d).",
+        backpatch_pool_size);
 }
 
-void recipientApplyThreadStop(void) {
-    if (!apply_thread_started) return;
-    atomic_store_explicit(&apply_thread_shutdown, 1, memory_order_release);
-    sem_post(&apply_wake);
-    pthread_join(apply_thread_tid, NULL);
-    apply_thread_started = 0;
+void recipientBackpatchThreadStop(void) {
+    if (!backpatch_thread_started) return;
+    atomic_store_explicit(&backpatch_thread_shutdown, 1, memory_order_release);
+
+    /* Stop dispatcher first so it stops enqueueing into the pool work queue. */
+    sem_post(&backpatch_wake);
+    pthread_join(backpatch_thread_tid, NULL);
+
+    /* Now drain-and-exit the pool workers: with no more producer, their loop
+     * condition (queue empty AND shutdown) eventually fires. */
+    if (backpatch_pool_started) {
+        pthread_mutex_lock(&backpatch_work_mu);
+        pthread_cond_broadcast(&backpatch_work_cv);
+        pthread_mutex_unlock(&backpatch_work_mu);
+        for (int i = 0; i < backpatch_pool_size; i++)
+            pthread_join(backpatch_pool_tids[i], NULL);
+        backpatch_pool_started = 0;
+    }
+    backpatch_thread_started = 0;
 }
 
 /* ---- Recipient REGISTER-BLOCK-SLOTS deferred worker (Phase 4d) ---------- */
@@ -1124,24 +1253,24 @@ cleanup:
     return NULL;
 }
 
-/* RDMA APPLY-STATUS <src_node_id> <src_mig_id>
+/* RDMA BACKPATCH-STATUS <src_node_id> <src_mig_id>
  *
- * Source-polled status of a recipient apply batch. Returns a 6-element
+ * Source-polled status of a recipient backpatch batch. Returns a 6-element
  * reply: state (string: queued|running|done|failed), idx (slots applied
  * so far), n_slots, applied_keys, elapsed_seconds, err (empty if none). */
-static const char *applyStateName(applyBatchState s) {
+static const char *backpatchStateName(backpatchBatchState s) {
     switch (s) {
-    case APPLY_QUEUED:  return "queued";
-    case APPLY_RUNNING: return "running";
-    case APPLY_DONE:    return "done";
-    case APPLY_FAILED:  return "failed";
+    case BACKPATCH_QUEUED:  return "queued";
+    case BACKPATCH_RUNNING: return "running";
+    case BACKPATCH_DONE:    return "done";
+    case BACKPATCH_FAILED:  return "failed";
     }
     return "unknown";
 }
 
-void rdmaApplyStatusCommand(client *c) {
+void rdmaBackpatchStatusCommand(client *c) {
     if (c->argc != 4) {
-        addReplyError(c, "syntax: RDMA APPLY-STATUS src_node_id src_mig_id");
+        addReplyError(c, "syntax: RDMA BACKPATCH-STATUS src_node_id src_mig_id");
         return;
     }
     long long mig_id;
@@ -1155,14 +1284,14 @@ void rdmaApplyStatusCommand(client *c) {
         return;
     }
 
-    sds key = applyBatchKey(src_id, mig_id);
-    pthread_mutex_lock(&apply_batches_mu);
-    applyBatch *b = apply_batches_by_key ? dictFetchValue(apply_batches_by_key, key) : NULL;
-    pthread_mutex_unlock(&apply_batches_mu);
+    sds key = backpatchBatchKey(src_id, mig_id);
+    pthread_mutex_lock(&backpatch_batches_mu);
+    backpatchBatch *b = backpatch_batches_by_key ? dictFetchValue(backpatch_batches_by_key, key) : NULL;
+    pthread_mutex_unlock(&backpatch_batches_mu);
     sdsfree(key);
 
     if (b == NULL) {
-        addReplyError(c, "no such apply batch");
+        addReplyError(c, "no such backpatch batch");
         return;
     }
 
@@ -1176,7 +1305,7 @@ void rdmaApplyStatusCommand(client *c) {
     long long elapsed = (long long) ((b->t_ended ? b->t_ended : time(NULL)) - b->t_started);
 
     addReplyArrayLen(c, 6);
-    addReplyBulkCString(c, applyStateName((applyBatchState) state));
+    addReplyBulkCString(c, backpatchStateName((backpatchBatchState) state));
     addReplyLongLong(c, idx);
     addReplyLongLong(c, b->n_slots);
     addReplyLongLong(c, ap);
@@ -1508,7 +1637,7 @@ void rdmaReshardCommand(client *c) {
 }
 
 /* ====================================================================== *
- *  RDMA RESHARD-EXEC  (Phase 2: data-plane transfer)
+ *  RDMA RESHARD-TRANSFER  (Phase 2: data-plane transfer)
  *
  *  Per-slot pipeline against the N slots a prior RDMA RESHARD registered:
  *    1. Encode the slot's keys into the source's pre-registered staging
@@ -1529,18 +1658,18 @@ void rdmaReshardCommand(client *c) {
  * ====================================================================== */
 
 /* Detached pthread worker that runs the actual RDMA WRITE loop + DONE-SLOTS
- * notification. rdmaReshardExecCommand replies +OK immediately and this
+ * notification. rdmaReshardTransferCommand replies +OK immediately and this
  * thread does the network-bound work off the main event loop so the source
  * can keep serving traffic. */
-struct reshardExecArgs {
+struct reshardTransferArgs {
     rdmaOutboundLink *L;
     redisDb *db;
     int *chosen;       /* owned; freed by the worker */
     int n_slots;
 };
 
-static void *reshardExecWorker(void *p) {
-    struct reshardExecArgs *a = (struct reshardExecArgs *) p;
+static void *reshardTransferWorker(void *p) {
+    struct reshardTransferArgs *a = (struct reshardTransferArgs *) p;
 
     pthread_mutex_lock(&a->L->mu);
 
@@ -1555,7 +1684,7 @@ static void *reshardExecWorker(void *p) {
         if (server.rdma_reshard_debug_bytes) {
             r_allocator_log_slot_stats(slot);
             serverLog(LL_NOTICE,
-                "RDMA RESHARD-EXEC TX (thr): slot=%d n_entries=%u rdma_bytes=%d",
+                "RDMA RESHARD-TRANSFER TX (thr): slot=%d n_entries=%u rdma_bytes=%d",
                 slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
         }
         int rc = rdmamig_client_post_write(a->L->source_buffers[slot], staging,
@@ -1565,19 +1694,19 @@ static void *reshardExecWorker(void *p) {
         if (rc != 0) {
             errs++;
             serverLog(LL_WARNING,
-                "RDMA RESHARD-EXEC (thr): slot=%d post_write failed rc=%d", slot, rc);
+                "RDMA RESHARD-TRANSFER (thr): slot=%d post_write failed rc=%d", slot, rc);
             continue;
         }
         int wc_rc = rdmamig_client_wait_send(a->L->client);
         if (wc_rc < 0) {
             errs++;
             serverLog(LL_WARNING,
-                "RDMA RESHARD-EXEC (thr): slot=%d wait_send failed rc=%d", slot, wc_rc);
+                "RDMA RESHARD-TRANSFER (thr): slot=%d wait_send failed rc=%d", slot, wc_rc);
             continue;
         }
         total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
         serverLog(LL_NOTICE,
-            "RDMA RESHARD-EXEC (thr): slot=%d entries=%u bytes=%d rc=0",
+            "RDMA RESHARD-TRANSFER (thr): slot=%d entries=%u bytes=%d rc=0",
             slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
     }
 
@@ -1599,7 +1728,7 @@ static void *reshardExecWorker(void *p) {
 
     if (r == NULL || r->type != REDIS_REPLY_STATUS) {
         serverLog(LL_WARNING,
-            "RDMA RESHARD-EXEC (thr): DONE-SLOTS reply not OK (data may still have landed)");
+            "RDMA RESHARD-TRANSFER (thr): DONE-SLOTS reply not OK (data may still have landed)");
     }
     if (r) freeReplyObject(r);
 
@@ -1607,7 +1736,7 @@ static void *reshardExecWorker(void *p) {
 
     int first = a->chosen[0], last = a->chosen[a->n_slots - 1];
     serverLog(LL_NOTICE,
-        "RDMA RESHARD-EXEC (thr): finished n=%d slots %d..%d bytes=%zu errs=%d",
+        "RDMA RESHARD-TRANSFER (thr): finished n=%d slots %d..%d bytes=%zu errs=%d",
         a->n_slots, first, last, total_bytes, errs);
 
     zfree(a->chosen);
@@ -1615,9 +1744,9 @@ static void *reshardExecWorker(void *p) {
     return NULL;
 }
 
-void rdmaReshardExecCommand(client *c) {
+void rdmaReshardTransferCommand(client *c) {
     if (c->argc != 5) {
-        addReplyError(c, "syntax: RDMA RESHARD-EXEC recipient-host recipient-port n-slots");
+        addReplyError(c, "syntax: RDMA RESHARD-TRANSFER recipient-host recipient-port n-slots");
         return;
     }
     const char *host = c->argv[2]->ptr;
@@ -1681,17 +1810,17 @@ void rdmaReshardExecCommand(client *c) {
     /* Spawn the detached worker. Main thread returns +OK immediately so the
      * source's event loop is free to serve client traffic (or ASKING reads)
      * during the RDMA-WRITE phase. */
-    struct reshardExecArgs *a = zmalloc(sizeof(*a));
+    struct reshardTransferArgs *a = zmalloc(sizeof(*a));
     a->L = L;
     a->db = c->db;
     a->chosen = chosen;        /* worker owns it now */
     a->n_slots = n_slots;
 
     pthread_t t;
-    if (pthread_create(&t, NULL, reshardExecWorker, a) != 0) {
+    if (pthread_create(&t, NULL, reshardTransferWorker, a) != 0) {
         zfree(a->chosen);
         zfree(a);
-        addReplyError(c, "RESHARD-EXEC: pthread_create failed");
+        addReplyError(c, "RESHARD-TRANSFER: pthread_create failed");
         return;
     }
     pthread_detach(t);
@@ -1718,7 +1847,7 @@ void rdmaReshardExecCommand(client *c) {
  *       clusterAddSlot(recipient_node, slot) directly — bypassing the
  *       official CLUSTER SETSLOT NODE safety check that refuses to give
  *       up a slot while local keys still exist (which is precisely what
- *       this protocol wants: source keeps the keys until RESHARD-EXEC
+ *       this protocol wants: source keeps the keys until RESHARD-TRANSFER
  *       has RDMA-WRITE'd them to the recipient, then the source's copy
  *       becomes stale and can be released).
  *
@@ -1993,10 +2122,10 @@ void rdmaReshardRecvFlipCommand(client *c) {
         slotMigStateSet((int) slot_ll, SLOT_STATE_STABLE, NULL);
     }
 
-    /* Aqueduct: re-enable databasesCron on this recipient. Apply is done
+    /* Aqueduct: re-enable databasesCron on this recipient. Backpatch is done
      * and ownership has swapped; the kvstore is back to a single-writer
      * state where main-thread cron is safe again. */
-    atomicDecr(server.recipient_apply_in_progress, 1);
+    atomicDecr(server.recipient_backpatch_in_progress, 1);
 
     addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }
@@ -2007,7 +2136,7 @@ void rdmaReshardRecvFlipCommand(client *c) {
  *  RDMA MIGRATE — single autonomous-thread migration                       *
  *                                                                          *
  *  Replaces the four-command Ansible-driven sequence (MIGRATE-PREP →       *
- *  RESHARD → RESHARD-FLIP → RESHARD-EXEC) with a single command that       *
+ *  RESHARD → RESHARD-FLIP → RESHARD-TRANSFER) with a single command that       *
  *  spawns a detached worker thread to walk the full pipeline off the       *
  *  event loop.                                                             *
  *                                                                          *
@@ -2018,13 +2147,13 @@ void rdmaReshardRecvFlipCommand(client *c) {
  *      mig->mu  <  L->mu  <  cluster_topology_lock  <  slot_locks[S]       *
  *                                                                          *
  *  Stale legacy commands (MIGRATE-PREP / RESHARD / RESHARD-FLIP /          *
- *  RESHARD-EXEC) remain available, calling shared helpers below.           *
+ *  RESHARD-TRANSFER) remain available, calling shared helpers below.           *
  * ======================================================================== */
 
 #include "cluster_legacy.h"  /* for clusterState slot_locks + clusterAddSlot/Del proto */
 
 /* Phase 4d: TLS flag — see cluster.h. Default 0 on every thread, set to 1
- * by recipientApplyThreadMain while it holds clusterSlotLockWrite(s). */
+ * by recipientBackpatchThreadMain while it holds clusterSlotLockWrite(s). */
 __thread int cluster_slot_lock_held_by_thread = 0;
 
 /* ---- helpers (shared by the legacy command handlers above and the new
@@ -2419,9 +2548,9 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
     return 0;
 }
 
-/* EXEC-helper: encode + RDMA-WRITE + DONE-SLOTS. Mirrors reshardExecWorker
+/* EXEC-helper: encode + RDMA-WRITE + DONE-SLOTS. Mirrors reshardTransferWorker
  * (lines ~974-1048). */
-static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
+static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                                   const int *chosen, int n_slots,
                                   long long mig_id, sds *err_out) {
     pthread_mutex_lock(&L->mu);
@@ -2466,8 +2595,8 @@ static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
     /* Notify recipient (Phase 4d):
      *   "RDMA DONE-SLOTS <src_node_id> <src_mig_id> <s1> ... <sN>"
      * The two new positional args let the recipient identify the batch in
-     * its apply-status tracking dict so the source can later poll
-     * RDMA APPLY-STATUS. The recipient also accepts the legacy 2-arg form
+     * its backpatch-status tracking dict so the source can later poll
+     * RDMA BACKPATCH-STATUS. The recipient also accepts the legacy 2-arg form
      * for back-compat (no tracking).                                       */
     char src_id[CLUSTER_NAMELEN + 1];
     if (server.cluster != NULL && server.cluster->myself != NULL) {
@@ -2505,11 +2634,11 @@ static int rdmaReshardExecHelper(rdmaOutboundLink *L, redisDb *db,
     pthread_mutex_unlock(&L->mu);
 
     serverLog(LL_NOTICE,
-        "RDMA MIGRATE worker: EXEC finished n=%d bytes=%zu errs=%d",
+        "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d",
         n_slots, total_bytes, errs);
 
     if (errs > 0 && err_out) {
-        *err_out = sdscatfmt(sdsempty(), "EXEC: %i slot writes failed", errs);
+        *err_out = sdscatfmt(sdsempty(), "TRANSFER: %i slot writes failed", errs);
         return -1;
     }
     return 0;
@@ -2523,8 +2652,8 @@ static const char *migStateName(rdmaMigrationState s) {
     case RDMA_MIG_PREP:        return "PREP";
     case RDMA_MIG_REGISTERING: return "REGISTERING";
     case RDMA_MIG_FLIPPING:    return "FLIPPING";
-    case RDMA_MIG_EXECUTING:   return "EXECUTING";
-    case RDMA_MIG_APPLYING:    return "APPLYING";
+    case RDMA_MIG_TRANSFER:    return "TRANSFER";
+    case RDMA_MIG_BACKPATCH:   return "BACKPATCH";
     case RDMA_MIG_DONE:        return "DONE";
     case RDMA_MIG_FAILED:      return "FAILED";
     }
@@ -2596,38 +2725,38 @@ static void *migrationWorker(void *arg) {
     }
 
     /* Option 2: FLIP is deferred to after the recipient has applied the data.
-     * The old order (FLIP before EXEC) created a window where the recipient
+     * The old order (FLIP before TRANSFER) created a window where the recipient
      * owned the slots but didn't yet have any data — clients hitting either
      * end during that window triggered a -MOVED / -ASK ping-pong that stalled
      * YCSB for ~5 s per migration. New order keeps the source serving reads
-     * from its live keyspace all the way through transfer + recipient-apply;
+     * from its live keyspace all the way through transfer + recipient-backpatch;
      * FLIP is the final microsecond ownership swap once the recipient
      * already has the data.                                                  */
 
-    /* EXECUTING: RDMA-WRITE + DONE-SLOTS. Source still owns the slots, so
+    /* TRANSFER: RDMA-WRITE + DONE-SLOTS. Source still owns the slots, so
      * client traffic continues to hit the source's live keyspace.           */
-    migSetState(mig, RDMA_MIG_EXECUTING);
-    /* Use db 0 — same as the legacy reshardExecWorker path (DB selection
+    migSetState(mig, RDMA_MIG_TRANSFER);
+    /* Use db 0 — same as the legacy reshardTransferWorker path (DB selection
      * comes from the dispatching client; cluster mode is single-DB). */
-    if (rdmaReshardExecHelper(mig->L, &server.db[0], mig->chosen, mig->n_slots,
+    if (rdmaReshardTransferHelper(mig->L, &server.db[0], mig->chosen, mig->n_slots,
                               mig->id, &err) != 0) {
         migFail(mig, err);
         return NULL;
     }
 
-    /* APPLYING: poll the recipient's RDMA APPLY-STATUS until the apply
-     * thread on the recipient reports the batch as done. The recipient
+    /* BACKPATCH: poll the recipient's RDMA BACKPATCH-STATUS until the
+     * backpatch thread on the recipient reports the batch as done. The recipient
      * acknowledged DONE-SLOTS as soon as it queued the batch onto its
-     * SPSC ring; the actual apply runs asynchronously on the recipient's
-     * apply thread. We tail the status here so the source-side
+     * SPSC ring; the actual backpatch runs asynchronously on the recipient's
+     * backpatch thread. We tail the status here so the source-side
      * RDMA_MIG_DONE transition genuinely means "data is in the recipient's
      * keyspace", not just "the recipient acked the buffer transfer."
      *
      * Poll cadence 10 ms; bails on FAILED. Retries on transient hiredis
      * errors (recipient busy). Upper bound: 60 s (~6000 polls). For the
-     * typical 4095-slot batch the apply completes in ~tens to hundreds of
+     * typical 4095-slot batch the backpatch completes in ~tens to hundreds of
      * milliseconds; polling overhead is negligible. */
-    migSetState(mig, RDMA_MIG_APPLYING);
+    migSetState(mig, RDMA_MIG_BACKPATCH);
     {
         char src_id[CLUSTER_NAMELEN + 1];
         memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
@@ -2636,11 +2765,11 @@ static void *migrationWorker(void *arg) {
         const int max_polls = 6000;  /* ~60 s at 10 ms each */
         int polls = 0;
         int done = 0;
-        sds apply_err = NULL;
+        sds backpatch_err = NULL;
         while (polls < max_polls && !done) {
             pthread_mutex_lock(&mig->L->mu);
             redisReply *r = redisCommand(mig->L->ctrl,
-                "RDMA APPLY-STATUS %s %lld", src_id, mig->id);
+                "RDMA BACKPATCH-STATUS %s %lld", src_id, mig->id);
             pthread_mutex_unlock(&mig->L->mu);
             if (r == NULL) {
                 /* Hiredis error — treat as transient; brief sleep and retry. */
@@ -2659,8 +2788,8 @@ static void *migrationWorker(void *arg) {
                 const char *state_str = r->element[0]->str;
                 if (state_str && strcmp(state_str, "done") == 0) done = 1;
                 else if (state_str && strcmp(state_str, "failed") == 0) {
-                    apply_err = sdscatfmt(sdsempty(),
-                        "recipient apply FAILED: %s",
+                    backpatch_err = sdscatfmt(sdsempty(),
+                        "recipient backpatch FAILED: %s",
                         (r->element[5]->str ? r->element[5]->str : "(no detail)"));
                     freeReplyObject(r);
                     break;
@@ -2672,12 +2801,12 @@ static void *migrationWorker(void *arg) {
                 polls++;
             }
         }
-        if (apply_err) {
-            migFail(mig, apply_err);
+        if (backpatch_err) {
+            migFail(mig, backpatch_err);
             return NULL;
         }
         if (!done) {
-            migFail(mig, sdsnew("recipient apply timed out after 60s of polling"));
+            migFail(mig, sdsnew("recipient backpatch timed out after 60s of polling"));
             return NULL;
         }
     }

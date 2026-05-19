@@ -2,7 +2,7 @@
 """
 plot_ycsb_timeseries.py — plot YCSB throughput + latency over time from an
 experiment result directory, with vertical axvlines marking the RDMA reshard
-phase boundaries (RESHARD-FLIP, RESHARD-EXEC, DONE-SLOTS).
+phase boundaries (RESHARD-FLIP, RESHARD-TRANSFER, DONE-SLOTS).
 
 Usage:
     python3 plot_ycsb_timeseries.py /tmp/experiments/custom_reshard_v2_workloada
@@ -34,49 +34,81 @@ _HAS_LATEX = shutil.which("latex") is not None and shutil.which("dvipng") is not
 
 plt.rcParams.update({
     "text.usetex":     _HAS_LATEX,
-    "font.family":     "serif",
-    "font.serif":      ["CMU Serif", "Computer Modern Roman",
-                        "Latin Modern Roman", "STIX Two Text", "DejaVu Serif"],
-    "mathtext.fontset": "cm",
-    # Paper-style hierarchy: body 13 anchors title (~1.5x), axis (~1.2x),
+    # Computer-Modern-style geometric sans-serif. When LaTeX is available
+    # the preamble below switches the default family to sans (\sffamily);
+    # otherwise matplotlib's font search picks from the list.
+    "font.family":         "sans-serif",
+    "font.sans-serif":     ["CMU Sans Serif", "Latin Modern Sans", "Inter",
+                            "SF Pro Text", "Helvetica", "Arial", "DejaVu Sans"],
+    "mathtext.fontset":    "dejavusans",
+    "text.latex.preamble": r"\renewcommand{\familydefault}{\sfdefault}",
+    # Paper-style hierarchy: body 15 anchors title (~1.5x), axis (~1.2x),
     # legend (1.0x), tick (~0.85x).
-    "font.size":       13,
-    "axes.titlesize":  14,
-    "axes.labelsize":  15,
-    "legend.fontsize": 13,
-    "xtick.labelsize": 11,
-    "ytick.labelsize": 11,
-    "axes.linewidth":  0.6,
-    "xtick.direction": "out",
-    "ytick.direction": "out",
+    "font.size":       15,
+    "axes.titlesize":  16,
+    "axes.labelsize":  13,
+    "legend.fontsize": 11,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    # Borderless panels — no spines on any side.
+    "axes.linewidth":      0.7,
+    "axes.spines.top":     False,
+    "axes.spines.right":   False,
+    "axes.spines.left":    False,
+    "axes.spines.bottom":  False,
+    "axes.edgecolor":      "#333333",
+    # Outward ticks; small extra pad to push tick labels further from axis.
+    "xtick.direction":     "out",
+    "ytick.direction":     "out",
+    "xtick.major.size":    4.0,
+    "ytick.major.size":    4.0,
+    "xtick.major.width":   1.4,
+    "ytick.major.width":   1.4,
+    "xtick.major.pad":     5.0,
+    "ytick.major.pad":     5.0,
+    "xtick.color":         "#333333",
+    "ytick.color":         "#333333",
+    # Sparse dotted horizontal gridlines for read-off.
+    "axes.grid":           True,
+    "axes.grid.axis":      "y",
+    "grid.color":          "#666666",
+    "grid.linewidth":      0.9,
+    "grid.linestyle":      (0, (1, 5)),   # dot, 5x gap = sparse dots
+    "grid.alpha":          1.0,
+    # Editable text in PDFs (USENIX/ACM expectation).
+    "pdf.fonttype":        42,
+    "ps.fonttype":         42,
+    "legend.frameon":      False,
 })
 
 # Inline annotation font sizes (band labels, vertical-line labels, summary).
-_FS_BAND_LABEL = 12   # "M1\n7.4s" centered above each migration band
-_FS_VLINE      = 11   # rotated FLIP label next to vertical line
-_FS_SUMMARY    = 11   # "Total migration: 34.7s (3 sources, serial)"
+_FS_BAND_LABEL = 10   # "M1\n7.4s" centered above each migration band
+_FS_VLINE      = 13   # rotated FLIP label next to vertical line
+_FS_SUMMARY    = 13   # "Total migration: 34.7s (3 sources, serial)"
 
-# Crop the x-axis so the YCSB ramp-up (no ops in seconds 0-8) is hidden.
+# Crop the x-axis so the YCSB ramp-up (no ops in seconds 0-8) is hidden,
+# and bound the upper end so all three workloads share the same window.
 PLOT_X_MIN = 10
+PLOT_X_MAX = 45
 
 # Grayscale palette — differentiate by line style + marker shape, not color.
 THROUGHPUT_COLOR = "#1A1A1A"     # near-black throughput line
 THROUGHPUT_FILL  = "#4A4A4A"     # mid-dark gray for area shading under tp
 AQUEDUCT_STYLE = dict(
-    color=THROUGHPUT_COLOR, marker="D", markersize=5, markevery=6,
-    linewidth=2.0, linestyle="-",
+    color=THROUGHPUT_COLOR, marker="D", markersize=6, markevery=6,
+    linewidth=1.8, linestyle="-",
     markerfacecolor=THROUGHPUT_COLOR, markeredgecolor="white",
-    markeredgewidth=0.6,
+    markeredgewidth=0.7,
 )
 LATENCY_READ_STYLE = dict(
     color="#1a1a1a", marker="o", markersize=6, markevery=4,
-    linewidth=1.6, linestyle=(0, (6, 2)),       # long-dash
+    linewidth=1.5, linestyle=(0, (5, 2)),       # dashed
     markerfacecolor="white", markeredgecolor="#1a1a1a", markeredgewidth=1.2,
 )
 LATENCY_UPDATE_STYLE = dict(
     color="#1a1a1a", marker="^", markersize=7, markevery=4,
-    linewidth=1.6, linestyle=(0, (1, 2)),       # dotted
-    markerfacecolor="#1a1a1a", markeredgecolor="white", markeredgewidth=0.6,
+    linewidth=1.5, linestyle=(0, (1, 1.5)),     # dotted
+    markerfacecolor="#1a1a1a", markeredgecolor="white", markeredgewidth=0.7,
 )
 
 # Migration-band palette — neutral gray fill + dark gray edges / labels.
@@ -194,7 +226,7 @@ def find_per_source_migration_windows(expdir: Path) -> list[tuple[str, datetime,
     if not log_root.exists():
         return windows
     for log_path in log_root.rglob("redis_logs/redis*"):
-        # The recipient (redis3) also has "DONE" lines from its apply thread,
+        # The recipient (redis3) also has "DONE" lines from its backpatch thread,
         # but no "MIGRATE-PREP" line — skip silently if PREP isn't found.
         prep_t: Optional[datetime] = None
         done_t: Optional[datetime] = None
@@ -306,8 +338,8 @@ def plot(expdir: Path, output: Path) -> None:
 
     flip_rel       = to_rel(auto_tz_offset(find_first_marker(expdir,
                             "RDMA RESHARD-FLIP: slot=", "ownership flipped to"), t0), t0)
-    exec_first_rel = to_rel(auto_tz_offset(find_first_marker(expdir, "RDMA RESHARD-EXEC: slot="), t0), t0)
-    exec_last_rel  = to_rel(auto_tz_offset(find_last_marker (expdir, "RDMA RESHARD-EXEC: slot="), t0), t0)
+    transfer_first_rel = to_rel(auto_tz_offset(find_first_marker(expdir, "RDMA RESHARD-TRANSFER: slot="), t0), t0)
+    transfer_last_rel  = to_rel(auto_tz_offset(find_last_marker (expdir, "RDMA RESHARD-TRANSFER: slot="), t0), t0)
     done_rel       = to_rel(auto_tz_offset(find_first_marker(expdir, "RDMA DONE-SLOTS: applied"), t0), t0)
 
     # Per-source migration windows (PREP -> DONE per source). One band per
@@ -333,17 +365,18 @@ def plot(expdir: Path, output: Path) -> None:
             break
 
     fig, (ax_tp, ax_lat) = plt.subplots(
-        2, 1, figsize=(11.5, 4.0), sharex=True,
-        gridspec_kw={"height_ratios": [1, 1], "hspace": 0.75},
+        2, 1, figsize=(5.5, 3.4), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1], "hspace": 1.6},
         facecolor=FIG_BG,
     )
 
     def _stylize_axes(ax):
+        # Borderless + dotted grid; ticks themselves separate x/y axes.
         ax.set_facecolor(AXES_BG)
         for side in ("top", "right", "left", "bottom"):
             ax.spines[side].set_visible(False)
-        ax.tick_params(direction="out", length=0, color="0.55")
-        ax.grid(False)
+        ax.grid(True, axis="y", color="#666666", linewidth=0.9,
+                linestyle=(0, (1, 5)), alpha=1.0, zorder=0)
         ax.set_axisbelow(True)
 
     _stylize_axes(ax_tp)
@@ -351,31 +384,34 @@ def plot(expdir: Path, output: Path) -> None:
 
     # ---- Panel (a): Throughput --------------------------------------------------
     ax_tp.plot(t_rel, tp, label="Aqueduct", zorder=3, **AQUEDUCT_STYLE)
-    ax_tp.set_title(f"Th/put — {workload}", pad=8)
+    ax_tp.set_title(f"Th/put — {workload}", pad=22)
     ax_tp.set_ylabel("Th/put (Kops/s)")
     # Y-axis in Kops/s with exactly 3 ticks framing the data range (no 0 tick).
     ax_tp.yaxis.set_major_formatter(
         mticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}"))
-    if tp:
-        ax_tp.set_ylim(bottom=max(0, min(tp) * 0.95), top=max(tp) * 1.05)
-    ax_tp.yaxis.set_major_locator(mticker.MaxNLocator(nbins=3, prune="lower"))
+    # Fixed ticks at 100/300/500 Kops/s so the throughput series sits mid-axis.
+    ax_tp.set_ylim(50_000, 600_000)
+    ax_tp.yaxis.set_major_locator(mticker.FixedLocator([100_000, 300_000, 500_000]))
 
     # ---- Panel (b): Avg latency -------------------------------------------------
     ax_lat.plot(t_rel, rd_lat, label="READ", zorder=3, **LATENCY_READ_STYLE)
     ax_lat.plot(t_rel, up_lat, label="UPDATE", zorder=3, **LATENCY_UPDATE_STYLE)
     ax_lat.set_title("Average Latency", pad=8)
     ax_lat.set_xlabel("Time since YCSB start (seconds)")
-    ax_lat.set_ylabel(r"Avg latency ($\mu$s)")
+    ax_lat.set_ylabel(r"Latency ($\mu$s)")
+    # Fixed ticks at 200/500/800 μs so the latency series sits mid-axis.
+    ax_lat.set_ylim(100, 950)
+    ax_lat.yaxis.set_major_locator(mticker.FixedLocator([200, 500, 800]))
     if t_rel:
-        ax_tp.set_xlim(PLOT_X_MIN, t_rel[-1])
-        ax_lat.set_xlim(PLOT_X_MIN, t_rel[-1])
+        ax_tp.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
+        ax_lat.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
     # Legend moved to the figure footer (below both panels and below the
     # x-axis title) so it never overlaps data or labels.
     handles, labels = ax_lat.get_legend_handles_labels()
     fig.legend(
         handles, labels,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.07),
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.02),
         ncol=len(labels),
         frameon=False,
         handlelength=2.0,
@@ -408,42 +444,46 @@ def plot(expdir: Path, output: Path) -> None:
         for i, (src, s_rel, e_rel) in enumerate(migration_bands, start=1):
             dur = e_rel - s_rel
             mid = (s_rel + e_rel) / 2.0
+            # Place the label just above the panel top edge, centered over the
+            # band, with text on a single line ("M1 7.4s").
             ax_tp.annotate(
-                f"M{i}\n{dur:.1f}s",
-                xy=(mid, ymax_tp * 0.78),
-                xytext=(0, 0),
-                textcoords="offset points",
-                ha="center", va="center",
+                f"M{i} {dur:.1f}s",
+                xy=(mid, 1.0), xycoords=("data", "axes fraction"),
+                xytext=(0, 4), textcoords="offset points",
+                ha="center", va="bottom",
                 color=PHASE_COLORS["BAND_EDGE"],
                 fontsize=_FS_BAND_LABEL,
                 fontweight="bold",
-                bbox=label_bbox,
             )
-        # Overall span summary, bottom-right corner of throughput panel.
+        # Overall span summary as a footer line below the legend, so it never
+        # covers data or the migration bands.
         total_start = migration_bands[0][1]
         total_end   = migration_bands[-1][2]
         total       = total_end - total_start
-        ax_tp.annotate(
-            f"Total migration: {total:.1f}s\n({len(migration_bands)} sources, serial)",
-            xy=(0.99, 0.06), xycoords="axes fraction",
-            ha="right", va="bottom",
+        fig.text(
+            0.5, -0.12,
+            f"Total migration: {total:.1f}s ({len(migration_bands)} sources)",
+            ha="center", va="top",
             color=PHASE_COLORS["BAND_EDGE"],
             fontsize=_FS_SUMMARY,
             fontweight="bold",
-            bbox=label_bbox,
+            transform=fig.transFigure,
         )
 
     # FLIP vline intentionally not drawn — the M1 band's left edge already
     # marks the first FLIP. Keep _annotate_vline available for future use.
 
     plt.subplots_adjust(left=0.08, right=0.97, top=0.92, bottom=0.18)
+    fig.align_ylabels([ax_tp, ax_lat])
+    for ax in (ax_tp, ax_lat):
+        _bold_tick_labels(ax)
     plt.savefig(output, dpi=300, bbox_inches="tight")
     print(f"wrote {output}")
     print(f"  samples: {len(samples)}    span: {t_rel[-1]:.1f}s")
-    if flip_rel       is not None: print(f"  FLIP:         t+{flip_rel:.2f}s")
-    if exec_first_rel is not None: print(f"  EXEC start:   t+{exec_first_rel:.2f}s")
-    if exec_last_rel  is not None: print(f"  EXEC end:     t+{exec_last_rel:.2f}s")
-    if done_rel       is not None: print(f"  DONE-SLOTS:   t+{done_rel:.2f}s")
+    if flip_rel           is not None: print(f"  FLIP:             t+{flip_rel:.2f}s")
+    if transfer_first_rel is not None: print(f"  TRANSFER start:   t+{transfer_first_rel:.2f}s")
+    if transfer_last_rel  is not None: print(f"  TRANSFER end:     t+{transfer_last_rel:.2f}s")
+    if done_rel           is not None: print(f"  DONE-SLOTS:       t+{done_rel:.2f}s")
 
 
 # ============================================================================ #
@@ -568,15 +608,26 @@ def parse_ifstat(path: Path, date_anchor: datetime,
 
 
 def _stylize_axes(ax) -> None:
-    """Apply consistent panel styling — borderless: no spines, no gridlines,
-    no tick marks; tick labels and titles remain. Mirrors the inline helper
-    in plot() so plot_resources uses the same look."""
+    """Borderless + dotted grid (mirrors plot()'s helper)."""
     ax.set_facecolor(AXES_BG)
     for side in ("top", "right", "left", "bottom"):
         ax.spines[side].set_visible(False)
-    ax.tick_params(direction="out", length=0, color="0.55")
-    ax.grid(False)
+    ax.grid(True, axis="y", color="#666666", linewidth=0.9,
+            linestyle=(0, (1, 5)), alpha=1.0, zorder=0)
     ax.set_axisbelow(True)
+
+
+def _bold_tick_labels(ax) -> None:
+    """Bold tick labels. bbox_inches='tight' triggers an extra render that
+    can recreate the tick Text artists, dropping any one-shot fontweight set.
+    Re-apply on every draw via a draw_event callback so the bolding sticks."""
+    fig = ax.figure
+    def _apply(_event=None):
+        for a in (ax,) if not isinstance(ax, (list, tuple)) else ax:
+            plt.setp(a.get_xticklabels(), fontweight="bold")
+            plt.setp(a.get_yticklabels(), fontweight="bold")
+    _apply()
+    fig.canvas.mpl_connect("draw_event", _apply)
 
 
 def plot_resources(expdir: Path, output: Path, host: str) -> None:
@@ -651,8 +702,8 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
             break
 
     fig, axes = plt.subplots(
-        3, 1, figsize=(11.5, 5.0), sharex=True,
-        gridspec_kw={"height_ratios": [1, 1, 1], "hspace": 0.65},
+        3, 1, figsize=(5.5, 5.4), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1, 1], "hspace": 1.1},
         facecolor=FIG_BG,
     )
     ax_cpu, ax_net, ax_disk = axes
@@ -661,14 +712,14 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
 
     # Two distinct dash + marker patterns so paired lines remain visually
     # separable even when they overlap in value.
-    PRIMARY = dict(color="#1a1a1a", linewidth=1.6, linestyle=(0, (6, 2)),
+    PRIMARY = dict(color="#1a1a1a", linewidth=1.5, linestyle=(0, (5, 2)),
                    marker="o", markersize=6, markevery=4,
                    markerfacecolor="white", markeredgecolor="#1a1a1a",
                    markeredgewidth=1.2)
-    SECONDARY = dict(color="#1a1a1a", linewidth=1.6, linestyle=(0, (1, 2)),
+    SECONDARY = dict(color="#1a1a1a", linewidth=1.5, linestyle=(0, (1, 1.5)),
                      marker="^", markersize=7, markevery=4,
                      markerfacecolor="#1a1a1a", markeredgecolor="white",
-                     markeredgewidth=0.6)
+                     markeredgewidth=0.7)
 
     # ---- (a) CPU --------------------------------------------------------------
     ax_cpu.plot(x_cpu, y_cpu_used, label="CPU used (%)", **PRIMARY)
@@ -682,13 +733,13 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
         return [x / 1024.0 for x in v]
     ax_net.plot(x_if, _mb(y_if_in),  label="RX (MB/s)", **PRIMARY)
     ax_net.plot(x_if, _mb(y_if_out), label="TX (MB/s)", **SECONDARY)
-    ax_net.set_ylabel("Net throughput (MB/s)")
+    ax_net.set_ylabel("Net Th/put (MB/s)")
     ax_net.set_title(f"Network — {host} (RDMA NIC ens1f1np1)", pad=8)
 
     # ---- (c) Disk -------------------------------------------------------------
     ax_disk.plot(x_io, _mb(y_io_read), label="Read (MB/s)",  **PRIMARY)
     ax_disk.plot(x_io, _mb(y_io_wrtn), label="Write (MB/s)", **SECONDARY)
-    ax_disk.set_ylabel("Disk I/O (MB/s)")
+    ax_disk.set_ylabel("Disk (MB/s)")
     ax_disk.set_xlabel("Time since YCSB start (seconds)")
     ax_disk.set_title(f"Disk — {host} (sda)", pad=8)
 
@@ -703,7 +754,7 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
     t_rel = [(s.t - t0).total_seconds() for s in samples]
     if t_rel:
         for ax in axes:
-            ax.set_xlim(PLOT_X_MIN, t_rel[-1])
+            ax.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
 
     # Footer legend — one per panel below each axis is noisy; use a single
     # figure-level legend that lists the per-panel colors and dashed/solid.
@@ -717,7 +768,7 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
     fig.legend(
         handles_all, labels_all,
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.04),
+        bbox_to_anchor=(0.5, -0.10),
         ncol=min(len(labels_all), 6),
         frameon=False,
         handlelength=2.0,
@@ -726,6 +777,9 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
     )
 
     plt.subplots_adjust(left=0.08, right=0.97, top=0.95, bottom=0.13)
+    fig.align_ylabels(axes)
+    for ax in axes:
+        _bold_tick_labels(ax)
     plt.savefig(output, dpi=300, bbox_inches="tight")
     print(f"wrote {output}")
     print(f"  mpstat samples: {len(mpstat)}  iostat: {len(iostat)}  ifstat: {len(ifstat)}")

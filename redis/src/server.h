@@ -2170,7 +2170,7 @@ struct redisServer {
     int rdma_allocator_skip_lock;   /* If true, allocator skips per-slot mutex when slot
                                        not under migration. UNSAFE for concurrent
                                        intra-slot writers — smoke-test only. */
-    int rdma_reshard_debug_bytes;   /* If true, RDMA RESHARD-EXEC and rdmaApplySlot
+    int rdma_reshard_debug_bytes;   /* If true, RDMA RESHARD-TRANSFER and rdmaBackpatchSlot
                                        emit per-slot byte dumps (first 32 + last 16)
                                        on both source and recipient, for cross-checking
                                        that RDMA writes landed correctly. Off in
@@ -2183,15 +2183,21 @@ struct redisServer {
                                        topology-refresh dance. Off by default —
                                        breaks unmodified clients (incl. redis-cli)
                                        that expect plain bulk replies. */
-    int recipient_apply_in_progress; /* Counter (number of in-flight migrations
-                                       being applied on this node as recipient).
+    int recipient_backpatch_in_progress; /* Counter (number of in-flight migrations
+                                       being backpatched on this node as recipient).
                                        databasesCron skips its body when non-zero —
                                        avoids activeExpireCycle / activeDefragCycle /
                                        kvstoreTryResizeDicts / kvstoreIncrementallyRehash
-                                       all racing the recipient apply thread's dbAdd
-                                       on shared kvstore state (kvs->rehashing list,
-                                       per-slot dict resize, etc.). Apply thread is
-                                       the only kvstore writer during the window. */
+                                       all racing the recipient backpatch thread's
+                                       dbAdd on shared kvstore state (kvs->rehashing
+                                       list, per-slot dict resize, etc.). Backpatch
+                                       thread is the only kvstore writer during the
+                                       window. */
+    int rdma_backpatch_pool_size;   /* Aqueduct: number of pool workers the recipient
+                                       backpatch dispatcher fans per-slot work out to.
+                                       Read once at initServer time; changing at
+                                       runtime has no effect because the pool is
+                                       constructed during recipientBackpatchThreadStart. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */
@@ -4391,14 +4397,14 @@ void rdmaInitServerCommand(client *c);
 void rdmaRegisterBlockSlotsCommand(client *c);
 void rdmaMigratePrepCommand(client *c);
 void rdmaReshardCommand(client *c);
-void rdmaReshardExecCommand(client *c);
+void rdmaReshardTransferCommand(client *c);
 void rdmaReshardFlipCommand(client *c);
 void rdmaReshardRecvFlipCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
 void rdmaMigrateCommand(client *c);
 void rdmaMigrateStatusCommand(client *c);
-void rdmaApplyStatusCommand(client *c);
+void rdmaBackpatchStatusCommand(client *c);
 void rdmaRegisterResultCommand(client *c);
 void restoreCommand(client *c);
 void migrateCommand(client *c);

@@ -21,7 +21,7 @@ Add the data-plane step that takes a slot whose source MR is already registered 
 ```
 RDMA MIGRATE-PREP redis3 8000 0          # bootstrap link (already exists)
 RDMA RESHARD     redis3 8000 1365        # register source MRs (Phase 1)
-RDMA RESHARD-EXEC redis3 8000 1365       # NEW: encode + RDMA WRITE + DONE-SLOTS for those 1365 slots
+RDMA RESHARD-TRANSFER redis3 8000 1365       # NEW: encode + RDMA WRITE + DONE-SLOTS for those 1365 slots
 ```
 
 results in 1365 slots' worth of key data physically landed in the recipient's memory and applied into its keyspace via the existing `RDMA DONE-SLOTS` recipient handler.
@@ -31,7 +31,7 @@ What Phase 2 **does not do**: flip slot ownership via `CLUSTER SETSLOT NODE`. Th
 ## Surface
 
 ```
-RDMA RESHARD-EXEC <recipient-host> <recipient-port> <n-slots>
+RDMA RESHARD-TRANSFER <recipient-host> <recipient-port> <n-slots>
 ```
 
 - Subcommand of the existing `RDMA` container.
@@ -39,7 +39,7 @@ RDMA RESHARD-EXEC <recipient-host> <recipient-port> <n-slots>
 - **Precondition**: the corresponding `RDMA MIGRATE-PREP` + `RDMA RESHARD` must have already run. The command errors `-ERR slot X not pre-registered; call RDMA RESHARD first` if `L->source_buffers[slot] == NULL` for any slot in scope.
 - **Reply**: `+OK <n> slots transferred (bytes <total>, errors <err>)`.
 
-## Handler behavior (`rdmaReshardExecCommand`)
+## Handler behavior (`rdmaReshardTransferCommand`)
 
 Lives in `src/cluster_rdma.c`, appended after `rdmaReshardCommand`. ~80 lines.
 
@@ -53,7 +53,7 @@ Lives in `src/cluster_rdma.c`, appended after `rdmaReshardCommand`. ~80 lines.
    - `uint32_t n_entries = rdmaEncodeSlotEntries(c->db, slot, staging, RDMAMIG_BLOCK_SIZE_BYTES);` (existing function in cluster_rdma.c — already used by `rdmaTransferSlotsCommand`)
    - `int rc = rdmamig_client_post_write(L->source_buffers[slot], staging, L->buffers[slot].ptr, L->buffers[slot].rkey, RDMAMIG_BLOCK_SIZE_BYTES);`
    - `rdmamig_client_wait_send(L->client);` (blocks until completion)
-   - Log per-slot: `serverLog(LL_NOTICE, "RDMA RESHARD-EXEC: slot=%d entries=%u rc=%d", slot, n_entries, rc);`
+   - Log per-slot: `serverLog(LL_NOTICE, "RDMA RESHARD-TRANSFER: slot=%d entries=%u rc=%d", slot, n_entries, rc);`
    - If rc != 0, increment err counter but keep going (mirrors existing TRANSFER-SLOTS pattern).
 7. **After all slots written, notify the recipient via the cached `L->ctrl` hiredis channel**:
    - Build `RDMA DONE-SLOTS <s1> <s2> ... <sN>` argv via `redisCommandArgv`.
@@ -84,17 +84,17 @@ Go with Option A. It's cleaner.
 |---|---|
 | `src/rdma_migration/include/rdma_migration.h` | **add prototype** `char *rdmamig_buffer_data(const rdmamig_buffer *b);` next to `rdmamig_buffer_rkey`. |
 | `src/rdma_migration/rdma_buffer.c` | **add 1-line impl** of `rdmamig_buffer_data`. |
-| `src/server.h` | **add prototype** `void rdmaReshardExecCommand(client *c);` next to `rdmaReshardCommand`. |
-| `src/cluster_rdma.c` | **add handler** `rdmaReshardExecCommand` (~80 lines, logic above). Reuses `rdmaEncodeSlotEntries`, `rdmamig_client_post_write`, `rdmamig_client_wait_send`. |
-| `src/commands/rdma-reshard-exec.json` | **new file**, container=RDMA, function=`rdmaReshardExecCommand`, arity=5, args mirror `rdma-reshard.json`. |
+| `src/server.h` | **add prototype** `void rdmaReshardTransferCommand(client *c);` next to `rdmaReshardCommand`. |
+| `src/cluster_rdma.c` | **add handler** `rdmaReshardTransferCommand` (~80 lines, logic above). Reuses `rdmaEncodeSlotEntries`, `rdmamig_client_post_write`, `rdmamig_client_wait_send`. |
+| `src/commands/rdma-reshard-transfer.json` | **new file**, container=RDMA, function=`rdmaReshardTransferCommand`, arity=5, args mirror `rdma-reshard.json`. |
 
 No changes to the recipient — `rdmaDoneSlotsCommand` already exists at `src/cluster_rdma.c:481` and does the right thing on receipt of `RDMA DONE-SLOTS <slot> ...`.
 
-Also update the ansible task `tasks/cluster/reshard_cluster_rdma.yml` to call `RDMA RESHARD-EXEC` after `RDMA RESHARD` on each source. One extra `shell` task block, mirroring the existing one.
+Also update the ansible task `tasks/cluster/reshard_cluster_rdma.yml` to call `RDMA RESHARD-TRANSFER` after `RDMA RESHARD` on each source. One extra `shell` task block, mirroring the existing one.
 
 ## Reused pieces (do not re-implement)
 
-- `rdmaEncodeSlotEntries` — `src/cluster_rdma.c:200`, already used by `rdmaTransferSlotsCommand`. Format: `[u32 n_entries] [u32 keylen][key] [u32 vallen][val] …`. The recipient's `rdmaApplySlot` knows how to decode it.
+- `rdmaEncodeSlotEntries` — `src/cluster_rdma.c:200`, already used by `rdmaTransferSlotsCommand`. Format: `[u32 n_entries] [u32 keylen][key] [u32 vallen][val] …`. The recipient's `rdmaBackpatchSlot` knows how to decode it.
 - `rdmamig_client_post_write` / `rdmamig_client_wait_send` — `src/rdma_migration/rdma_client.c`.
 - `rdmaDoneSlotsCommand` (recipient handler) — `src/cluster_rdma.c:481`, applies landed segments into the kvstore.
 - The `rdmaOutboundLink` struct's existing `buffers[]` (recipient VA+rkey) and `source_buffers[]` (sender registered MRs) — both already in place.
@@ -114,27 +114,27 @@ Also update the ansible task `tasks/cluster/reshard_cluster_rdma.yml` to call `R
    ```
    redis-cli -p 8000 RDMA MIGRATE-PREP redis3 8000 0
    redis-cli -p 8000 RDMA RESHARD     redis3 8000 10
-   redis-cli -p 8000 RDMA RESHARD-EXEC redis3 8000 10
+   redis-cli -p 8000 RDMA RESHARD-TRANSFER redis3 8000 10
    ```
-   Expect `+OK 10 slots transferred (bytes N, errors 0)`. Source log should show 10 `RDMA RESHARD-EXEC: slot=X entries=Y rc=0` lines. Recipient log should show `RDMA DONE-SLOTS: applied K keys across 10 slots` (existing log line).
-3. **Functional check** — `redis-cli -h redis3 -p 8000 DBSIZE` should show K keys (whatever was in those 10 slots) AFTER the EXEC call. Before the call: 0.
-4. **Cluster-wide via the ansible task** — extend `tasks/cluster/reshard_cluster_rdma.yml` with a `RDMA RESHARD-EXEC` step right after the existing `RDMA RESHARD` step, then re-run the custom_reshard smoke with `redis_workload=workloada_smoke`. Expect all 3 source masters to transfer their 1365 slots; redis3 ends up with the union of all keys in those slot ranges.
-5. **Compare to baseline** — at smoke scale, run vanilla_reshard side-by-side with custom_reshard (RDMA-backed); confirm the RDMA path completes faster on the data-move step. The reshard_cluster_rdma task logs the per-source wall time of `RDMA RESHARD-EXEC` — that's the apples-to-apples number to put next to vanilla's per-slot timing log.
+   Expect `+OK 10 slots transferred (bytes N, errors 0)`. Source log should show 10 `RDMA RESHARD-TRANSFER: slot=X entries=Y rc=0` lines. Recipient log should show `RDMA DONE-SLOTS: applied K keys across 10 slots` (existing log line).
+3. **Functional check** — `redis-cli -h redis3 -p 8000 DBSIZE` should show K keys (whatever was in those 10 slots) AFTER the TRANSFER call. Before the call: 0.
+4. **Cluster-wide via the ansible task** — extend `tasks/cluster/reshard_cluster_rdma.yml` with a `RDMA RESHARD-TRANSFER` step right after the existing `RDMA RESHARD` step, then re-run the custom_reshard smoke with `redis_workload=workloada_smoke`. Expect all 3 source masters to transfer their 1365 slots; redis3 ends up with the union of all keys in those slot ranges.
+5. **Compare to baseline** — at smoke scale, run vanilla_reshard side-by-side with custom_reshard (RDMA-backed); confirm the RDMA path completes faster on the data-move step. The reshard_cluster_rdma task logs the per-source wall time of `RDMA RESHARD-TRANSFER` — that's the apples-to-apples number to put next to vanilla's per-slot timing log.
 6. **Idempotency / error paths** —
-   - Calling `RDMA RESHARD-EXEC` without prior `RDMA RESHARD` → error.
+   - Calling `RDMA RESHARD-TRANSFER` without prior `RDMA RESHARD` → error.
    - Calling twice in a row → second call re-encodes + re-WRITEs the same data (acceptable for Phase 2; Phase 3 will track applied-state).
-   - Recipient down between `RDMA RESHARD` and `RDMA RESHARD-EXEC` → `rdmamig_client_post_write` returns nonzero; log and continue, then the final DONE-SLOTS round-trip will surface a clearer error.
+   - Recipient down between `RDMA RESHARD` and `RDMA RESHARD-TRANSFER` → `rdmamig_client_post_write` returns nonzero; log and continue, then the final DONE-SLOTS round-trip will surface a clearer error.
 
 ## Suggested commit shape
 
 Three commits to keep history readable:
 1. `rdma_migration: expose rdmamig_buffer_data accessor` — header + 1-line impl.
-2. `rdma_migration: add RDMA RESHARD-EXEC (Phase 2, data transfer)` — new handler + JSON + server.h proto.
-3. `ansible: wire RDMA RESHARD-EXEC into custom_reshard task` — adds the per-source EXEC call after RESHARD in `tasks/cluster/reshard_cluster_rdma.yml`.
+2. `rdma_migration: add RDMA RESHARD-TRANSFER (Phase 2, data transfer)` — new handler + JSON + server.h proto.
+3. `ansible: wire RDMA RESHARD-TRANSFER into custom_reshard task` — adds the per-source TRANSFER call after RESHARD in `tasks/cluster/reshard_cluster_rdma.yml`.
 
 ## Risk / open questions to think about before starting
 
-- **rdmaEncodeSlotEntries return semantics** — it currently writes from byte 0 of the buffer with a leading `u32 n_entries` count. Confirm the recipient's `rdmaApplySlot` is the matching decoder. If not, the existing `rdmaTransferSlotsCommand` is already using a different encoder/decoder pair that we should reuse.
+- **rdmaEncodeSlotEntries return semantics** — it currently writes from byte 0 of the buffer with a leading `u32 n_entries` count. Confirm the recipient's `rdmaBackpatchSlot` is the matching decoder. If not, the existing `rdmaTransferSlotsCommand` is already using a different encoder/decoder pair that we should reuse.
 - **Block size** — `RDMAMIG_BLOCK_SIZE_BYTES` is 1 MiB. With 50M records × ~120 bytes per entry encoded ≈ 6 GiB across 16384 slots ≈ 375 KiB/slot avg, so one block is fine for the AVG case but hot slots (zipfian) may overflow. Decide whether Phase 2 silently truncates or errors. Recommended: error + log slot id, so we can find the overflowers.
 - **YCSB-during-RDMA write semantics** — Phase 1 currently runs `RDMA RESHARD` between `start_ycsb_async` and `wait_ycsb`. If YCSB writes a key DURING the encode-then-WRITE window, the recipient ends up with stale data. For Phase 2 smoke this is acceptable noise; Phase 3 must address it via ASK redirects.
 

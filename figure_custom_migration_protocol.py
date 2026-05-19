@@ -45,7 +45,7 @@ STEPS = [
     ("MIGRATE-PREP",  2.30, "bootstrap RDMA\ncontrol link"),
     ("RESHARD",       4.30, "register source MRs\n(1 MiB / slot)"),
     ("RESHARD-PRE",   6.30, "SETSLOT MIGRATING\n+ IMPORTING"),
-    ("RESHARD-EXEC",  8.40, "RDMA-WRITE\nstaging → landing"),
+    ("RESHARD-TRANSFER",  8.40, "RDMA-WRITE\nstaging → landing"),
     ("RESHARD-COMMIT",10.60, "SETSLOT NODE\n+ cluster broadcast"),
     ("(done)",       12.70, "MOVED redirects\nflip to recipient"),
 ]
@@ -110,7 +110,7 @@ arrow(xs[2], SRC_Y - 0.26, xs[2], DST_Y + 0.26, "#a16524",
       label="(orchestrator-driven\nSETSLOT calls)", label_off=(1.05, 0),
       label_size=6.8)
 
-# RESHARD-EXEC: BIG RDMA-WRITE arrow (bypasses CPU on recipient)
+# RESHARD-TRANSFER: BIG RDMA-WRITE arrow (bypasses CPU on recipient)
 exec_arrow = FancyArrowPatch((xs[3], SRC_Y - 0.26), (xs[3], DST_Y + 0.26),
                              arrowstyle="-|>", mutation_scale=20,
                              linewidth=3.5, color="#c44400", zorder=4)
@@ -144,7 +144,7 @@ ax.text(STEPS[5][1] + 0.75, SRC_Y + 0.10,
 ax.text(7.0, 8.15, "Custom (aqueduct fork) RDMA slot-migration protocol",
         fontsize=12.5, fontweight="bold", ha="center")
 ax.text(7.0, 0.35,
-        "Source pre-registers staging MRs once (RESHARD) and bursts slot data via one RDMA-WRITE per slot (RESHARD-EXEC). "
+        "Source pre-registers staging MRs once (RESHARD) and bursts slot data via one RDMA-WRITE per slot (RESHARD-TRANSFER). "
         "Ownership flip is split out (RESHARD-PRE / RESHARD-COMMIT) so client redirects switch atomically only after the data has landed.",
         fontsize=7.8, ha="center", color="#555555", style="italic", wrap=True)
 

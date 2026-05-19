@@ -75,7 +75,7 @@ uint32_t rdmamig_buffer_rkey(rdmamig_buffer *b);
 
 /* Pointer to the underlying user-supplied payload area passed to
  * rdmamig_buffer_create. Useful for callers that need to fill or read the
- * buffer in place (e.g. Phase 2 RDMA RESHARD-EXEC encodes slot entries into
+ * buffer in place (e.g. Phase 2 RDMA RESHARD-TRANSFER encodes slot entries into
  * the same registered buffer it later RDMA-WRITEs from). */
 char *rdmamig_buffer_data(const rdmamig_buffer *b);
 
