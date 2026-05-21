@@ -98,3 +98,7 @@
     - name: Show pinned memory after RDMA MIGRATE
       debug:
         var: vmpin.stdout_lines
+
+    - name: "10-second dwell so recipient CPU settles between migrations"
+      pause:
+        seconds: 10

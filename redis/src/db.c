@@ -275,10 +275,16 @@ void dbgAssertAllocSizePerSlot(redisDb *db) {
 static kvobj *lookupKeyImpl(redisDb *db, robj *key, int flags, dictEntryLink *link);
 
 /* Path B wrap (Phase 4d): if the key's slot is currently being imported from
- * another node, take the slot rdlock to fence against the recipient apply
- * thread's concurrent dbAdd writes into the same kvstore. Most slots aren't
- * importing, so the predicate is a single dirty atomic-ish read; lookups for
- * non-importing slots pay zero lock overhead. */
+ * another node, take the slot WRITE lock — *not* a rdlock — because
+ * lookupKeyImpl can incrementally rehash the per-slot dict (via
+ * _dictRehashStepIfNeeded inside dictFindLinkInternal), which is a write
+ * mutation that cannot run with concurrent readers. Pre-FLIP this lookup
+ * never raced (recipient saw no client traffic on importing slots); under
+ * early-FLIP the recipient *is* the read target post-flip, so two concurrent
+ * lookups holding rdlocks were each triggering rehash steps and corrupting
+ * the dict (NULL-deref / 'bucket != NULL' assert in dictSetKeyAtLink).
+ * Most slots aren't importing, so the predicate is a single dirty atomic-
+ * ish read; lookups for non-importing slots pay zero lock overhead. */
 kvobj *lookupKey(redisDb *db, robj *key, int flags, dictEntryLink *link) {
     int slot = -1;
     int wrap = 0;
@@ -286,9 +292,9 @@ kvobj *lookupKey(redisDb *db, robj *key, int flags, dictEntryLink *link) {
         slot = getKeySlot(key->ptr);
         wrap = clusterSlotIsImporting(slot);
     }
-    if (wrap) { clusterSlotLockRead(slot); cluster_slot_lock_held_by_thread++; }
+    if (wrap) { clusterSlotLockReadNoTopology(slot); cluster_slot_lock_held_by_thread++; }
     kvobj *r = lookupKeyImpl(db, key, flags, link);
-    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlock(slot); }
+    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;
 }
 
@@ -436,14 +442,12 @@ kvobj *dbAddInternal(redisDb *db, robj *key, robj **valref, dictEntryLink *link,
                      const KeyMetaSpec *keymeta)
 {
     int slot = getKeySlot(key->ptr);
-    /* Path B wrap (Phase 4d): writer exclusion against the recipient apply
-     * thread when this slot is being imported. */
     int wrap = server.cluster_enabled
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
-    if (wrap) { clusterSlotLockWrite(slot); cluster_slot_lock_held_by_thread++; }
+    if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
     kvobj *r = dbAddInternalImpl(db, key, valref, link, keymeta, slot);
-    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlock(slot); }
+    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;
 }
 
@@ -642,8 +646,26 @@ kvobj *dbAddRDBLoad(redisDb *db, sds key, robj **valref, const KeyMetaSpec *keyM
  *   update of a value of an existing key (when false).
  * - The `link` is optional, can save lookup, if provided.
  */
-static void dbSetValue(redisDb *db, robj *key, robj **valref, dictEntryLink link, 
+static void dbSetValueImpl(redisDb *db, robj *key, robj **valref, dictEntryLink link,
+                           int overwrite, int updateKeySizes, int keepTTL);
+
+static void dbSetValue(redisDb *db, robj *key, robj **valref, dictEntryLink link,
                        int overwrite, int updateKeySizes, int keepTTL) {
+    int slot = getKeySlot(key->ptr);
+    int wrap = server.cluster_enabled
+            && !cluster_slot_lock_held_by_thread
+            && clusterSlotIsImporting(slot);
+    if (wrap) {
+        clusterSlotLockWriteNoTopology(slot);
+        cluster_slot_lock_held_by_thread++;
+        link = NULL;  /* link looked up pre-lock may be stale */
+    }
+    dbSetValueImpl(db, key, valref, link, overwrite, updateKeySizes, keepTTL);
+    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
+}
+
+static void dbSetValueImpl(redisDb *db, robj *key, robj **valref, dictEntryLink link,
+                           int overwrite, int updateKeySizes, int keepTTL) {
     int freeModuleMeta = 0;
     robj *val = *valref;
     int slot = getKeySlot(key->ptr);
@@ -954,13 +976,12 @@ static int dbGenericDeleteImpl(redisDb *db, robj *key, int async, int flags, int
 /* Helper for sync and async delete. */
 int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
     int slot = getKeySlot(key->ptr);
-    /* Path B wrap (Phase 4d). */
     int wrap = server.cluster_enabled
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
-    if (wrap) { clusterSlotLockWrite(slot); cluster_slot_lock_held_by_thread++; }
+    if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
     int r = dbGenericDeleteImpl(db, key, async, flags, slot);
-    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlock(slot); }
+    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;
 }
 
@@ -2785,11 +2806,10 @@ int removeExpire(redisDb *db, robj *key) {
     int wrap = server.cluster_enabled
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
-    if (wrap) { clusterSlotLockWrite(slot); cluster_slot_lock_held_by_thread++; }
+    if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
     dictEntryLink link = kvstoreDictTwoPhaseUnlinkFind(db->expires, slot, key->ptr, &table);
-
     if (link == NULL) {
-        if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlock(slot); }
+        if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
         return 0;
     }
     dictEntry *de = *link;
@@ -2797,7 +2817,7 @@ int removeExpire(redisDb *db, robj *key) {
     kvobj *newkv = kvobjSetExpire(kv, -1);
     serverAssert(newkv == kv);
     kvstoreDictTwoPhaseUnlinkFree(db->expires, slot, link, table);
-    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlock(slot); }
+    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return 1;
 }
 
@@ -2815,19 +2835,15 @@ kvobj *setExpire(client *c, redisDb *db, robj *key, long long when) {
 static kvobj *setExpireByLinkImpl(client *c, redisDb *db, sds key, long long when,
                                    dictEntryLink keyLink, int slot);
 
-/* Like setExpire(), but accepts an optional `keyLink` to save lookup */
+/* Like setExpire(), but accepts an optional `keyLink` to save lookup. */
 kvobj *setExpireByLink(client *c, redisDb *db, sds key, long long when, dictEntryLink keyLink) {
     int slot = getKeySlot(key);
-    /* Path B wrap (Phase 4d). Caller from dbAddInternal already holds the
-     * slot wrlock; the TLS check in clusterSlotIsImporting+the apply-thread
-     * flag prevents recursive acquisition. For other callers (EXPIRE cmd,
-     * etc.), wrap only when slot is importing. */
     int wrap = server.cluster_enabled
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
-    if (wrap) { clusterSlotLockWrite(slot); cluster_slot_lock_held_by_thread++; }
+    if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
     kvobj *r = setExpireByLinkImpl(c, db, key, when, keyLink, slot);
-    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlock(slot); }
+    if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;
 }
 

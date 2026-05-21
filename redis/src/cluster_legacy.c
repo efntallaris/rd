@@ -998,6 +998,40 @@ void clusterSlotUnlock(int slot) {
     pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
 }
 
+/* Variants that skip the global cluster_topology_lock and take ONLY the
+ * per-slot lock. Used on the hot path where we need mutual exclusion
+ * against other writers/readers on the same slot but don't actually need
+ * topology-change exclusion — e.g., the backpatch worker (slot ownership
+ * doesn't change during its work in a serial-migration setup) and
+ * lookupKey's Path B wrap on importing slots.
+ *
+ * Avoids cache-line ping-pong on the single global rwlock's reader counter
+ * when 200+ threads (YCSB worker pool + backpatch worker) all hammer it.
+ *
+ * Caller responsibility: ensure no topology change is in flight while
+ * holding this lock. Currently safe because:
+ *   1. Backpatch never starts before RECV-FLIP completes for its slots.
+ *   2. The experiment runs migrations serially (one RECV-FLIP at a time).
+ *   3. lookupKey only takes it for importing slots, where ownership is
+ *      already established. */
+void clusterSlotLockReadNoTopology(int slot) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_rdlock(&server.cluster->slot_locks[slot]);
+}
+
+void clusterSlotLockWriteNoTopology(int slot) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_wrlock(&server.cluster->slot_locks[slot]);
+}
+
+void clusterSlotUnlockNoTopology(int slot) {
+    if (server.cluster == NULL) return;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
+}
+
 /* Phase 4d hot-path predicate: is this slot currently being imported from
  * another node? Used by main-thread keyspace accessors (lookupKey, dbAdd,
  * etc.) to decide whether to take clusterSlotLockRead/Write around the

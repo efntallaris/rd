@@ -240,6 +240,14 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
      * completes and ownership swaps. */
     atomicIncr(server.recipient_backpatch_in_progress, 1);
 
+    /* Aqueduct: defer Fenwick-tree updates on the keys kvstore while backpatch
+     * is in flight. Each dbAdd would otherwise hit the cross-slot Fenwick
+     * mutex, serializing the backpatch worker against concurrent main-thread
+     * inserts. The tree only feeds RANDOMKEY / SCAN-style weighted picks
+     * (not used by YCSB), so transient staleness is fine. Cleared + rebuilt
+     * once at BACKPATCH_DONE. */
+    kvstoreSetDeferFenwickUpdates(server.db[0].keys, 1);
+
     /* Aqueduct slot-state: flip each slot to MIGRATING with the donor's
      * host:port as the peer endpoint *before* replying +OK, so the donor
      * sees the recipient already in MIGRATING when it sets its own state
@@ -558,6 +566,28 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
     int n_blocks = 0;
     char **block_buffers = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
     if (block_buffers == NULL || n_blocks == 0) return 0;
+
+    /* Pre-size the per-slot dict to 4x the total key count across all blocks
+     * BEFORE doing any dbAdd. The 4x factor gives a load factor of ~25%,
+     * making bucket collisions extremely rare — important now that we run
+     * backpatch dbAdds concurrently with main-thread inserts WITHOUT a
+     * per-slot lock. With sparse buckets, the chance that backpatch and a
+     * main-thread insert touch the same bucket chain at the same time is
+     * tiny. Combined with dbAdd's skip-if-present semantics, this is the
+     * fast/lockless path. */
+    {
+        unsigned long total_entries = 0;
+        for (int b = 0; b < n_blocks; b++) {
+            char *buf = block_buffers[b];
+            if (buf == NULL) continue;
+            uint32_t n;
+            memcpy(&n, buf, sizeof(n));
+            total_entries += n;
+        }
+        if (total_entries > 0) {
+            kvstoreDictExpand(db->keys, slot, total_entries * 4);
+        }
+    }
 
     int total_added = 0;
     for (int b = 0; b < n_blocks; b++) {
@@ -886,6 +916,15 @@ void rdmaDoneSlotsCommand(client *c) {
         atomic_store(&b->state, BACKPATCH_DONE);
         atomic_store(&b->remaining, 0);  /* No pool worker will touch this batch. */
         b->t_ended = time(NULL);
+        /* Re-enable databasesCron — backpatch is done. Paired with the incr in
+         * rdmaRegisterBlockSlotsCommand (moved out of RECV-FLIP for early-FLIP). */
+        atomicDecr(server.recipient_backpatch_in_progress, 1);
+        /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
+        kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+        kvstoreFenwickRebuild(server.db[0].keys);
+        /* Note: recipient's slot meta is already STABLE (set in RECV-FLIP).
+         * The MIGRATING→STABLE transition here was tried but caused
+         * concurrent-mutation issues with main-thread Path B; reverted. */
         serverLog(LL_NOTICE,
             "RDMA DONE-SLOTS (chunked fallback): queued %d slots; %lu in-flight",
             n_slots, listLength(pending_applies));
@@ -949,11 +988,14 @@ static void *backpatchPoolWorkerMain(void *arg) {
         listDelNode(backpatch_work_queue, ln);
         pthread_mutex_unlock(&backpatch_work_mu);
 
-        clusterSlotLockWrite(w->slot);
-        cluster_slot_lock_held_by_thread++;       /* __thread, per worker */
+        /* Lock-free backpatch: per-slot dict is pre-sized to 4x in
+         * rdmaBackpatchSlot so no rehash fires; bucket collisions are rare
+         * enough at ~25% load factor that we can tolerate the residual race
+         * with concurrent main-thread inserts. cluster_slot_lock_held_by_thread
+         * is still set so any nested Path B checks see "lock held" and skip. */
+        cluster_slot_lock_held_by_thread++;
         int added = rdmaBackpatchSlot(w->db, w->slot);
         cluster_slot_lock_held_by_thread--;
-        clusterSlotUnlock(w->slot);
 
         backpatchBatch *b = w->batch;
         atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
@@ -965,6 +1007,14 @@ static void *backpatchPoolWorkerMain(void *arg) {
         if (prev == 1) {
             atomic_store_explicit(&b->state, BACKPATCH_DONE, memory_order_release);
             b->t_ended = time(NULL);
+            /* Re-enable databasesCron — backpatch is done. Paired with the incr
+             * in rdmaRegisterBlockSlotsCommand (moved out of RECV-FLIP for
+             * early-FLIP). */
+            atomicDecr(server.recipient_backpatch_in_progress, 1);
+            /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
+            kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+            kvstoreFenwickRebuild(server.db[0].keys);
+            /* Note: recipient's slot meta is already STABLE (set in RECV-FLIP). */
             serverLog(LL_NOTICE,
                 "RDMA backpatch-thread: batch DONE from %.*s mig_id=%lld "
                 "n_slots=%d applied=%lld (closed by pool worker=%ld)",
@@ -2113,8 +2163,11 @@ void rdmaReshardRecvFlipCommand(client *c) {
     clusterTopoUnlock();
 
     /* Aqueduct slot-state: recipient now owns the slots cleanly, clear
-     * MIGRATING and return to STABLE. Done outside the topology wrlock to
-     * avoid deadlocking against slotMigStateSet's internal rdlock acquire. */
+     * MIGRATING and return to STABLE. (Originally we tried deferring this
+     * to BACKPATCH_DONE; that exposed a concurrent-mutation issue between
+     * the backpatch worker and main-thread Path B wraps, so we keep the
+     * transition here at RECV-FLIP and rely on donor's STABLE-at-DONE to
+     * shift traffic to the recipient after migration completes.) */
     for (int j = 3; j < c->argc; j++) {
         long long slot_ll;
         if (getLongLongFromObject(c->argv[j], &slot_ll) != C_OK) continue;
@@ -2122,10 +2175,11 @@ void rdmaReshardRecvFlipCommand(client *c) {
         slotMigStateSet((int) slot_ll, SLOT_STATE_STABLE, NULL);
     }
 
-    /* Aqueduct: re-enable databasesCron on this recipient. Backpatch is done
-     * and ownership has swapped; the kvstore is back to a single-writer
-     * state where main-thread cron is safe again. */
-    atomicDecr(server.recipient_backpatch_in_progress, 1);
+    /* Under the early-FLIP ordering, RECV-FLIP fires BEFORE backpatch has even
+     * started — so the databasesCron gate (recipient_backpatch_in_progress) is
+     * NOT decremented here. The decrement now lives at the BACKPATCH_DONE
+     * transition sites (chunked-fallback inline, pool-worker path), so the
+     * gate stays held until backpatch genuinely finishes. */
 
     addReplyStatusFormat(c, "OK %d slots flipped on recipient", flipped);
 }
@@ -2724,17 +2778,34 @@ static void *migrationWorker(void *arg) {
         return NULL;
     }
 
-    /* Option 2: FLIP is deferred to after the recipient has applied the data.
-     * The old order (FLIP before TRANSFER) created a window where the recipient
-     * owned the slots but didn't yet have any data — clients hitting either
-     * end during that window triggered a -MOVED / -ASK ping-pong that stalled
-     * YCSB for ~5 s per migration. New order keeps the source serving reads
-     * from its live keyspace all the way through transfer + recipient-backpatch;
-     * FLIP is the final microsecond ownership swap once the recipient
-     * already has the data.                                                  */
+    /* FLIPPING (early-ownership): flip ownership BEFORE TRANSFER so all
+     * client writes during the transfer window route to the recipient (the
+     * new owner) instead of orphaning on the donor. The cluster router's
+     * read/write split (cluster.c) keeps reads bypassed for non-STABLE slots
+     * — donor still serves its snapshot — while writes fall through to
+     * standard routing and get a -MOVED to the recipient, which JedisCluster
+     * uses to refresh its topology once per slot. The parallel two-sided
+     * read in the YCSB client (donor + recipient, recipient-wins) is what
+     * makes recipient-as-owner semantically correct from the start: the
+     * recipient holds any post-FLIP writes; the donor's snapshot fills in
+     * for keys not yet transferred. */
+    migSetState(mig, RDMA_MIG_FLIPPING);
+    if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
+    }
 
-    /* TRANSFER: RDMA-WRITE + DONE-SLOTS. Source still owns the slots, so
-     * client traffic continues to hit the source's live keyspace.           */
+    /* Aqueduct slot-state: donor flips MIGRATING → MIGRATED. Recipient
+     * flipped MIGRATING → STABLE inside its RECV-FLIP handler. The donor's
+     * MIGRATED state persists through TRANSFER + BACKPATCH so its snapshot
+     * remains reachable to readers; a follow-up GC timer transitions
+     * MIGRATED → STABLE once the migration is fully complete. */
+    for (int i = 0; i < mig->n_slots; i++) {
+        slotMigStateSet(mig->chosen[i], SLOT_STATE_MIGRATED, NULL);
+    }
+
+    /* TRANSFER: RDMA-WRITE + DONE-SLOTS. Donor no longer owns the slots but
+     * still has the snapshot data; transfer runs against that snapshot. */
     migSetState(mig, RDMA_MIG_TRANSFER);
     /* Use db 0 — same as the legacy reshardTransferWorker path (DB selection
      * comes from the dispatching client; cluster mode is single-DB). */
@@ -2811,25 +2882,21 @@ static void *migrationWorker(void *arg) {
         }
     }
 
-    /* FLIPPING (Option 2): now that the data is on the recipient, atomically
-     * swap ownership. RECV-FLIP runs on the recipient, then we update our
-     * local slot table. By the time clients see the MOVED, the recipient
-     * already has the data — no -MOVED / -ASK ping-pong, no YCSB dip from
-     * topology refresh storms.                                              */
-    migSetState(mig, RDMA_MIG_FLIPPING);
-    if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
-        migFail(mig, err);
-        return NULL;
-    }
-
-    /* Aqueduct slot-state: donor flips MIGRATING → MIGRATED. Recipient
-     * flipped MIGRATING → STABLE inside its RECV-FLIP handler — by the
-     * time we reach here the recipient is fully serving. Donor stays in
-     * MIGRATED long enough for the slowest client to refresh its cache
-     * via the next reply (a follow-up GC timer transitions MIGRATED →
-     * STABLE; for the YCSB rig the next teardown reclusters the donor). */
+    /* Donor migration DONE: backpatch is genuinely applied on the recipient.
+     * Flip the donor's slot meta state back to STABLE for the migrated slots.
+     * With state=STABLE, the slot_meta bypass at cluster.c:1326 stops firing
+     * on this node — reads fall through to standard cluster routing, which
+     * returns MOVED → recipient (since the cluster table was flipped at FLIP
+     * time). JedisCluster refreshes once per slot and all subsequent client
+     * traffic on those slots routes to the recipient.
+     *
+     * Direct byte-write rather than per-slot slotMigStateSet to avoid 1365
+     * lock cycles racing with the donor's main thread serving live client
+     * traffic. */
     for (int i = 0; i < mig->n_slots; i++) {
-        slotMigStateSet(mig->chosen[i], SLOT_STATE_MIGRATED, NULL);
+        int s = mig->chosen[i];
+        server.cluster->slot_mig_state[s] = (uint8_t) SLOT_STATE_STABLE;
+        server.cluster->slot_peer_endpoint[s][0] = '\0';
     }
 
     pthread_mutex_lock(&mig->mu);

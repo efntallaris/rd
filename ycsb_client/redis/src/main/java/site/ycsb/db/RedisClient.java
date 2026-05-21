@@ -64,7 +64,11 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.Vector;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * YCSB binding for <a href="http://redis.io/">Redis</a>.
@@ -111,6 +115,10 @@ public class RedisClient extends DB {
   private HostAndPort seedHostPort;
   private Integer timeoutMs;
 
+  /** Single-thread executor used to fan out the recipient probe in parallel
+   *  with the donor read whenever the cached slot state is non-STABLE. */
+  private ExecutorService peerProbeExec;
+
   public void init() throws DBException {
     Properties props = getProperties();
     int port;
@@ -154,6 +162,12 @@ public class RedisClient extends DB {
     if (password != null) {
       ((BasicCommands) jedisWrites).auth(password);
     }
+
+    peerProbeExec = Executors.newSingleThreadExecutor(r -> {
+      Thread t = new Thread(r, "redis-peer-probe");
+      t.setDaemon(true);
+      return t;
+    });
   }
 
   /** Populate slotOwner[] from CLUSTER SLOTS and slotCache[] from CLUSTER
@@ -230,6 +244,7 @@ public class RedisClient extends DB {
 
   public void cleanup() throws DBException {
     try {
+      if (peerProbeExec != null) peerProbeExec.shutdownNow();
       if (jedisWrites instanceof Closeable) {
         ((Closeable) jedisWrites).close();
       }
@@ -341,39 +356,80 @@ public class RedisClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
       Map<String, ByteIterator> result) {
+    // Use the requested field name as the result-map key so YCSB's
+    // dataintegrity=true verifier can compare against
+    // buildDeterministicValue(key, fieldname). When fields is null/empty,
+    // fall back to "value" for backward compatibility.
+    String resultField = "value";
+    if (fields != null && !fields.isEmpty()) {
+      resultField = fields.iterator().next();
+    }
+
     if (slotOwner == null) {
       String val = ((JedisCommands) jedisWrites).get(key);
       if (val == null) return Status.ERROR;
-      result.put("value", new StringByteIterator(val));
+      result.put(resultField, new StringByteIterator(val));
       return Status.OK;
     }
 
     int slot = JedisClusterCRC16.getSlot(key);
     SlotEntry s = slotCache[slot];
 
-    // 1) Always try the bootstrap owner first.
     HostAndPort ownerHp = slotOwner[slot];
-    Jedis ownerJ = (ownerHp != null) ? getOrOpen(ownerHp) : null;
-    GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;
-    if (ra != null) updateSlotCache(slot, ra);
+    final Jedis ownerJ = (ownerHp != null) ? getOrOpen(ownerHp) : null;
 
-    if (ra != null && ra.value != null) {
-      result.put("value", new StringByteIterator(ra.value));
-      return Status.OK;
-    }
-
-    // 2) If owner returned nil and the slot is in a migration state, double-read
-    //    the peer (= the other side of the migration).
-    if (s.state != SLOT_STABLE && s.peer != null) {
-      Jedis peerJ = getOrOpen(s.peer);
-      GetReply rb = sendGet(peerJ, key);
-      updateSlotCache(slot, rb);
-      if (rb.value != null) {
-        result.put("value", new StringByteIterator(rb.value));
+    // Stable-slot fast path: single donor read. May discover a state flip on
+    // the reply; if so, follow up with the freshly-learned peer.
+    if (s.state == SLOT_STABLE || s.peer == null) {
+      GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;
+      if (ra != null) updateSlotCache(slot, ra);
+      if (ra != null && ra.value != null) {
+        result.put(resultField, new StringByteIterator(ra.value));
         return Status.OK;
       }
+      if (ra != null && ra.state != SLOT_STABLE && ra.peer != null) {
+        GetReply rb = sendGet(getOrOpen(ra.peer), key);
+        if (rb.value != null) {
+          result.put(resultField, new StringByteIterator(rb.value));
+          return Status.OK;
+        }
+      }
+      return Status.ERROR;
     }
 
+    // Migration path: fan out donor + recipient GETs in parallel. Recipient
+    // wins when both have the key — the donor's copy is the older snapshot
+    // once ownership has flipped to the recipient.
+    final HostAndPort peerHp = s.peer;
+    final String keyFinal = key;
+    Future<GetReply> peerFuture = peerProbeExec.submit(new Callable<GetReply>() {
+      @Override
+      public GetReply call() {
+        return sendGet(getOrOpen(peerHp), keyFinal);
+      }
+    });
+    GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;
+    GetReply rb;
+    try {
+      rb = peerFuture.get();
+    } catch (Exception e) {
+      rb = null;
+    }
+
+    // Cache update from donor reply only — slotOwner[] is the bootstrap owner,
+    // so the donor's peer field is "the other side relative to slotOwner".
+    // The recipient's peer field points back at the donor, which would invert
+    // the cache.
+    if (ra != null) updateSlotCache(slot, ra);
+
+    if (rb != null && rb.value != null) {
+      result.put(resultField, new StringByteIterator(rb.value));
+      return Status.OK;
+    }
+    if (ra != null && ra.value != null) {
+      result.put(resultField, new StringByteIterator(ra.value));
+      return Status.OK;
+    }
     return Status.ERROR;
   }
 

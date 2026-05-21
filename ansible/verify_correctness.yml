@@ -1,0 +1,55 @@
+---
+# Aqueduct early-FLIP correctness verification.
+# Loads workloada (writes recordcount keys), migrates 4095 slots to redis3 with NO concurrent
+# YCSB run, then reads ALL keys back via workloadreadonly. If migration is correct: every key
+# should be retrievable and Return=OK count should match recordcount.
+- import_playbook: tasks/teardown/kill_processes.yml
+- import_playbook: tasks/teardown/clean_runtime.yml
+- import_playbook: tasks/cluster/start_redis_instances.yml
+- import_playbook: tasks/cluster/create_cluster.yml
+
+- name: "YCSB load (workloada)"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Run YCSB load phase
+      command: >
+        {{ ycsb_dir_bin }}/ycsb.sh load redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}workloada
+        -threads {{ ycsb_threads_load }}
+      register: load_out
+    - debug:
+        msg: "Load complete; last lines: {{ load_out.stdout_lines[-3:] }}"
+
+- import_playbook: tasks/cluster/add_migrate_nodes.yml
+
+- import_playbook: tasks/cluster/reshard_cluster_rdma_v2.yml
+
+- name: "Verification pass: read all loaded keys (workloadreadonly)"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Run YCSB read-only verification
+      command: >
+        {{ ycsb_dir_bin }}/ycsb.sh run redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}workloadreadonly
+        -threads {{ ycsb_threads_run }}
+      register: verify_out
+
+    - name: "Verification summary"
+      debug:
+        msg: "{{ item }}"
+      loop: "{{ verify_out.stdout_lines | select('match', '^\\[(OVERALL|READ|READ-FAILED|.*Return)') | list }}"
+
+    - name: "Save verification output to control node"
+      copy:
+        content: "{{ verify_out.stdout }}"
+        dest: /tmp/verify_correctness_out.txt
+      delegate_to: localhost
+      become: no

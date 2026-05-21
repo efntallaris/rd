@@ -16,6 +16,7 @@
 
 #include <string.h>
 #include <stddef.h>
+#include <pthread.h>
 
 #include "zmalloc.h"
 #include "kvstore.h"
@@ -33,12 +34,21 @@ struct _kvstore {
     long long num_dicts;
     long long num_dicts_bits;
     list *rehashing;                       /* List of dictionaries in this kvstore that are currently rehashing. */
+    pthread_mutex_t shared_mu;             /* Narrow mutex: protects the `rehashing` list,
+                                              `overhead_hashtable_rehashing`, and `dict_sizes` (Fenwick tree)
+                                              against concurrent backpatch worker + main client thread mutation.
+                                              Simple counters (key_count, non_empty_dicts, bucket_count) use
+                                              atomic increments instead — much cheaper than mutex contention
+                                              on the hot dbAdd path. */
     int resize_cursor;                     /* Cron job uses this cursor to gradually resize dictionaries (only used if num_dicts > 1). */
     int allocated_dicts;                   /* The number of allocated dicts. */
     int non_empty_dicts;                   /* The number of non-empty dicts. */
     unsigned long long key_count;          /* Total number of keys in this kvstore. */
     unsigned long long bucket_count;       /* Total number of buckets in this kvstore across dictionaries. */
     fenwickTree *dict_sizes;               /* Binary indexed tree (BIT) that describes cumulative key frequencies up until given dict-index. */
+    int defer_fenwick_updates;             /* When non-zero, cumulativeKeyCountAdd skips the Fenwick tree update. Used during
+                                              recipient backpatch to avoid the mutex contention from millions of dbAdds.
+                                              Caller must rebuild the tree via kvstoreFenwickRebuild after the window. */
     size_t overhead_hashtable_rehashing;   /* The overhead of dictionaries rehashing. */
     void *metadata[];                      /* conditionally allocated based on "flags" */
 };
@@ -79,23 +89,64 @@ static int getAndClearDictIndexFromCursor(kvstore *kvs, unsigned long long *curs
     return didx;
 }
 
-/* Updates binary index tree (Fenwick tree), updates key count for a given dict */
+/* Updates binary index tree (Fenwick tree), updates key count for a given dict.
+ *
+ * Cross-slot shared state mutation. Simple counters use atomic increments
+ * (lock-free, fast). The Fenwick tree mutation needs the mutex — the tree
+ * walk is not thread-safe.
+ *
+ * During backpatch (kvs->defer_fenwick_updates set), the tree update is
+ * SKIPPED entirely. The recipient applies tens of millions of dbAdds via
+ * the backpatch worker, each of which would otherwise contend on the
+ * Fenwick mutex with concurrent main-thread inserts. The tree is used
+ * only by RANDOMKEY / SCAN-style weighted-random picks (not part of any
+ * YCSB workload), so accepting transient staleness for migration's sake
+ * is the right trade-off. Callers must invoke kvstoreFenwickRebuild()
+ * once backpatch finishes if they need an accurate tree. */
 static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
-    kvs->key_count += delta;
-
     dict *d = kvstoreGetDict(kvs, didx);
     size_t dsize = dictSize(d);
-    /* Increment if dsize is 1 and delta is positive (first element inserted, dict becomes non-empty).
-     * Decrement if dsize is 0 (dict becomes empty). */
     int non_empty_dicts_delta = (dsize == 1 && delta > 0) ? 1 : (dsize == 0) ? -1 : 0;
-    kvs->non_empty_dicts += non_empty_dicts_delta;
 
-    /* BIT does not need to be calculated when there's only one dict. */
-    if (kvs->num_dicts == 1)
-        return;
+    /* Atomic counters — no mutex needed. */
+    __atomic_fetch_add(&kvs->key_count, (unsigned long long) delta, __ATOMIC_RELAXED);
+    if (non_empty_dicts_delta) {
+        __atomic_fetch_add(&kvs->non_empty_dicts, non_empty_dicts_delta, __ATOMIC_RELAXED);
+    }
 
-    /* Update the BIT */
+    if (kvs->num_dicts <= 1) return;
+
+    if (__atomic_load_n(&kvs->defer_fenwick_updates, __ATOMIC_RELAXED)) {
+        return;  /* tree update skipped during backpatch window */
+    }
+
+    pthread_mutex_lock(&kvs->shared_mu);
     fwTreeUpdate(kvs->dict_sizes, didx, delta);
+    pthread_mutex_unlock(&kvs->shared_mu);
+}
+
+/* Toggle whether cumulativeKeyCountAdd updates the Fenwick tree. While
+ * deferred, the tree drifts; call kvstoreFenwickRebuild after to bring
+ * it back into sync. */
+void kvstoreSetDeferFenwickUpdates(kvstore *kvs, int on) {
+    __atomic_store_n(&kvs->defer_fenwick_updates, on ? 1 : 0, __ATOMIC_RELEASE);
+}
+
+/* Rebuild the Fenwick tree from current per-dict sizes. Called after a
+ * backpatch window that ran with deferred tree updates. Single-threaded;
+ * caller must ensure no concurrent inserters. */
+void kvstoreFenwickRebuild(kvstore *kvs) {
+    if (kvs->num_dicts <= 1 || kvs->dict_sizes == NULL) return;
+    pthread_mutex_lock(&kvs->shared_mu);
+    fwTreeClear(kvs->dict_sizes);
+    for (int i = 0; i < kvs->num_dicts; i++) {
+        dict *d = kvs->dicts[i];
+        if (d) {
+            unsigned long sz = dictSize(d);
+            if (sz > 0) fwTreeUpdate(kvs->dict_sizes, i, (long long) sz);
+        }
+    }
+    pthread_mutex_unlock(&kvs->shared_mu);
 }
 
 /* Create the dict if it does not exist and return it. */
@@ -148,12 +199,15 @@ void kvstoreFreeDictIfNeeded(kvstore *kvs, int didx) {
 static void kvstoreDictRehashingStarted(dict *d) {
     kvstore *kvs = d->type->userdata;
     kvstoreDictMetaBase *metadata = (kvstoreDictMetaBase *)dictMetadata(d);
-    listAddNodeTail(kvs->rehashing, d);
-    metadata->rehashing_node = listLast(kvs->rehashing);
 
     unsigned long long from, to;
     dictRehashingInfo(d, &from, &to);
+
+    pthread_mutex_lock(&kvs->shared_mu);
+    listAddNodeTail(kvs->rehashing, d);
+    metadata->rehashing_node = listLast(kvs->rehashing);
     kvs->overhead_hashtable_rehashing += from;
+    pthread_mutex_unlock(&kvs->shared_mu);
 }
 
 /* Remove dictionary from the rehashing list.
@@ -163,14 +217,17 @@ static void kvstoreDictRehashingStarted(dict *d) {
 static void kvstoreDictRehashingCompleted(dict *d) {
     kvstore *kvs = d->type->userdata;
     kvstoreDictMetaBase *metadata = (kvstoreDictMetaBase *)dictMetadata(d);
+
+    unsigned long long from, to;
+    dictRehashingInfo(d, &from, &to);
+
+    pthread_mutex_lock(&kvs->shared_mu);
     if (metadata->rehashing_node) {
         listDelNode(kvs->rehashing, metadata->rehashing_node);
         metadata->rehashing_node = NULL;
     }
-
-    unsigned long long from, to;
-    dictRehashingInfo(d, &from, &to);
     kvs->overhead_hashtable_rehashing -= from;
+    pthread_mutex_unlock(&kvs->shared_mu);
 }
 
 /* Updates the bucket count for the given dictionary in a DB. It adds the new ht size
@@ -178,7 +235,8 @@ static void kvstoreDictRehashingCompleted(dict *d) {
  * sum of buckets for a DB. */
 static void kvstoreDictBucketChanged(dict *d, long long delta) {
     kvstore *kvs = d->type->userdata;
-    kvs->bucket_count += delta;
+    /* Atomic counter — no mutex needed. */
+    __atomic_fetch_add(&kvs->bucket_count, (unsigned long long) delta, __ATOMIC_RELAXED);
 }
 
 /* Returns the size of the DB dict extended metadata in bytes. */
@@ -233,6 +291,7 @@ kvstore *kvstoreCreate(kvstoreType *type, dictType *dtype, int num_dicts_bits, i
     }
 
     kvs->rehashing = listCreate();
+    pthread_mutex_init(&kvs->shared_mu, NULL);
     kvs->key_count = 0;
     kvs->non_empty_dicts = 0;
     kvs->resize_cursor = 0;
@@ -282,6 +341,7 @@ void kvstoreRelease(kvstore *kvs) {
     zfree(kvs->dicts);
 
     listRelease(kvs->rehashing);
+    pthread_mutex_destroy(&kvs->shared_mu);
     if (kvs->dict_sizes)
         fwTreeDestroy(kvs->dict_sizes);
 

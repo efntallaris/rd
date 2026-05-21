@@ -131,6 +131,11 @@ dictEntry *kvstoreDictGetRandomKey(kvstore *kvs, int didx);
 dictEntry *kvstoreDictGetFairRandomKey(kvstore *kvs, int didx);
 unsigned int kvstoreDictGetSomeKeys(kvstore *kvs, int didx, dictEntry **des, unsigned int count);
 int kvstoreDictExpand(kvstore *kvs, int didx, unsigned long size);
+
+/* Migration helpers: defer Fenwick-tree updates during a high-volume
+ * backpatch window, then rebuild the tree once it ends. */
+void kvstoreSetDeferFenwickUpdates(kvstore *kvs, int on);
+void kvstoreFenwickRebuild(kvstore *kvs);
 unsigned long kvstoreDictScanDefrag(kvstore *kvs, int didx, unsigned long v, dictScanFunction *fn, dictDefragFunctions *defragfns, void *privdata);
 typedef dict *(kvstoreDictLUTDefragFunction)(dict *d);
 unsigned long kvstoreDictLUTDefrag(kvstore *kvs, unsigned long cursor, kvstoreDictLUTDefragFunction *defragfn);

@@ -1,0 +1,126 @@
+---
+# Correctness-with-writes test for aqueduct early-FLIP.
+#
+#   1. Load workloada_integrity (recordcount records, dataintegrity=true,
+#      values are deterministic from the key).
+#   2. Add migrate node.
+#   3. Start workloada_integrity concurrently — 50% reads, 50% updates,
+#      all reads run verifyRow() against buildDeterministicValue(key, fieldname).
+#   4. Mid-run, trigger RDMA MIGRATE.
+#   5. Wait for YCSB to finish, then run workloadreadonly_integrity to read all
+#      keys back with dataintegrity=true.
+#
+# Any read that comes back with the wrong value (e.g. donor's stale snapshot
+# masquerading as the recipient's post-FLIP write) shows up as
+# VERIFY status=UNEXPECTED_STATE in the YCSB output. A clean run = no
+# UNEXPECTED_STATE rows + Return=OK matching operation count.
+- import_playbook: tasks/teardown/kill_processes.yml
+- import_playbook: tasks/teardown/clean_runtime.yml
+- import_playbook: tasks/cluster/start_redis_instances.yml
+- import_playbook: tasks/cluster/create_cluster.yml
+
+- name: "YCSB load (workloada_integrity, deterministic values)"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Load deterministic values
+      command: >
+        {{ ycsb_dir_bin }}/ycsb.sh load redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}workloada_integrity
+        -threads {{ ycsb_threads_load }}
+      register: load_out
+
+- import_playbook: tasks/cluster/add_migrate_nodes.yml
+
+- name: "Start YCSB run (workloada_integrity) async — concurrent with reshard"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Kick off async YCSB run
+      shell: >
+        {{ ycsb_dir_bin }}/ycsb.sh run redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}workloada_integrity
+        -p status.interval=1 -s
+        -p measurementtype=timeseries
+        -p "redis.timeout={{ ycsb_timeout }}"
+        -threads {{ ycsb_threads_run }}
+        > /tmp/ycsb_writes_run.txt 2>&1
+      async: 600
+      poll: 0
+      register: ycsb_async
+
+    - name: Persist YCSB async job id
+      set_fact:
+        ycsb_async_jid: "{{ ycsb_async.ansible_job_id }}"
+        cacheable: yes
+
+- name: "Pause 5s so YCSB has a steady-state baseline"
+  hosts: redis_masters[0]
+  gather_facts: no
+  tasks:
+    - pause:
+        seconds: 5
+
+- import_playbook: tasks/cluster/reshard_cluster_rdma_v2.yml
+
+- name: "Wait for the concurrent YCSB run to finish"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Wait for async YCSB to complete
+      async_status:
+        jid: "{{ ycsb_async_jid }}"
+      register: ycsb_done
+      until: ycsb_done.finished
+      retries: 120
+      delay: 5
+
+- name: "Verification pass: workloadreadonly_integrity (reads all keys with verifyRow)"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Run YCSB read-only integrity verification
+      command: >
+        {{ ycsb_dir_bin }}/ycsb.sh run redis
+        -p "redis.host={{ master_host }}"
+        -p "redis.port={{ master_port }}"
+        -p "redis.cluster=true"
+        -P {{ redis_workload_path }}workloadreadonly_integrity
+        -threads {{ ycsb_threads_run }}
+      register: verify_out
+
+    - name: "Concurrent-workload (workloada+dataintegrity) summary"
+      shell: |
+        echo '--- concurrent run summary ---'
+        grep -E '^\[(OVERALL|READ|UPDATE|VERIFY).*(Return|Operations|RunTime|Throughput|VERIFY)' /tmp/ycsb_writes_run.txt || true
+        echo ''
+        echo '--- VERIFY status counts ---'
+        grep -E 'VERIFY' /tmp/ycsb_writes_run.txt | head -20 || true
+      register: concurrent_summary
+      changed_when: false
+
+    - debug:
+        msg: "{{ concurrent_summary.stdout_lines }}"
+
+    - name: "Post-migration verification summary"
+      debug:
+        msg: "{{ verify_out.stdout_lines | select('match', '^\\[(OVERALL|READ|VERIFY).*(Return|Operations|RunTime|Throughput|VERIFY)') | list }}"
+
+    - name: "Save full outputs to control node"
+      shell: |
+        cat > /tmp/verify_writes_concurrent.txt <<'EOF'
+        {{ concurrent_summary.stdout }}
+        EOF
+        cat > /tmp/verify_writes_postmig.txt <<'EOF'
+        {{ verify_out.stdout }}
+        EOF
+      delegate_to: localhost
+      become: no
+      args:
+        executable: /bin/bash

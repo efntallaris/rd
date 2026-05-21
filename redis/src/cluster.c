@@ -1312,14 +1312,18 @@ clusterNode *getNodeByQuery(client *c, struct redisCommand *cmd, robj **argv, in
                     return NULL;
                 }
 
-                /* Aqueduct slot-state machine: for any slot in active migration
-                 * (MIGRATING or MIGRATED), both donor and recipient serve
-                 * locally. The cooperative client (driven by the metadata
-                 * embedded in every GET reply) is responsible for fan-out and
-                 * write routing — no MOVED, no ASK. */
+                /* Aqueduct slot-state machine: for slots in active migration
+                 * (MIGRATING or MIGRATED), READS bypass standard routing and
+                 * serve locally — both donor and recipient serve their own
+                 * view, and the cooperative client (driven by per-reply slot
+                 * meta) fans out and resolves recipient-wins. WRITES fall
+                 * through to standard cluster routing so the donor returns
+                 * -MOVED to the new owner (recipient) under the early-FLIP
+                 * ordering. JedisCluster refreshes its topology on MOVED, so
+                 * subsequent writes route directly to the recipient. */
                 if (server.slot_meta_reply) {
                     slotMigState ms = slotMigStateGet(slot, NULL, 0);
-                    if (ms != SLOT_STATE_STABLE) {
+                    if (ms != SLOT_STATE_STABLE && !(cmd_flags & CMD_WRITE)) {
                         if (!use_cache_keys_result) getKeysFreeResult(&result);
                         if (hashslot) *hashslot = slot;
                         return myself;

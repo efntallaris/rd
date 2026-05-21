@@ -1,0 +1,71 @@
+---
+# Strict latest-write correctness test. Writes monotonically-increasing values
+# per key during migration; verifies every post-migration read returns the
+# locally-tracked latest version. Any mismatch = a stale read.
+- import_playbook: tasks/teardown/kill_processes.yml
+- import_playbook: tasks/teardown/clean_runtime.yml
+- import_playbook: tasks/cluster/start_redis_instances.yml
+- import_playbook: tasks/cluster/create_cluster.yml
+- import_playbook: tasks/cluster/add_migrate_nodes.yml
+
+- name: "Start VersionedWriteTest async on ycsb0"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Fire VersionedWriteTest (load + monotonic-version writer for 40s)
+      shell: |
+        java -cp /tmp:/tmp/testdeps/'*' VersionedWriteTest \
+          {{ groups['redis_masters'][0] }} {{ master_port }} 50000 40 \
+          > /tmp/versioned_write_test.log 2>&1
+      async: 600
+      poll: 0
+      register: vwt_async
+
+    - set_fact:
+        vwt_jid: "{{ vwt_async.ansible_job_id }}"
+        cacheable: yes
+
+- name: "Wait for test's load phase to complete before triggering migration"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Wait for /tmp/vwt_load_done marker
+      wait_for:
+        path: /tmp/vwt_load_done
+        timeout: 120
+    - name: "Settle 3s into the write phase"
+      pause:
+        seconds: 3
+
+- import_playbook: tasks/cluster/reshard_cluster_rdma_v2.yml
+
+- name: "Wait for VersionedWriteTest to finish, then show result"
+  hosts: ycsb_nodes[0]
+  become: yes
+  tasks:
+    - name: Wait for the test
+      async_status:
+        jid: "{{ vwt_jid }}"
+      register: vwt_done
+      until: vwt_done.finished
+      retries: 120
+      delay: 5
+
+    - name: "Tail of versioned-write test log"
+      shell: tail -40 /tmp/versioned_write_test.log
+      register: vwt_tail
+      changed_when: false
+
+    - debug:
+        msg: "{{ vwt_tail.stdout_lines }}"
+
+    - name: "Fetch full log"
+      fetch:
+        src: /tmp/versioned_write_test.log
+        dest: /tmp/versioned_write_test.log
+        flat: yes
+
+    - name: "Assert PASS"
+      fail:
+        msg: "VersionedWriteTest reported failure — see /tmp/versioned_write_test.log"
+      when: "'RESULT: PASS' not in vwt_tail.stdout"

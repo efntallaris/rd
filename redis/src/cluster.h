@@ -60,6 +60,13 @@ void clusterTopoUnlock(void);
 void clusterSlotLockRead(int slot);
 void clusterSlotLockWrite(int slot);
 void clusterSlotUnlock(int slot);
+/* Variants that skip the global topology rdlock for hot-path callers that
+ * only need per-slot mutual exclusion (backpatch worker, lookupKey Path B
+ * wrap). See clusterSlotLockWriteNoTopology in cluster_legacy.c for the
+ * safety preconditions. */
+void clusterSlotLockReadNoTopology(int slot);
+void clusterSlotLockWriteNoTopology(int slot);
+void clusterSlotUnlockNoTopology(int slot);
 
 /* Phase 4d: cheap dirty-read predicate. Returns 1 iff
  * server.cluster->importing_slots_from[slot] is currently non-NULL — i.e.
