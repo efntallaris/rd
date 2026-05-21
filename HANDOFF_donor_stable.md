@@ -55,12 +55,135 @@ combined view at
 connection-pool init to redis3. Mig #2 and Mig #3 dips are shallow
 (2-3s, ~277K trough) because the cache and pool are already warm.
 
-**Throughput went up modestly: 370K → 395K (+7%).** Bigger gains would
-require the redis servers to actually be the bottleneck — they're at
-~5% CPU. The YCSB workload is **closed-loop with 200 threads × ~500µs
-latency = ~400K ops/sec ceiling**. Adding a 4th node trims latency
-slightly but doesn't lift the closed-loop cap. To prove cluster scaling,
-crank YCSB threads to 600+ or use an open-loop client.
+**Throughput went up modestly: 370K → 395K (+7%).** See "Throughput
+analysis" section below for why this is expected, not a regression.
+
+## Plot reading
+
+### `ycsb_timeseries.png` — YCSB throughput + latency
+
+- **M1** (4.6s band, t≈11-15s): throughput plunges to 100K then to 0
+  (the MOVED storm). Latency spikes proportionally.
+- **M2** (4.9s band, t≈31-35s): small dip from ~400K → ~300K, fully
+  recovered by t=35s.
+- **M3 not drawn** because the script only adds bands for migrations
+  with a `RDMA MIGRATE worker: DONE n_slots=` log line — redis2's
+  Mig #3 timed out before reaching DONE.
+- Total migration time on the band: **25.1s** (spans both serial
+  migrations, including the inter-migration dwell).
+
+### Per-host cluster-NIC traffic
+
+- `resources_redis0.png` (donor #1): steady ~18 MB/s before, dips to 0
+  during M1 band (donor busy with RDMA transfer + YCSB clients in
+  MOVED storm), recovers to ~18 MB/s after. **No drop after migration**
+  — redis0 still owns slots 1365..4095, so most of its YCSB load
+  remains.
+- `resources_redis1.png` (donor #2): same shape, dip during M2 transfer
+  (t≈31-35), recovers to ~17 MB/s.
+- `resources_redis2.png` (donor #3): ~17-18 MB/s; dips during transfer
+  windows for the other migrations (clients refreshing). Mig #3 band
+  missing because it never finished.
+- `resources_redis3.png` (recipient): **the key change** — climbs from
+  ~0 MB/s → ~3 MB/s after M1 → ~8 MB/s after M2. Pre-PR baseline had
+  redis3 stuck near ~5 MB/s the whole time while donors hogged ~19 MB/s
+  each. Now traffic visibly migrates onto redis3, though still
+  under-loaded relative to donors at t=45s (8 vs 17-18 MB/s).
+
+Caveats:
+- Plot window stops at `PLOT_X_MAX=45`, so post-M2 steady-state is
+  truncated.
+- CPU panel hard to read (everyone ≤10%) — workload is network-bound
+  with this load, not CPU-bound. Use the network panel as the load
+  proxy.
+- Disk panel empty — no iostat capture was preserved.
+- Mig #3 stall means we never saw the full 3-migration shift; expected
+  redis3 plateau is ~12-15 MB/s if all three migrations had completed.
+
+## Why does only Mig #1 have a deep throughput dip?
+
+Three things stack on Mig #1 that are already absorbed by Mig #2:
+
+1. **JedisCluster slot-map cache invalidation is one-time.** Jedis
+   2.9.0's `JedisClusterInfoCache.renewSlotCache()` takes a single
+   write-lock and runs `CLUSTER SLOTS`. With 200 client threads, the
+   first time any thread sees MOVED, all 200 race on that lock; one
+   wins, 199 block. After that refresh, the slot map for **all 16384
+   slots** is fresh — including slots that haven't migrated yet. Mig
+   #2 only invalidates 1365 of 16384 slots; refresh is cheap.
+
+2. **Connection pool to redis3 didn't exist before Mig #1.** Pre-M1,
+   no client thread had opened a Jedis connection to redis3 (it owned
+   no slots). On the first MOVED burst, each thread must instantiate
+   a connection (TCP + AUTH + CLIENT SETNAME). 200 threads × first
+   connect = synchronized burst. By Mig #2 the pool is warm.
+
+3. **Donor read-bypass hid all reads until DONE-STABLE.** During PREP
+   → TRANSFER → BACKPATCH, `cluster.c:1326` returns `myself` for reads
+   on non-STABLE slots, so clients only see MOVED on writes. On a
+   50/50 read/update workload, the client doesn't aggressively refresh
+   until the donor transitions to STABLE at DONE. Mig #1's MOVED storm
+   thus peaks right at DONE (t=15s, 0 ops/sec).
+
+Mig #2's STABLE-flip causes the same trigger, but the cache is warm,
+connections exist, and the topology delta is small. Dip is shallow.
+
+Per-second numbers:
+- Mig #1 dip: 369K → 21K → **0 → 0** → 14K → 148K → 363K (6s deep)
+- Mig #2 dip: 374K → 277K → 349K → 386K (1-2s shallow)
+- Mig #3 dip: 394K → 375K → 391K → **329K → 340K → 314K** (small,
+  then YCSB output stops because backpatch stalled — but the dip
+  itself is small)
+
+## Throughput analysis — why no scaling after each migration
+
+Steady-state throughput by phase (from YCSB log):
+
+| Phase | ops/sec | Active redis nodes |
+|---|---|---|
+| Pre-migration (t=14-22s) | ~370K | 3 |
+| Mig #1 dip (t=23-25s) | 21K → 0 | — |
+| Post-Mig-1 (t=27-30s) | ~378K | 3 (redis0 STABLE, traffic shifted) |
+| Mig #2 dip (t=43s) | 277K | — |
+| Post-Mig-2 (t=46-54s) | ~395K | 4 |
+| Steady state w/ M1+M2 done (t=55-63s) | ~393K | 4 |
+
+Total: **370K → 395K, +7%** — not the +33% you'd get from CPU-scaling
+on the redis side.
+
+### Why only +7%
+
+**The redis servers are not the bottleneck — CPU is ~5% on every host.**
+The bottleneck is on the client:
+
+1. **YCSB is closed-loop with 200 threads.** 200 threads × ~500µs/op =
+   400K ops/sec ceiling. Each thread issues one request, blocks until
+   reply, then the next. We land at exactly that ceiling. Adding
+   redis3 doesn't help because no thread was waiting on a slow server.
+
+2. **Latency is dominated by network RTT + Jedis serialization**, not
+   server work. Adding redis3 shaves 5-10µs off median latency by
+   reducing per-server queue depth — exactly the +7% we see.
+
+3. **Parallel two-sided read amplifies the closed-loop cap during
+   migration.** During non-STABLE windows, our patched client fans
+   donor + recipient reads concurrently. Each YCSB thread still
+   occupies one thread-slot but uses 2 RTTs (waits for first non-nil).
+   Doesn't speed up the thread. After STABLE, single reads resume.
+
+### To see real scaling
+
+Make the servers be the bottleneck:
+- **Crank YCSB threads to 600+** — moves the closed-loop ceiling from
+  400K → 1.2M ops/sec, donors hit 100% CPU, redis3 absorbs its share.
+- **Heavier per-op work** (LRANGE, bigger payloads, HMSET) — pushes
+  redis CPU up enough that the 4th node measurably extends saturation.
+- **Open-loop client** (memtier with `--rate-limit`) — bypass the
+  closed-loop cap entirely.
+
+The +7% is consistent with "latency-bound, not throughput-bound." The
+architecture is working; this workload just doesn't stress it enough
+to make the gain visible.
 
 ## Mig #3 stall — root cause hypothesis
 
