@@ -13,7 +13,7 @@ PRESERVE="/tmp/preserved_logs_conc_${TS}"
 # Full scale
 sudo sed -i \
   -e 's/^recordcount=.*/recordcount=10000000/' \
-  -e 's/^operationcount=.*/operationcount=20000000/' \
+  -e 's/^operationcount=.*/operationcount=40000000/' \
   /rd/workloads/workloada
 sudo scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
   /rd/workloads/workloada ycsb0:/users/entall/rd/workloads/workloada >/dev/null 2>&1
@@ -41,6 +41,7 @@ sudo ansible-playbook -i inventory.ini \
   -e "redis_variant=custom" \
   -e "experiment_name=workloada_conc_${TS}" \
   -e "redis_workload=workloada" \
+  -e "pre_reshard_pause=10" \
   2>&1 | tee "$LOG"
 rc=${PIPESTATUS[0]}
 

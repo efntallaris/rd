@@ -1,0 +1,16 @@
+---
+# 4-node-from-start baseline. No migration. Used to compare against the
+# post-migration steady state in custom_reshard_v2 — confirms the YCSB
+# closed-loop throughput cap is the bottleneck, not the cluster size.
+#
+# Run with `-i inventory_4nodes.ini` so the cluster is created with 4
+# masters (redis0..3) and redis_migrate is empty.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redis_instances.yml
+- import_playbook: ../../tasks/cluster/create_cluster.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

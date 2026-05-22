@@ -296,6 +296,7 @@ public class RedisClient extends DB {
     r.peer = null;
     r.value = null;
     r.ok = false;
+    synchronized (j) {
     try {
       j.getClient().get(SafeEncoder.encode(key));
       Object reply = j.getClient().getOne();
@@ -342,15 +343,87 @@ public class RedisClient extends DB {
     } catch (JedisException je) {
       return r;
     }
+    }
   }
 
-  /** Update the slot cache from a successful GET reply's metadata. */
+  /** Update the slot cache from a successful GET reply's metadata. When the
+   * reply indicates the slot is migrating/migrated away, also retarget
+   * slotOwner[slot] to the new peer so subsequent writes route there
+   * directly — no MOVED needed, no global cache invalidation. */
   private void updateSlotCache(int slot, GetReply r) {
     if (!r.ok) return;
     SlotEntry se = slotCache[slot];
     se.state = r.state;
     se.peer = r.peer;
-    if (r.peer != null) getOrOpen(r.peer);
+    if (r.peer != null) {
+      getOrOpen(r.peer);
+      if (r.state != SLOT_STABLE && slotOwner != null) {
+        slotOwner[slot] = r.peer;
+      }
+    }
+  }
+
+  /** Send a write command to slotOwner[slot]. If the donor returns MOVED
+   * (we haven't learned the new owner from a prior read yet), parse it,
+   * update slotOwner[slot] for this slot only, and retry once. No global
+   * slot-cache invalidation, no CLUSTER SLOTS call. */
+  private interface JedisOp {
+    Object run(Jedis j);
+  }
+
+  private Object execForSlot(String key, JedisOp op) {
+    int slot = JedisClusterCRC16.getSlot(key);
+    HostAndPort hp = (slotOwner != null) ? slotOwner[slot] : seedHostPort;
+    boolean ask = false;
+    /* The peer-probe thread (parallel-read path) may be using these same
+     * Jedis instances. Synchronize per-connection so reply pipelining
+     * doesn't interleave + corrupt Jedis's protocol parser. Loop bounded
+     * to handle a brief cascade of ASK/MOVED while the donor + recipient
+     * concurrently swap ownership. */
+    for (int attempt = 0; attempt < 8; attempt++) {
+      if (hp == null) hp = seedHostPort;
+      Jedis j = getOrOpen(hp);
+      synchronized (j) {
+        try {
+          if (ask) {
+            j.asking();
+            ask = false;
+          }
+          return op.run(j);
+        } catch (redis.clients.jedis.exceptions.JedisMovedDataException mv) {
+          hp = new HostAndPort(mv.getTargetNode().getHost(),
+                               mv.getTargetNode().getPort());
+          if (slotOwner != null) slotOwner[slot] = hp;
+          ask = false;
+        } catch (redis.clients.jedis.exceptions.JedisAskDataException ax) {
+          hp = new HostAndPort(ax.getTargetNode().getHost(),
+                               ax.getTargetNode().getPort());
+          ask = true;
+        }
+      }
+    }
+    throw new redis.clients.jedis.exceptions.JedisException(
+        "execForSlot: exhausted retries for slot=" + slot);
+  }
+
+  private String setForSlot(String key, final String value) {
+    Object r = execForSlot(key, j -> j.set(key, value));
+    return (r instanceof String) ? (String) r : null;
+  }
+
+  private Long delForSlot(String key) {
+    Object r = execForSlot(key, j -> j.del(key));
+    return (r instanceof Long) ? (Long) r : Long.valueOf(0);
+  }
+
+  private Long zaddForSlot(String indexKey, final double score, final String member) {
+    Object r = execForSlot(indexKey, j -> j.zadd(indexKey, score, member));
+    return (r instanceof Long) ? (Long) r : Long.valueOf(0);
+  }
+
+  private Long zremForSlot(String indexKey, final String member) {
+    Object r = execForSlot(indexKey, j -> j.zrem(indexKey, member));
+    return (r instanceof Long) ? (Long) r : Long.valueOf(0);
   }
 
   @Override
@@ -446,9 +519,14 @@ public class RedisClient extends DB {
 
   @Override
   public Status delete(String table, String key) {
-    return ((JedisCommands) jedisWrites).del(key) == 0
-        && ((JedisCommands) jedisWrites).zrem(INDEX_KEY, key) == 0 ? Status.ERROR
-        : Status.OK;
+    if (slotOwner == null) {
+      return ((JedisCommands) jedisWrites).del(key) == 0
+          && ((JedisCommands) jedisWrites).zrem(INDEX_KEY, key) == 0 ? Status.ERROR
+          : Status.OK;
+    }
+    Long delN = delForSlot(key);
+    Long zremN = zremForSlot(INDEX_KEY, key);
+    return (delN == 0 && zremN == 0) ? Status.ERROR : Status.OK;
   }
 
   @Override
@@ -456,8 +534,14 @@ public class RedisClient extends DB {
       Map<String, ByteIterator> values) {
     /* YCSB update sends only the modified fields (typically 1 of N). With
      * the single-string representation we just SET the new concatenated
-     * payload, replacing the prior contents. */
-    String reply = ((JedisCommands) jedisWrites).set(key, concatFields(values));
+     * payload, replacing the prior contents. Route via slotOwner[] so
+     * MOVED triggers a single-slot update instead of Jedis's global cache
+     * rebuild. */
+    if (slotOwner == null) {
+      String reply = ((JedisCommands) jedisWrites).set(key, concatFields(values));
+      return (reply != null && reply.equals("OK")) ? Status.OK : Status.ERROR;
+    }
+    String reply = setForSlot(key, concatFields(values));
     return (reply != null && reply.equals("OK")) ? Status.OK : Status.ERROR;
   }
 

@@ -148,42 +148,79 @@ Steady-state throughput by phase (from YCSB log):
 | Post-Mig-2 (t=46-54s) | ~395K | 4 |
 | Steady state w/ M1+M2 done (t=55-63s) | ~393K | 4 |
 
-Total: **370K → 395K, +7%** — not the +33% you'd get from CPU-scaling
-on the redis side.
+Total: **370K → 395K, +7%**.
 
-### Why only +7%
+### The real bottleneck picture (two stacked caps)
 
-**The redis servers are not the bottleneck — CPU is ~5% on every host.**
-The bottleneck is on the client:
+There are **two ceilings** at play. Throughput is bounded by the
+smaller of them.
 
-1. **YCSB is closed-loop with 200 threads.** 200 threads × ~500µs/op =
-   400K ops/sec ceiling. Each thread issues one request, blocks until
-   reply, then the next. We land at exactly that ceiling. Adding
-   redis3 doesn't help because no thread was waiting on a slow server.
+**Cap 1: per-redis single-thread capacity.** Redis executes commands
+on one main thread. mpstat shows ~5% **system-wide** CPU, but on a
+32-core cloudlab box, 100% of *one* core ≈ 3% system CPU — so 5%
+system is **consistent with the redis main thread being saturated**
+plus background-thread overhead. We cannot conclude from `mpstat all`
+that redis is idle. Pre-migration we see 3 nodes × R ≈ 370K, so
+R ≈ 120-130K ops/sec per redis main thread on this hardware.
 
-2. **Latency is dominated by network RTT + Jedis serialization**, not
-   server work. Adding redis3 shaves 5-10µs off median latency by
-   reducing per-server queue depth — exactly the +7% we see.
+**Cap 2: YCSB closed-loop.** 200 threads × ~500µs/op ≈ 400K ceiling.
+Each thread blocks waiting for reply, then issues the next.
 
-3. **Parallel two-sided read amplifies the closed-loop cap during
-   migration.** During non-STABLE windows, our patched client fans
-   donor + recipient reads concurrently. Each YCSB thread still
-   occupies one thread-slot but uses 2 RTTs (waits for first non-nil).
-   Doesn't speed up the thread. After STABLE, single reads resume.
+### Per-phase predictions vs observed
+
+Each donor keeps serving its remaining slots (it owned 4096 of 16384;
+after one migration it owns 4096 - 1365 = 2731, still ~67% of original).
+If donors stay saturated at R while serving fewer slots, total = sum of
+saturated nodes + partial recipient.
+
+| Phase | Per-node load model | Predicted | Observed |
+|---|---|---|---|
+| Pre-migration | 3 × R | ~375K | 370K |
+| Post-Mig-1 | 3 × R + 0.25R (redis3 partial) | ~470K | 378K |
+| Post-Mig-2 | 3 × R + 0.5R | ~440K | 395K |
+| Post-Mig-3 | 4 × R | ~500K | (didn't run) |
+
+The per-node-saturation model predicts +25% by Post-Mig-2; we see +7%.
+**A second cap is binding** before we hit `4R`. Likely candidates:
+
+1. **YCSB closed loop hits its 400K cap** as soon as we'd otherwise
+   exceed it. Adding redis cores beyond that doesn't help because no
+   YCSB thread is waiting on a slow server.
+
+2. **JedisCluster sync semantics.** Jedis 2.9.0 is one in-flight
+   request per connection. If the connection pool size doesn't scale
+   with the 4th node, effective parallelism is unchanged.
+
+3. **Per-command client overhead** — CRC16 + slot-table lookup + Java
+   serialization happens once per op regardless of cluster size.
+
+We can't distinguish 1/2/3 without per-core CPU sampling on each redis
+host (e.g., `pidstat -p $(pidof redis-server) 1` or `top -H`) or a
+different driver. **The architecture IS rebalancing traffic** (resources
+plots confirm redis3 climbs 0 → 8 MB/s) — but a client-side cap is
+preventing the full 4-node speedup from materializing in the YCSB
+number.
 
 ### To see real scaling
 
-Make the servers be the bottleneck:
+To distinguish the redis-thread cap from the YCSB-client cap:
+- **Run `pidstat -p <redis-pid> -u 1`** on each host during the test
+  to see per-process CPU. If donors are at 100% (one-core), Cap 1 is
+  binding. If donors are at <50%, Cap 2 (client) is binding.
 - **Crank YCSB threads to 600+** — moves the closed-loop ceiling from
-  400K → 1.2M ops/sec, donors hit 100% CPU, redis3 absorbs its share.
-- **Heavier per-op work** (LRANGE, bigger payloads, HMSET) — pushes
-  redis CPU up enough that the 4th node measurably extends saturation.
+  400K → 1.2M. If redis3 then absorbs its full share and total scales
+  toward 4R ≈ 500K, the client-thread cap was indeed binding.
+- **Heavier per-op work** (LRANGE, bigger payloads, HMSET) — drives
+  per-op latency up so per-thread throughput drops, but raises the
+  per-op work the redis main thread must do, exposing per-node
+  saturation more clearly.
 - **Open-loop client** (memtier with `--rate-limit`) — bypass the
-  closed-loop cap entirely.
+  closed-loop cap entirely; throughput is then bounded only by the
+  redis main-thread cap.
 
-The +7% is consistent with "latency-bound, not throughput-bound." The
-architecture is working; this workload just doesn't stress it enough
-to make the gain visible.
+The +7% post-M2 means the load *did* spread (we'd otherwise see no
+change), but the spread didn't translate into proportional throughput
+because of a client-side cap we haven't fully characterized.
 
 ## Mig #3 stall — root cause hypothesis
 

@@ -38,8 +38,7 @@ plt.rcParams.update({
     # the preamble below switches the default family to sans (\sffamily);
     # otherwise matplotlib's font search picks from the list.
     "font.family":         "sans-serif",
-    "font.sans-serif":     ["CMU Sans Serif", "Latin Modern Sans", "Inter",
-                            "SF Pro Text", "Helvetica", "Arial", "DejaVu Sans"],
+    "font.sans-serif":     ["DejaVu Sans"],
     "mathtext.fontset":    "dejavusans",
     "text.latex.preamble": r"\renewcommand{\familydefault}{\sfdefault}",
     # Paper-style hierarchy: body 15 anchors title (~1.5x), axis (~1.2x),
@@ -82,14 +81,14 @@ plt.rcParams.update({
 })
 
 # Inline annotation font sizes (band labels, vertical-line labels, summary).
-_FS_BAND_LABEL = 10   # "M1\n7.4s" centered above each migration band
+_FS_BAND_LABEL = 13   # "M1 7.4s" centered above each migration band
 _FS_VLINE      = 13   # rotated FLIP label next to vertical line
 _FS_SUMMARY    = 13   # "Total migration: 34.7s (3 sources, serial)"
 
 # Crop the x-axis so the YCSB ramp-up (no ops in seconds 0-8) is hidden,
 # and bound the upper end so all three workloads share the same window.
-PLOT_X_MIN = 10
-PLOT_X_MAX = 45
+PLOT_X_MIN = 0
+PLOT_X_MAX = 80
 
 # Grayscale palette — differentiate by line style + marker shape, not color.
 THROUGHPUT_COLOR = "#1A1A1A"     # near-black throughput line
@@ -364,9 +363,15 @@ def plot(expdir: Path, output: Path) -> None:
             workload = workload[len(prefix):]
             break
 
+    # 2 panels side-by-side, each ≈ φ:1 (width:height).
+    PHI = 1.618
+    panel_h = 4.0
+    panel_w = panel_h * PHI  # ≈ 6.47
+    fig_w   = 2 * panel_w + 1 * 0.35 * panel_w + 0.8
+    fig_h   = panel_h + 1.5  # room for band labels, x-label, footer legend
     fig, (ax_tp, ax_lat) = plt.subplots(
-        2, 1, figsize=(5.5, 3.4), sharex=True,
-        gridspec_kw={"height_ratios": [1, 1], "hspace": 1.6},
+        1, 2, figsize=(fig_w, fig_h), sharex=True,
+        gridspec_kw={"width_ratios": [1, 1], "wspace": 0.35},
         facecolor=FIG_BG,
     )
 
@@ -384,24 +389,27 @@ def plot(expdir: Path, output: Path) -> None:
 
     # ---- Panel (a): Throughput --------------------------------------------------
     ax_tp.plot(t_rel, tp, label="Aqueduct", zorder=3, **AQUEDUCT_STYLE)
-    ax_tp.set_title(f"Th/put — {workload}", pad=22)
+    ax_tp.set_title("Throughput", pad=22)
     ax_tp.set_ylabel("Th/put (Kops/s)")
     # Y-axis in Kops/s with exactly 3 ticks framing the data range (no 0 tick).
     ax_tp.yaxis.set_major_formatter(
         mticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}"))
-    # Fixed ticks at 100/300/500 Kops/s so the throughput series sits mid-axis.
-    ax_tp.set_ylim(50_000, 600_000)
-    ax_tp.yaxis.set_major_locator(mticker.FixedLocator([100_000, 300_000, 500_000]))
+    # Fixed ticks at 300/350/400 Kops/s so the throughput series sits mid-axis.
+    ax_tp.set_ylim(260_000, 420_000)
+    ax_tp.yaxis.set_major_locator(mticker.FixedLocator([300_000, 350_000, 400_000]))
 
     # ---- Panel (b): Avg latency -------------------------------------------------
     ax_lat.plot(t_rel, rd_lat, label="READ", zorder=3, **LATENCY_READ_STYLE)
     ax_lat.plot(t_rel, up_lat, label="UPDATE", zorder=3, **LATENCY_UPDATE_STYLE)
-    ax_lat.set_title("Average Latency", pad=8)
+    ax_lat.set_title("Average Latency", pad=22)
     ax_lat.set_xlabel("Time since YCSB start (seconds)")
+    ax_tp.set_xlabel("Time since YCSB start (seconds)")
     ax_lat.set_ylabel(r"Latency ($\mu$s)")
-    # Fixed ticks at 200/500/800 μs so the latency series sits mid-axis.
-    ax_lat.set_ylim(100, 950)
-    ax_lat.yaxis.set_major_locator(mticker.FixedLocator([200, 500, 800]))
+    # Fixed ticks at 100/150/200 μs; ylim matches the throughput panel's
+    # visual proportions (ticks span ~25%→87% of the panel height) so the
+    # latency series sits in the same band of the axis.
+    ax_lat.set_ylim(60, 220)
+    ax_lat.yaxis.set_major_locator(mticker.FixedLocator([100, 150, 200]))
     if t_rel:
         ax_tp.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
         ax_lat.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
@@ -445,16 +453,18 @@ def plot(expdir: Path, output: Path) -> None:
             dur = e_rel - s_rel
             mid = (s_rel + e_rel) / 2.0
             # Place the label just above the panel top edge, centered over the
-            # band, with text on a single line ("M1 7.4s").
-            ax_tp.annotate(
-                f"M{i} {dur:.1f}s",
-                xy=(mid, 1.0), xycoords=("data", "axes fraction"),
-                xytext=(0, 4), textcoords="offset points",
-                ha="center", va="bottom",
-                color=PHASE_COLORS["BAND_EDGE"],
-                fontsize=_FS_BAND_LABEL,
-                fontweight="bold",
-            )
+            # band, with text on a single line ("M1 7.4s"). Side-by-side
+            # layout: label both panels so the latency panel doesn't look
+            # orphaned.
+            for ax in (ax_tp, ax_lat):
+                ax.annotate(
+                    f"M{i} {dur:.1f}s",
+                    xy=(mid, 1.0), xycoords=("data", "axes fraction"),
+                    xytext=(0, 4), textcoords="offset points",
+                    ha="center", va="bottom",
+                    color=PHASE_COLORS["BAND_EDGE"],
+                    fontsize=_FS_BAND_LABEL,
+                )
         # Overall span summary as a footer line below the legend, so it never
         # covers data or the migration bands.
         total_start = migration_bands[0][1]
@@ -466,7 +476,6 @@ def plot(expdir: Path, output: Path) -> None:
             ha="center", va="top",
             color=PHASE_COLORS["BAND_EDGE"],
             fontsize=_FS_SUMMARY,
-            fontweight="bold",
             transform=fig.transFigure,
         )
 
@@ -618,16 +627,9 @@ def _stylize_axes(ax) -> None:
 
 
 def _bold_tick_labels(ax) -> None:
-    """Bold tick labels. bbox_inches='tight' triggers an extra render that
-    can recreate the tick Text artists, dropping any one-shot fontweight set.
-    Re-apply on every draw via a draw_event callback so the bolding sticks."""
-    fig = ax.figure
-    def _apply(_event=None):
-        for a in (ax,) if not isinstance(ax, (list, tuple)) else ax:
-            plt.setp(a.get_xticklabels(), fontweight="bold")
-            plt.setp(a.get_yticklabels(), fontweight="bold")
-    _apply()
-    fig.canvas.mpl_connect("draw_event", _apply)
+    """No-op kept for call-site compatibility — tick labels render at the
+    default regular weight set in rcParams."""
+    return
 
 
 def plot_resources(expdir: Path, output: Path, host: str) -> None:
@@ -785,6 +787,159 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
     print(f"  mpstat samples: {len(mpstat)}  iostat: {len(iostat)}  ifstat: {len(ifstat)}")
 
 
+def plot_resources_combined(expdir: Path, output: Path, hosts: list[str]) -> None:
+    """Single 3-panel figure overlaying CPU / Network / Disk for all hosts.
+    One summary line per host per panel: CPU used %, total NIC MB/s (RX+TX),
+    disk write MB/s. Migration bands shaded as in the YCSB plot."""
+    ycsb_path = expdir / "ycsb" / "ycsb0" / "tmp" / "ycsb_output_ycsb0"
+    if not ycsb_path.exists():
+        cands = list(expdir.rglob("ycsb_output_*"))
+        if not cands:
+            sys.exit(f"No YCSB output file found under {expdir}")
+        ycsb_path = cands[0]
+    samples = parse_ycsb_log(ycsb_path)
+    if not samples:
+        sys.exit("No YCSB samples parsed; cannot anchor resource timeline")
+    t0 = samples[0].t
+    date_anchor = t0.replace(microsecond=0)
+
+    # Per-host styles: distinct linestyle + marker, all grayscale.
+    HOST_STYLES = [
+        dict(linestyle="-",          marker="o", markersize=6,
+             markerfacecolor="white", markeredgewidth=1.2),
+        dict(linestyle=(0, (5, 2)),  marker="s", markersize=6,
+             markerfacecolor="white", markeredgewidth=1.2),
+        dict(linestyle=(0, (3, 1, 1, 1)), marker="^", markersize=7,
+             markerfacecolor="#1a1a1a", markeredgecolor="white",
+             markeredgewidth=0.7),
+        dict(linestyle=(0, (1, 1.5)), marker="D", markersize=6,
+             markerfacecolor="#1a1a1a", markeredgecolor="white",
+             markeredgewidth=0.7),
+    ]
+
+    per_host: dict[str, dict] = {}
+    for host in hosts:
+        systat_dir = expdir / "logs" / host / "users" / "entall" / "systat_logs"
+        if not systat_dir.is_dir():
+            cands = list(expdir.rglob(f"{host}_mpstat.txt"))
+            if not cands:
+                print(f"WARN: no systat logs for {host}, skipping")
+                continue
+            systat_dir = cands[0].parent
+        mpstat_p = systat_dir / f"{host}_mpstat.txt"
+        iostat_p = systat_dir / f"{host}_iostat.txt"
+        ifstat_p = systat_dir / f"{host}_ifstat.txt"
+
+        mpstat = parse_mpstat(mpstat_p, date_anchor) if mpstat_p.exists() else []
+        iostat = parse_iostat(iostat_p, date_anchor) if iostat_p.exists() else []
+        ifstat = parse_ifstat(ifstat_p, date_anchor) if ifstat_p.exists() else []
+
+        def _to_rel_series(seq, k):
+            ts = [auto_tz_offset(row[0], t0) for row in seq]
+            xs = [to_rel(t, t0) for t in ts]
+            ys = [row[k] for row in seq]
+            return ([x for x in xs if x is not None],
+                    [y for x, y in zip(xs, ys) if x is not None])
+
+        x_cpu, y_cpu_used = _to_rel_series(mpstat, 1)
+        x_if,  y_if_in    = _to_rel_series(ifstat, 1)
+        _,     y_if_out   = _to_rel_series(ifstat, 2)
+        x_io,  y_io_wrtn  = _to_rel_series(iostat, 3)
+        y_if_total = [a + b for a, b in zip(y_if_in, y_if_out)]
+        per_host[host] = dict(
+            x_cpu=x_cpu, y_cpu=y_cpu_used,
+            x_if=x_if,   y_if=[v / 1024.0 for v in y_if_total],
+            x_io=x_io,   y_io=[v / 1024.0 for v in y_io_wrtn],
+            n_mp=len(mpstat), n_io=len(iostat), n_if=len(ifstat),
+        )
+
+    if not per_host:
+        sys.exit("No host resource data found")
+
+    raw_windows = find_per_source_migration_windows(expdir)
+    migration_bands: list[tuple[float, float]] = []
+    for src, p, d in raw_windows:
+        ps = auto_tz_offset(p, t0)
+        ds = auto_tz_offset(d, t0)
+        if ps is None or ds is None:
+            continue
+        s_rel = to_rel(ps, t0)
+        e_rel = to_rel(ds, t0)
+        if s_rel is not None and e_rel is not None and e_rel > s_rel:
+            migration_bands.append((s_rel, e_rel))
+
+    workload = expdir.name
+    for prefix in ("custom_reshard_v2_", "custom_reshard_"):
+        if workload.startswith(prefix):
+            workload = workload[len(prefix):]
+            break
+
+    # 3 panels side-by-side, each ≈ φ:1 (width:height).
+    PHI = 1.618
+    panel_h = 4.0
+    panel_w = panel_h * PHI  # ≈ 6.47
+    fig_w   = 3 * panel_w + 2 * 0.35 * panel_w + 0.8
+    fig_h   = panel_h + 1.2  # room for x-label + footer legend
+    fig, axes = plt.subplots(
+        1, 3, figsize=(fig_w, fig_h), sharex=True,
+        gridspec_kw={"width_ratios": [1, 1, 1], "wspace": 0.35},
+        facecolor=FIG_BG,
+    )
+    ax_cpu, ax_net, ax_disk = axes
+    for ax in axes:
+        _stylize_axes(ax)
+
+    for i, (host, d) in enumerate(per_host.items()):
+        style = dict(HOST_STYLES[i % len(HOST_STYLES)])
+        style.setdefault("markeredgecolor", "#1a1a1a")
+        common = dict(color="#1a1a1a", linewidth=1.5,
+                      markevery=max(1, 4 + i))
+        ax_cpu.plot(d["x_cpu"], d["y_cpu"], label=host, **common, **style)
+        ax_net.plot(d["x_if"],  d["y_if"],  label=host, **common, **style)
+        ax_disk.plot(d["x_io"], d["y_io"], label=host, **common, **style)
+
+    ax_cpu.set_ylabel("CPU used (%)")
+    ax_cpu.set_ylim(0, 25)
+    ax_cpu.yaxis.set_major_locator(mticker.FixedLocator([0, 10, 20]))
+    ax_cpu.set_title("CPU Utilization", pad=8)
+    ax_net.set_ylabel("Net total (MB/s)")
+    ax_net.set_title("Network Throughput (YCSB Clients)", pad=8)
+    ax_disk.set_ylabel("Disk write (MB/s)")
+    ax_disk.set_title("Disk", pad=8)
+    # Side-by-side: every panel needs its own x-axis label.
+    for ax in axes:
+        ax.set_xlabel("Time since YCSB start (seconds)")
+
+    for s_rel, e_rel in migration_bands:
+        for ax in axes:
+            ax.axvspan(s_rel, e_rel, alpha=0.20,
+                       color=PHASE_COLORS["BAND_FILL"], zorder=1)
+
+    for ax in axes:
+        ax.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
+
+    handles, labels = ax_cpu.get_legend_handles_labels()
+    fig.legend(
+        handles, labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.10),
+        ncol=min(len(labels), 6),
+        frameon=False,
+        handlelength=2.4,
+        handletextpad=0.5,
+        columnspacing=1.6,
+    )
+
+    plt.subplots_adjust(left=0.08, right=0.97, top=0.95, bottom=0.13)
+    fig.align_ylabels(axes)
+    for ax in axes:
+        _bold_tick_labels(ax)
+    plt.savefig(output, dpi=300, bbox_inches="tight")
+    print(f"wrote {output}")
+    for host, d in per_host.items():
+        print(f"  {host}: mpstat={d['n_mp']} iostat={d['n_io']} ifstat={d['n_if']}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -805,14 +960,12 @@ def main() -> None:
     plot(expdir, output)
 
     if args.with_resources:
-        for host in args.hosts:
-            # Output filename matches YCSB output extension.
-            ext = output.suffix or ".png"
-            res_out = expdir / f"resources_{host}{ext}"
-            try:
-                plot_resources(expdir, res_out, host=host)
-            except SystemExit as e:
-                print(f"WARN: {e}")
+        ext = output.suffix or ".png"
+        res_out = output.parent / f"resources{ext}"
+        try:
+            plot_resources_combined(expdir, res_out, hosts=args.hosts)
+        except SystemExit as e:
+            print(f"WARN: {e}")
 
 
 if __name__ == "__main__":

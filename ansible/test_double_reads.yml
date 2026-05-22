@@ -1,0 +1,261 @@
+---
+# Double-read correctness test with slot-ownership timeline.
+#
+# Spins up a clean cluster, runs DoubleReadCorrectnessTest (a small single-
+# threaded driver that exercises the parallel two-sided read path with
+# deterministic versioned keys), triggers a single small migration, and
+# polls CLUSTER SLOTSTATE on every redis node at 50ms granularity so we
+# can correlate server + client views of slot ownership through the
+# whole migration.
+#
+# Outputs collected to /tmp/double_reads_test_<TS>/:
+#   client_trace.log         — client slotCache/slotOwner per 100ms
+#   slot_ownership.log       — server CLUSTER SLOTSTATE every 50ms × 4 hosts
+#   tool.stdout / tool.stderr — DoubleReadCorrectnessTest output (mismatch counts)
+#   verdict.txt              — human summary after analyze step
+#   timeline.txt             — per-slot unified timeline
+
+- name: "Compute result_dir on localhost (used by later plays via hostvars)"
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Set timestamp + result dir
+      set_fact:
+        result_dir: "/tmp/double_reads_test_{{ lookup('pipe','date +%Y%m%d_%H%M%S') }}"
+
+    - name: mkdir result_dir
+      file:
+        path: "{{ result_dir }}"
+        state: directory
+        mode: '0755'
+
+    - debug:
+        msg: "result_dir = {{ result_dir }}"
+
+- import_playbook: tasks/teardown/kill_processes.yml
+- import_playbook: tasks/teardown/clean_runtime.yml
+- import_playbook: tasks/cluster/start_redis_instances.yml
+- import_playbook: tasks/cluster/create_cluster.yml
+- import_playbook: tasks/cluster/add_migrate_nodes.yml
+
+- name: "Load deterministic keys (single-thread Java loader)"
+  hosts: ycsb_nodes[0]
+  become: yes
+  gather_facts: no
+  vars:
+    classpath: "/users/entall/ycsb_client/redis-binding/lib/*:/users/entall/ycsb_client/lib/*"
+  tasks:
+    - name: Run DoubleReadCorrectnessTest in --load-only mode
+      shell: |
+        java -cp "{{ classpath }}" site.ycsb.db.DoubleReadCorrectnessTest \
+          --seed-host {{ master_host }} --seed-port {{ master_port }} \
+          --num-keys 1000 --load-only 2>&1
+      register: load_out
+      changed_when: false
+
+    - debug: var=load_out.stdout_lines
+
+- name: "Start CLUSTER SLOTSTATE poller (50ms, on control node)"
+  hosts: localhost
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Launch Python poller (persistent TCP, 50ms interval)
+      shell: |
+        rm -f /tmp/slot_poller.pid
+        nohup setsid python3 /users/entall/rd/ansible/poll_slot_ownership.py \
+          --out {{ hostvars['localhost'].result_dir }}/slot_ownership.log \
+          --hosts redis0 redis1 redis2 redis3 \
+          --interval-ms 50 \
+          --slot-lo 0 --slot-hi 127 \
+          > {{ hostvars['localhost'].result_dir }}/poller.log 2>&1 < /dev/null &
+        disown
+        # Wait up to 2s for the poller to write its PID file
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if [ -f /tmp/slot_poller.pid ]; then break; fi
+          sleep 0.2
+        done
+        cat /tmp/slot_poller.pid 2>/dev/null || echo "no pid"
+      register: poller_pid_result
+      args:
+        executable: /bin/bash
+
+    - name: Persist poller PID
+      set_fact:
+        poller_pid: "{{ poller_pid_result.stdout_lines | last }}"
+        cacheable: yes
+
+    - debug:
+        msg: "poller pid = {{ poller_pid }}"
+
+- name: "Start DoubleReadCorrectnessTest run in background (~40s)"
+  hosts: ycsb_nodes[0]
+  become: yes
+  gather_facts: no
+  vars:
+    classpath: "/users/entall/ycsb_client/redis-binding/lib/*:/users/entall/ycsb_client/lib/*"
+  tasks:
+    - name: Clean prior client_trace.log so we don't append to stale data
+      file:
+        path: /tmp/client_trace.log
+        state: absent
+
+    - name: Kick off the tool async
+      shell: >
+        java -cp "{{ classpath }}" site.ycsb.db.DoubleReadCorrectnessTest
+        --seed-host {{ master_host }} --seed-port {{ master_port }}
+        --num-keys 1000
+        --slot-range 0..127
+        --duration-sec 40
+        --dump-interval-ms 100
+        --trace-out /tmp/client_trace.log
+        > /tmp/tool.stdout 2> /tmp/tool.stderr
+      async: 120
+      poll: 0
+      register: tool_async
+
+    - set_fact:
+        tool_jid: "{{ tool_async.ansible_job_id }}"
+        cacheable: yes
+
+- name: "Pause 3s so the tool warms up before migration"
+  hosts: redis_masters[0]
+  gather_facts: no
+  tasks:
+    - pause:
+        seconds: 3
+
+- name: "Trigger a small migration: slots 0..127 from redis0 to redis3"
+  hosts: redis0
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: CONFIG SET rdma-migration-port
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          CONFIG SET rdma-migration-port 17777
+      changed_when: false
+
+    - name: "RDMA MIGRATE redis3 8000 128 (slots 0..127)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE redis3 {{ master_port }} 128
+      register: migrate_result
+      changed_when: false
+
+    - debug: var=migrate_result.stdout
+
+    - set_fact:
+        migration_id: "{{ migrate_result.stdout | regex_search('migration_id=([0-9]+)', '\\1') | first }}"
+
+    - name: "Poll MIGRATE-STATUS until DONE or FAILED"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE-STATUS {{ migration_id }}
+      register: mig_status
+      retries: 120
+      delay: 1
+      until: >
+        mig_status.stdout is defined and
+        (mig_status.stdout_lines | first | default('')) in ['DONE','FAILED']
+      changed_when: false
+
+    - debug: var=mig_status.stdout_lines
+
+    - name: "Fail if migration FAILED"
+      fail:
+        msg: "Migration FAILED: {{ mig_status.stdout_lines | last }}"
+      when: (mig_status.stdout_lines | first | default('')) == 'FAILED'
+
+- name: "Wait 5s post-DONE so client cache settles"
+  hosts: redis_masters[0]
+  gather_facts: no
+  tasks:
+    - pause:
+        seconds: 5
+
+- name: "Wait for DoubleReadCorrectnessTest to finish, then collect outputs"
+  hosts: ycsb_nodes[0]
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Wait for async tool (continue even if it exits rc=1 — mismatches are expected output)
+      async_status:
+        jid: "{{ tool_jid }}"
+      register: tool_done
+      until: tool_done.finished
+      retries: 60
+      delay: 2
+      failed_when: false
+      ignore_errors: yes
+
+    - name: Fetch tool stdout
+      fetch:
+        src: /tmp/tool.stdout
+        dest: "{{ hostvars['localhost'].result_dir }}/tool.stdout"
+        flat: yes
+
+    - name: Fetch tool stderr
+      fetch:
+        src: /tmp/tool.stderr
+        dest: "{{ hostvars['localhost'].result_dir }}/tool.stderr"
+        flat: yes
+
+    - name: Fetch client_trace
+      fetch:
+        src: /tmp/client_trace.log
+        dest: "{{ hostvars['localhost'].result_dir }}/client_trace.log"
+        flat: yes
+
+- name: "Stop slot-ownership poller"
+  hosts: localhost
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: SIGTERM the poller
+      shell: |
+        if [ -n "{{ poller_pid }}" ] && [ "{{ poller_pid }}" != "no pid" ]; then
+          kill {{ poller_pid }} 2>/dev/null || true
+        fi
+        # Self-exclude: use pkill but skip our own shell + the playbook bash.
+        # SIGUSR1 first as a no-op probe — if no match, fine. Then SIGTERM.
+        pgrep -f poll_slot_ownership.py | while read p; do
+          if [ "$p" != "$$" ] && [ "$p" != "{{ ansible_pid | default('') }}" ]; then
+            kill "$p" 2>/dev/null || true
+          fi
+        done
+        sleep 0.2
+        echo "poller stopped"
+      args:
+        executable: /bin/bash
+      changed_when: false
+      ignore_errors: yes
+
+- name: "Run analyzer + print verdict"
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: analyze_double_read_trace.py
+      shell: |
+        python3 /users/entall/rd/analyze_double_read_trace.py \
+          --client-trace {{ result_dir }}/client_trace.log \
+          --server-trace {{ result_dir }}/slot_ownership.log \
+          --tool-out {{ result_dir }}/tool.stdout \
+          --tool-err {{ result_dir }}/tool.stderr \
+          --timeline-out {{ result_dir }}/timeline.txt \
+          --verdict-out {{ result_dir }}/verdict.txt \
+          --slot-range 0..127
+      register: analyze_out
+      changed_when: false
+
+    - name: Print verdict
+      shell: cat {{ result_dir }}/verdict.txt
+      register: verdict
+      changed_when: false
+
+    - debug:
+        msg: "{{ verdict.stdout_lines }}"
+
+    - debug:
+        msg: "Full results in {{ result_dir }}"
+      # result_dir is already on localhost from the first play

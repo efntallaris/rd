@@ -575,19 +575,35 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
      * main-thread insert touch the same bucket chain at the same time is
      * tiny. Combined with dbAdd's skip-if-present semantics, this is the
      * fast/lockless path. */
-    {
-        unsigned long total_entries = 0;
-        for (int b = 0; b < n_blocks; b++) {
-            char *buf = block_buffers[b];
-            if (buf == NULL) continue;
-            uint32_t n;
-            memcpy(&n, buf, sizeof(n));
-            total_entries += n;
-        }
-        if (total_entries > 0) {
-            kvstoreDictExpand(db->keys, slot, total_entries * 4);
-        }
+    unsigned long total_entries = 0;
+    for (int b = 0; b < n_blocks; b++) {
+        char *buf = block_buffers[b];
+        if (buf == NULL) continue;
+        uint32_t n;
+        memcpy(&n, buf, sizeof(n));
+        total_entries += n;
     }
+
+    /* Pre-size + pause MUST happen under the per-slot write lock. dictExpand
+     * mutates the dict's table pointers / rehashidx, and the main thread's
+     * Path B lookups (lookupKey → dictFindLink → _dictRehashStepIfNeeded)
+     * also mutate rehashidx — if they interleave with the expand, the bucket
+     * chain corrupts (cycle → lookup walks forever; or dict.c:423 assert).
+     * Once paused, _dictRehashStepIfNeeded is a no-op for both threads, so
+     * the per-key dbAdd loop below stays race-free with just the per-key
+     * lock. dictPauseRehashing/AutoResize are not undone until the loop ends. */
+    clusterSlotLockWriteNoTopology(slot);
+    cluster_slot_lock_held_by_thread++;
+    if (total_entries > 0) {
+        kvstoreDictExpand(db->keys, slot, total_entries * 4);
+    }
+    dict *slot_dict = kvstoreGetDict(db->keys, slot);
+    if (slot_dict) {
+        dictPauseRehashing(slot_dict);
+        dictPauseAutoResize(slot_dict);
+    }
+    cluster_slot_lock_held_by_thread--;
+    clusterSlotUnlockNoTopology(slot);
 
     int total_added = 0;
     for (int b = 0; b < n_blocks; b++) {
@@ -610,6 +626,26 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
                 break;
             }
             cursor += consumed;
+            /* Per-key write lock on the slot. Without this, our lookup+dbAdd
+             * races with main-thread Path B reads/writes (which take the same
+             * lock at db.c:295 / db.c:448), corrupting the dict bucket chain
+             * and leaving lookupKeyImpl walking a cycle forever. The lock is
+             * held only for one lookup+insert (~microseconds), so the main
+             * event loop is never starved. cluster_slot_lock_held_by_thread
+             * is set so nested Path B wraps in dbAddInternal/lookupKey skip
+             * the (non-recursive) self-lock. */
+            /* Lock the KEY's actual slot, not the backpatch `slot` param.
+             * A staged block fetched for slot S can hold a key that hashes
+             * to a different slot (donor-side block classification ≠ CRC16
+             * slot). dbAdd/lookupKeyWrite always act on getKeySlot(key)'s
+             * dict, so the lock must be on that same slot or we'd mutate an
+             * unlocked dict and race the main thread → corrupted bucket chain.
+             * Use keyHashSlot (pure CRC16) rather than getKeySlot — the
+             * latter reads server.current_client, which is unsafe off the
+             * main thread. */
+            int kslot = keyHashSlot(key->ptr, (int)sdslen(key->ptr));
+            clusterSlotLockWriteNoTopology(kslot);
+            cluster_slot_lock_held_by_thread++;
             if (lookupKeyWrite(db, key) == NULL) {
                 /* dbAdd takes the value by ref and consumes it. */
                 dbAdd(db, key, &val);
@@ -618,8 +654,14 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
                 /* Key already exists; drop the staged value. */
                 decrRefCount(val);
             }
+            cluster_slot_lock_held_by_thread--;
+            clusterSlotUnlockNoTopology(kslot);
             decrRefCount(key);
         }
+    }
+    if (slot_dict) {
+        dictResumeRehashing(slot_dict);
+        dictResumeAutoResize(slot_dict);
     }
     zfree(block_buffers);
     return total_added;
@@ -695,6 +737,8 @@ static int migrationBackpatchTick(struct aeEventLoop *el, long long id, void *cl
     }
 
     if (p->idx >= p->n_slots) {
+        /* NOTE: importing_slots_from[] cleanup reverted — see donor
+         * MIGRATE-DONE site for rationale. */
         serverLog(LL_NOTICE,
             "RDMA DONE-SLOTS (chunked): finished %d slots, applied %lld keys total",
             p->n_slots, p->applied);
@@ -988,14 +1032,12 @@ static void *backpatchPoolWorkerMain(void *arg) {
         listDelNode(backpatch_work_queue, ln);
         pthread_mutex_unlock(&backpatch_work_mu);
 
-        /* Lock-free backpatch: per-slot dict is pre-sized to 4x in
-         * rdmaBackpatchSlot so no rehash fires; bucket collisions are rare
-         * enough at ~25% load factor that we can tolerate the residual race
-         * with concurrent main-thread inserts. cluster_slot_lock_held_by_thread
-         * is still set so any nested Path B checks see "lock held" and skip. */
-        cluster_slot_lock_held_by_thread++;
+        /* Per-key locking: rdmaBackpatchSlot takes the per-slot write lock
+         * around each lookup+dbAdd internally (microseconds per key). Path B
+         * read/write wraps in db.c serialize against the same lock, so the
+         * dict bucket chain is never mutated concurrently. The pause inside
+         * rdmaBackpatchSlot also prevents the rehash-state race in dict.c. */
         int added = rdmaBackpatchSlot(w->db, w->slot);
-        cluster_slot_lock_held_by_thread--;
 
         backpatchBatch *b = w->batch;
         atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
@@ -1014,6 +1056,8 @@ static void *backpatchPoolWorkerMain(void *arg) {
             /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
             kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
             kvstoreFenwickRebuild(server.db[0].keys);
+            /* NOTE: importing_slots_from[] cleanup reverted — see donor
+             * MIGRATE-DONE site for rationale. */
             /* Note: recipient's slot meta is already STABLE (set in RECV-FLIP). */
             serverLog(LL_NOTICE,
                 "RDMA backpatch-thread: batch DONE from %.*s mig_id=%lld "
@@ -2898,6 +2942,15 @@ static void *migrationWorker(void *arg) {
         server.cluster->slot_mig_state[s] = (uint8_t) SLOT_STATE_STABLE;
         server.cluster->slot_peer_endpoint[s][0] = '\0';
     }
+
+    /* NOTE: previously cleared migrating_slots_to[] here to close the
+     * ~5.5% throughput gap vs 4-node-baseline (the cluster.c routing
+     * walks importing_slot/v2_src_serving branches when this is set).
+     * Reverted because it broke quorum: ~10s after cleanup, the
+     * cluster marked the recipient as failing. Root cause not yet
+     * identified — likely a routing interaction post-FLIP+post-cleanup
+     * that causes redis3's main thread to fall behind on cluster
+     * heartbeats. Keep migrating_slots_to[] set for now. */
 
     pthread_mutex_lock(&mig->mu);
     mig->state = RDMA_MIG_DONE;

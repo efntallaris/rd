@@ -30,8 +30,8 @@ node_conf: "/users/entall/{{ inventory_hostname }}.conf"
 
 # ─── YCSB settings ─────────────────────────────────────────────────────────
 ycsb_loader_instance: ycsb0
-ycsb_threads_load: 200
-ycsb_threads_run: 200
+ycsb_threads_load: 50
+ycsb_threads_run: 50
 ycsb_timeout: 10000
 
 # ─── Experiment ─────────────────────────────────────────────────────────────
