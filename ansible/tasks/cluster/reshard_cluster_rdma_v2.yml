@@ -39,10 +39,6 @@
       set_fact:
         src_rdma_port: "{{ (rdma_port_base | int) + (groups['redis_masters'].index(inventory_hostname) | int) }}"
 
-    - name: Log RDMA reshard v2 start
-      debug:
-        msg: "[{{ inventory_hostname }}] RDMA RESHARD v2 -> {{ reshard_target }}:{{ master_port }} for {{ reshard_slots_per_source }} slots (own RDMA port {{ src_rdma_port }})"
-
     - name: "CONFIG SET rdma-migration-port to per-source value"
       shell: |
         {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
@@ -57,10 +53,6 @@
       register: migrate_result
       changed_when: "'OK' in migrate_result.stdout"
 
-    - name: Show MIGRATE dispatch result
-      debug:
-        var: migrate_result.stdout
-
     - name: "Parse migration_id from dispatch reply"
       set_fact:
         migration_id: "{{ migrate_result.stdout
@@ -73,32 +65,18 @@
           RDMA MIGRATE-STATUS {{ migration_id }}
       register: mig_status
       changed_when: false
-      retries: 600                 # at delay=1, up to 10 minutes
-      delay: 1
+      # Tight poll: 200 ms × 3000 = 10 min cap. Used to be 1 s × 600.
+      retries: 3000
+      delay: 0.2
       until: >
         mig_status.stdout is defined and
         (mig_status.stdout_lines | first | default('')) in ['DONE','FAILED']
-
-    - name: Show final MIGRATE-STATUS reply
-      debug:
-        var: mig_status.stdout_lines
 
     - name: "Fail loudly if migration ended in FAILED state"
       fail:
         msg: "[{{ inventory_hostname }}] RDMA MIGRATE id={{ migration_id }} FAILED: {{ mig_status.stdout_lines | last }}"
       when: (mig_status.stdout_lines | first | default('')) == 'FAILED'
 
-    - name: "Post-migration: dump VmPin on source"
-      shell: |
-        PID=$(pgrep -f 'redis-server.*:{{ master_port }}' | head -1)
-        if [ -n "$PID" ]; then grep -E 'VmPin|VmRSS' /proc/$PID/status; else echo "pid not found"; fi
-      register: vmpin
-      changed_when: false
-
-    - name: Show pinned memory after RDMA MIGRATE
-      debug:
-        var: vmpin.stdout_lines
-
-    - name: "10-second dwell so recipient CPU settles between migrations"
-      pause:
-        seconds: 10
+    # Removed: log start debug, dispatch debug, status debug, VmPin dump,
+    # pinned-memory debug, inter-migration dwell. They contributed ~5-7s
+    # of pure ansible orchestration overhead between migrations.

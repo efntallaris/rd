@@ -735,6 +735,19 @@ dictType rdmaMigrationsDictType = {
     NULL                        /* allow to expand */
 };
 
+/* Orchestrator-side reshard tracking. Key is sds decimal of the
+ * orchestration id; value is rdmaOrchestration* freed via
+ * rdmaOrchestrationFree (cluster_rdma.c). */
+dictType rdmaOrchestrationsDictType = {
+    dictSdsHash,
+    NULL,
+    NULL,
+    dictSdsKeyCompare,
+    dictSdsDestructor,
+    rdmaOrchestrationFree,
+    NULL
+};
+
 /* Dict for for case-insensitive search using null terminated C strings.
  * The keys stored in dict are sds though. */
 dictType stringSetDictType = {
@@ -2393,6 +2406,9 @@ void initServerConfig(void) {
     server.rdma_migrations = dictCreate(&rdmaMigrationsDictType);
     server.rdma_migration_next_id = 1;
     server.rdma_migration_last_id = 0;
+    server.rdma_orchestrations = dictCreate(&rdmaOrchestrationsDictType);
+    server.rdma_orchestration_next_id = 1;
+    server.rdma_orchestration_last_id = 0;
     server.next_client_id = 1; /* Client IDs, start from 1 .*/
     server.page_size = sysconf(_SC_PAGESIZE);
     server.pause_cron = 0;

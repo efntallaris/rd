@@ -292,7 +292,24 @@ kvobj *lookupKey(redisDb *db, robj *key, int flags, dictEntryLink *link) {
         slot = getKeySlot(key->ptr);
         wrap = clusterSlotIsImporting(slot);
     }
-    if (wrap) { clusterSlotLockReadNoTopology(slot); cluster_slot_lock_held_by_thread++; }
+    if (wrap) {
+        /* Read lookups never block the event loop: if the backpatch worker
+         * holds the per-slot wrlock, try-lock fails and we return NULL — the
+         * key is "not locally present right now", which the client's
+         * two-sided read resolves from the donor. Write lookups still take
+         * the blocking rdlock: a false NULL there could make a read-modify-
+         * write clobber a value that's only on the donor, and the wait is
+         * just the worker's ~µs per-key hold. */
+        if (!(flags & LOOKUP_WRITE)) {
+            if (!clusterSlotTryLockReadNoTopology(slot)) return NULL;
+            cluster_slot_lock_held_by_thread++;
+            kvobj *r = lookupKeyImpl(db, key, flags, link);
+            cluster_slot_lock_held_by_thread--;
+            clusterSlotUnlockNoTopology(slot);
+            return r;
+        }
+        clusterSlotLockReadNoTopology(slot); cluster_slot_lock_held_by_thread++;
+    }
     kvobj *r = lookupKeyImpl(db, key, flags, link);
     if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;

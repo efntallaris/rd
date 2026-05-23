@@ -1020,6 +1020,17 @@ void clusterSlotLockReadNoTopology(int slot) {
     pthread_rwlock_rdlock(&server.cluster->slot_locks[slot]);
 }
 
+/* Non-blocking rdlock acquire. Returns 1 if the lock was taken (caller must
+ * later clusterSlotUnlockNoTopology), 0 if it is currently held for write
+ * (e.g. by the backpatch worker mid-key). Lets the main-thread read path
+ * avoid stalling the event loop: on a 0 return the caller falls back to the
+ * donor (two-sided read) instead of waiting. */
+int clusterSlotTryLockReadNoTopology(int slot) {
+    if (server.cluster == NULL) return 1;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    return pthread_rwlock_tryrdlock(&server.cluster->slot_locks[slot]) == 0;
+}
+
 void clusterSlotLockWriteNoTopology(int slot) {
     if (server.cluster == NULL) return;
     serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
@@ -1074,7 +1085,18 @@ slotMigState slotMigStateGet(int slot, char *peer_out, size_t peer_out_sz) {
         if (peer_out && peer_out_sz > 0) peer_out[0] = '\0';
         return SLOT_STATE_STABLE;
     }
-    clusterSlotLockRead(slot);
+    /* Non-blocking, like getNodeBySlot: this is on the per-command routing
+     * path. The backpatch worker holds the per-slot wrlock in ~µs bursts but
+     * never writes slot_mig_state / slot_peer_endpoint — those change only at
+     * migration state transitions (PREP/FLIP/DONE) under clusterSlotLockWrite,
+     * which is not concurrent with the per-key backpatch loop. So take the
+     * topology rdlock and TRY the per-slot rdlock; on contention (worker holds
+     * the wrlock) read the migration-state fields lock-free — they're stable
+     * because the only contending holder isn't writing them. Blocking here
+     * would freeze the whole event loop for every command to a slot that's
+     * mid-backpatch. */
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+    int got = (pthread_rwlock_tryrdlock(&server.cluster->slot_locks[slot]) == 0);
     slotMigState s = (slotMigState) server.cluster->slot_mig_state[slot];
     if (peer_out && peer_out_sz > 0) {
         size_t n = strnlen(server.cluster->slot_peer_endpoint[slot],
@@ -1083,7 +1105,8 @@ slotMigState slotMigStateGet(int slot, char *peer_out, size_t peer_out_sz) {
         memcpy(peer_out, server.cluster->slot_peer_endpoint[slot], n);
         peer_out[n] = '\0';
     }
-    clusterSlotUnlock(slot);
+    if (got) pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
+    pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
     return s;
 }
 
@@ -6714,17 +6737,32 @@ clusterNode *clusterNodeGetSlave(clusterNode *node, int slave_idx) {
 /* Single-slot reads on the hot path. Each takes the slot rdlock so we are
  * consistent with the recipient-apply worker writes. Callers must NOT hold
  * any cluster lock when entering — these helpers take their own. */
+/* Non-blocking pointer reads on the routing hot path (getNodeByQuery). Like
+ * getNodeBySlot/slotMigStateGet: the backpatch worker holds the per-slot
+ * wrlock per key but never writes migrating_slots_to[]/importing_slots_from[]
+ * (those change only at SETSLOT/migration transitions under the topology
+ * write path). Take the topology rdlock and try the per-slot rdlock; on
+ * contention read the pointer lock-free (aligned ptr load is atomic) so a
+ * single in-flight backpatch key cannot freeze the event loop. */
 clusterNode *getMigratingSlotDest(int slot) {
-    clusterSlotLockRead(slot);
+    if (server.cluster == NULL) return NULL;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+    int got = (pthread_rwlock_tryrdlock(&server.cluster->slot_locks[slot]) == 0);
     clusterNode *n = server.cluster->migrating_slots_to[slot];
-    clusterSlotUnlock(slot);
+    if (got) pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
+    pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
     return n;
 }
 
 clusterNode *getImportingSlotSource(int slot) {
-    clusterSlotLockRead(slot);
+    if (server.cluster == NULL) return NULL;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+    int got = (pthread_rwlock_tryrdlock(&server.cluster->slot_locks[slot]) == 0);
     clusterNode *n = server.cluster->importing_slots_from[slot];
-    clusterSlotUnlock(slot);
+    if (got) pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
+    pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
     return n;
 }
 
@@ -6733,9 +6771,30 @@ int isClusterHealthy(void) {
 }
 
 clusterNode *getNodeBySlot(int slot) {
-    clusterSlotLockRead(slot);
-    clusterNode *n = server.cluster->slots[slot];
-    clusterSlotUnlock(slot);
+    if (server.cluster == NULL) return NULL;
+    serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
+    /* Non-blocking on the per-slot lock. This is on the routing path of
+     * EVERY command (getNodeByQuery). The backpatch worker holds the
+     * per-slot wrlock in ~µs bursts while applying keys, but it mutates only
+     * the slot's dict — never the topology pointer slots[slot]. If we block
+     * here, a single in-flight backpatch key stalls the whole event loop,
+     * which is what craters throughput to 0 during a migration.
+     *
+     * So: hold the topology rdlock (real SETSLOT/topology writers take the
+     * topology WRITE lock, and the backpatch worker takes neither), then
+     * TRY the per-slot rdlock. On contention (backpatch worker holds the
+     * wrlock) read slots[slot] lock-free — an aligned pointer load is atomic
+     * and yields either the pre- or post-reassignment node, both valid; the
+     * client retries on MOVED if stale. */
+    pthread_rwlock_rdlock(&server.cluster->cluster_topology_lock);
+    clusterNode *n;
+    if (pthread_rwlock_tryrdlock(&server.cluster->slot_locks[slot]) == 0) {
+        n = server.cluster->slots[slot];
+        pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
+    } else {
+        n = server.cluster->slots[slot];
+    }
+    pthread_rwlock_unlock(&server.cluster->cluster_topology_lock);
     return n;
 }
 

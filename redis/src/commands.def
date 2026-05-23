@@ -1290,6 +1290,78 @@ struct COMMAND_ARG RDMA_MIGRATE_Args[] = {
 {MAKE_ARG("slot-count",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA MIGRATE_ALL ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA MIGRATE_ALL history */
+#define RDMA_MIGRATE_ALL_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA MIGRATE_ALL tips */
+#define RDMA_MIGRATE_ALL_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA MIGRATE_ALL key specs */
+#define RDMA_MIGRATE_ALL_Keyspecs NULL
+#endif
+
+/* RDMA MIGRATE_ALL argument table */
+struct COMMAND_ARG RDMA_MIGRATE_ALL_Args[] = {
+{MAKE_ARG("recipient-host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("recipient-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slots-per-source",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("peer-endpoint",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/********** RDMA MIGRATE_ALL_STATUS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA MIGRATE_ALL_STATUS history */
+#define RDMA_MIGRATE_ALL_STATUS_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA MIGRATE_ALL_STATUS tips */
+#define RDMA_MIGRATE_ALL_STATUS_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA MIGRATE_ALL_STATUS key specs */
+#define RDMA_MIGRATE_ALL_STATUS_Keyspecs NULL
+#endif
+
+/* RDMA MIGRATE_ALL_STATUS argument table */
+struct COMMAND_ARG RDMA_MIGRATE_ALL_STATUS_Args[] = {
+{MAKE_ARG("orchestration-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA MIGRATE_COMPLETE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA MIGRATE_COMPLETE history */
+#define RDMA_MIGRATE_COMPLETE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA MIGRATE_COMPLETE tips */
+#define RDMA_MIGRATE_COMPLETE_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA MIGRATE_COMPLETE key specs */
+#define RDMA_MIGRATE_COMPLETE_Keyspecs NULL
+#endif
+
+/* RDMA MIGRATE_COMPLETE argument table */
+struct COMMAND_ARG RDMA_MIGRATE_COMPLETE_Args[] = {
+{MAKE_ARG("orchestration-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("donor-node-id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("state",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("applied",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA MIGRATE_PREP ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1514,7 +1586,10 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("done-slots","Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_History,0,RDMA_DONE_SLOTS_Tips,0,rdmaDoneSlotsCommand,-3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_Keyspecs,0,NULL,1),.args=RDMA_DONE_SLOTS_Args},
 {MAKE_CMD("init-client","Donor side: establish an RDMA queue-pair to a recipient node.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_CLIENT_History,0,RDMA_INIT_CLIENT_Tips,0,rdmaInitClientCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_CLIENT_Keyspecs,0,NULL,2),.args=RDMA_INIT_CLIENT_Args},
 {MAKE_CMD("init-server","Recipient side: start listening on an RDMA endpoint.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_SERVER_History,0,RDMA_INIT_SERVER_Tips,0,rdmaInitServerCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_SERVER_Keyspecs,0,NULL,1),.args=RDMA_INIT_SERVER_Args},
-{MAKE_CMD("migrate","Source side: kick off an autonomous-thread RDMA slot migration that runs the full PREP → REGISTER → FLIP → EXEC pipeline off the event loop. Returns +OK migration_id=<N> running immediately; poll RDMA MIGRATE-STATUS for progress.","O(N) in number of slots (registration is the dominant cost).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_History,0,RDMA_MIGRATE_Tips,0,rdmaMigrateCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_Args},
+{MAKE_CMD("migrate","Source side: kick off an autonomous-thread RDMA slot migration that runs the full PREP → REGISTER → FLIP → EXEC pipeline off the event loop. Returns +OK migration_id=<N> running immediately; poll RDMA MIGRATE-STATUS for progress.","O(N) in number of slots (registration is the dominant cost).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_History,0,RDMA_MIGRATE_Tips,0,rdmaMigrateCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_Args},
+{MAKE_CMD("migrate-all","Orchestrator side: dispatch RDMA MIGRATE to N peer donors (self + each peer-host:port) in parallel and register an aggregated orchestration record. Each peer donor calls back via RDMA MIGRATE-COMPLETE when its worker enters DONE/FAILED. Returns +OK orchestration_id=<N> running immediately; poll RDMA MIGRATE-ALL-STATUS for progress.","O(N) in number of peer donors (one TCP dispatch each at command time).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_ALL_History,0,RDMA_MIGRATE_ALL_Tips,0,rdmaMigrateAllCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_ALL_Keyspecs,0,NULL,4),.args=RDMA_MIGRATE_ALL_Args},
+{MAKE_CMD("migrate-all-status","Orchestrator side: report aggregated state of an in-flight or finished RDMA MIGRATE-ALL. Reply is a 6-element array: state (string), n_donors, n_terminal, n_failed, elapsed_seconds, per-donor-details (array of bulks).","O(N) in number of donors.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_ALL_STATUS_History,0,RDMA_MIGRATE_ALL_STATUS_Tips,0,rdmaMigrateAllStatusCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_ALL_STATUS_Keyspecs,0,NULL,1),.args=RDMA_MIGRATE_ALL_STATUS_Args},
+{MAKE_CMD("migrate-complete","Internal callback: a peer donor's migrationWorker invokes this on the orchestrator node when it enters DONE/FAILED. Records the per-donor terminal state in the orchestration; when all donors are terminal, transitions the orchestration itself to DONE/FAILED.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_COMPLETE_History,0,RDMA_MIGRATE_COMPLETE_Tips,0,rdmaMigrateCompleteCommand,6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_COMPLETE_Keyspecs,0,NULL,4),.args=RDMA_MIGRATE_COMPLETE_Args},
 {MAKE_CMD("migrate-prep","Source side: open (or reuse) an RDMA control link to the recipient and pre-register one landing block per listed slot.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_PREP_History,0,RDMA_MIGRATE_PREP_Tips,0,rdmaMigratePrepCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_PREP_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_PREP_Args},
 {MAKE_CMD("migrate-status","Source side: report the state of an in-flight or recently-finished RDMA MIGRATE. With no argument returns the latest migration's state. Reply is an 8-element array: state (string), registered, n_slots, slot_first, slot_last, elapsed_seconds, ended_flag, err.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_STATUS_History,0,RDMA_MIGRATE_STATUS_Tips,0,rdmaMigrateStatusCommand,-2,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_STATUS_Keyspecs,0,NULL,1),.args=RDMA_MIGRATE_STATUS_Args},
 {MAKE_CMD("register-block-slots","Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.","O(N) where N is the total number of blocks requested.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_BLOCK_SLOTS_History,0,RDMA_REGISTER_BLOCK_SLOTS_Tips,0,rdmaRegisterBlockSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_BLOCK_SLOTS_Keyspecs,0,NULL,2),.args=RDMA_REGISTER_BLOCK_SLOTS_Args},

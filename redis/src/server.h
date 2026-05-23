@@ -2015,6 +2015,9 @@ struct redisServer {
     dict *rdma_migrations;             /* Source side: in-flight + recently-finished RDMA MIGRATE state, keyed by migration id as decimal sds */
     long long rdma_migration_next_id;  /* Monotonic counter for new migrations. */
     long long rdma_migration_last_id;  /* Id of the most-recently-dispatched migration (for RDMA MIGRATE-STATUS with no arg). */
+    dict *rdma_orchestrations;         /* Orchestrator node: in-flight + recently-finished RDMA MIGRATE-ALL state, keyed by orchestration id as decimal sds */
+    long long rdma_orchestration_next_id;  /* Monotonic counter for new orchestrations. */
+    long long rdma_orchestration_last_id;  /* Id of the most-recently-dispatched orchestration. */
     redisAtomic uint64_t next_client_id; /* Next client unique ID. Incremental. */
     int protected_mode;         /* Don't accept external connections. */
     int io_threads_num;         /* Number of IO threads to use. */
@@ -4405,6 +4408,9 @@ void rdmaDoneSlotsCommand(client *c);
 void rdmaMigrateCommand(client *c);
 void rdmaMigrateStatusCommand(client *c);
 void rdmaBackpatchStatusCommand(client *c);
+void rdmaMigrateAllCommand(client *c);
+void rdmaMigrateAllStatusCommand(client *c);
+void rdmaMigrateCompleteCommand(client *c);
 void rdmaRegisterResultCommand(client *c);
 void restoreCommand(client *c);
 void migrateCommand(client *c);

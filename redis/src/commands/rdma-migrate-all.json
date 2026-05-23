@@ -1,0 +1,22 @@
+{
+    "MIGRATE-ALL": {
+        "summary": "Orchestrator side: dispatch RDMA MIGRATE to N peer donors (self + each peer-host:port) in parallel and register an aggregated orchestration record. Each peer donor calls back via RDMA MIGRATE-COMPLETE when its worker enters DONE/FAILED. Returns +OK orchestration_id=<N> running immediately; poll RDMA MIGRATE-ALL-STATUS for progress.",
+        "complexity": "O(N) in number of peer donors (one TCP dispatch each at command time).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -5,
+        "container": "RDMA",
+        "function": "rdmaMigrateAllCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "recipient-host", "type": "string" },
+            { "name": "recipient-port", "type": "integer" },
+            { "name": "slots-per-source", "type": "integer" },
+            { "name": "peer-endpoint", "type": "string", "multiple": true }
+        ]
+    }
+}

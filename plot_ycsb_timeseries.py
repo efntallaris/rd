@@ -394,9 +394,9 @@ def plot(expdir: Path, output: Path) -> None:
     # Y-axis in Kops/s with exactly 3 ticks framing the data range (no 0 tick).
     ax_tp.yaxis.set_major_formatter(
         mticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}"))
-    # Fixed ticks at 300/350/400 Kops/s so the throughput series sits mid-axis.
-    ax_tp.set_ylim(260_000, 420_000)
-    ax_tp.yaxis.set_major_locator(mticker.FixedLocator([300_000, 350_000, 400_000]))
+    # Fixed ticks at 300/350/400/450 Kops/s so the throughput series sits mid-axis.
+    ax_tp.set_ylim(260_000, 450_000)
+    ax_tp.yaxis.set_major_locator(mticker.FixedLocator([300_000, 350_000, 400_000, 450_000]))
 
     # ---- Panel (b): Avg latency -------------------------------------------------
     ax_lat.plot(t_rel, rd_lat, label="READ", zorder=3, **LATENCY_READ_STYLE)
@@ -728,7 +728,7 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
     ax_cpu.plot(x_cpu, y_cpu_iow,  label="iowait (%)",  **SECONDARY)
     ax_cpu.set_ylabel("CPU (%)")
     ax_cpu.set_ylim(0, 100)
-    ax_cpu.set_title(f"CPU utilization — {host} ({workload})", pad=8)
+    ax_cpu.set_title(f"CPU utilization — {host}", pad=8)
 
     # ---- (b) Network ----------------------------------------------------------
     def _mb(v):
@@ -736,14 +736,16 @@ def plot_resources(expdir: Path, output: Path, host: str) -> None:
     ax_net.plot(x_if, _mb(y_if_in),  label="RX (MB/s)", **PRIMARY)
     ax_net.plot(x_if, _mb(y_if_out), label="TX (MB/s)", **SECONDARY)
     ax_net.set_ylabel("Net Th/put (MB/s)")
-    ax_net.set_title(f"Network — {host} (RDMA NIC ens1f1np1)", pad=8)
+    ax_net.set_title(f"Network — {host}", pad=8)
+    ax_net.set_ylim(0, 35)
+    ax_net.yaxis.set_major_locator(mticker.FixedLocator([0, 15, 30]))
 
     # ---- (c) Disk -------------------------------------------------------------
     ax_disk.plot(x_io, _mb(y_io_read), label="Read (MB/s)",  **PRIMARY)
     ax_disk.plot(x_io, _mb(y_io_wrtn), label="Write (MB/s)", **SECONDARY)
     ax_disk.set_ylabel("Disk (MB/s)")
     ax_disk.set_xlabel("Time since YCSB start (seconds)")
-    ax_disk.set_title(f"Disk — {host} (sda)", pad=8)
+    ax_disk.set_title(f"Disk — {host}", pad=8)
 
     # Migration bands across all panels.
     for s_rel, e_rel in migration_bands:

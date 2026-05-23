@@ -1,0 +1,58 @@
+---
+# Server-side orchestrator (RDMA MIGRATE-ALL).
+#
+# Replaces the serial:1 per-donor loop in reshard_cluster_rdma_v2.yml.
+# One ssh dispatch on redis_masters[0], one polling loop on the same node,
+# everything else happens server-side: the orchestrator dials peer donors
+# via TCP (RDMA MIGRATE --orchestrator ...), peers' workers call back with
+# RDMA MIGRATE-COMPLETE when they enter DONE/FAILED, and the orchestrator
+# transitions its own state. Per-source diagnostics live in each donor's
+# redis log as usual; nothing on the ansible critical path beyond the
+# dispatch + status poll.
+- name: "RDMA reshard v2 orchestrated: server-side multi-source migration"
+  hosts: redis_masters[0]
+  become: yes
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+  tasks:
+    - name: "Build peer-endpoint list"
+      set_fact:
+        peer_endpoints: >-
+          {{
+            groups['redis_masters']
+            | difference([inventory_hostname])
+            | map('regex_replace', '^(.+)$', '\1:' + master_port|string)
+            | list
+          }}
+
+    - name: "Dispatch RDMA MIGRATE-ALL"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL \
+          {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }} \
+          {{ peer_endpoints | join(' ') }}
+      register: dispatch
+      changed_when: "'OK' in dispatch.stdout"
+
+    - name: "Parse orchestration_id"
+      set_fact:
+        orch_id: "{{ dispatch.stdout
+                      | regex_search('orchestration_id=([0-9]+)', '\\1')
+                      | first }}"
+
+    - name: "Poll RDMA MIGRATE-ALL-STATUS until DONE or FAILED"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL-STATUS {{ orch_id }}
+      register: orch_status
+      changed_when: false
+      # 200 ms × 3000 = 10 min cap.
+      retries: 3000
+      delay: 0.2
+      until: >
+        orch_status.stdout is defined and
+        (orch_status.stdout_lines | first | default('')) in ['DONE','FAILED']
+
+    - name: "Fail if MIGRATE-ALL ended FAILED"
+      fail:
+        msg: "MIGRATE-ALL orch_id={{ orch_id }} FAILED: {{ orch_status.stdout_lines }}"
+      when: (orch_status.stdout_lines | first | default('')) == 'FAILED'

@@ -1,0 +1,19 @@
+{
+    "MIGRATE-ALL-STATUS": {
+        "summary": "Orchestrator side: report aggregated state of an in-flight or finished RDMA MIGRATE-ALL. Reply is a 6-element array: state (string), n_donors, n_terminal, n_failed, elapsed_seconds, per-donor-details (array of bulks).",
+        "complexity": "O(N) in number of donors.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 3,
+        "container": "RDMA",
+        "function": "rdmaMigrateAllStatusCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "orchestration-id", "type": "integer" }
+        ]
+    }
+}

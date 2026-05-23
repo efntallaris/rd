@@ -1,0 +1,22 @@
+{
+    "MIGRATE-COMPLETE": {
+        "summary": "Internal callback: a peer donor's migrationWorker invokes this on the orchestrator node when it enters DONE/FAILED. Records the per-donor terminal state in the orchestration; when all donors are terminal, transitions the orchestration itself to DONE/FAILED.",
+        "complexity": "O(1).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 6,
+        "container": "RDMA",
+        "function": "rdmaMigrateCompleteCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "orchestration-id", "type": "integer" },
+            { "name": "donor-node-id", "type": "string" },
+            { "name": "state", "type": "string" },
+            { "name": "applied", "type": "integer" }
+        ]
+    }
+}

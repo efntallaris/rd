@@ -606,6 +606,7 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
     clusterSlotUnlockNoTopology(slot);
 
     int total_added = 0;
+    int cross_slot_skipped = 0;
     for (int b = 0; b < n_blocks; b++) {
         char *buf = block_buffers[b];
         if (buf == NULL) continue;
@@ -644,6 +645,21 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
              * latter reads server.current_client, which is unsafe off the
              * main thread. */
             int kslot = keyHashSlot(key->ptr, (int)sdslen(key->ptr));
+            if (kslot != slot) {
+                /* This staged entry doesn't hash to the slot being migrated.
+                 * Adding it would touch a *different* slot's dict (kslot) that
+                 * this backpatch neither pre-sized nor paused. Worse, if kslot
+                 * is a stable (already-owned) slot, main-thread accessors skip
+                 * the per-slot lock entirely (clusterSlotIsImporting is false),
+                 * so our insert races them lock-free and corrupts the dict —
+                 * the intermittent dict.c:423 crash. Skip it: if kslot is also
+                 * migrating, its own block carries the key; otherwise it isn't
+                 * part of this migration. */
+                cross_slot_skipped++;
+                decrRefCount(val);
+                decrRefCount(key);
+                continue;
+            }
             clusterSlotLockWriteNoTopology(kslot);
             cluster_slot_lock_held_by_thread++;
             if (lookupKeyWrite(db, key) == NULL) {
@@ -662,6 +678,11 @@ static int rdmaBackpatchSlot(redisDb *db, int slot) {
     if (slot_dict) {
         dictResumeRehashing(slot_dict);
         dictResumeAutoResize(slot_dict);
+    }
+    if (cross_slot_skipped > 0) {
+        serverLog(LL_WARNING,
+            "RDMA backpatch: slot=%d skipped %d staged entries that hash to "
+            "other slots (donor block misclassification)", slot, cross_slot_skipped);
     }
     zfree(block_buffers);
     return total_added;
@@ -837,6 +858,48 @@ static int              backpatch_pool_started = 0;
 
 static dict *backpatch_batches_by_key = NULL;
 static pthread_mutex_t backpatch_batches_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* ====================================================================== *
+ *  Double-buffer backpatch (option 3).
+ *
+ *  Pool worker fills a per-slot SHADOW dict (worker-private) instead of
+ *  touching db->keys. When a slot's shadow is full, the worker enqueues a
+ *  merge job; the main thread's mergeBackpatchTick drains the queue
+ *  MERGE_KEYS_PER_TICK keys per tick, moving entries from shadow into the
+ *  live slot dict (or freeing them if live already has the key — live wins
+ *  because that's a client write that landed during the migration window).
+ *  A slot is counted as applied (batch->idx, ->applied, ->remaining) at
+ *  MERGE completion, not at shadow-fill completion, so BACKPATCH-STATUS
+ *  reports DONE only after the live dict has every staged key.
+ *
+ *  Concurrency invariants:
+ *    - Worker writes only to its slot's shadow. No live access. No locks
+ *      on live, no rehash pause, no cross-slot guard needed.
+ *    - Main thread owns live entirely (client traffic + merge). Single
+ *      writer to live → no dict races.
+ *    - The shadow handoff is via backpatch_merge_queue under
+ *      backpatch_merge_mu; the worker writes one byte to the existing
+ *      backpatch_dispose_pipe to wake the main thread, which arms the
+ *      merge timer if not already armed.
+ * ====================================================================== */
+
+typedef struct backpatchMergeWork {
+    backpatchBatch *batch;     /* parent batch */
+    redisDb        *db;        /* cached from batch->db */
+    int             slot;
+    dict           *shadow;    /* worker-filled, main-thread drains */
+    dictIterator   *iter;      /* persistent across ticks; NULL until first tick */
+    int             total;     /* shadow size at handoff (stats) */
+    int             moved;     /* entries transferred into live so far */
+} backpatchMergeWork;
+
+#define MERGE_KEYS_PER_TICK 512
+#define MERGE_TICK_DELAY_MS 1
+
+static list           *backpatch_merge_queue   = NULL; /* list of backpatchMergeWork* */
+static pthread_mutex_t backpatch_merge_mu      = PTHREAD_MUTEX_INITIALIZER;
+static long long       backpatch_merge_timer_id = -1;
+extern dictType        dbDictType;             /* server.c — shadow uses same type as live */
 
 static sds backpatchBatchKey(const char *src_node_id, long long src_mig_id) {
     return sdscatfmt(sdsempty(), "%s:%I", src_node_id, src_mig_id);
@@ -1014,6 +1077,218 @@ void recipientBackpatchMuUnlock(void)     {}
  * batch lands on the SPSC ring. The worker that decrements b->remaining to 0
  * transitions the batch to BACKPATCH_DONE and pushes to the dispose pipe,
  * inheriting the bookkeeping that the single-thread dispatcher used to do. */
+/* Worker-private: read the staged blocks for `slot`, allocate kvobjs into the
+ * recipient's r_allocator (its per-slot mutex makes that thread-safe), and
+ * insert each kvobj pointer into a fresh `shadow` dict. Returns the populated
+ * shadow (caller transfers ownership to the merge queue). Touches *no* live
+ * keyspace state, so no Path B locks, no rehash pause, no per-slot wrlock —
+ * the shadow is private to this thread until it's enqueued for merge. */
+static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
+                                         int *out_total, int *out_skipped)
+{
+    UNUSED(db);
+    if (out_total)   *out_total = 0;
+    if (out_skipped) *out_skipped = 0;
+
+    int n_blocks = 0;
+    char **block_buffers = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
+    if (block_buffers == NULL || n_blocks == 0) {
+        if (block_buffers) zfree(block_buffers);
+        return NULL;
+    }
+
+    unsigned long total_entries = 0;
+    for (int b = 0; b < n_blocks; b++) {
+        char *buf = block_buffers[b];
+        if (buf == NULL) continue;
+        uint32_t n;
+        memcpy(&n, buf, sizeof(n));
+        total_entries += n;
+    }
+
+    dict *shadow = dictCreate(&dbDictType);
+    if (total_entries > 0) {
+        /* 2x headroom — shadow is transient and won't see further growth. */
+        dictExpand(shadow, total_entries * 2);
+    }
+
+    int skipped = 0;
+    int total   = 0;
+    for (int b = 0; b < n_blocks; b++) {
+        char *buf = block_buffers[b];
+        if (buf == NULL) continue;
+        if (b == 0) rdmaDebugDumpSlotBytes("RCV-SHADOW", slot, buf);
+        uint32_t n_entries;
+        memcpy(&n_entries, buf, sizeof(n_entries));
+        if (n_entries == 0) continue;
+
+        size_t cursor = sizeof(uint32_t);
+        size_t cap    = RDMAMIG_BLOCK_SIZE_BYTES;
+        for (uint32_t i = 0; i < n_entries; i++) {
+            robj *key = NULL, *val = NULL;
+            size_t consumed = rdmaDecodeEntry(buf + cursor, cap - cursor, &key, &val);
+            if (consumed == 0) {
+                serverLog(LL_WARNING,
+                    "RDMA backpatch-shadow: malformed entry slot=%d block=%d entry=%u offset=%zu",
+                    slot, b, i, cursor);
+                break;
+            }
+            cursor += consumed;
+
+            int kslot = keyHashSlot(key->ptr, (int)sdslen(key->ptr));
+            if (kslot != slot) {
+                /* Donor block held a key that doesn't hash to this slot.
+                 * Drop it — it isn't part of this migration. */
+                skipped++;
+                decrRefCount(val);
+                decrRefCount(key);
+                continue;
+            }
+
+            /* Allocate kvobj into r_allocator (slot-keyed mutex inside makes
+             * this safe to call from the worker). Mirrors the r_allocator
+             * branch of dbAddInternalImpl ([db.c:482](redis/src/db.c#L482)). */
+            int allocated_new_block = 0;
+            kvobj *kv = r_allocator_insert_kvobj(
+                slot, (sds)key->ptr, (sds)val->ptr, &allocated_new_block);
+            initObjectLRUOrLFU(kv);
+
+            /* Insert kvobj into shadow. dbDictType is no_value=1, so the
+             * kvobj itself is the bucket entry. DICT_ERR means a duplicate
+             * was staged within this slot's blocks; free the new kvobj. */
+            if (dictAdd(shadow, kv, NULL) != DICT_OK) {
+                decrRefCount(kv);
+            } else {
+                total++;
+            }
+
+            decrRefCount(val);  /* r_allocator copied the bytes; drop transient. */
+            decrRefCount(key);  /* key sds was copied into the kvobj segment. */
+        }
+    }
+
+    zfree(block_buffers);
+    if (out_total)   *out_total = total;
+    if (out_skipped) *out_skipped = skipped;
+    return shadow;
+}
+
+/* Main thread: arm the merge timer if there's queued work and no timer is
+ * already running. Called from the dispose-pipe handler (worker writes the
+ * pipe after enqueuing) and from mergeBackpatchTick itself when re-queueing
+ * is needed. */
+static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *clientData);
+static void armMergeTimer(void) {
+    if (backpatch_merge_timer_id != -1) return;
+    pthread_mutex_lock(&backpatch_merge_mu);
+    int empty = (backpatch_merge_queue == NULL || listLength(backpatch_merge_queue) == 0);
+    pthread_mutex_unlock(&backpatch_merge_mu);
+    if (empty) return;
+    backpatch_merge_timer_id = aeCreateTimeEvent(server.el,
+        MERGE_TICK_DELAY_MS, mergeBackpatchTick, NULL, NULL);
+}
+
+/* Main thread: drain the head merge work item up to MERGE_KEYS_PER_TICK
+ * keys per tick. For each shadow entry, move the kvobj into the live slot
+ * dict if absent (shadow wins); otherwise leave it in the shadow to be
+ * freed at dictRelease (live wins — a client write landed during the
+ * window). When the head item is exhausted, free its shadow, mark the slot
+ * applied on the batch counter, and drop the item from the queue. */
+static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *clientData) {
+    UNUSED(el); UNUSED(id); UNUSED(clientData);
+
+    pthread_mutex_lock(&backpatch_merge_mu);
+    if (backpatch_merge_queue == NULL || listLength(backpatch_merge_queue) == 0) {
+        pthread_mutex_unlock(&backpatch_merge_mu);
+        backpatch_merge_timer_id = -1;
+        return AE_NOMORE;
+    }
+    listNode *ln = listFirst(backpatch_merge_queue);
+    backpatchMergeWork *w = listNodeValue(ln);
+    pthread_mutex_unlock(&backpatch_merge_mu);
+
+    /* Lazy iterator init on the first tick that touches this work item. */
+    if (w->iter == NULL && w->shadow != NULL) {
+        w->iter = dictGetSafeIterator(w->shadow);
+    }
+
+    int budget = MERGE_KEYS_PER_TICK;
+    if (w->iter != NULL) {
+        dictEntry *de;
+        while (budget > 0 && (de = dictNext(w->iter)) != NULL) {
+            /* dbDictType is no_value=1 so the entry IS the kvobj; pull the
+             * lookup sds via kvobjGetKey (used everywhere else: evict.c,
+             * cluster.c, keymeta.c). */
+            kvobj *kv = (kvobj *) dictGetKV(de);
+            sds    k  = kvobjGetKey(kv);
+
+            dictEntry *existing = NULL;
+            dictEntry *added = kvstoreDictAddRaw(w->db->keys, w->slot, kv, &existing);
+            if (added) {
+                /* Moved into live; detach from shadow so dictRelease won't
+                 * also free the kvobj. dictUnlink removes the bucket entry
+                 * without invoking the destructor. */
+                dictUnlink(w->shadow, k);
+                w->moved++;
+            }
+            /* else: live already has this key (a client write arrived
+             * during the migration window). Leave the kvobj in the shadow;
+             * dictRelease at end will free it via the dbDictType
+             * destructor. */
+            budget--;
+        }
+
+        if (de == NULL) {
+            /* Shadow exhausted. */
+            dictReleaseIterator(w->iter);
+            w->iter = NULL;
+            dictRelease(w->shadow);
+            w->shadow = NULL;
+        }
+    }
+
+    if (w->shadow == NULL) {
+        /* This slot is fully applied. Update the batch as the worker used
+         * to do, then drop the work item. If this was the last slot of
+         * the batch, transition to BACKPATCH_DONE and dispose. */
+        backpatchBatch *b = w->batch;
+        atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
+        atomic_fetch_add_explicit(&b->applied, w->moved, memory_order_relaxed);
+        int prev = atomic_fetch_sub_explicit(&b->remaining, 1, memory_order_acq_rel);
+        if (prev == 1) {
+            atomic_store_explicit(&b->state, BACKPATCH_DONE, memory_order_release);
+            b->t_ended = time(NULL);
+            atomicDecr(server.recipient_backpatch_in_progress, 1);
+            kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+            kvstoreFenwickRebuild(server.db[0].keys);
+            serverLog(LL_NOTICE,
+                "RDMA backpatch-merge: batch DONE from %.*s mig_id=%lld "
+                "n_slots=%d applied=%lld",
+                CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots,
+                (long long) atomic_load(&b->applied));
+            pthread_mutex_lock(&backpatch_dispose_mu);
+            listAddNodeTail(backpatch_dispose_list, b);
+            pthread_mutex_unlock(&backpatch_dispose_mu);
+            char tick = 1;
+            ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+            (void) wr;
+        }
+
+        pthread_mutex_lock(&backpatch_merge_mu);
+        listDelNode(backpatch_merge_queue, ln);
+        int more = listLength(backpatch_merge_queue) > 0;
+        pthread_mutex_unlock(&backpatch_merge_mu);
+        zfree(w);
+
+        if (!more) {
+            backpatch_merge_timer_id = -1;
+            return AE_NOMORE;
+        }
+    }
+
+    return MERGE_TICK_DELAY_MS;
+}
+
 static void *backpatchPoolWorkerMain(void *arg) {
     long worker_idx = (long) arg;
     while (1) {
@@ -1032,46 +1307,41 @@ static void *backpatchPoolWorkerMain(void *arg) {
         listDelNode(backpatch_work_queue, ln);
         pthread_mutex_unlock(&backpatch_work_mu);
 
-        /* Per-key locking: rdmaBackpatchSlot takes the per-slot write lock
-         * around each lookup+dbAdd internally (microseconds per key). Path B
-         * read/write wraps in db.c serialize against the same lock, so the
-         * dict bucket chain is never mutated concurrently. The pause inside
-         * rdmaBackpatchSlot also prevents the rehash-state race in dict.c. */
-        int added = rdmaBackpatchSlot(w->db, w->slot);
-
-        backpatchBatch *b = w->batch;
-        atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
-        atomic_fetch_add_explicit(&b->applied, added, memory_order_relaxed);
-
-        /* Last slot finishes the batch. acq_rel so the DONE store happens-after
-         * every worker's per-slot updates on this batch. */
-        int prev = atomic_fetch_sub_explicit(&b->remaining, 1, memory_order_acq_rel);
-        if (prev == 1) {
-            atomic_store_explicit(&b->state, BACKPATCH_DONE, memory_order_release);
-            b->t_ended = time(NULL);
-            /* Re-enable databasesCron — backpatch is done. Paired with the incr
-             * in rdmaRegisterBlockSlotsCommand (moved out of RECV-FLIP for
-             * early-FLIP). */
-            atomicDecr(server.recipient_backpatch_in_progress, 1);
-            /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
-            kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
-            kvstoreFenwickRebuild(server.db[0].keys);
-            /* NOTE: importing_slots_from[] cleanup reverted — see donor
-             * MIGRATE-DONE site for rationale. */
-            /* Note: recipient's slot meta is already STABLE (set in RECV-FLIP). */
-            serverLog(LL_NOTICE,
-                "RDMA backpatch-thread: batch DONE from %.*s mig_id=%lld "
-                "n_slots=%d applied=%lld (closed by pool worker=%ld)",
-                CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots,
-                (long long) atomic_load(&b->applied), worker_idx);
-
-            pthread_mutex_lock(&backpatch_dispose_mu);
-            listAddNodeTail(backpatch_dispose_list, b);
-            pthread_mutex_unlock(&backpatch_dispose_mu);
-            char tick = 1;
-            ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
-            (void) wr;
+        /* Double-buffer backpatch (option 3): the worker fills a SHADOW
+         * dict for this slot (no live keyspace access, no locks). When the
+         * shadow is full, hand it off to the main thread via the merge
+         * queue + dispose pipe. The merge tick (mergeBackpatchTick) is the
+         * one that updates batch->idx/applied/remaining and signals DONE,
+         * because the slot isn't truly "applied" until live has the data. */
+        int total = 0, skipped = 0;
+        dict *shadow = rdmaBackpatchSlotFillShadow(w->db, w->slot, &total, &skipped);
+        if (skipped > 0) {
+            serverLog(LL_WARNING,
+                "RDMA backpatch-shadow: slot=%d skipped %d staged entries "
+                "(donor block misclassification)", w->slot, skipped);
         }
+        UNUSED(worker_idx);
+
+        backpatchMergeWork *mw = zmalloc(sizeof(*mw));
+        mw->batch  = w->batch;
+        mw->db     = w->db;
+        mw->slot   = w->slot;
+        mw->shadow = shadow;       /* may be NULL → merge tick treats as 0-key */
+        mw->iter   = NULL;
+        mw->total  = total;
+        mw->moved  = 0;
+
+        pthread_mutex_lock(&backpatch_merge_mu);
+        if (backpatch_merge_queue == NULL) {
+            backpatch_merge_queue = listCreate();
+        }
+        listAddNodeTail(backpatch_merge_queue, mw);
+        pthread_mutex_unlock(&backpatch_merge_mu);
+
+        /* Wake main thread (it arms the merge timer if not running). */
+        char tick = 1;
+        ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+        (void) wr;
         zfree(w);
     }
     return NULL;
@@ -1137,9 +1407,13 @@ static void backpatchDisposePipeHandler(aeEventLoop *el, int fd, void *priv, int
     UNUSED(el); UNUSED(priv); UNUSED(mask);
     char buf[64];
     while (read(fd, buf, sizeof(buf)) > 0) { /* drain */ }
+    /* The pipe is shared by two producers:
+     *   1. The pool worker after filling a slot's shadow → arms the merge timer.
+     *   2. The dispatch tail (last slot of a batch DONE) → batch in dispose_list.
+     * Both paths just write a byte; the handler does the cheap thing for each. */
+    armMergeTimer();
     /* The completed batches stay in backpatch_batches_by_key until cleanup.
-     * For now we don't free here — BACKPATCH-STATUS needs them. Future:
-     * TTL sweep based on (now - b->t_ended). */
+     * For now we don't free here — BACKPATCH-STATUS needs them. */
 }
 
 void recipientBackpatchThreadStart(void) {
@@ -2769,6 +3043,83 @@ static void migSetState(rdmaMigration *mig, rdmaMigrationState s) {
         mig->id, migStateName(s), mig->n_slots);
 }
 
+/* If this migration was launched by an orchestrator (`RDMA MIGRATE-ALL`),
+ * dial back to the orchestrator endpoint with a one-shot hiredis TCP
+ * connection and fire `RDMA MIGRATE-COMPLETE`. Fire-and-forget — we don't
+ * retry on connection failure (the orchestrator's status poll will time
+ * out and trip ansible's fail-check if a peer doesn't report in).
+ *
+ * Called by the worker thread immediately before it returns NULL on DONE
+ * or after entering FAILED. Safe to call when there's no orchestrator —
+ * mig->orchestrator_endpoint is NULL in the legacy `RDMA MIGRATE` path.
+ *
+ * `state_name` is "DONE" or "FAILED" (passed in to avoid re-reading the
+ * mig->state under the lock here). */
+static void migNotifyOrchestratorIfAny(rdmaMigration *mig,
+                                       const char *state_name,
+                                       long long applied) {
+    if (mig->orchestrator_endpoint == NULL) return;
+
+    /* Parse "host:port" — last ':' splits. */
+    sds ep = mig->orchestrator_endpoint;
+    char *colon = strrchr(ep, ':');
+    if (!colon) {
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: id=%lld bad orchestrator endpoint '%s'",
+            mig->id, ep);
+        return;
+    }
+    size_t hostlen = colon - ep;
+    char host_buf[256];
+    if (hostlen >= sizeof(host_buf)) hostlen = sizeof(host_buf) - 1;
+    memcpy(host_buf, ep, hostlen);
+    host_buf[hostlen] = '\0';
+    int port = atoi(colon + 1);
+    if (port <= 0 || port > 65535) {
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: id=%lld bad orchestrator port in '%s'",
+            mig->id, ep);
+        return;
+    }
+
+    /* Best-effort node id: copy our own. */
+    const char *my_id = (server.cluster && server.cluster->myself)
+                       ? server.cluster->myself->name : "?";
+
+    struct timeval tv = {.tv_sec = 2, .tv_usec = 0};
+    redisContext *cc = redisConnectWithTimeout(host_buf, port, tv);
+    if (cc == NULL || cc->err) {
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: id=%lld could not dial orchestrator %s:%d (%s)",
+            mig->id, host_buf, port,
+            cc ? cc->errstr : "alloc failed");
+        if (cc) redisFree(cc);
+        return;
+    }
+    redisSetTimeout(cc, tv);
+
+    redisReply *r = redisCommand(cc,
+        "RDMA MIGRATE-COMPLETE %lld %s %s %lld",
+        mig->orchestrator_orch_id, my_id, state_name, applied);
+    if (r == NULL) {
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: id=%lld orchestrator callback timed out",
+            mig->id);
+    } else {
+        if (r->type == REDIS_REPLY_ERROR) {
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: id=%lld orchestrator returned -ERR: %s",
+                mig->id, r->str);
+        } else {
+            serverLog(LL_NOTICE,
+                "RDMA MIGRATE worker: id=%lld notified orchestrator %s:%d state=%s",
+                mig->id, host_buf, port, state_name);
+        }
+        freeReplyObject(r);
+    }
+    redisFree(cc);
+}
+
 /* Worker-side failure setter. Caller passes ownership of `err` (sds). */
 static void migFail(rdmaMigration *mig, sds err) {
     pthread_mutex_lock(&mig->mu);
@@ -2779,6 +3130,7 @@ static void migFail(rdmaMigration *mig, sds err) {
     pthread_mutex_unlock(&mig->mu);
     serverLog(LL_WARNING,
         "RDMA MIGRATE worker: id=%lld FAILED: %s", mig->id, mig->err);
+    migNotifyOrchestratorIfAny(mig, "FAILED", 0);
 }
 
 static void *migrationWorker(void *arg) {
@@ -2958,15 +3310,106 @@ static void *migrationWorker(void *arg) {
     pthread_mutex_unlock(&mig->mu);
     serverLog(LL_NOTICE,
         "RDMA MIGRATE worker: id=%lld DONE n_slots=%d", mig->id, mig->n_slots);
+    migNotifyOrchestratorIfAny(mig, "DONE", (long long) mig->n_slots);
     return NULL;
 }
 
 /* ---- public commands ------------------------------------------------- */
 
-/* RDMA MIGRATE recipient-host recipient-port n-slots */
+/* RDMA MIGRATE recipient-host recipient-port n-slots
+ *   [--orchestrator orch-host:orch-port orch-id]
+ *
+ * The optional --orchestrator triplet is set by `RDMA MIGRATE-ALL` when a
+ * peer donor is dispatched from the orchestrator node; on entering
+ * DONE/FAILED the worker dials back to the orchestrator with
+ * `RDMA MIGRATE-COMPLETE`. When not set the command behaves identically
+ * to the legacy 5-arg form (full backwards compatibility). */
+/* Core dispatch routine extracted from rdmaMigrateCommand so that the
+ * orchestrator (RDMA MIGRATE-ALL) can drive its OWN local migration
+ * without going through a hiredis loopback (which would deadlock — the
+ * orchestrator command is currently holding the event loop and can't
+ * service its own dial-back).
+ *
+ * On success: returns the new migration's id and `*err_out` is NULL.
+ * On failure: returns -1 and `*err_out` is a static string with the
+ * cause. The function owns `orch_endpoint` (takes it; caller must not
+ * free it after a successful call). On failure the function frees it. */
+static long long startLocalMigration(const char *host, int port, int n_slots,
+                                     sds orch_endpoint, long long orch_id,
+                                     const char **err_out) {
+    *err_out = NULL;
+
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        if (orch_endpoint) sdsfree(orch_endpoint);
+        *err_out = "cluster mode not enabled on this node";
+        return -1;
+    }
+
+    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
+    int picked = 0;
+    clusterTopoLockRead();
+    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+        if (server.cluster->slots[i] == server.cluster->myself) {
+            chosen[picked++] = i;
+        }
+    }
+    clusterTopoUnlock();
+    if (picked < n_slots) {
+        zfree(chosen);
+        if (orch_endpoint) sdsfree(orch_endpoint);
+        *err_out = "self owns fewer slots than requested";
+        return -1;
+    }
+
+    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    if (L == NULL) {
+        L = rdmaOutboundLinkOpen(host, port);
+        if (L == NULL) {
+            sdsfree(key);
+            zfree(chosen);
+            if (orch_endpoint) sdsfree(orch_endpoint);
+            *err_out = "could not establish outbound RDMA link (see server log)";
+            return -1;
+        }
+        dictAdd(server.rdma_outbound_links, key, L);
+    } else {
+        sdsfree(key);
+    }
+
+    rdmaMigration *mig = zcalloc(sizeof(*mig));
+    mig->id        = server.rdma_migration_next_id++;
+    mig->addr      = sdscatfmt(sdsempty(), "%s:%i", host, port);
+    mig->host      = sdsnew(host);
+    mig->port      = port;
+    mig->n_slots   = n_slots;
+    mig->chosen    = chosen;
+    mig->L         = L;
+    mig->orchestrator_endpoint = orch_endpoint;   /* takes ownership */
+    mig->orchestrator_orch_id  = orch_id;
+    pthread_mutex_init(&mig->mu, NULL);
+    mig->state     = RDMA_MIG_INIT;
+    mig->registered = 0;
+    mig->err       = NULL;
+    mig->t_started = time(NULL);
+    mig->t_ended   = 0;
+
+    sds dict_key = sdsfromlonglong(mig->id);
+    dictAdd(server.rdma_migrations, dict_key, mig);
+    server.rdma_migration_last_id = mig->id;
+
+    if (pthread_create(&mig->thr, NULL, migrationWorker, mig) != 0) {
+        dictDelete(server.rdma_migrations, dict_key);
+        *err_out = "pthread_create failed";
+        return -1;
+    }
+    pthread_detach(mig->thr);
+    return mig->id;
+}
+
 void rdmaMigrateCommand(client *c) {
-    if (c->argc != 5) {
-        addReplyError(c, "syntax: RDMA MIGRATE recipient-host recipient-port n-slots");
+    if (c->argc != 5 && c->argc != 8) {
+        addReplyError(c, "syntax: RDMA MIGRATE recipient-host recipient-port n-slots [--orchestrator orch-host:orch-port orch-id]");
         return;
     }
     const char *host = c->argv[2]->ptr;
@@ -2984,79 +3427,30 @@ void rdmaMigrateCommand(client *c) {
     int port = (int) port_ll;
     int n_slots = (int) n_slots_ll;
 
-    if (server.cluster == NULL || server.cluster->myself == NULL) {
-        addReplyError(c, "cluster mode not enabled on this node");
-        return;
-    }
-
-    /* Pick n_slots self-owned slots, lowest first. Multi-slot scan; take
-     * topology rdlock so we don't race with a concurrent FLIP wrlock from
-     * another migration on the same source. Per-slot rdlocks would be
-     * 16384 acquires for a one-shot read — overkill. */
-    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
-    int picked = 0;
-    clusterTopoLockRead();
-    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
-        if (server.cluster->slots[i] == server.cluster->myself) {
-            chosen[picked++] = i;
-        }
-    }
-    clusterTopoUnlock();
-    if (picked < n_slots) {
-        zfree(chosen);
-        addReplyErrorFormat(c, "self owns only %d slots, asked for %d",
-                            picked, n_slots);
-        return;
-    }
-
-    /* Resolve or create the outbound link (event-loop owned dict mutation,
-     * so do it here, not in the worker). */
-    sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
-    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
-    if (L == NULL) {
-        L = rdmaOutboundLinkOpen(host, port);
-        if (L == NULL) {
-            sdsfree(key);
-            zfree(chosen);
-            addReplyError(c, "could not establish outbound RDMA link (see server log)");
+    sds       orch_endpoint = NULL;
+    long long orch_id       = 0;
+    if (c->argc == 8) {
+        if (strcasecmp(c->argv[5]->ptr, "--orchestrator") != 0) {
+            addReplyError(c, "expected --orchestrator as the 6th argument");
             return;
         }
-        dictAdd(server.rdma_outbound_links, key, L);
-    } else {
-        sdsfree(key);
+        orch_endpoint = sdsdup((sds) c->argv[6]->ptr);
+        if (getLongLongFromObject(c->argv[7], &orch_id) != C_OK || orch_id <= 0) {
+            sdsfree(orch_endpoint);
+            addReplyError(c, "orchestrator id must be a positive integer");
+            return;
+        }
     }
 
-    /* Allocate the migration record. */
-    rdmaMigration *mig = zcalloc(sizeof(*mig));
-    mig->id        = server.rdma_migration_next_id++;
-    mig->addr      = sdscatfmt(sdsempty(), "%s:%i", host, port);
-    mig->host      = sdsnew(host);
-    mig->port      = port;
-    mig->n_slots   = n_slots;
-    mig->chosen    = chosen;        /* worker reads but does not free */
-    mig->L         = L;
-    pthread_mutex_init(&mig->mu, NULL);
-    mig->state     = RDMA_MIG_INIT;
-    mig->registered = 0;
-    mig->err       = NULL;
-    mig->t_started = time(NULL);
-    mig->t_ended   = 0;
-
-    sds dict_key = sdsfromlonglong(mig->id);
-    dictAdd(server.rdma_migrations, dict_key, mig);
-    server.rdma_migration_last_id = mig->id;
-
-    if (pthread_create(&mig->thr, NULL, migrationWorker, mig) != 0) {
-        /* dict owns mig; remove + free via dictDelete which triggers our destructor */
-        dictDelete(server.rdma_migrations, dict_key);
-        /* dict_key was consumed by dictDelete -> sdsDestructor */
-        addReplyError(c, "RDMA MIGRATE: pthread_create failed");
+    const char *err = NULL;
+    long long mig_id = startLocalMigration(host, port, n_slots,
+                                           orch_endpoint, orch_id, &err);
+    if (mig_id < 0) {
+        addReplyError(c, err ? err : "RDMA MIGRATE: dispatch failed");
         return;
     }
-    pthread_detach(mig->thr);
-
     addReplyStatusFormat(c, "OK migration_id=%lld running (n_slots=%d, %s:%d)",
-                         mig->id, n_slots, host, port);
+                         mig_id, n_slots, host, port);
 }
 
 /* RDMA MIGRATE-STATUS [migration_id] */
@@ -3128,6 +3522,446 @@ void rdmaMigrationFree(dict *d, void *v) {
     if (mig->addr)   sdsfree(mig->addr);
     if (mig->host)   sdsfree(mig->host);
     if (mig->err)    sdsfree(mig->err);
+    if (mig->orchestrator_endpoint) sdsfree(mig->orchestrator_endpoint);
     pthread_mutex_destroy(&mig->mu);
     zfree(mig);
+}
+
+/* ====================================================================== *
+ *  Server-side reshard orchestrator: RDMA MIGRATE-ALL                    *
+ *                                                                        *
+ *  Replaces ansible's per-source serial loop with a single redis command *
+ *  that dispatches RDMA MIGRATE to N donors (self + peer-host:port list) *
+ *  in parallel. Each peer donor's worker thread, on entering DONE or     *
+ *  FAILED, dials back to this orchestrator with RDMA MIGRATE-COMPLETE.   *
+ *  Ansible polls one aggregated status command instead of N separate    *
+ *  MIGRATE-STATUS polls.                                                 *
+ * ====================================================================== */
+
+static const char *orchStateName(rdmaOrchestrationState s) {
+    switch (s) {
+        case RDMA_ORCH_INIT:        return "INIT";
+        case RDMA_ORCH_DISPATCHING: return "DISPATCHING";
+        case RDMA_ORCH_RUNNING:     return "RUNNING";
+        case RDMA_ORCH_DONE:        return "DONE";
+        case RDMA_ORCH_FAILED:      return "FAILED";
+    }
+    return "?";
+}
+
+/* Helper: parse "host:port" → (host_buf, port). Returns -1 on parse error. */
+static int parseHostPort(const char *s, char *host_buf, size_t host_buf_sz, int *port_out) {
+    const char *colon = strrchr(s, ':');
+    if (!colon) return -1;
+    size_t hostlen = (size_t) (colon - s);
+    if (hostlen == 0 || hostlen >= host_buf_sz) return -1;
+    memcpy(host_buf, s, hostlen);
+    host_buf[hostlen] = '\0';
+    int p = atoi(colon + 1);
+    if (p <= 0 || p > 65535) return -1;
+    *port_out = p;
+    return 0;
+}
+
+/* Dispatch RDMA MIGRATE to a peer donor over hiredis TCP. Returns the
+ * peer's migration id on success, -1 on failure (and sets *err_out to a
+ * borrowed static string describing the failure). The connection is
+ * closed before returning — short-lived, one-shot.
+ *
+ * `rdma_port` is the per-source RDMA port this donor should tell the
+ * recipient to bind for it. The function does a CONFIG SET first to
+ * avoid the recipient-port-collision that happens if all donors default
+ * to the same port (17777). */
+static long long orchDispatchPeer(const char *peer_host, int peer_port,
+                                  const char *recipient_host, int recipient_port,
+                                  int n_slots, int rdma_port,
+                                  const char *orch_endpoint, long long orch_id,
+                                  const char **err_out) {
+    *err_out = NULL;
+    struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
+    redisContext *cc = redisConnectWithTimeout(peer_host, peer_port, tv);
+    if (cc == NULL || cc->err) {
+        *err_out = "peer connect failed";
+        if (cc) redisFree(cc);
+        return -1;
+    }
+    redisSetTimeout(cc, tv);
+
+    /* Set the per-source RDMA port BEFORE dispatching MIGRATE — otherwise
+     * the second/third concurrent donor will collide with the first on
+     * the recipient's RDMA listener. */
+    {
+        redisReply *cfg = redisCommand(cc,
+            "CONFIG SET rdma-migration-port %d", rdma_port);
+        if (cfg == NULL) {
+            *err_out = "peer CONFIG SET timed out";
+            redisFree(cc);
+            return -1;
+        }
+        int ok = (cfg->type == REDIS_REPLY_STATUS && strcasecmp(cfg->str, "OK") == 0);
+        freeReplyObject(cfg);
+        if (!ok) {
+            *err_out = "peer CONFIG SET failed";
+            redisFree(cc);
+            return -1;
+        }
+    }
+
+    redisReply *r = redisCommand(cc,
+        "RDMA MIGRATE %s %d %d --orchestrator %s %lld",
+        recipient_host, recipient_port, n_slots,
+        orch_endpoint, orch_id);
+    long long peer_mig_id = -1;
+    if (r == NULL) {
+        *err_out = "peer dispatch timed out";
+    } else if (r->type == REDIS_REPLY_ERROR) {
+        *err_out = "peer returned -ERR";
+        serverLog(LL_WARNING, "RDMA MIGRATE-ALL: peer %s:%d returned -ERR: %s",
+                  peer_host, peer_port, r->str);
+    } else if (r->type == REDIS_REPLY_STATUS || r->type == REDIS_REPLY_STRING) {
+        /* Reply form: "OK migration_id=<N> running (...)". */
+        const char *p = strstr(r->str, "migration_id=");
+        if (p) {
+            peer_mig_id = strtoll(p + strlen("migration_id="), NULL, 10);
+        }
+        if (peer_mig_id <= 0) {
+            *err_out = "could not parse migration_id from peer reply";
+            peer_mig_id = -1;
+        }
+    } else {
+        *err_out = "unexpected peer reply type";
+    }
+    if (r) freeReplyObject(r);
+    redisFree(cc);
+    return peer_mig_id;
+}
+
+/* Allocate, dispatch, and register an orchestration. Returns the
+ * orchestration id on success; 0 on failure with an error reply already
+ * sent to the client `c`. */
+static long long orchAllocateAndDispatch(client *c,
+                                         const char *recipient_host, int recipient_port,
+                                         int n_slots_per_source,
+                                         sds *peer_endpoints, int n_peers)
+{
+    /* Figure out our own endpoint to pass to peers. Prefer the cluster
+     * node's announced ip+port; fall back to bindaddr. */
+    if (server.cluster == NULL || server.cluster->myself == NULL) {
+        addReplyError(c, "cluster mode not enabled on this node");
+        return 0;
+    }
+    char self_host[256];
+    int  self_port = server.port;     /* the client port we accept commands on */
+    clusterNode *me = server.cluster->myself;
+    if (me->ip && me->ip[0])
+        snprintf(self_host, sizeof(self_host), "%s", me->ip);
+    else
+        snprintf(self_host, sizeof(self_host), "127.0.0.1");
+    sds self_endpoint = sdscatfmt(sdsempty(), "%s:%i", self_host, self_port);
+
+    /* Allocate the orchestration. n_donors = self + n_peers. */
+    int n_donors = 1 + n_peers;
+    rdmaOrchestration *orch = zcalloc(sizeof(*orch));
+    orch->id = server.rdma_orchestration_next_id++;
+    orch->n_donors = n_donors;
+    orch->donors = zcalloc((size_t) n_donors * sizeof(orch->donors[0]));
+    pthread_mutex_init(&orch->mu, NULL);
+    orch->state = RDMA_ORCH_INIT;
+    orch->t_started = time(NULL);
+
+    /* Slot 0 = self; subsequent slots = peers. */
+    orch->donors[0].endpoint = sdsdup(self_endpoint);
+    orch->donors[0].node_id  = sdsnew(me->name);
+    orch->donors[0].is_local = 1;
+    orch->donors[0].migration_id = 0;     /* set after self-dispatch */
+
+    for (int i = 0; i < n_peers; i++) {
+        orch->donors[i + 1].endpoint = sdsdup(peer_endpoints[i]);
+        orch->donors[i + 1].node_id  = NULL;
+        orch->donors[i + 1].is_local = 0;
+    }
+
+    /* Register before dispatching so MIGRATE-COMPLETE callbacks can find us. */
+    sds dict_key = sdsfromlonglong(orch->id);
+    dictAdd(server.rdma_orchestrations, dict_key, orch);
+    server.rdma_orchestration_last_id = orch->id;
+
+    orch->state = RDMA_ORCH_DISPATCHING;
+
+    /* Per-donor RDMA ports. Same base as the legacy playbook (17777) so
+     * the recipient's binding behaviour is identical. Self takes index 0
+     * (matching the existing single-source path), peers take 1.. n_peers.
+     * This must be different per donor because all donors send INIT-SERVER
+     * to the recipient and the recipient binds the requested port. */
+    const int RDMA_PORT_BASE = 17777;
+
+    /* Dispatch to peer donors first (so they're already in-flight while we
+     * set up our own). */
+    int n_dispatched = 0;
+    for (int i = 0; i < n_peers; i++) {
+        char host_buf[256]; int peer_port;
+        if (parseHostPort(peer_endpoints[i], host_buf, sizeof(host_buf), &peer_port) != 0) {
+            serverLog(LL_WARNING, "RDMA MIGRATE-ALL: bad peer endpoint '%s'",
+                      peer_endpoints[i]);
+            orch->donors[i + 1].terminal = 1;
+            orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+            orch->donors[i + 1].err = sdsnew("bad endpoint format");
+            orch->n_terminal++;
+            orch->n_failed++;
+            continue;
+        }
+        int peer_rdma_port = RDMA_PORT_BASE + 1 + i;
+        const char *perr = NULL;
+        long long peer_mig_id = orchDispatchPeer(host_buf, peer_port,
+                                                 recipient_host, recipient_port,
+                                                 n_slots_per_source, peer_rdma_port,
+                                                 self_endpoint, orch->id,
+                                                 &perr);
+        if (peer_mig_id < 0) {
+            serverLog(LL_WARNING, "RDMA MIGRATE-ALL: failed to dispatch to %s: %s",
+                      peer_endpoints[i], perr ? perr : "?");
+            orch->donors[i + 1].terminal = 1;
+            orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+            orch->donors[i + 1].err = sdsnew(perr ? perr : "dispatch failed");
+            orch->n_terminal++;
+            orch->n_failed++;
+        } else {
+            orch->donors[i + 1].migration_id = peer_mig_id;
+            n_dispatched++;
+        }
+    }
+
+    /* Dispatch self in-process, NOT via hiredis loopback. The orchestrator
+     * command currently holds the event loop, so a hiredis dial-back to
+     * ourselves would deadlock waiting for the listener to accept the new
+     * connection. startLocalMigration sets up and detaches the worker
+     * thread without going through redis-cli.
+     *
+     * Set our own rdma-migration-port to the base value first so the
+     * recipient binds a port that doesn't collide with the peers'. */
+    server.rdma_migration_port = RDMA_PORT_BASE;
+    {
+        const char *self_err = NULL;
+        sds self_orch_ep = sdsdup(self_endpoint);   /* startLocalMigration takes ownership */
+        long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
+                                                    n_slots_per_source,
+                                                    self_orch_ep, orch->id, &self_err);
+        if (self_mig_id < 0) {
+            serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
+                      self_err ? self_err : "?");
+            orch->donors[0].terminal = 1;
+            orch->donors[0].terminal_state = RDMA_MIG_FAILED;
+            orch->donors[0].err = sdsnew(self_err ? self_err : "self dispatch failed");
+            orch->n_terminal++;
+            orch->n_failed++;
+        } else {
+            orch->donors[0].migration_id = self_mig_id;
+            n_dispatched++;
+        }
+    }
+
+    orch->state = (n_dispatched == 0) ? RDMA_ORCH_FAILED : RDMA_ORCH_RUNNING;
+    if (orch->n_terminal == orch->n_donors) {
+        /* All donors failed to dispatch — already terminal. */
+        orch->state = (orch->n_failed > 0) ? RDMA_ORCH_FAILED : RDMA_ORCH_DONE;
+        orch->t_ended = time(NULL);
+    }
+
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE-ALL orchestration_id=%lld dispatched: n_donors=%d n_dispatched=%d target=%s:%d slots_per_source=%d",
+        orch->id, n_donors, n_dispatched, recipient_host, recipient_port,
+        n_slots_per_source);
+
+    sdsfree(self_endpoint);
+    return orch->id;
+}
+
+/* RDMA MIGRATE-ALL recipient-host recipient-port slots-per-source peer-host:port ... */
+void rdmaMigrateAllCommand(client *c) {
+    if (c->argc < 5) {
+        addReplyError(c, "syntax: RDMA MIGRATE-ALL recipient-host recipient-port slots-per-source peer-host:port ...");
+        return;
+    }
+    const char *recipient_host = c->argv[2]->ptr;
+    long long port_ll, n_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "recipient port out of range");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &n_slots_ll) != C_OK ||
+        n_slots_ll <= 0 || n_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "slots-per-source out of range");
+        return;
+    }
+    int recipient_port = (int) port_ll;
+    int n_slots = (int) n_slots_ll;
+    int n_peers = c->argc - 5;
+
+    sds *peers = (n_peers > 0) ? zmalloc((size_t) n_peers * sizeof(sds)) : NULL;
+    for (int i = 0; i < n_peers; i++) {
+        peers[i] = (sds) c->argv[5 + i]->ptr;
+    }
+
+    long long orch_id = orchAllocateAndDispatch(c, recipient_host, recipient_port,
+                                                n_slots, peers, n_peers);
+    if (peers) zfree(peers);
+    if (orch_id == 0) return;  /* reply already sent */
+
+    addReplyStatusFormat(c, "OK orchestration_id=%lld running (n_donors=%d, target=%s:%d, slots_per_source=%d)",
+                         orch_id, 1 + n_peers, recipient_host, recipient_port, n_slots);
+}
+
+/* RDMA MIGRATE-ALL-STATUS <orchestration_id> */
+void rdmaMigrateAllStatusCommand(client *c) {
+    if (c->argc != 3) {
+        addReplyError(c, "syntax: RDMA MIGRATE-ALL-STATUS orchestration_id");
+        return;
+    }
+    long long want_id;
+    if (getLongLongFromObject(c->argv[2], &want_id) != C_OK || want_id <= 0) {
+        addReplyError(c, "orchestration_id must be a positive integer");
+        return;
+    }
+    sds key = sdsfromlonglong(want_id);
+    rdmaOrchestration *orch = dictFetchValue(server.rdma_orchestrations, key);
+    sdsfree(key);
+    if (orch == NULL) {
+        addReplyError(c, "no such orchestration_id");
+        return;
+    }
+
+    pthread_mutex_lock(&orch->mu);
+    long long elapsed = (long long) (
+        (orch->t_ended ? orch->t_ended : time(NULL)) - orch->t_started);
+    /* Reply: 6-element array:
+     *   [0] state         (string)
+     *   [1] n_donors      (integer)
+     *   [2] n_terminal    (integer; count of donors reported terminal)
+     *   [3] n_failed      (integer)
+     *   [4] elapsed_s     (integer)
+     *   [5] per-donor details (array of bulks "endpoint=... mig_id=... state=... err=...")
+     */
+    addReplyArrayLen(c, 6);
+    addReplyBulkCString(c, orchStateName(orch->state));
+    addReplyLongLong(c, orch->n_donors);
+    addReplyLongLong(c, orch->n_terminal);
+    addReplyLongLong(c, orch->n_failed);
+    addReplyLongLong(c, elapsed);
+    addReplyArrayLen(c, orch->n_donors);
+    for (int i = 0; i < orch->n_donors; i++) {
+        rdmaOrchestrationDonor *d = &orch->donors[i];
+        const char *st = d->terminal
+            ? (d->terminal_state == RDMA_MIG_DONE ? "DONE" : "FAILED")
+            : "RUNNING";
+        sds detail = sdscatfmt(sdsempty(),
+            "endpoint=%s mig_id=%I state=%s err=%s",
+            d->endpoint ? d->endpoint : "?",
+            d->migration_id,
+            st,
+            d->err ? d->err : "");
+        addReplyBulkSds(c, detail);   /* takes ownership of detail */
+    }
+    pthread_mutex_unlock(&orch->mu);
+}
+
+/* RDMA MIGRATE-COMPLETE <orchestration_id> <donor_node_id> <state-string> <applied>
+ *
+ * Internal callback fired by a donor's migrationWorker on terminal state.
+ * The state-string is "DONE" or "FAILED". */
+void rdmaMigrateCompleteCommand(client *c) {
+    if (c->argc != 6) {
+        addReplyError(c, "syntax: RDMA MIGRATE-COMPLETE orch_id donor_node_id state applied");
+        return;
+    }
+    long long want_id, applied;
+    if (getLongLongFromObject(c->argv[2], &want_id) != C_OK || want_id <= 0) {
+        addReplyError(c, "orch_id must be a positive integer");
+        return;
+    }
+    const char *donor_id = c->argv[3]->ptr;
+    const char *st_str   = c->argv[4]->ptr;
+    if (getLongLongFromObject(c->argv[5], &applied) != C_OK) applied = 0;
+
+    rdmaMigrationState st;
+    if (strcasecmp(st_str, "DONE") == 0)       st = RDMA_MIG_DONE;
+    else if (strcasecmp(st_str, "FAILED") == 0) st = RDMA_MIG_FAILED;
+    else {
+        addReplyError(c, "state must be DONE or FAILED");
+        return;
+    }
+
+    sds key = sdsfromlonglong(want_id);
+    rdmaOrchestration *orch = dictFetchValue(server.rdma_orchestrations, key);
+    sdsfree(key);
+    if (orch == NULL) {
+        addReplyError(c, "no such orchestration_id");
+        return;
+    }
+
+    pthread_mutex_lock(&orch->mu);
+    /* Find the donor slot by node_id (set at dispatch for local; for peers
+     * we set it on first callback). Match by endpoint if id mismatches. */
+    int matched = -1;
+    for (int i = 0; i < orch->n_donors; i++) {
+        if (orch->donors[i].node_id &&
+            strcmp(orch->donors[i].node_id, donor_id) == 0) {
+            matched = i; break;
+        }
+    }
+    if (matched < 0) {
+        /* First callback from this donor: claim the first slot with
+         * NULL node_id (peer slots start unidentified). */
+        for (int i = 0; i < orch->n_donors; i++) {
+            if (orch->donors[i].node_id == NULL && !orch->donors[i].terminal) {
+                orch->donors[i].node_id = sdsnew(donor_id);
+                matched = i; break;
+            }
+        }
+    }
+    if (matched < 0) {
+        pthread_mutex_unlock(&orch->mu);
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE-COMPLETE: orch_id=%lld donor_id=%s — no slot matched",
+            want_id, donor_id);
+        addReplyError(c, "no donor slot matched");
+        return;
+    }
+    if (!orch->donors[matched].terminal) {
+        orch->donors[matched].terminal = 1;
+        orch->donors[matched].terminal_state = st;
+        orch->donors[matched].applied = applied;
+        orch->n_terminal++;
+        if (st == RDMA_MIG_FAILED) orch->n_failed++;
+    }
+    if (orch->n_terminal == orch->n_donors) {
+        orch->state = (orch->n_failed > 0) ? RDMA_ORCH_FAILED : RDMA_ORCH_DONE;
+        orch->t_ended = time(NULL);
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE-ALL orch_id=%lld %s n_donors=%d n_failed=%d elapsed=%lds",
+            orch->id, orchStateName(orch->state), orch->n_donors,
+            orch->n_failed, (long) (orch->t_ended - orch->t_started));
+    }
+    pthread_mutex_unlock(&orch->mu);
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE-COMPLETE orch_id=%lld donor=%s state=%s applied=%lld (terminal=%d/%d)",
+        want_id, donor_id, st_str, applied,
+        orch->n_terminal, orch->n_donors);
+    addReply(c, shared.ok);
+}
+
+void rdmaOrchestrationFree(dict *d, void *v) {
+    (void) d;
+    rdmaOrchestration *orch = v;
+    if (orch == NULL) return;
+    if (orch->donors) {
+        for (int i = 0; i < orch->n_donors; i++) {
+            if (orch->donors[i].endpoint) sdsfree(orch->donors[i].endpoint);
+            if (orch->donors[i].node_id)  sdsfree(orch->donors[i].node_id);
+            if (orch->donors[i].err)      sdsfree(orch->donors[i].err);
+        }
+        zfree(orch->donors);
+    }
+    pthread_mutex_destroy(&orch->mu);
+    zfree(orch);
 }

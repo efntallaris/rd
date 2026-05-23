@@ -1,0 +1,124 @@
+---
+# Chunked RDMA reshard: two rounds cycling through every donor, each round
+# moves half the per-source slots. This makes the busiest-node slot count
+# drop AFTER each full round, producing two visible aggregate-throughput
+# steps instead of one. Useful for showing incremental scaling benefits in
+# aggregate (the single-step shape of reshard_cluster_rdma_v2.yml is a
+# consequence of the busiest-node-bottleneck argument, not a defect).
+#
+# Per ROUND (× 2):
+#   For each donor (serial:1):
+#     1. CONFIG SET rdma-migration-port (round-and-source-unique)
+#     2. RDMA MIGRATE <recipient> <port> <slots_per_source_per_round>
+#     3. Poll MIGRATE-STATUS until DONE or FAILED
+#     4. dwell
+#
+# Variables consumed:
+#   reshard_slots   — total slots to move (sum across all sources, all rounds)
+#   master_port     — donor port
+#   redis_bin_dir   — redis-cli path
+- name: "RDMA reshard v2 chunked: round 1"
+  hosts: redis_masters
+  become: yes
+  serial: 1
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) // 2 }}"
+    rdma_port_base: 17777
+    reshard_round: 1
+  tasks:
+    - name: Compute this source's unique RDMA port (round 1)
+      set_fact:
+        src_rdma_port: "{{ (rdma_port_base | int) + (groups['redis_masters'].index(inventory_hostname) | int) }}"
+
+    - name: "CONFIG SET rdma-migration-port (round 1)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          CONFIG SET rdma-migration-port {{ src_rdma_port }}
+      changed_when: false
+
+    - name: "Dispatch RDMA MIGRATE (round 1)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: migrate_result_r1
+      changed_when: "'OK' in migrate_result_r1.stdout"
+
+    - name: "Parse migration_id (round 1)"
+      set_fact:
+        migration_id_r1: "{{ migrate_result_r1.stdout
+                              | regex_search('migration_id=([0-9]+)', '\\1')
+                              | first }}"
+
+    - name: "Poll MIGRATE-STATUS (round 1)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE-STATUS {{ migration_id_r1 }}
+      register: mig_status_r1
+      changed_when: false
+      retries: 3000
+      delay: 0.2
+      until: >
+        mig_status_r1.stdout is defined and
+        (mig_status_r1.stdout_lines | first | default('')) in ['DONE','FAILED']
+
+    - name: "Fail if round 1 migration ended FAILED"
+      fail:
+        msg: "[{{ inventory_hostname }}] round 1 RDMA MIGRATE id={{ migration_id_r1 }} FAILED: {{ mig_status_r1.stdout_lines | last }}"
+      when: (mig_status_r1.stdout_lines | first | default('')) == 'FAILED'
+
+    # Inter-migration dwell removed (round 1).
+
+- name: "RDMA reshard v2 chunked: round 2"
+  hosts: redis_masters
+  become: yes
+  serial: 1
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    # Round 2 picks up the remainder so the totals match a 1-round reshard
+    # with the same reshard_slots.
+    reshard_slots_per_source: "{{ ((reshard_slots | int) // (groups['redis_masters'] | length)) - ((reshard_slots | int) // (groups['redis_masters'] | length) // 2) }}"
+    rdma_port_base: 17777
+    reshard_round: 2
+  tasks:
+    - name: Compute this source's unique RDMA port (round 2)
+      set_fact:
+        src_rdma_port: "{{ (rdma_port_base | int) + (groups['redis_masters'].index(inventory_hostname) | int) }}"
+
+    - name: "CONFIG SET rdma-migration-port (round 2)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          CONFIG SET rdma-migration-port {{ src_rdma_port }}
+      changed_when: false
+
+    - name: "Dispatch RDMA MIGRATE (round 2)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: migrate_result_r2
+      changed_when: "'OK' in migrate_result_r2.stdout"
+
+    - name: "Parse migration_id (round 2)"
+      set_fact:
+        migration_id_r2: "{{ migrate_result_r2.stdout
+                              | regex_search('migration_id=([0-9]+)', '\\1')
+                              | first }}"
+
+    - name: "Poll MIGRATE-STATUS (round 2)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} \
+          RDMA MIGRATE-STATUS {{ migration_id_r2 }}
+      register: mig_status_r2
+      changed_when: false
+      retries: 3000
+      delay: 0.2
+      until: >
+        mig_status_r2.stdout is defined and
+        (mig_status_r2.stdout_lines | first | default('')) in ['DONE','FAILED']
+
+    - name: "Fail if round 2 migration ended FAILED"
+      fail:
+        msg: "[{{ inventory_hostname }}] round 2 RDMA MIGRATE id={{ migration_id_r2 }} FAILED: {{ mig_status_r2.stdout_lines | last }}"
+      when: (mig_status_r2.stdout_lines | first | default('')) == 'FAILED'
+
+    # Inter-migration dwell removed (round 2).

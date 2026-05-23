@@ -65,6 +65,7 @@ void clusterSlotUnlock(int slot);
  * wrap). See clusterSlotLockWriteNoTopology in cluster_legacy.c for the
  * safety preconditions. */
 void clusterSlotLockReadNoTopology(int slot);
+int clusterSlotTryLockReadNoTopology(int slot);
 void clusterSlotLockWriteNoTopology(int slot);
 void clusterSlotUnlockNoTopology(int slot);
 
@@ -203,6 +204,15 @@ typedef struct rdmaMigration {
     int      *chosen;              /* slot ids picked at dispatch time */
     rdmaOutboundLink *L;           /* resolved/created by dispatch */
 
+    /* Orchestrator callback fields (NULL/0 when this migration was launched
+     * directly via `RDMA MIGRATE`, set when launched via `RDMA MIGRATE-ALL`
+     * dispatching to a peer donor). When set, the worker calls back to
+     * <orchestrator_endpoint> on entering DONE/FAILED with
+     * `RDMA MIGRATE-COMPLETE <orchestrator_orch_id> <self_node_id> <state> <applied>`.
+     * Read-only after dispatch; no lock needed. */
+    sds       orchestrator_endpoint;  /* "host:port" or NULL */
+    long long orchestrator_orch_id;   /* 0 if no orchestrator */
+
     /* All fields below are guarded by mu. */
     pthread_mutex_t mu;
     rdmaMigrationState state;
@@ -214,6 +224,50 @@ typedef struct rdmaMigration {
 } rdmaMigration;
 
 void rdmaMigrationFree(dict *d, void *v);
+
+/* ====================================================================== *
+ *  Server-side reshard orchestrator (RDMA MIGRATE-ALL).
+ *
+ *  One rdmaOrchestration is allocated per `RDMA MIGRATE-ALL` invocation on
+ *  the orchestrator node. It tracks N peer migrations (self + each peer
+ *  donor). Peer workers dial back to the orchestrator with
+ *  `RDMA MIGRATE-COMPLETE` when they enter DONE/FAILED. Once all N peers
+ *  have reported, the orchestration transitions to DONE/FAILED itself, so
+ *  the single `RDMA MIGRATE-ALL-STATUS` poll on the ansible side flips.
+ * ====================================================================== */
+typedef enum {
+    RDMA_ORCH_INIT        = 0,
+    RDMA_ORCH_DISPATCHING = 1,
+    RDMA_ORCH_RUNNING     = 2,
+    RDMA_ORCH_DONE        = 3,
+    RDMA_ORCH_FAILED      = 4
+} rdmaOrchestrationState;
+
+typedef struct rdmaOrchestrationDonor {
+    sds  endpoint;            /* "host:port" — peer donor, or self if local */
+    sds  node_id;              /* CLUSTER MYID of this donor; may be NULL until completion */
+    long long migration_id;    /* The peer's migration id (returned from the peer's RDMA MIGRATE) */
+    int       is_local;        /* 1 if this is the orchestrator node itself */
+    int       terminal;        /* 0 until DONE/FAILED reported */
+    rdmaMigrationState terminal_state;  /* DONE or FAILED once terminal=1 */
+    long long applied;          /* keys reported applied (best-effort) */
+    sds       err;              /* failure reason if terminal_state==FAILED */
+} rdmaOrchestrationDonor;
+
+typedef struct rdmaOrchestration {
+    long long id;
+    int       n_donors;
+    rdmaOrchestrationDonor *donors;   /* length n_donors */
+
+    pthread_mutex_t mu;
+    rdmaOrchestrationState state;
+    int       n_terminal;             /* count of donors that have reported terminal */
+    int       n_failed;
+    time_t    t_started;
+    time_t    t_ended;
+} rdmaOrchestration;
+
+void rdmaOrchestrationFree(dict *d, void *v);
 
 void recipientBackpatchWorkerStart(void);
 void recipientBackpatchWorkerStop(void);
