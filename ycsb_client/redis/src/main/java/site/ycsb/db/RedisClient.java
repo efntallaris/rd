@@ -340,6 +340,26 @@ public class RedisClient extends DB {
       return r;
     } catch (JedisConnectionException ce) {
       return r;
+    } catch (redis.clients.jedis.exceptions.JedisMovedDataException mv) {
+      // Donor told us this slot moved. Treat it as if the donor returned
+      // a slot-meta "migrating" reply: mark the slot as in-flux with the
+      // new owner as peer. The caller's read() path then exercises its
+      // existing peer-fallback / parallel-fanout machinery, AND
+      // updateSlotCache() refreshes slotOwner[slot] to the new owner so
+      // future reads on this slot route directly there.
+      //
+      // Without this, MOVED was caught by the generic JedisException
+      // handler below and the slot's stale slotOwner entry would persist
+      // forever — every subsequent read of any key in this slot would
+      // hit the wrong (donor) node and silently fail with Status.ERROR.
+      HostAndPort target = mv.getTargetNode();
+      if (target != null) {
+        r.state = SLOT_MIGRATED;
+        r.peer  = target;
+        getOrOpen(target);
+        r.ok    = true;
+      }
+      return r;
     } catch (JedisException je) {
       return r;
     }

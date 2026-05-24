@@ -1,0 +1,82 @@
+>>> Sat May 23 02:48:57 PM MDT 2026 saving working tree to stash
+Saved working directory and index state On aqueduct_broken: compare_commits_driver_745908
+>>> stash ref: stash@{0}
+
+====================================================================
+=== Sat May 23 02:48:57 PM MDT 2026 starting commit f555359c
+====================================================================
+>>> head sources checked out at f555359c
+f7949ef9f3bdd94c2e5d618747dcf2fe  redis/src/cluster_rdma.c
+>>> syncing redis/ source to redis1/redis2/redis3 (excluding .git, obj files)
+Warning: Permanently added 'redis1' (ECDSA) to the list of known hosts.
+Warning: Permanently added 'redis2' (ECDSA) to the list of known hosts.
+Warning: Permanently added 'redis3' (ECDSA) to the list of known hosts.
+>>> running setup.yml (builds redis_custom on all hosts)
+ok: [ycsb0] => (item=/rd/workloads/workloada)
+ok: [ycsb1] => (item=/rd/workloads/workloada)
+ok: [ycsb0] => (item=/rd/workloads/workloadreadonly)
+ok: [ycsb1] => (item=/rd/workloads/workloadreadonly)
+ok: [ycsb0] => (item=/rd/workloads/workloadreadonly_integrity)
+ok: [ycsb1] => (item=/rd/workloads/workloadreadonly_integrity)
+ok: [ycsb0] => (item=/rd/workloads/workloadfulva955)
+ok: [ycsb1] => (item=/rd/workloads/workloadfulva955)
+changed: [ycsb1] => (item=/rd/workloads/workloada.zipfian.bak)
+changed: [ycsb0] => (item=/rd/workloads/workloada.zipfian.bak)
+
+PLAY RECAP *********************************************************************
+redis0                     : ok=18   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+redis1                     : ok=18   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+redis2                     : ok=18   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+redis3                     : ok=18   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+redis4                     : ok=6    changed=5    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+ycsb0                      : ok=22   changed=13   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+ycsb1                      : ok=22   changed=13   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+>>> Sat May 23 02:53:50 PM MDT 2026 running 2-YCSB workload (tag=f555359c)
+Terminated
+>>> rc=143
+>>> experiment dir: /tmp/experiments/workloada_2ycsb_orch_20260523_123827
+=== Sat May 23 03:16:38 PM MDT 2026 done with f555359c
+
+====================================================================
+=== Sat May 23 03:16:38 PM MDT 2026 starting commit 152702be
+====================================================================
+>>> head sources checked out at 152702be
+53e061326cec42d2ac7a99328aa4e395  redis/src/cluster_rdma.c
+>>> syncing redis/ source to redis1/redis2/redis3 (excluding .git, obj files)
+Warning: Permanently added 'redis1' (ECDSA) to the list of known hosts.
+=== TRAP: restoring state ===
+>>> Sat May 23 03:16:39 PM MDT 2026 restoring stash stash@{0}
+	ansible/tasks/cluster/reshard_cluster_rdma_v2_orchestrated.yml
+	ansible/throughput_1v2_ycsb.png
+	redis/src/commands/rdma-migrate-all-status.json
+	redis/src/commands/rdma-migrate-all.json
+	redis/src/commands/rdma-migrate-complete.json
+	run13_shadow_throughput.png
+	run14_2ycsb_shadow.png
+
+no changes added to commit (use "git add" and/or "git commit -a")
+Dropped stash@{0} (cef1d7c204e642009cce51bdd4759ffc23b8f24b)
+Warning: Permanently added 'redis2' (ECDSA) to the list of known hosts.
+Warning: Permanently added 'redis3' (ECDSA) to the list of known hosts.
+>>> running setup.yml (builds redis_custom on all hosts)
+
+TASK [Generate jemalloc configure script if missing] ***************************
+ok: [redis0]
+ok: [redis2]
+ok: [redis1]
+ok: [redis3]
+
+TASK [Build Redis dependencies (hiredis, linenoise, lua, jemalloc, fast_float)] ***
+changed: [redis0] => (item=hiredis)
+changed: [redis0] => (item=linenoise)
+changed: [redis0] => (item=lua)
+changed: [redis2] => (item=hiredis)
+changed: [redis1] => (item=hiredis)
+changed: [redis3] => (item=hiredis)
+changed: [redis2] => (item=linenoise)
+changed: [redis1] => (item=linenoise)
+changed: [redis3] => (item=linenoise)
+changed: [redis2] => (item=lua)
+changed: [redis1] => (item=lua)
+changed: [redis3] => (item=lua)

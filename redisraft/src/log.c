@@ -945,6 +945,12 @@ static int logImplAppend(void *arg, raft_entry_t *ety)
     RAFTLOG_TRACE("Append(id=%d, term=%lu) -> index %lu",
                   ety->id, ety->term, LogCurrentIdx(&rr->log) + 1);
 
+    LOG_NOTICE("RAFT_LOG append: idx=%ld term=%ld type=%s(%d) size=%llu",
+               LogCurrentIdx(&rr->log) + 1,
+               ety->term,
+               raftLogTypeName(ety->type), ety->type,
+               (unsigned long long) ety->data_len);
+
     if (LogAppend(&rr->log, ety) != RR_OK) {
         return -1;
     }

@@ -101,6 +101,7 @@ static const CommandSpec commands[] = {
     {"raft._sort_reply",            CMD_SPEC_DONT_INTERCEPT                      },
     {"raft._reject_random_command", CMD_SPEC_DONT_INTERCEPT                      },
     {"raft.import",                 CMD_SPEC_DONT_INTERCEPT                      },
+    {"raft.mgn-log",                CMD_SPEC_DONT_INTERCEPT                      },
     {"raft.scan",                   CMD_SPEC_READONLY                            },
     {"client",                      CMD_SPEC_SUBCOMMAND | CMD_SPEC_DONT_INTERCEPT},
     {NULL,                          0                                            }

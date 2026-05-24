@@ -42,6 +42,48 @@
 #include <arpa/inet.h>
 #include <sys/mman.h>   /* mmap, munmap, MAP_ANONYMOUS — Aqueduct big-MR pool */
 
+/* ---- Migration protocol log (RAFT.MGN-LOG) ------------------------------- */
+
+/* Synchronously append a migration protocol event into the local redisraft
+ * Raft log. Issued by migrationWorker (donor side) and registerWorkerThread
+ * (recipient side) at phase boundaries, so all replicas in the local replica
+ * group durably record the session's progress.
+ *
+ * Sync hiredis to 127.0.0.1:<this server's port> — same pattern the existing
+ * RDMA control RPCs already use. Safe from worker threads; NOT safe from the
+ * main Redis thread (would deadlock — main thread is the one that processes
+ * RAFT.MGN-LOG). The two main-thread sites (mergeBackpatchTick INDX_UPD /
+ * RECP_TXN_DONE) need a different mechanism — out of scope for 1c.1. */
+static void rdmaMgnLogSync(const char *type, const char *payload) {
+    redisContext *ctx = redisConnect("127.0.0.1", server.port);
+    if (ctx == NULL || ctx->err) {
+        serverLog(LL_WARNING,
+            "RAFT.MGN-LOG %s: redisConnect(127.0.0.1:%d) failed: %s",
+            type, server.port, ctx ? ctx->errstr : "(null ctx)");
+        if (ctx) redisFree(ctx);
+        return;
+    }
+
+    redisReply *r = redisCommand(ctx, "RAFT.MGN-LOG %s %s", type, payload);
+    if (r == NULL) {
+        serverLog(LL_WARNING,
+            "RAFT.MGN-LOG %s: command failed: %s",
+            type, ctx->errstr);
+    } else if (r->type == REDIS_REPLY_ERROR) {
+        serverLog(LL_WARNING,
+            "RAFT.MGN-LOG %s: error reply: %s", type, r->str);
+    } else if (r->type == REDIS_REPLY_STATUS &&
+               r->len == 2 && memcmp(r->str, "OK", 2) == 0) {
+        serverLog(LL_NOTICE,
+            "RAFT.MGN-LOG %s logged: %s", type, payload);
+    } else {
+        serverLog(LL_WARNING,
+            "RAFT.MGN-LOG %s: unexpected reply (type=%d)", type, r->type);
+    }
+    if (r) freeReplyObject(r);
+    redisFree(ctx);
+}
+
 /* ---- Connection cache ---------------------------------------------------- */
 
 /* Cache an RDMA connection keyed by client id, so subsequent RPCs from the
@@ -1755,6 +1797,21 @@ deliver:
             "RDMA REGISTER-RESULT: register_id=%s total_buffers=%d, dialing back to %s:%d",
             job->register_id, job->total_buffers, job->src_host, job->src_port);
 
+        /* Protocol log: recipient is ready to receive (buffers registered).
+         * Logged BEFORE the dial-back so all recipient replicas record the
+         * start of the session before the donor is told to proceed. Skipped
+         * on the error path so we don't log a phantom "ready" event. */
+        if (!job->has_error) {
+            int first_slot = (job->n_pairs > 0) ? job->slot_ids[0] : -1;
+            int last_slot  = (job->n_pairs > 0) ? job->slot_ids[job->n_pairs - 1] : -1;
+            char mgn_payload[256];
+            snprintf(mgn_payload, sizeof(mgn_payload),
+                     "register_id=%s slots=%d-%d n=%d donor=%s:%d",
+                     job->register_id, first_slot, last_slot, job->n_pairs,
+                     job->src_host, job->src_port);
+            rdmaMgnLogSync("RECP_TXN_START", mgn_payload);
+        }
+
         redisContext *ctx = redisConnect(job->src_host, job->src_port);
         if (ctx == NULL || ctx->err) {
             serverLog(LL_WARNING,
@@ -3437,6 +3494,18 @@ static void *migrationWorker(void *arg) {
         "RDMA MIGRATE worker: started id=%lld addr=%s n_slots=%d",
         mig->id, mig->addr, mig->n_slots);
 
+    /* Protocol log: donor opens a migration session. All donor replicas
+     * record the event via the Raft log. */
+    {
+        char mgn_payload[160];
+        int first_slot = (mig->n_slots > 0) ? mig->chosen[0] : -1;
+        int last_slot  = (mig->n_slots > 0) ? mig->chosen[mig->n_slots - 1] : -1;
+        snprintf(mgn_payload, sizeof(mgn_payload),
+                 "sess=%lld slots=%d-%d n=%d recipient=%s",
+                 mig->id, first_slot, last_slot, mig->n_slots, mig->addr);
+        rdmaMgnLogSync("TXN_START", mgn_payload);
+    }
+
     /* PREP: register recipient landing buffers for the chosen slots. */
     migSetState(mig, RDMA_MIG_PREP);
     if (rdmaMigratePrepHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
@@ -3549,7 +3618,15 @@ static void *migrationWorker(void *arg) {
             }
             if (r->type == REDIS_REPLY_ARRAY && r->elements == 6) {
                 const char *state_str = r->element[0]->str;
-                if (state_str && strcmp(state_str, "done") == 0) done = 1;
+                if (state_str && strcmp(state_str, "done") == 0) {
+                    done = 1;
+                    /* Protocol log: donor sees recipient acked done. All
+                     * donor replicas record the session close. */
+                    char mgn_payload[64];
+                    snprintf(mgn_payload, sizeof(mgn_payload),
+                             "sess=%lld", mig->id);
+                    rdmaMgnLogSync("TXN_DONE", mgn_payload);
+                }
                 else if (state_str && strcmp(state_str, "failed") == 0) {
                     backpatch_err = sdscatfmt(sdsempty(),
                         "recipient backpatch FAILED: %s",

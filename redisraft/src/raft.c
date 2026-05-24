@@ -1024,6 +1024,12 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
     RedisRaftCtx *rr = user_data;
     RaftReq *req = entryDetachRaftReq(rr, entry);
 
+    LOG_NOTICE("RAFT_LOG apply:  idx=%ld term=%ld type=%s(%d) size=%llu",
+               entry_idx,
+               entry->term,
+               raftLogTypeName(entry->type), entry->type,
+               (unsigned long long) entry->data_len);
+
     switch (entry->type) {
         case RAFT_LOGTYPE_ADD_NONVOTING_NODE: {
             RaftCfgChange *cfg = (RaftCfgChange *) entry->data;
@@ -1083,6 +1089,24 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
         case RAFT_LOGTYPE_TIMEOUT_BLOCKED:
             timeoutBlockedCommand(rr, entry, req);
             break;
+        case RAFT_LOGTYPE_MGN_TXN_START:
+        case RAFT_LOGTYPE_MGN_RECP_TXN_START:
+        case RAFT_LOGTYPE_MGN_INDX_UPD:
+        case RAFT_LOGTYPE_MGN_RECP_TXN_DONE:
+        case RAFT_LOGTYPE_MGN_TXN_DONE: {
+            /* Bookkeeping-only apply for the migration protocol entries.
+             * Each replica records the event in its log; control flow
+             * (PREP / TRANSFER / BACKPATCH) is driven by the existing
+             * migrationWorker in cluster_rdma.c, which calls RAFT.MGN-LOG
+             * via RedisModule_Call at each phase boundary. */
+            int len = (int) entry->data_len;
+            LOG_NOTICE("%s applied: payload=\"%.*s\"",
+                       raftLogTypeName(entry->type), len, entry->data);
+            if (req) {
+                RaftReqFree(req);
+            }
+            break;
+        }
         default:
             break;
     }

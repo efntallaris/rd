@@ -524,3 +524,28 @@ int syncRename(const char *oldname, const char *newname)
     fsyncDir(oldname);
     return RR_OK;
 }
+
+const char *raftLogTypeName(int type)
+{
+    switch (type) {
+        case RAFT_LOGTYPE_NORMAL:              return "NORMAL";
+        case RAFT_LOGTYPE_ADD_NONVOTING_NODE:  return "ADD_NONVOTING_NODE";
+        case RAFT_LOGTYPE_ADD_NODE:            return "ADD_NODE";
+        case RAFT_LOGTYPE_REMOVE_NODE:         return "REMOVE_NODE";
+        case RAFT_LOGTYPE_NO_OP:               return "NO_OP";
+        case RAFT_LOGTYPE_ADD_SHARDGROUP:      return "ADD_SHARDGROUP";
+        case RAFT_LOGTYPE_UPDATE_SHARDGROUP:   return "UPDATE_SHARDGROUP";
+        case RAFT_LOGTYPE_REPLACE_SHARDGROUPS: return "REPLACE_SHARDGROUPS";
+        case RAFT_LOGTYPE_LOCK_KEYS:           return "LOCK_KEYS";
+        case RAFT_LOGTYPE_DELETE_UNLOCK_KEYS:  return "DELETE_UNLOCK_KEYS";
+        case RAFT_LOGTYPE_IMPORT_KEYS:         return "IMPORT_KEYS";
+        case RAFT_LOGTYPE_END_SESSION:         return "END_SESSION";
+        case RAFT_LOGTYPE_TIMEOUT_BLOCKED:     return "TIMEOUT_BLOCKED";
+        case RAFT_LOGTYPE_MGN_TXN_START:       return "MGN_TXN_START";
+        case RAFT_LOGTYPE_MGN_RECP_TXN_START:  return "MGN_RECP_TXN_START";
+        case RAFT_LOGTYPE_MGN_INDX_UPD:        return "MGN_INDX_UPD";
+        case RAFT_LOGTYPE_MGN_RECP_TXN_DONE:   return "MGN_RECP_TXN_DONE";
+        case RAFT_LOGTYPE_MGN_TXN_DONE:        return "MGN_TXN_DONE";
+        default:                               return "UNKNOWN";
+    }
+}

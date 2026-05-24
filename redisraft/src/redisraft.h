@@ -585,6 +585,14 @@ typedef struct ShardGroup {
 #define RAFT_LOGTYPE_END_SESSION         (RAFT_LOGTYPE_NUM + 7)
 #define RAFT_LOGTYPE_TIMEOUT_BLOCKED     (RAFT_LOGTYPE_NUM + 8)
 
+/* Vanilla migration protocol entries. Donor and recipient leaders append these
+ * via the standard Raft log to record progress through a migration session. */
+#define RAFT_LOGTYPE_MGN_TXN_START       (RAFT_LOGTYPE_NUM + 10)
+#define RAFT_LOGTYPE_MGN_RECP_TXN_START  (RAFT_LOGTYPE_NUM + 11)
+#define RAFT_LOGTYPE_MGN_INDX_UPD        (RAFT_LOGTYPE_NUM + 12)
+#define RAFT_LOGTYPE_MGN_RECP_TXN_DONE   (RAFT_LOGTYPE_NUM + 13)
+#define RAFT_LOGTYPE_MGN_TXN_DONE        (RAFT_LOGTYPE_NUM + 14)
+
 #define MAX_AUTH_STRING_ARG_LENGTH 255
 
 /* Sharding information, used when cluster_mode is enabled and multiple
@@ -852,6 +860,7 @@ void blockedTimedOut(RedisModuleCtx *ctx, void *data);
 void handleUnblock(RedisModuleCtx *ctx, RedisModuleCallReply *reply, void *private_data);
 
 /* util.c */
+const char *raftLogTypeName(int type);
 int RedisModuleStringToInt(RedisModuleString *str, int *value);
 char *catsnprintf(char *strbuf, size_t *strbuf_len, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 int safesnprintf(void *buf, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
@@ -950,6 +959,7 @@ void JoinCluster(RedisRaftCtx *rr, NodeAddrListElement *el, RaftReq *req, void (
 /* migrate.c */
 void importKeys(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req);
 int cmdRaftImport(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void MigrateKeys(RedisRaftCtx *rr, RaftReq *req);
 
 /* commands.c */

@@ -394,3 +394,74 @@ void MigrateKeys(RedisRaftCtx *rr, RaftReq *req)
 exit:
     RaftReqFree(req);
 }
+
+/* RAFT.MGN-LOG <type> <payload>
+ *
+ * Internal command for the existing RDMA migration path in cluster_rdma.c to
+ * record protocol-message events into the Raft log on the local replica
+ * group. Called by migrationWorker (donor side) and RDMA RPC handlers
+ * (recipient side) at phase boundaries via RedisModule_Call so all replicas
+ * see the same view of in-flight migration sessions.
+ *
+ * <type> is one of:
+ *   TXN_START         - donor: migration session opened
+ *   RECP_TXN_START    - recipient: PREP buffers ready
+ *   INDX_UPD          - recipient: chain majority has the TRANSFER data
+ *   RECP_TXN_DONE     - recipient: BACKPATCH + chain majority complete
+ *   TXN_DONE          - donor: recipient acked done
+ *
+ * <payload> is an opaque bytestring; senders agree on a format per type
+ * (current convention: space-separated decimal/text fields).
+ */
+int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    RedisRaftCtx *rr = &redis_raft;
+
+    if (checkRaftState(rr, ctx) == RR_ERROR) {
+        return REDISMODULE_OK;
+    }
+
+    if (argc != 3) {
+        RedisModule_WrongArity(ctx);
+        return REDISMODULE_OK;
+    }
+
+    size_t type_len;
+    const char *type_str = RedisModule_StringPtrLen(argv[1], &type_len);
+
+    int log_type;
+    if (type_len == 9 && memcmp(type_str, "TXN_START", 9) == 0) {
+        log_type = RAFT_LOGTYPE_MGN_TXN_START;
+    } else if (type_len == 14 && memcmp(type_str, "RECP_TXN_START", 14) == 0) {
+        log_type = RAFT_LOGTYPE_MGN_RECP_TXN_START;
+    } else if (type_len == 8 && memcmp(type_str, "INDX_UPD", 8) == 0) {
+        log_type = RAFT_LOGTYPE_MGN_INDX_UPD;
+    } else if (type_len == 13 && memcmp(type_str, "RECP_TXN_DONE", 13) == 0) {
+        log_type = RAFT_LOGTYPE_MGN_RECP_TXN_DONE;
+    } else if (type_len == 8 && memcmp(type_str, "TXN_DONE", 8) == 0) {
+        log_type = RAFT_LOGTYPE_MGN_TXN_DONE;
+    } else {
+        RedisModule_ReplyWithError(ctx,
+            "ERR unknown MGN log type (expected TXN_START | RECP_TXN_START | "
+            "INDX_UPD | RECP_TXN_DONE | TXN_DONE)");
+        return REDISMODULE_OK;
+    }
+
+    size_t payload_len;
+    const char *payload = RedisModule_StringPtrLen(argv[2], &payload_len);
+
+    raft_entry_t *entry = raft_entry_new(payload_len);
+    entry->type = log_type;
+    if (payload_len > 0) {
+        memcpy(entry->data, payload, payload_len);
+    }
+
+    int e = RedisRaftRecvEntry(rr, entry, NULL);
+    if (e != 0) {
+        replyRaftError(ctx, NULL, e);
+        return REDISMODULE_OK;
+    }
+
+    RedisModule_ReplyWithSimpleString(ctx, "OK");
+    return REDISMODULE_OK;
+}

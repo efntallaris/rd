@@ -1,0 +1,987 @@
+/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+Command line: -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+2026-05-23 15:46:21:580 0 sec: 0 operations; est completion in 0 second 
+2026-05-23 15:46:21:580 0 sec: 0 operations; est completion in 0 second 
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+2026-05-23 15:46:22:537 1 sec: 16900 operations; 16900 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=480.78] [UPDATE AverageLatency(us)=507.01] 
+2026-05-23 15:46:22:537 1 sec: 16900 operations; 16900 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=480.78] [UPDATE AverageLatency(us)=507.01] 
+2026-05-23 15:46:23:537 2 sec: 184890 operations; 167990 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=291.83] [UPDATE AverageLatency(us)=293.85] 
+2026-05-23 15:46:23:537 2 sec: 184890 operations; 167990 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=291.83] [UPDATE AverageLatency(us)=293.85] 
+2026-05-23 15:46:24:537 3 sec: 340960 operations; 156070 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=314.31] [UPDATE AverageLatency(us)=316.45] 
+2026-05-23 15:46:24:537 3 sec: 340960 operations; 156070 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=314.31] [UPDATE AverageLatency(us)=316.45] 
+2026-05-23 15:46:25:537 4 sec: 512936 operations; 171976 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=286.02] [UPDATE AverageLatency(us)=287.45] 
+2026-05-23 15:46:25:537 4 sec: 512936 operations; 171976 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=286.02] [UPDATE AverageLatency(us)=287.45] 
+2026-05-23 15:46:26:537 5 sec: 684775 operations; 171839 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.78] [UPDATE AverageLatency(us)=289.02] 
+2026-05-23 15:46:26:537 5 sec: 684775 operations; 171839 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.78] [UPDATE AverageLatency(us)=289.02] 
+2026-05-23 15:46:27:537 6 sec: 855330 operations; 170555 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=288.23] [UPDATE AverageLatency(us)=289.89] 
+2026-05-23 15:46:27:537 6 sec: 855330 operations; 170555 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=288.23] [UPDATE AverageLatency(us)=289.89] 
+2026-05-23 15:46:28:537 7 sec: 1027195 operations; 171865 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=285.54] [UPDATE AverageLatency(us)=288.29] 
+2026-05-23 15:46:28:537 7 sec: 1027195 operations; 171865 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=285.54] [UPDATE AverageLatency(us)=288.29] 
+2026-05-23 15:46:29:537 8 sec: 1200017 operations; 172822 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.34] [UPDATE AverageLatency(us)=286.69] 
+2026-05-23 15:46:29:537 8 sec: 1200017 operations; 172822 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.34] [UPDATE AverageLatency(us)=286.69] 
+2026-05-23 15:46:30:537 9 sec: 1372123 operations; 172106 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.96] [UPDATE AverageLatency(us)=287.9] 
+2026-05-23 15:46:30:537 9 sec: 1372123 operations; 172106 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.96] [UPDATE AverageLatency(us)=287.9] 
+2026-05-23 15:46:31:537 10 sec: 1543385 operations; 171262 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=286.71] [UPDATE AverageLatency(us)=289.28] 
+2026-05-23 15:46:31:537 10 sec: 1543385 operations; 171262 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=286.71] [UPDATE AverageLatency(us)=289.28] 
+2026-05-23 15:46:32:537 11 sec: 1716255 operations; 172870 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.59] [UPDATE AverageLatency(us)=286.67] 
+2026-05-23 15:46:32:537 11 sec: 1716255 operations; 172870 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=284.59] [UPDATE AverageLatency(us)=286.67] 
+2026-05-23 15:46:33:537 12 sec: 1875437 operations; 159182 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=308.58] [UPDATE AverageLatency(us)=311.9] 
+2026-05-23 15:46:33:537 12 sec: 1875437 operations; 159182 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=308.58] [UPDATE AverageLatency(us)=311.9] 
+2026-05-23 15:46:34:537 13 sec: 2045694 operations; 170257 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=287.16] [UPDATE AverageLatency(us)=293.17] [READ-FAILED AverageLatency(us)=902.33] 
+2026-05-23 15:46:34:537 13 sec: 2045694 operations; 170257 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=287.16] [UPDATE AverageLatency(us)=293.17] [READ-FAILED AverageLatency(us)=902.33] 
+2026-05-23 15:46:35:537 14 sec: 2211276 operations; 165582 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=282.37] [UPDATE AverageLatency(us)=315.35] [READ-FAILED AverageLatency(us)=321.55] 
+2026-05-23 15:46:35:537 14 sec: 2211276 operations; 165582 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=282.37] [UPDATE AverageLatency(us)=315.35] [READ-FAILED AverageLatency(us)=321.55] 
+2026-05-23 15:46:36:537 15 sec: 2380051 operations; 168775 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=285.88] [UPDATE AverageLatency(us)=299.53] [READ-FAILED AverageLatency(us)=351.27] 
+2026-05-23 15:46:36:537 15 sec: 2380051 operations; 168775 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=285.88] [UPDATE AverageLatency(us)=299.53] [READ-FAILED AverageLatency(us)=351.27] 
+2026-05-23 15:46:37:537 16 sec: 2554082 operations; 174031 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=283.36] [UPDATE AverageLatency(us)=285.99] [READ-FAILED AverageLatency(us)=201.96] 
+2026-05-23 15:46:37:537 16 sec: 2554082 operations; 174031 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=283.36] [UPDATE AverageLatency(us)=285.99] [READ-FAILED AverageLatency(us)=201.96] 
+2026-05-23 15:46:38:537 17 sec: 2725802 operations; 171720 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=287.96] [UPDATE AverageLatency(us)=289.37] [READ-FAILED AverageLatency(us)=188.16] 
+2026-05-23 15:46:38:537 17 sec: 2725802 operations; 171720 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=287.96] [UPDATE AverageLatency(us)=289.37] [READ-FAILED AverageLatency(us)=188.16] 
+2026-05-23 15:46:39:537 18 sec: 2897683 operations; 171881 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.69] [UPDATE AverageLatency(us)=288.27] [READ-FAILED AverageLatency(us)=174.81] 
+2026-05-23 15:46:39:537 18 sec: 2897683 operations; 171881 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.69] [UPDATE AverageLatency(us)=288.27] [READ-FAILED AverageLatency(us)=174.81] 
+2026-05-23 15:46:40:537 19 sec: 3069569 operations; 171886 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.31] [UPDATE AverageLatency(us)=288.15] [READ-FAILED AverageLatency(us)=176.9] 
+2026-05-23 15:46:40:537 19 sec: 3069569 operations; 171886 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.31] [UPDATE AverageLatency(us)=288.15] [READ-FAILED AverageLatency(us)=176.9] 
+2026-05-23 15:46:41:537 20 sec: 3243115 operations; 173546 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=285.49] [UPDATE AverageLatency(us)=285.73] [READ-FAILED AverageLatency(us)=166.43] 
+2026-05-23 15:46:41:537 20 sec: 3243115 operations; 173546 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=285.49] [UPDATE AverageLatency(us)=285.73] [READ-FAILED AverageLatency(us)=166.43] 
+2026-05-23 15:46:42:537 21 sec: 3414088 operations; 170973 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.71] [UPDATE AverageLatency(us)=290.02] [READ-FAILED AverageLatency(us)=194.38] 
+2026-05-23 15:46:42:537 21 sec: 3414088 operations; 170973 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.71] [UPDATE AverageLatency(us)=290.02] [READ-FAILED AverageLatency(us)=194.38] 
+2026-05-23 15:46:43:537 22 sec: 3587612 operations; 173524 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=284.82] [UPDATE AverageLatency(us)=285.76] [READ-FAILED AverageLatency(us)=191.63] 
+2026-05-23 15:46:43:537 22 sec: 3587612 operations; 173524 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=284.82] [UPDATE AverageLatency(us)=285.76] [READ-FAILED AverageLatency(us)=191.63] 
+2026-05-23 15:46:44:537 23 sec: 3758912 operations; 171300 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.41] [UPDATE AverageLatency(us)=289.16] [READ-FAILED AverageLatency(us)=192.98] 
+2026-05-23 15:46:44:537 23 sec: 3758912 operations; 171300 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.41] [UPDATE AverageLatency(us)=289.16] [READ-FAILED AverageLatency(us)=192.98] 
+2026-05-23 15:46:45:537 24 sec: 3932046 operations; 173134 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=285.14] [UPDATE AverageLatency(us)=286.05] [READ-FAILED AverageLatency(us)=189.24] 
+2026-05-23 15:46:45:537 24 sec: 3932046 operations; 173134 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=285.14] [UPDATE AverageLatency(us)=286.05] [READ-FAILED AverageLatency(us)=189.24] 
+2026-05-23 15:46:46:537 25 sec: 4104817 operations; 172771 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=284.38] [UPDATE AverageLatency(us)=287.79] [READ-FAILED AverageLatency(us)=209.31] 
+2026-05-23 15:46:46:537 25 sec: 4104817 operations; 172771 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=284.38] [UPDATE AverageLatency(us)=287.79] [READ-FAILED AverageLatency(us)=209.31] 
+2026-05-23 15:46:47:537 26 sec: 4266301 operations; 161484 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=304.52] [UPDATE AverageLatency(us)=307.77] [READ-FAILED AverageLatency(us)=223.45] 
+2026-05-23 15:46:47:537 26 sec: 4266301 operations; 161484 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=304.52] [UPDATE AverageLatency(us)=307.77] [READ-FAILED AverageLatency(us)=223.45] 
+2026-05-23 15:46:48:537 27 sec: 4432848 operations; 166547 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=289.78] [UPDATE AverageLatency(us)=303.95] [READ-FAILED AverageLatency(us)=222.29] 
+2026-05-23 15:46:48:537 27 sec: 4432848 operations; 166547 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=289.78] [UPDATE AverageLatency(us)=303.95] [READ-FAILED AverageLatency(us)=222.29] 
+2026-05-23 15:46:49:537 28 sec: 4596216 operations; 163368 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=281.87] [UPDATE AverageLatency(us)=323.73] [READ-FAILED AverageLatency(us)=258.75] 
+2026-05-23 15:46:49:537 28 sec: 4596216 operations; 163368 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=281.87] [UPDATE AverageLatency(us)=323.73] [READ-FAILED AverageLatency(us)=258.75] 
+2026-05-23 15:46:50:537 29 sec: 4766963 operations; 170747 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=280.82] [UPDATE AverageLatency(us)=297.95] [READ-FAILED AverageLatency(us)=267.47] 
+2026-05-23 15:46:50:537 29 sec: 4766963 operations; 170747 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=280.82] [UPDATE AverageLatency(us)=297.95] [READ-FAILED AverageLatency(us)=267.47] 
+2026-05-23 15:46:51:537 30 sec: 4944318 operations; 177355 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=277.15] [UPDATE AverageLatency(us)=280.62] [READ-FAILED AverageLatency(us)=250.04] 
+2026-05-23 15:46:51:537 30 sec: 4944318 operations; 177355 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=277.15] [UPDATE AverageLatency(us)=280.62] [READ-FAILED AverageLatency(us)=250.04] 
+2026-05-23 15:46:52:537 31 sec: 5120343 operations; 176025 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=278.45] [UPDATE AverageLatency(us)=282.97] [READ-FAILED AverageLatency(us)=247.56] 
+2026-05-23 15:46:52:537 31 sec: 5120343 operations; 176025 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=278.45] [UPDATE AverageLatency(us)=282.97] [READ-FAILED AverageLatency(us)=247.56] 
+2026-05-23 15:46:53:537 32 sec: 5292174 operations; 171831 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=286.3] [UPDATE AverageLatency(us)=289.44] [READ-FAILED AverageLatency(us)=232.22] 
+2026-05-23 15:46:53:537 32 sec: 5292174 operations; 171831 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=286.3] [UPDATE AverageLatency(us)=289.44] [READ-FAILED AverageLatency(us)=232.22] 
+2026-05-23 15:46:54:538 33 sec: 5467661 operations; 175136.73 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=280.42] [UPDATE AverageLatency(us)=283.29] [READ-FAILED AverageLatency(us)=249.51] 
+2026-05-23 15:46:54:538 33 sec: 5467661 operations; 175136.73 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=280.42] [UPDATE AverageLatency(us)=283.29] [READ-FAILED AverageLatency(us)=249.51] 
+2026-05-23 15:46:55:537 34 sec: 5643828 operations; 176520.04 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=278.96] [UPDATE AverageLatency(us)=281] [READ-FAILED AverageLatency(us)=257.63] 
+2026-05-23 15:46:55:537 34 sec: 5643828 operations; 176520.04 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=278.96] [UPDATE AverageLatency(us)=281] [READ-FAILED AverageLatency(us)=257.63] 
+2026-05-23 15:46:56:537 35 sec: 5820384 operations; 176556 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=279.03] [UPDATE AverageLatency(us)=280.61] [READ-FAILED AverageLatency(us)=230.1] 
+2026-05-23 15:46:56:537 35 sec: 5820384 operations; 176556 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=279.03] [UPDATE AverageLatency(us)=280.61] [READ-FAILED AverageLatency(us)=230.1] 
+2026-05-23 15:46:57:537 36 sec: 5994378 operations; 173994 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=283.1] [UPDATE AverageLatency(us)=284.88] [READ-FAILED AverageLatency(us)=228.51] 
+2026-05-23 15:46:57:537 36 sec: 5994378 operations; 173994 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=283.1] [UPDATE AverageLatency(us)=284.88] [READ-FAILED AverageLatency(us)=228.51] 
+2026-05-23 15:46:58:537 37 sec: 6165184 operations; 170806 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.39] [UPDATE AverageLatency(us)=290.47] [READ-FAILED AverageLatency(us)=215.08] 
+2026-05-23 15:46:58:537 37 sec: 6165184 operations; 170806 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=288.39] [UPDATE AverageLatency(us)=290.47] [READ-FAILED AverageLatency(us)=215.08] 
+2026-05-23 15:46:59:537 38 sec: 6340140 operations; 174956 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=281.65] [UPDATE AverageLatency(us)=282.9] [READ-FAILED AverageLatency(us)=213.53] 
+2026-05-23 15:46:59:537 38 sec: 6340140 operations; 174956 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=281.65] [UPDATE AverageLatency(us)=282.9] [READ-FAILED AverageLatency(us)=213.53] 
+2026-05-23 15:47:00:537 39 sec: 6511298 operations; 171158 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=287.03] [UPDATE AverageLatency(us)=290.44] [READ-FAILED AverageLatency(us)=209.38] 
+2026-05-23 15:47:00:537 39 sec: 6511298 operations; 171158 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=287.03] [UPDATE AverageLatency(us)=290.44] [READ-FAILED AverageLatency(us)=209.38] 
+2026-05-23 15:47:01:537 40 sec: 6687415 operations; 176117 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=278.62] [UPDATE AverageLatency(us)=282.1] [READ-FAILED AverageLatency(us)=218.87] 
+2026-05-23 15:47:01:537 40 sec: 6687415 operations; 176117 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=278.62] [UPDATE AverageLatency(us)=282.1] [READ-FAILED AverageLatency(us)=218.87] 
+2026-05-23 15:47:02:537 41 sec: 6862733 operations; 175318 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=280.63] [UPDATE AverageLatency(us)=282.59] [READ-FAILED AverageLatency(us)=228.38] 
+2026-05-23 15:47:02:537 41 sec: 6862733 operations; 175318 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=280.63] [UPDATE AverageLatency(us)=282.59] [READ-FAILED AverageLatency(us)=228.38] 
+2026-05-23 15:47:03:537 42 sec: 7023875 operations; 161142 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=307.44] [UPDATE AverageLatency(us)=306.1] [READ-FAILED AverageLatency(us)=200.76] 
+2026-05-23 15:47:03:537 42 sec: 7023875 operations; 161142 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=307.44] [UPDATE AverageLatency(us)=306.1] [READ-FAILED AverageLatency(us)=200.76] 
+2026-05-23 15:47:04:537 43 sec: 7197547 operations; 173672 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=281.74] [UPDATE AverageLatency(us)=286.55] [READ-FAILED AverageLatency(us)=276.31] 
+2026-05-23 15:47:04:537 43 sec: 7197547 operations; 173672 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=281.74] [UPDATE AverageLatency(us)=286.55] [READ-FAILED AverageLatency(us)=276.31] 
+2026-05-23 15:47:05:537 44 sec: 7353087 operations; 155540 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=292.02] [UPDATE AverageLatency(us)=343.15] [READ-FAILED AverageLatency(us)=277.83] 
+2026-05-23 15:47:05:537 44 sec: 7353087 operations; 155540 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=292.02] [UPDATE AverageLatency(us)=343.15] [READ-FAILED AverageLatency(us)=277.83] 
+2026-05-23 15:47:06:537 45 sec: 7524071 operations; 170984 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=276.3] [UPDATE AverageLatency(us)=300.41] [READ-FAILED AverageLatency(us)=297.44] 
+2026-05-23 15:47:06:537 45 sec: 7524071 operations; 170984 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=276.3] [UPDATE AverageLatency(us)=300.41] [READ-FAILED AverageLatency(us)=297.44] 
+2026-05-23 15:47:07:537 46 sec: 7705960 operations; 181889 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=265.51] [UPDATE AverageLatency(us)=274.16] [READ-FAILED AverageLatency(us)=388.02] 
+2026-05-23 15:47:07:537 46 sec: 7705960 operations; 181889 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=265.51] [UPDATE AverageLatency(us)=274.16] [READ-FAILED AverageLatency(us)=388.02] 
+2026-05-23 15:47:08:537 47 sec: 7887262 operations; 181302 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=265.9] [UPDATE AverageLatency(us)=275.19] [READ-FAILED AverageLatency(us)=389.68] 
+2026-05-23 15:47:08:537 47 sec: 7887262 operations; 181302 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=265.9] [UPDATE AverageLatency(us)=275.19] [READ-FAILED AverageLatency(us)=389.68] 
+2026-05-23 15:47:09:537 48 sec: 8073151 operations; 185889 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=260.29] [UPDATE AverageLatency(us)=267.64] [READ-FAILED AverageLatency(us)=384.79] 
+2026-05-23 15:47:09:537 48 sec: 8073151 operations; 185889 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=260.29] [UPDATE AverageLatency(us)=267.64] [READ-FAILED AverageLatency(us)=384.79] 
+2026-05-23 15:47:10:537 49 sec: 8257204 operations; 184053 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=263.3] [UPDATE AverageLatency(us)=270.29] [READ-FAILED AverageLatency(us)=390.22] 
+2026-05-23 15:47:10:537 49 sec: 8257204 operations; 184053 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=263.3] [UPDATE AverageLatency(us)=270.29] [READ-FAILED AverageLatency(us)=390.22] 
+2026-05-23 15:47:11:537 50 sec: 8445206 operations; 188002 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.65] [UPDATE AverageLatency(us)=264.09] [READ-FAILED AverageLatency(us)=367.67] 
+2026-05-23 15:47:11:537 50 sec: 8445206 operations; 188002 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.65] [UPDATE AverageLatency(us)=264.09] [READ-FAILED AverageLatency(us)=367.67] 
+2026-05-23 15:47:12:537 51 sec: 8633062 operations; 187856 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.87] [UPDATE AverageLatency(us)=264.43] [READ-FAILED AverageLatency(us)=383.35] 
+2026-05-23 15:47:12:537 51 sec: 8633062 operations; 187856 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.87] [UPDATE AverageLatency(us)=264.43] [READ-FAILED AverageLatency(us)=383.35] 
+2026-05-23 15:47:13:537 52 sec: 8820320 operations; 187258 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=259.96] [UPDATE AverageLatency(us)=265.15] [READ-FAILED AverageLatency(us)=383.36] 
+2026-05-23 15:47:13:537 52 sec: 8820320 operations; 187258 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=259.96] [UPDATE AverageLatency(us)=265.15] [READ-FAILED AverageLatency(us)=383.36] 
+2026-05-23 15:47:14:537 53 sec: 9009176 operations; 188856 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.61] [UPDATE AverageLatency(us)=262.58] [READ-FAILED AverageLatency(us)=363.13] 
+2026-05-23 15:47:14:537 53 sec: 9009176 operations; 188856 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.61] [UPDATE AverageLatency(us)=262.58] [READ-FAILED AverageLatency(us)=363.13] 
+2026-05-23 15:47:15:537 54 sec: 9192443 operations; 183267 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=266.07] [UPDATE AverageLatency(us)=270.48] [READ-FAILED AverageLatency(us)=403.24] 
+2026-05-23 15:47:15:537 54 sec: 9192443 operations; 183267 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=266.07] [UPDATE AverageLatency(us)=270.48] [READ-FAILED AverageLatency(us)=403.24] 
+2026-05-23 15:47:16:537 55 sec: 9381691 operations; 189248 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.54] [UPDATE AverageLatency(us)=261.69] [READ-FAILED AverageLatency(us)=356.64] 
+2026-05-23 15:47:16:537 55 sec: 9381691 operations; 189248 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=258.54] [UPDATE AverageLatency(us)=261.69] [READ-FAILED AverageLatency(us)=356.64] 
+2026-05-23 15:47:17:537 56 sec: 9567703 operations; 186012 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259] [UPDATE AverageLatency(us)=270.39] [READ-FAILED AverageLatency(us)=352.88] 
+2026-05-23 15:47:17:537 56 sec: 9567703 operations; 186012 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259] [UPDATE AverageLatency(us)=270.39] [READ-FAILED AverageLatency(us)=352.88] 
+2026-05-23 15:47:18:537 57 sec: 9751419 operations; 183716 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.88] [UPDATE AverageLatency(us)=282.66] [READ-FAILED AverageLatency(us)=367.85] 
+2026-05-23 15:47:18:537 57 sec: 9751419 operations; 183716 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.88] [UPDATE AverageLatency(us)=282.66] [READ-FAILED AverageLatency(us)=367.85] 
+2026-05-23 15:47:19:537 58 sec: 9942078 operations; 190659 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.21] [UPDATE AverageLatency(us)=264.27] [READ-FAILED AverageLatency(us)=355.1] 
+2026-05-23 15:47:19:537 58 sec: 9942078 operations; 190659 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.21] [UPDATE AverageLatency(us)=264.27] [READ-FAILED AverageLatency(us)=355.1] 
+2026-05-23 15:47:20:537 59 sec: 10129559 operations; 187481 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=261.38] [UPDATE AverageLatency(us)=266] [READ-FAILED AverageLatency(us)=220.45] 
+2026-05-23 15:47:20:537 59 sec: 10129559 operations; 187481 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=261.38] [UPDATE AverageLatency(us)=266] [READ-FAILED AverageLatency(us)=220.45] 
+2026-05-23 15:47:21:537 60 sec: 10321565 operations; 192006 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=255.88] [UPDATE AverageLatency(us)=258.99] [READ-FAILED AverageLatency(us)=214.47] 
+2026-05-23 15:47:21:537 60 sec: 10321565 operations; 192006 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=255.88] [UPDATE AverageLatency(us)=258.99] [READ-FAILED AverageLatency(us)=214.47] 
+2026-05-23 15:47:22:537 61 sec: 10511951 operations; 190386 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=258.42] [UPDATE AverageLatency(us)=260.57] [READ-FAILED AverageLatency(us)=228.58] 
+2026-05-23 15:47:22:537 61 sec: 10511951 operations; 190386 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=258.42] [UPDATE AverageLatency(us)=260.57] [READ-FAILED AverageLatency(us)=228.58] 
+2026-05-23 15:47:23:537 62 sec: 10700650 operations; 188699 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=260.04] [UPDATE AverageLatency(us)=263.23] [READ-FAILED AverageLatency(us)=229.65] 
+2026-05-23 15:47:23:537 62 sec: 10700650 operations; 188699 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=260.04] [UPDATE AverageLatency(us)=263.23] [READ-FAILED AverageLatency(us)=229.65] 
+2026-05-23 15:47:24:537 63 sec: 10895916 operations; 195266 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.01] [UPDATE AverageLatency(us)=253.69] [READ-FAILED AverageLatency(us)=222.78] 
+2026-05-23 15:47:24:537 63 sec: 10895916 operations; 195266 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.01] [UPDATE AverageLatency(us)=253.69] [READ-FAILED AverageLatency(us)=222.78] 
+2026-05-23 15:47:25:537 64 sec: 11088058 operations; 192142 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=256.87] [UPDATE AverageLatency(us)=257.19] [READ-FAILED AverageLatency(us)=219.5] 
+2026-05-23 15:47:25:537 64 sec: 11088058 operations; 192142 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=256.87] [UPDATE AverageLatency(us)=257.19] [READ-FAILED AverageLatency(us)=219.5] 
+2026-05-23 15:47:26:537 65 sec: 11279449 operations; 191391 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=256.73] [UPDATE AverageLatency(us)=258.68] [READ-FAILED AverageLatency(us)=237.87] 
+2026-05-23 15:47:26:537 65 sec: 11279449 operations; 191391 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=256.73] [UPDATE AverageLatency(us)=258.68] [READ-FAILED AverageLatency(us)=237.87] 
+2026-05-23 15:47:27:537 66 sec: 11476855 operations; 197406 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=248.56] [UPDATE AverageLatency(us)=251.34] [READ-FAILED AverageLatency(us)=218.28] 
+2026-05-23 15:47:27:537 66 sec: 11476855 operations; 197406 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=248.56] [UPDATE AverageLatency(us)=251.34] [READ-FAILED AverageLatency(us)=218.28] 
+2026-05-23 15:47:28:537 67 sec: 11670999 operations; 194144 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.71] [UPDATE AverageLatency(us)=255.14] [READ-FAILED AverageLatency(us)=243.13] 
+2026-05-23 15:47:28:537 67 sec: 11670999 operations; 194144 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=252.71] [UPDATE AverageLatency(us)=255.14] [READ-FAILED AverageLatency(us)=243.13] 
+2026-05-23 15:47:29:537 68 sec: 11868727 operations; 197728 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=247.89] [UPDATE AverageLatency(us)=251] [READ-FAILED AverageLatency(us)=233.82] 
+2026-05-23 15:47:29:537 68 sec: 11868727 operations; 197728 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=247.89] [UPDATE AverageLatency(us)=251] [READ-FAILED AverageLatency(us)=233.82] 
+2026-05-23 15:47:30:537 69 sec: 12062403 operations; 193676 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=253.85] [UPDATE AverageLatency(us)=255.58] [READ-FAILED AverageLatency(us)=222.99] 
+2026-05-23 15:47:30:537 69 sec: 12062403 operations; 193676 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=253.85] [UPDATE AverageLatency(us)=255.58] [READ-FAILED AverageLatency(us)=222.99] 
+2026-05-23 15:47:31:537 70 sec: 12248303 operations; 185900 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=253.5] [UPDATE AverageLatency(us)=277.43] [READ-FAILED AverageLatency(us)=262.5] 
+2026-05-23 15:47:31:537 70 sec: 12248303 operations; 185900 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=253.5] [UPDATE AverageLatency(us)=277.43] [READ-FAILED AverageLatency(us)=262.5] 
+2026-05-23 15:47:32:537 71 sec: 12434588 operations; 186285 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=249.43] [UPDATE AverageLatency(us)=279.52] [READ-FAILED AverageLatency(us)=295.89] 
+2026-05-23 15:47:32:537 71 sec: 12434588 operations; 186285 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=249.43] [UPDATE AverageLatency(us)=279.52] [READ-FAILED AverageLatency(us)=295.89] 
+2026-05-23 15:47:33:537 72 sec: 12620799 operations; 186211 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259.65] [UPDATE AverageLatency(us)=269.81] [READ-FAILED AverageLatency(us)=284.13] 
+2026-05-23 15:47:33:537 72 sec: 12620799 operations; 186211 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259.65] [UPDATE AverageLatency(us)=269.81] [READ-FAILED AverageLatency(us)=284.13] 
+2026-05-23 15:47:34:537 73 sec: 12810334 operations; 189535 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259.04] [UPDATE AverageLatency(us)=262.36] [READ-FAILED AverageLatency(us)=220.55] 
+2026-05-23 15:47:34:537 73 sec: 12810334 operations; 189535 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259.04] [UPDATE AverageLatency(us)=262.36] [READ-FAILED AverageLatency(us)=220.55] 
+2026-05-23 15:47:35:537 74 sec: 12999163 operations; 188829 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259.84] [UPDATE AverageLatency(us)=263.19] [READ-FAILED AverageLatency(us)=223.65] 
+2026-05-23 15:47:35:537 74 sec: 12999163 operations; 188829 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=259.84] [UPDATE AverageLatency(us)=263.19] [READ-FAILED AverageLatency(us)=223.65] 
+2026-05-23 15:47:36:537 75 sec: 13198627 operations; 199464 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.35] [UPDATE AverageLatency(us)=248.88] [READ-FAILED AverageLatency(us)=218.32] 
+2026-05-23 15:47:36:537 75 sec: 13198627 operations; 199464 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.35] [UPDATE AverageLatency(us)=248.88] [READ-FAILED AverageLatency(us)=218.32] 
+2026-05-23 15:47:37:537 76 sec: 13398505 operations; 199878 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=245.49] [UPDATE AverageLatency(us)=248.28] [READ-FAILED AverageLatency(us)=219] 
+2026-05-23 15:47:37:537 76 sec: 13398505 operations; 199878 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=245.49] [UPDATE AverageLatency(us)=248.28] [READ-FAILED AverageLatency(us)=219] 
+2026-05-23 15:47:38:537 77 sec: 13596750 operations; 198245 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=247.47] [UPDATE AverageLatency(us)=250.41] [READ-FAILED AverageLatency(us)=223.83] 
+2026-05-23 15:47:38:537 77 sec: 13596750 operations; 198245 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=247.47] [UPDATE AverageLatency(us)=250.41] [READ-FAILED AverageLatency(us)=223.83] 
+2026-05-23 15:47:39:537 78 sec: 13798400 operations; 201650 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=242.96] [UPDATE AverageLatency(us)=246.32] [READ-FAILED AverageLatency(us)=229.55] 
+2026-05-23 15:47:39:537 78 sec: 13798400 operations; 201650 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=242.96] [UPDATE AverageLatency(us)=246.32] [READ-FAILED AverageLatency(us)=229.55] 
+2026-05-23 15:47:40:537 79 sec: 13995467 operations; 197067 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=248.74] [UPDATE AverageLatency(us)=252.02] [READ-FAILED AverageLatency(us)=210.4] 
+2026-05-23 15:47:40:537 79 sec: 13995467 operations; 197067 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=248.74] [UPDATE AverageLatency(us)=252.02] [READ-FAILED AverageLatency(us)=210.4] 
+2026-05-23 15:47:41:537 80 sec: 14197163 operations; 201696 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=243.5] [UPDATE AverageLatency(us)=245.8] [READ-FAILED AverageLatency(us)=211.45] 
+2026-05-23 15:47:41:537 80 sec: 14197163 operations; 201696 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=243.5] [UPDATE AverageLatency(us)=245.8] [READ-FAILED AverageLatency(us)=211.45] 
+2026-05-23 15:47:42:537 81 sec: 14396301 operations; 199138 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.23] [UPDATE AverageLatency(us)=249.26] [READ-FAILED AverageLatency(us)=217.6] 
+2026-05-23 15:47:42:537 81 sec: 14396301 operations; 199138 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.23] [UPDATE AverageLatency(us)=249.26] [READ-FAILED AverageLatency(us)=217.6] 
+2026-05-23 15:47:43:537 82 sec: 14595263 operations; 198962 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.65] [UPDATE AverageLatency(us)=249.12] [READ-FAILED AverageLatency(us)=217.07] 
+2026-05-23 15:47:43:537 82 sec: 14595263 operations; 198962 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.65] [UPDATE AverageLatency(us)=249.12] [READ-FAILED AverageLatency(us)=217.07] 
+2026-05-23 15:47:44:537 83 sec: 14797556 operations; 202293 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=241.63] [UPDATE AverageLatency(us)=245.85] [READ-FAILED AverageLatency(us)=223.11] 
+2026-05-23 15:47:44:537 83 sec: 14797556 operations; 202293 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=241.63] [UPDATE AverageLatency(us)=245.85] [READ-FAILED AverageLatency(us)=223.11] 
+2026-05-23 15:47:45:537 84 sec: 14968772 operations; 171216 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=266.8] [UPDATE AverageLatency(us)=308.99] [READ-FAILED AverageLatency(us)=315.97] 
+2026-05-23 15:47:45:537 84 sec: 14968772 operations; 171216 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=266.8] [UPDATE AverageLatency(us)=308.99] [READ-FAILED AverageLatency(us)=315.97] 
+2026-05-23 15:47:46:537 85 sec: 15142822 operations; 174050 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=265.37] [UPDATE AverageLatency(us)=298.21] [READ-FAILED AverageLatency(us)=517.31] 
+2026-05-23 15:47:46:537 85 sec: 15142822 operations; 174050 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=265.37] [UPDATE AverageLatency(us)=298.21] [READ-FAILED AverageLatency(us)=517.31] 
+2026-05-23 15:47:47:537 86 sec: 15338097 operations; 195275 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.08] [UPDATE AverageLatency(us)=256.16] [READ-FAILED AverageLatency(us)=408.14] 
+2026-05-23 15:47:47:537 86 sec: 15338097 operations; 195275 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=246.08] [UPDATE AverageLatency(us)=256.16] [READ-FAILED AverageLatency(us)=408.14] 
+2026-05-23 15:47:48:537 87 sec: 15535305 operations; 197208 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=244.57] [UPDATE AverageLatency(us)=253.4] [READ-FAILED AverageLatency(us)=342.99] 
+2026-05-23 15:47:48:537 87 sec: 15535305 operations; 197208 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=244.57] [UPDATE AverageLatency(us)=253.4] [READ-FAILED AverageLatency(us)=342.99] 
+2026-05-23 15:47:49:537 88 sec: 15743550 operations; 208245 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=231.54] [UPDATE AverageLatency(us)=238.93] [READ-FAILED AverageLatency(us)=368.56] 
+2026-05-23 15:47:49:537 88 sec: 15743550 operations; 208245 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=231.54] [UPDATE AverageLatency(us)=238.93] [READ-FAILED AverageLatency(us)=368.56] 
+2026-05-23 15:47:50:537 89 sec: 15953406 operations; 209856 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=231.32] [UPDATE AverageLatency(us)=236.18] [READ-FAILED AverageLatency(us)=353.97] 
+2026-05-23 15:47:50:537 89 sec: 15953406 operations; 209856 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=231.32] [UPDATE AverageLatency(us)=236.18] [READ-FAILED AverageLatency(us)=353.97] 
+2026-05-23 15:47:51:537 90 sec: 16164689 operations; 211283 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=230.43] [UPDATE AverageLatency(us)=234.1] [READ-FAILED AverageLatency(us)=353.9] 
+2026-05-23 15:47:51:537 90 sec: 16164689 operations; 211283 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=230.43] [UPDATE AverageLatency(us)=234.1] [READ-FAILED AverageLatency(us)=353.9] 
+2026-05-23 15:47:52:537 91 sec: 16375603 operations; 210914 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=230.62] [UPDATE AverageLatency(us)=235.42] [READ-FAILED AverageLatency(us)=337] 
+2026-05-23 15:47:52:537 91 sec: 16375603 operations; 210914 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=230.62] [UPDATE AverageLatency(us)=235.42] [READ-FAILED AverageLatency(us)=337] 
+2026-05-23 15:47:53:536 92 sec: 16595987 operations; 220384 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=222.41] [UPDATE AverageLatency(us)=225.94] [READ-FAILED AverageLatency(us)=309.73] 
+2026-05-23 15:47:53:536 92 sec: 16595987 operations; 220384 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=222.41] [UPDATE AverageLatency(us)=225.94] [READ-FAILED AverageLatency(us)=309.73] 
+2026-05-23 15:47:54:536 93 sec: 16813438 operations; 217451 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=225.94] [UPDATE AverageLatency(us)=227.96] [READ-FAILED AverageLatency(us)=323.82] 
+2026-05-23 15:47:54:536 93 sec: 16813438 operations; 217451 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=225.94] [UPDATE AverageLatency(us)=227.96] [READ-FAILED AverageLatency(us)=323.82] 
+2026-05-23 15:47:55:536 94 sec: 17033184 operations; 219746 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=223.04] [UPDATE AverageLatency(us)=227.03] [READ-FAILED AverageLatency(us)=302.38] 
+2026-05-23 15:47:55:536 94 sec: 17033184 operations; 219746 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=223.04] [UPDATE AverageLatency(us)=227.03] [READ-FAILED AverageLatency(us)=302.38] 
+2026-05-23 15:47:56:537 95 sec: 17250113 operations; 216929 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=226.32] [UPDATE AverageLatency(us)=229.25] [READ-FAILED AverageLatency(us)=347.69] 
+2026-05-23 15:47:56:537 95 sec: 17250113 operations; 216929 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=226.32] [UPDATE AverageLatency(us)=229.25] [READ-FAILED AverageLatency(us)=347.69] 
+2026-05-23 15:47:57:537 96 sec: 17456131 operations; 206018 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=238.05] [UPDATE AverageLatency(us)=240.18] [READ-FAILED AverageLatency(us)=334.62] 
+2026-05-23 15:47:57:537 96 sec: 17456131 operations; 206018 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=238.05] [UPDATE AverageLatency(us)=240.18] [READ-FAILED AverageLatency(us)=334.62] 
+2026-05-23 15:47:58:537 97 sec: 17672606 operations; 216475 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=226.16] [UPDATE AverageLatency(us)=228.85] [READ-FAILED AverageLatency(us)=308.39] 
+2026-05-23 15:47:58:537 97 sec: 17672606 operations; 216475 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=226.16] [UPDATE AverageLatency(us)=228.85] [READ-FAILED AverageLatency(us)=308.39] 
+2026-05-23 15:47:59:537 98 sec: 17890315 operations; 217709 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=225.42] [UPDATE AverageLatency(us)=227.07] [READ-FAILED AverageLatency(us)=302.85] 
+2026-05-23 15:47:59:537 98 sec: 17890315 operations; 217709 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=225.42] [UPDATE AverageLatency(us)=227.07] [READ-FAILED AverageLatency(us)=302.85] 
+2026-05-23 15:48:00:537 99 sec: 18108065 operations; 217750 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=225.07] [UPDATE AverageLatency(us)=227.38] [READ-FAILED AverageLatency(us)=305.13] 
+2026-05-23 15:48:00:537 99 sec: 18108065 operations; 217750 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=225.07] [UPDATE AverageLatency(us)=227.38] [READ-FAILED AverageLatency(us)=305.13] 
+2026-05-23 15:48:01:537 100 sec: 18319177 operations; 211112 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=231.66] [UPDATE AverageLatency(us)=235.2] [READ-FAILED AverageLatency(us)=283.77] 
+2026-05-23 15:48:01:537 100 sec: 18319177 operations; 211112 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=231.66] [UPDATE AverageLatency(us)=235.2] [READ-FAILED AverageLatency(us)=283.77] 
+2026-05-23 15:48:02:537 101 sec: 18540590 operations; 221413 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=221.33] [UPDATE AverageLatency(us)=223.79] [READ-FAILED AverageLatency(us)=295.06] 
+2026-05-23 15:48:02:537 101 sec: 18540590 operations; 221413 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=221.33] [UPDATE AverageLatency(us)=223.79] [READ-FAILED AverageLatency(us)=295.06] 
+2026-05-23 15:48:03:537 102 sec: 18759935 operations; 219345 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.7] [UPDATE AverageLatency(us)=225.5] [READ-FAILED AverageLatency(us)=319.11] 
+2026-05-23 15:48:03:537 102 sec: 18759935 operations; 219345 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.7] [UPDATE AverageLatency(us)=225.5] [READ-FAILED AverageLatency(us)=319.11] 
+2026-05-23 15:48:04:537 103 sec: 18969964 operations; 210029 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=233.48] [UPDATE AverageLatency(us)=236.01] [READ-FAILED AverageLatency(us)=333.7] 
+2026-05-23 15:48:04:537 103 sec: 18969964 operations; 210029 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=233.48] [UPDATE AverageLatency(us)=236.01] [READ-FAILED AverageLatency(us)=333.7] 
+2026-05-23 15:48:05:537 104 sec: 19187853 operations; 217889 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.79] [UPDATE AverageLatency(us)=227.19] [READ-FAILED AverageLatency(us)=321.99] 
+2026-05-23 15:48:05:537 104 sec: 19187853 operations; 217889 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.79] [UPDATE AverageLatency(us)=227.19] [READ-FAILED AverageLatency(us)=321.99] 
+2026-05-23 15:48:06:537 105 sec: 19404373 operations; 216520 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.5] [UPDATE AverageLatency(us)=228.55] [READ-FAILED AverageLatency(us)=347.31] 
+2026-05-23 15:48:06:537 105 sec: 19404373 operations; 216520 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.5] [UPDATE AverageLatency(us)=228.55] [READ-FAILED AverageLatency(us)=347.31] 
+2026-05-23 15:48:07:536 106 sec: 19626812 operations; 222439 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=221.61] [UPDATE AverageLatency(us)=223.55] [READ-FAILED AverageLatency(us)=332.72] 
+2026-05-23 15:48:07:536 106 sec: 19626812 operations; 222439 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=221.61] [UPDATE AverageLatency(us)=223.55] [READ-FAILED AverageLatency(us)=332.72] 
+2026-05-23 15:48:08:537 107 sec: 19843621 operations; 216809 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=227.55] [UPDATE AverageLatency(us)=227.92] [READ-FAILED AverageLatency(us)=350.38] 
+2026-05-23 15:48:08:537 107 sec: 19843621 operations; 216809 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=227.55] [UPDATE AverageLatency(us)=227.92] [READ-FAILED AverageLatency(us)=350.38] 
+2026-05-23 15:48:09:537 108 sec: 20052841 operations; 209220 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=235.82] [UPDATE AverageLatency(us)=235.53] [READ-FAILED AverageLatency(us)=325.91] 
+2026-05-23 15:48:09:537 108 sec: 20052841 operations; 209220 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=235.82] [UPDATE AverageLatency(us)=235.53] [READ-FAILED AverageLatency(us)=325.91] 
+2026-05-23 15:48:10:537 109 sec: 20274688 operations; 221847 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=221.16] [UPDATE AverageLatency(us)=222.9] [READ-FAILED AverageLatency(us)=323.02] 
+2026-05-23 15:48:10:537 109 sec: 20274688 operations; 221847 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=221.16] [UPDATE AverageLatency(us)=222.9] [READ-FAILED AverageLatency(us)=323.02] 
+2026-05-23 15:48:11:537 110 sec: 20493933 operations; 219245 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.77] [UPDATE AverageLatency(us)=226.08] [READ-FAILED AverageLatency(us)=319.07] 
+2026-05-23 15:48:11:537 110 sec: 20493933 operations; 219245 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.77] [UPDATE AverageLatency(us)=226.08] [READ-FAILED AverageLatency(us)=319.07] 
+2026-05-23 15:48:12:537 111 sec: 20705026 operations; 211093 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=232.13] [UPDATE AverageLatency(us)=234.9] [READ-FAILED AverageLatency(us)=319.41] 
+2026-05-23 15:48:12:537 111 sec: 20705026 operations; 211093 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=232.13] [UPDATE AverageLatency(us)=234.9] [READ-FAILED AverageLatency(us)=319.41] 
+2026-05-23 15:48:13:537 112 sec: 20929909 operations; 224883 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=218.51] [UPDATE AverageLatency(us)=219.89] [READ-FAILED AverageLatency(us)=282.97] 
+2026-05-23 15:48:13:537 112 sec: 20929909 operations; 224883 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=218.51] [UPDATE AverageLatency(us)=219.89] [READ-FAILED AverageLatency(us)=282.97] 
+2026-05-23 15:48:14:537 113 sec: 21150639 operations; 220730 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=222.35] [UPDATE AverageLatency(us)=224.35] [READ-FAILED AverageLatency(us)=311.69] 
+2026-05-23 15:48:14:537 113 sec: 21150639 operations; 220730 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=222.35] [UPDATE AverageLatency(us)=224.35] [READ-FAILED AverageLatency(us)=311.69] 
+2026-05-23 15:48:15:537 114 sec: 21370259 operations; 219620 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.21] [UPDATE AverageLatency(us)=225.73] [READ-FAILED AverageLatency(us)=331.76] 
+2026-05-23 15:48:15:537 114 sec: 21370259 operations; 219620 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.21] [UPDATE AverageLatency(us)=225.73] [READ-FAILED AverageLatency(us)=331.76] 
+2026-05-23 15:48:16:537 115 sec: 21579384 operations; 209125 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=235.03] [UPDATE AverageLatency(us)=236.31] [READ-FAILED AverageLatency(us)=274.54] 
+2026-05-23 15:48:16:537 115 sec: 21579384 operations; 209125 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=235.03] [UPDATE AverageLatency(us)=236.31] [READ-FAILED AverageLatency(us)=274.54] 
+2026-05-23 15:48:17:537 116 sec: 21794725 operations; 215341 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.03] [UPDATE AverageLatency(us)=229.81] [READ-FAILED AverageLatency(us)=254.95] 
+2026-05-23 15:48:17:537 116 sec: 21794725 operations; 215341 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.03] [UPDATE AverageLatency(us)=229.81] [READ-FAILED AverageLatency(us)=254.95] 
+2026-05-23 15:48:18:536 117 sec: 22014316 operations; 219591 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.02] [UPDATE AverageLatency(us)=226.44] [READ-FAILED AverageLatency(us)=274.12] 
+2026-05-23 15:48:18:536 117 sec: 22014316 operations; 219591 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.02] [UPDATE AverageLatency(us)=226.44] [READ-FAILED AverageLatency(us)=274.12] 
+2026-05-23 15:48:19:537 118 sec: 22225775 operations; 211459 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=233.62] [UPDATE AverageLatency(us)=234.46] [READ-FAILED AverageLatency(us)=252.95] 
+2026-05-23 15:48:19:537 118 sec: 22225775 operations; 211459 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=233.62] [UPDATE AverageLatency(us)=234.46] [READ-FAILED AverageLatency(us)=252.95] 
+2026-05-23 15:48:20:537 119 sec: 22443052 operations; 217277 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.11] [UPDATE AverageLatency(us)=227.82] [READ-FAILED AverageLatency(us)=318.85] 
+2026-05-23 15:48:20:537 119 sec: 22443052 operations; 217277 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.11] [UPDATE AverageLatency(us)=227.82] [READ-FAILED AverageLatency(us)=318.85] 
+2026-05-23 15:48:21:537 120 sec: 22661588 operations; 218536 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.77] [UPDATE AverageLatency(us)=226.45] [READ-FAILED AverageLatency(us)=293.79] 
+2026-05-23 15:48:21:537 120 sec: 22661588 operations; 218536 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.77] [UPDATE AverageLatency(us)=226.45] [READ-FAILED AverageLatency(us)=293.79] 
+2026-05-23 15:48:22:537 121 sec: 22880270 operations; 218682 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.65] [UPDATE AverageLatency(us)=226.19] [READ-FAILED AverageLatency(us)=279.92] 
+2026-05-23 15:48:22:537 121 sec: 22880270 operations; 218682 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.65] [UPDATE AverageLatency(us)=226.19] [READ-FAILED AverageLatency(us)=279.92] 
+2026-05-23 15:48:23:537 122 sec: 23098193 operations; 217923 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.16] [UPDATE AverageLatency(us)=227.27] [READ-FAILED AverageLatency(us)=276.97] 
+2026-05-23 15:48:23:537 122 sec: 23098193 operations; 217923 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.16] [UPDATE AverageLatency(us)=227.27] [READ-FAILED AverageLatency(us)=276.97] 
+2026-05-23 15:48:24:537 123 sec: 23315345 operations; 217152 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.37] [UPDATE AverageLatency(us)=228.25] [READ-FAILED AverageLatency(us)=288.22] 
+2026-05-23 15:48:24:537 123 sec: 23315345 operations; 217152 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.37] [UPDATE AverageLatency(us)=228.25] [READ-FAILED AverageLatency(us)=288.22] 
+2026-05-23 15:48:25:537 124 sec: 23519659 operations; 204314 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=239.94] [UPDATE AverageLatency(us)=243.08] [READ-FAILED AverageLatency(us)=247.06] 
+2026-05-23 15:48:25:537 124 sec: 23519659 operations; 204314 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=239.94] [UPDATE AverageLatency(us)=243.08] [READ-FAILED AverageLatency(us)=247.06] 
+2026-05-23 15:48:26:537 125 sec: 23733875 operations; 214216 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.4] [UPDATE AverageLatency(us)=231.87] [READ-FAILED AverageLatency(us)=279.86] 
+2026-05-23 15:48:26:537 125 sec: 23733875 operations; 214216 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.4] [UPDATE AverageLatency(us)=231.87] [READ-FAILED AverageLatency(us)=279.86] 
+2026-05-23 15:48:27:537 126 sec: 23935025 operations; 201150 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=244.38] [UPDATE AverageLatency(us)=245.95] [READ-FAILED AverageLatency(us)=357.36] 
+2026-05-23 15:48:27:537 126 sec: 23935025 operations; 201150 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=244.38] [UPDATE AverageLatency(us)=245.95] [READ-FAILED AverageLatency(us)=357.36] 
+2026-05-23 15:48:28:537 127 sec: 24146272 operations; 211247 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=232.56] [UPDATE AverageLatency(us)=234.26] [READ-FAILED AverageLatency(us)=325.88] 
+2026-05-23 15:48:28:537 127 sec: 24146272 operations; 211247 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=232.56] [UPDATE AverageLatency(us)=234.26] [READ-FAILED AverageLatency(us)=325.88] 
+2026-05-23 15:48:29:537 128 sec: 24361480 operations; 215208 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.69] [UPDATE AverageLatency(us)=230.2] [READ-FAILED AverageLatency(us)=319.5] 
+2026-05-23 15:48:29:537 128 sec: 24361480 operations; 215208 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.69] [UPDATE AverageLatency(us)=230.2] [READ-FAILED AverageLatency(us)=319.5] 
+2026-05-23 15:48:30:536 129 sec: 24580405 operations; 218925 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.12] [UPDATE AverageLatency(us)=226.39] [READ-FAILED AverageLatency(us)=396.5] 
+2026-05-23 15:48:30:536 129 sec: 24580405 operations; 218925 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.12] [UPDATE AverageLatency(us)=226.39] [READ-FAILED AverageLatency(us)=396.5] 
+2026-05-23 15:48:31:537 130 sec: 24797885 operations; 217480 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.98] [UPDATE AverageLatency(us)=227.91] [READ-FAILED AverageLatency(us)=375.88] 
+2026-05-23 15:48:31:537 130 sec: 24797885 operations; 217480 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.98] [UPDATE AverageLatency(us)=227.91] [READ-FAILED AverageLatency(us)=375.88] 
+2026-05-23 15:48:32:537 131 sec: 25006074 operations; 208189 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=236.59] [UPDATE AverageLatency(us)=237.18] [READ-FAILED AverageLatency(us)=300.8] 
+2026-05-23 15:48:32:537 131 sec: 25006074 operations; 208189 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=236.59] [UPDATE AverageLatency(us)=237.18] [READ-FAILED AverageLatency(us)=300.8] 
+2026-05-23 15:48:33:537 132 sec: 25220938 operations; 214864 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=229.2] [UPDATE AverageLatency(us)=229.59] [READ-FAILED AverageLatency(us)=330.5] 
+2026-05-23 15:48:33:537 132 sec: 25220938 operations; 214864 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=229.2] [UPDATE AverageLatency(us)=229.59] [READ-FAILED AverageLatency(us)=330.5] 
+2026-05-23 15:48:34:537 133 sec: 25434183 operations; 213245 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=230.84] [UPDATE AverageLatency(us)=231.54] [READ-FAILED AverageLatency(us)=293.56] 
+2026-05-23 15:48:34:537 133 sec: 25434183 operations; 213245 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=230.84] [UPDATE AverageLatency(us)=231.54] [READ-FAILED AverageLatency(us)=293.56] 
+2026-05-23 15:48:35:536 134 sec: 25650486 operations; 216303 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.77] [UPDATE AverageLatency(us)=228.96] [READ-FAILED AverageLatency(us)=375] 
+2026-05-23 15:48:35:536 134 sec: 25650486 operations; 216303 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=226.77] [UPDATE AverageLatency(us)=228.96] [READ-FAILED AverageLatency(us)=375] 
+2026-05-23 15:48:36:537 135 sec: 25853876 operations; 203390 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=241.89] [UPDATE AverageLatency(us)=243.13] [READ-FAILED AverageLatency(us)=329.6] 
+2026-05-23 15:48:36:537 135 sec: 25853876 operations; 203390 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=241.89] [UPDATE AverageLatency(us)=243.13] [READ-FAILED AverageLatency(us)=329.6] 
+2026-05-23 15:48:37:537 136 sec: 26057937 operations; 204061 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=241.2] [UPDATE AverageLatency(us)=242.11] [READ-FAILED AverageLatency(us)=378.5] 
+2026-05-23 15:48:37:537 136 sec: 26057937 operations; 204061 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=241.2] [UPDATE AverageLatency(us)=242.11] [READ-FAILED AverageLatency(us)=378.5] 
+2026-05-23 15:48:38:537 137 sec: 26270972 operations; 213035 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=229.95] [UPDATE AverageLatency(us)=232.81] [READ-FAILED AverageLatency(us)=245.33] 
+2026-05-23 15:48:38:537 137 sec: 26270972 operations; 213035 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=229.95] [UPDATE AverageLatency(us)=232.81] [READ-FAILED AverageLatency(us)=245.33] 
+2026-05-23 15:48:39:537 138 sec: 26488991 operations; 218019 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.49] [UPDATE AverageLatency(us)=226.82]  
+2026-05-23 15:48:39:537 138 sec: 26488991 operations; 218019 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.49] [UPDATE AverageLatency(us)=226.82]  
+2026-05-23 15:48:40:537 139 sec: 26707738 operations; 218747 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.44] [UPDATE AverageLatency(us)=226.22] [READ-FAILED AverageLatency(us)=307.75] 
+2026-05-23 15:48:40:537 139 sec: 26707738 operations; 218747 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=224.44] [UPDATE AverageLatency(us)=226.22] [READ-FAILED AverageLatency(us)=307.75] 
+2026-05-23 15:48:41:536 140 sec: 26923916 operations; 216178 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.68] [UPDATE AverageLatency(us)=229.46] [READ-FAILED AverageLatency(us)=192.5] 
+2026-05-23 15:48:41:536 140 sec: 26923916 operations; 216178 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=228.68] [UPDATE AverageLatency(us)=229.46] [READ-FAILED AverageLatency(us)=192.5] 
+2026-05-23 15:48:42:537 141 sec: 27138535 operations; 214619 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=229.92] [UPDATE AverageLatency(us)=230.93] [READ-FAILED AverageLatency(us)=201.67] 
+2026-05-23 15:48:42:537 141 sec: 27138535 operations; 214619 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=229.92] [UPDATE AverageLatency(us)=230.93] [READ-FAILED AverageLatency(us)=201.67] 
+2026-05-23 15:48:43:537 142 sec: 27334681 operations; 196146 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=250.08] [UPDATE AverageLatency(us)=252.58] [READ-FAILED AverageLatency(us)=175.5] 
+2026-05-23 15:48:43:537 142 sec: 27334681 operations; 196146 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=250.08] [UPDATE AverageLatency(us)=252.58] [READ-FAILED AverageLatency(us)=175.5] 
+2026-05-23 15:48:44:537 143 sec: 27552518 operations; 217837 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.49] [UPDATE AverageLatency(us)=227.02] [READ-FAILED AverageLatency(us)=260.5] 
+2026-05-23 15:48:44:537 143 sec: 27552518 operations; 217837 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=225.49] [UPDATE AverageLatency(us)=227.02] [READ-FAILED AverageLatency(us)=260.5] 
+2026-05-23 15:48:45:537 144 sec: 27771697 operations; 219179 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.85] [UPDATE AverageLatency(us)=225.77]  
+2026-05-23 15:48:45:537 144 sec: 27771697 operations; 219179 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=223.85] [UPDATE AverageLatency(us)=225.77]  
+2026-05-23 15:48:46:537 145 sec: 27987509 operations; 215812 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=227.04] [UPDATE AverageLatency(us)=229.8] [READ-FAILED AverageLatency(us)=145.5] 
+2026-05-23 15:48:46:537 145 sec: 27987509 operations; 215812 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=227.04] [UPDATE AverageLatency(us)=229.8] [READ-FAILED AverageLatency(us)=145.5] 
+2026-05-23 15:48:47:537 146 sec: 28190067 operations; 202558 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=243.35] [UPDATE AverageLatency(us)=243.32] [READ-FAILED AverageLatency(us)=122] 
+2026-05-23 15:48:47:537 146 sec: 28190067 operations; 202558 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=243.35] [UPDATE AverageLatency(us)=243.32] [READ-FAILED AverageLatency(us)=122] 
+2026-05-23 15:48:48:537 147 sec: 28414031 operations; 223964 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=219.06] [UPDATE AverageLatency(us)=221.12] [READ-FAILED AverageLatency(us)=279] 
+2026-05-23 15:48:48:537 147 sec: 28414031 operations; 223964 current ops/sec; est completion in 1 minute [READ AverageLatency(us)=219.06] [UPDATE AverageLatency(us)=221.12] [READ-FAILED AverageLatency(us)=279] 
+2026-05-23 15:48:49:536 148 sec: 28627129 operations; 213098 current ops/sec; est completion in 59 seconds [READ AverageLatency(us)=230.21] [UPDATE AverageLatency(us)=232.37]  
+2026-05-23 15:48:49:536 148 sec: 28627129 operations; 213098 current ops/sec; est completion in 59 seconds [READ AverageLatency(us)=230.21] [UPDATE AverageLatency(us)=232.37]  
+2026-05-23 15:48:50:537 149 sec: 28854171 operations; 227042 current ops/sec; est completion in 58 seconds [READ AverageLatency(us)=216.69] [UPDATE AverageLatency(us)=217.61]  
+2026-05-23 15:48:50:537 149 sec: 28854171 operations; 227042 current ops/sec; est completion in 58 seconds [READ AverageLatency(us)=216.69] [UPDATE AverageLatency(us)=217.61]  
+2026-05-23 15:48:51:537 150 sec: 29069630 operations; 215459 current ops/sec; est completion in 57 seconds [READ AverageLatency(us)=228.55] [UPDATE AverageLatency(us)=229.15]  
+2026-05-23 15:48:51:537 150 sec: 29069630 operations; 215459 current ops/sec; est completion in 57 seconds [READ AverageLatency(us)=228.55] [UPDATE AverageLatency(us)=229.15]  
+2026-05-23 15:48:52:536 151 sec: 29289054 operations; 219424 current ops/sec; est completion in 56 seconds [READ AverageLatency(us)=224.19] [UPDATE AverageLatency(us)=226.2]  
+2026-05-23 15:48:52:536 151 sec: 29289054 operations; 219424 current ops/sec; est completion in 56 seconds [READ AverageLatency(us)=224.19] [UPDATE AverageLatency(us)=226.2]  
+2026-05-23 15:48:53:537 152 sec: 29510242 operations; 221188 current ops/sec; est completion in 55 seconds [READ AverageLatency(us)=222.7] [UPDATE AverageLatency(us)=224.92] [READ-FAILED AverageLatency(us)=169] 
+2026-05-23 15:48:53:537 152 sec: 29510242 operations; 221188 current ops/sec; est completion in 55 seconds [READ AverageLatency(us)=222.7] [UPDATE AverageLatency(us)=224.92] [READ-FAILED AverageLatency(us)=169] 
+2026-05-23 15:48:54:537 153 sec: 29736836 operations; 226594 current ops/sec; est completion in 53 seconds [READ AverageLatency(us)=216.59] [UPDATE AverageLatency(us)=218.52]  
+2026-05-23 15:48:54:537 153 sec: 29736836 operations; 226594 current ops/sec; est completion in 53 seconds [READ AverageLatency(us)=216.59] [UPDATE AverageLatency(us)=218.52]  
+2026-05-23 15:48:55:536 154 sec: 29963928 operations; 227092 current ops/sec; est completion in 52 seconds [READ AverageLatency(us)=216.26] [UPDATE AverageLatency(us)=217.75]  
+2026-05-23 15:48:55:536 154 sec: 29963928 operations; 227092 current ops/sec; est completion in 52 seconds [READ AverageLatency(us)=216.26] [UPDATE AverageLatency(us)=217.75]  
+2026-05-23 15:48:56:537 155 sec: 30189979 operations; 226051 current ops/sec; est completion in 51 seconds [READ AverageLatency(us)=217.03] [UPDATE AverageLatency(us)=219.2]  
+2026-05-23 15:48:56:537 155 sec: 30189979 operations; 226051 current ops/sec; est completion in 51 seconds [READ AverageLatency(us)=217.03] [UPDATE AverageLatency(us)=219.2]  
+2026-05-23 15:48:57:536 156 sec: 30415396 operations; 225417 current ops/sec; est completion in 50 seconds [READ AverageLatency(us)=217.76] [UPDATE AverageLatency(us)=219.6]  
+2026-05-23 15:48:57:536 156 sec: 30415396 operations; 225417 current ops/sec; est completion in 50 seconds [READ AverageLatency(us)=217.76] [UPDATE AverageLatency(us)=219.6]  
+2026-05-23 15:48:58:536 157 sec: 30638193 operations; 222797 current ops/sec; est completion in 48 seconds [READ AverageLatency(us)=220.87] [UPDATE AverageLatency(us)=221.82]  
+2026-05-23 15:48:58:536 157 sec: 30638193 operations; 222797 current ops/sec; est completion in 48 seconds [READ AverageLatency(us)=220.87] [UPDATE AverageLatency(us)=221.82]  
+2026-05-23 15:48:59:537 158 sec: 30856536 operations; 218343 current ops/sec; est completion in 47 seconds [READ AverageLatency(us)=225.31] [UPDATE AverageLatency(us)=226.15]  
+2026-05-23 15:48:59:537 158 sec: 30856536 operations; 218343 current ops/sec; est completion in 47 seconds [READ AverageLatency(us)=225.31] [UPDATE AverageLatency(us)=226.15]  
+2026-05-23 15:49:00:537 159 sec: 31075704 operations; 219168 current ops/sec; est completion in 46 seconds [READ AverageLatency(us)=224.22] [UPDATE AverageLatency(us)=225.59]  
+2026-05-23 15:49:00:537 159 sec: 31075704 operations; 219168 current ops/sec; est completion in 46 seconds [READ AverageLatency(us)=224.22] [UPDATE AverageLatency(us)=225.59]  
+2026-05-23 15:49:01:537 160 sec: 31293766 operations; 218062 current ops/sec; est completion in 45 seconds [READ AverageLatency(us)=225.89] [UPDATE AverageLatency(us)=226.09]  
+2026-05-23 15:49:01:537 160 sec: 31293766 operations; 218062 current ops/sec; est completion in 45 seconds [READ AverageLatency(us)=225.89] [UPDATE AverageLatency(us)=226.09]  
+2026-05-23 15:49:02:537 161 sec: 31513933 operations; 220167 current ops/sec; est completion in 44 seconds [READ AverageLatency(us)=222.8] [UPDATE AverageLatency(us)=224.93]  
+2026-05-23 15:49:02:537 161 sec: 31513933 operations; 220167 current ops/sec; est completion in 44 seconds [READ AverageLatency(us)=222.8] [UPDATE AverageLatency(us)=224.93]  
+2026-05-23 15:49:03:536 162 sec: 31733755 operations; 219822 current ops/sec; est completion in 43 seconds [READ AverageLatency(us)=223.91] [UPDATE AverageLatency(us)=225.06]  
+2026-05-23 15:49:03:536 162 sec: 31733755 operations; 219822 current ops/sec; est completion in 43 seconds [READ AverageLatency(us)=223.91] [UPDATE AverageLatency(us)=225.06]  
+2026-05-23 15:49:04:536 163 sec: 31937983 operations; 204228 current ops/sec; est completion in 42 seconds [READ AverageLatency(us)=241.67] [UPDATE AverageLatency(us)=243.61]  
+2026-05-23 15:49:04:536 163 sec: 31937983 operations; 204228 current ops/sec; est completion in 42 seconds [READ AverageLatency(us)=241.67] [UPDATE AverageLatency(us)=243.61]  
+2026-05-23 15:49:05:537 164 sec: 32162562 operations; 224579 current ops/sec; est completion in 40 seconds [READ AverageLatency(us)=219.41] [UPDATE AverageLatency(us)=220.2]  
+2026-05-23 15:49:05:537 164 sec: 32162562 operations; 224579 current ops/sec; est completion in 40 seconds [READ AverageLatency(us)=219.41] [UPDATE AverageLatency(us)=220.2]  
+2026-05-23 15:49:06:537 165 sec: 32387385 operations; 224823 current ops/sec; est completion in 39 seconds [READ AverageLatency(us)=218.7] [UPDATE AverageLatency(us)=219.97]  
+2026-05-23 15:49:06:537 165 sec: 32387385 operations; 224823 current ops/sec; est completion in 39 seconds [READ AverageLatency(us)=218.7] [UPDATE AverageLatency(us)=219.97]  
+2026-05-23 15:49:07:537 166 sec: 32614689 operations; 227304 current ops/sec; est completion in 38 seconds [READ AverageLatency(us)=216.41] [UPDATE AverageLatency(us)=217.41]  
+2026-05-23 15:49:07:537 166 sec: 32614689 operations; 227304 current ops/sec; est completion in 38 seconds [READ AverageLatency(us)=216.41] [UPDATE AverageLatency(us)=217.41]  
+2026-05-23 15:49:08:537 167 sec: 32841095 operations; 226406 current ops/sec; est completion in 37 seconds [READ AverageLatency(us)=216.58] [UPDATE AverageLatency(us)=218.9]  
+2026-05-23 15:49:08:537 167 sec: 32841095 operations; 226406 current ops/sec; est completion in 37 seconds [READ AverageLatency(us)=216.58] [UPDATE AverageLatency(us)=218.9]  
+2026-05-23 15:49:09:537 168 sec: 33066738 operations; 225643 current ops/sec; est completion in 36 seconds [READ AverageLatency(us)=217.69] [UPDATE AverageLatency(us)=219.25] [READ-FAILED AverageLatency(us)=173] 
+2026-05-23 15:49:09:537 168 sec: 33066738 operations; 225643 current ops/sec; est completion in 36 seconds [READ AverageLatency(us)=217.69] [UPDATE AverageLatency(us)=219.25] [READ-FAILED AverageLatency(us)=173] 
+2026-05-23 15:49:10:537 169 sec: 33289370 operations; 222632 current ops/sec; est completion in 35 seconds [READ AverageLatency(us)=220.99] [UPDATE AverageLatency(us)=222]  
+2026-05-23 15:49:10:537 169 sec: 33289370 operations; 222632 current ops/sec; est completion in 35 seconds [READ AverageLatency(us)=220.99] [UPDATE AverageLatency(us)=222]  
+2026-05-23 15:49:11:537 170 sec: 33505508 operations; 216138 current ops/sec; est completion in 33 seconds [READ AverageLatency(us)=227.89] [UPDATE AverageLatency(us)=228.38]  
+2026-05-23 15:49:11:537 170 sec: 33505508 operations; 216138 current ops/sec; est completion in 33 seconds [READ AverageLatency(us)=227.89] [UPDATE AverageLatency(us)=228.38]  
+2026-05-23 15:49:12:537 171 sec: 33719002 operations; 213494 current ops/sec; est completion in 32 seconds [READ AverageLatency(us)=230.37] [UPDATE AverageLatency(us)=231.48] [READ-FAILED AverageLatency(us)=342] 
+2026-05-23 15:49:12:537 171 sec: 33719002 operations; 213494 current ops/sec; est completion in 32 seconds [READ AverageLatency(us)=230.37] [UPDATE AverageLatency(us)=231.48] [READ-FAILED AverageLatency(us)=342] 
+2026-05-23 15:49:13:537 172 sec: 33937313 operations; 218311 current ops/sec; est completion in 31 seconds [READ AverageLatency(us)=224.83] [UPDATE AverageLatency(us)=226.87]  
+2026-05-23 15:49:13:537 172 sec: 33937313 operations; 218311 current ops/sec; est completion in 31 seconds [READ AverageLatency(us)=224.83] [UPDATE AverageLatency(us)=226.87]  
+2026-05-23 15:49:14:537 173 sec: 34157444 operations; 220131 current ops/sec; est completion in 30 seconds [READ AverageLatency(us)=223.1] [UPDATE AverageLatency(us)=224.74]  
+2026-05-23 15:49:14:537 173 sec: 34157444 operations; 220131 current ops/sec; est completion in 30 seconds [READ AverageLatency(us)=223.1] [UPDATE AverageLatency(us)=224.74]  
+2026-05-23 15:49:15:536 174 sec: 34379413 operations; 221969 current ops/sec; est completion in 29 seconds [READ AverageLatency(us)=222.36] [UPDATE AverageLatency(us)=223.68]  
+2026-05-23 15:49:15:536 174 sec: 34379413 operations; 221969 current ops/sec; est completion in 29 seconds [READ AverageLatency(us)=222.36] [UPDATE AverageLatency(us)=223.68]  
+2026-05-23 15:49:16:536 175 sec: 34601253 operations; 221840 current ops/sec; est completion in 28 seconds [READ AverageLatency(us)=222.23] [UPDATE AverageLatency(us)=223.75]  
+2026-05-23 15:49:16:536 175 sec: 34601253 operations; 221840 current ops/sec; est completion in 28 seconds [READ AverageLatency(us)=222.23] [UPDATE AverageLatency(us)=223.75]  
+2026-05-23 15:49:17:536 176 sec: 34805287 operations; 204034 current ops/sec; est completion in 27 seconds [READ AverageLatency(us)=241.06] [UPDATE AverageLatency(us)=242.36]  
+2026-05-23 15:49:17:536 176 sec: 34805287 operations; 204034 current ops/sec; est completion in 27 seconds [READ AverageLatency(us)=241.06] [UPDATE AverageLatency(us)=242.36]  
+2026-05-23 15:49:18:537 177 sec: 35009786 operations; 204499 current ops/sec; est completion in 26 seconds [READ AverageLatency(us)=239.99] [UPDATE AverageLatency(us)=242.12]  
+2026-05-23 15:49:18:537 177 sec: 35009786 operations; 204499 current ops/sec; est completion in 26 seconds [READ AverageLatency(us)=239.99] [UPDATE AverageLatency(us)=242.12]  
+2026-05-23 15:49:19:537 178 sec: 35210595 operations; 200809 current ops/sec; est completion in 25 seconds [READ AverageLatency(us)=244.85] [UPDATE AverageLatency(us)=246.24]  
+2026-05-23 15:49:19:537 178 sec: 35210595 operations; 200809 current ops/sec; est completion in 25 seconds [READ AverageLatency(us)=244.85] [UPDATE AverageLatency(us)=246.24]  
+2026-05-23 15:49:20:537 179 sec: 35429342 operations; 218747 current ops/sec; est completion in 24 seconds [READ AverageLatency(us)=224.63] [UPDATE AverageLatency(us)=226.1]  
+2026-05-23 15:49:20:537 179 sec: 35429342 operations; 218747 current ops/sec; est completion in 24 seconds [READ AverageLatency(us)=224.63] [UPDATE AverageLatency(us)=226.1]  
+2026-05-23 15:49:21:537 180 sec: 35645774 operations; 216432 current ops/sec; est completion in 22 seconds [READ AverageLatency(us)=227.19] [UPDATE AverageLatency(us)=228.5]  
+2026-05-23 15:49:21:537 180 sec: 35645774 operations; 216432 current ops/sec; est completion in 22 seconds [READ AverageLatency(us)=227.19] [UPDATE AverageLatency(us)=228.5]  
+2026-05-23 15:49:22:536 181 sec: 35862436 operations; 216662 current ops/sec; est completion in 21 seconds [READ AverageLatency(us)=226.96] [UPDATE AverageLatency(us)=228.16]  
+2026-05-23 15:49:22:536 181 sec: 35862436 operations; 216662 current ops/sec; est completion in 21 seconds [READ AverageLatency(us)=226.96] [UPDATE AverageLatency(us)=228.16]  
+2026-05-23 15:49:23:537 182 sec: 36080551 operations; 218115 current ops/sec; est completion in 20 seconds [READ AverageLatency(us)=225.18] [UPDATE AverageLatency(us)=226.99]  
+2026-05-23 15:49:23:537 182 sec: 36080551 operations; 218115 current ops/sec; est completion in 20 seconds [READ AverageLatency(us)=225.18] [UPDATE AverageLatency(us)=226.99]  
+2026-05-23 15:49:24:537 183 sec: 36297846 operations; 217295 current ops/sec; est completion in 19 seconds [READ AverageLatency(us)=226.15] [UPDATE AverageLatency(us)=227.73]  
+2026-05-23 15:49:24:537 183 sec: 36297846 operations; 217295 current ops/sec; est completion in 19 seconds [READ AverageLatency(us)=226.15] [UPDATE AverageLatency(us)=227.73]  
+2026-05-23 15:49:25:537 184 sec: 36507055 operations; 209209 current ops/sec; est completion in 18 seconds [READ AverageLatency(us)=234.89] [UPDATE AverageLatency(us)=236.2]  
+2026-05-23 15:49:25:537 184 sec: 36507055 operations; 209209 current ops/sec; est completion in 18 seconds [READ AverageLatency(us)=234.89] [UPDATE AverageLatency(us)=236.2]  
+2026-05-23 15:49:26:536 185 sec: 36722839 operations; 215784 current ops/sec; est completion in 17 seconds [READ AverageLatency(us)=228.51] [UPDATE AverageLatency(us)=229.48]  
+2026-05-23 15:49:26:536 185 sec: 36722839 operations; 215784 current ops/sec; est completion in 17 seconds [READ AverageLatency(us)=228.51] [UPDATE AverageLatency(us)=229.48]  
+2026-05-23 15:49:27:536 186 sec: 36945329 operations; 222490 current ops/sec; est completion in 16 seconds [READ AverageLatency(us)=221.94] [UPDATE AverageLatency(us)=223.22]  
+2026-05-23 15:49:27:536 186 sec: 36945329 operations; 222490 current ops/sec; est completion in 16 seconds [READ AverageLatency(us)=221.94] [UPDATE AverageLatency(us)=223.22]  
+2026-05-23 15:49:28:537 187 sec: 37164542 operations; 219213 current ops/sec; est completion in 15 seconds [READ AverageLatency(us)=223.9] [UPDATE AverageLatency(us)=226.11]  
+2026-05-23 15:49:28:537 187 sec: 37164542 operations; 219213 current ops/sec; est completion in 15 seconds [READ AverageLatency(us)=223.9] [UPDATE AverageLatency(us)=226.11]  
+2026-05-23 15:49:29:537 188 sec: 37366378 operations; 201836 current ops/sec; est completion in 14 seconds [READ AverageLatency(us)=242.86] [UPDATE AverageLatency(us)=245.65]  
+2026-05-23 15:49:29:537 188 sec: 37366378 operations; 201836 current ops/sec; est completion in 14 seconds [READ AverageLatency(us)=242.86] [UPDATE AverageLatency(us)=245.65]  
+2026-05-23 15:49:30:537 189 sec: 37587998 operations; 221620 current ops/sec; est completion in 13 seconds [READ AverageLatency(us)=221.48] [UPDATE AverageLatency(us)=223.48]  
+2026-05-23 15:49:30:537 189 sec: 37587998 operations; 221620 current ops/sec; est completion in 13 seconds [READ AverageLatency(us)=221.48] [UPDATE AverageLatency(us)=223.48]  
+2026-05-23 15:49:31:537 190 sec: 37808810 operations; 220812 current ops/sec; est completion in 12 seconds [READ AverageLatency(us)=222.72] [UPDATE AverageLatency(us)=223.89]  
+2026-05-23 15:49:31:537 190 sec: 37808810 operations; 220812 current ops/sec; est completion in 12 seconds [READ AverageLatency(us)=222.72] [UPDATE AverageLatency(us)=223.89]  
+2026-05-23 15:49:32:537 191 sec: 38029337 operations; 220527 current ops/sec; est completion in 10 seconds [READ AverageLatency(us)=222.5] [UPDATE AverageLatency(us)=224.63]  
+2026-05-23 15:49:32:537 191 sec: 38029337 operations; 220527 current ops/sec; est completion in 10 seconds [READ AverageLatency(us)=222.5] [UPDATE AverageLatency(us)=224.63]  
+2026-05-23 15:49:33:537 192 sec: 38250750 operations; 221413 current ops/sec; est completion in 9 second [READ AverageLatency(us)=222.11] [UPDATE AverageLatency(us)=223.35]  
+2026-05-23 15:49:33:537 192 sec: 38250750 operations; 221413 current ops/sec; est completion in 9 second [READ AverageLatency(us)=222.11] [UPDATE AverageLatency(us)=223.35]  
+2026-05-23 15:49:34:537 193 sec: 38473873 operations; 223123 current ops/sec; est completion in 8 second [READ AverageLatency(us)=220.68] [UPDATE AverageLatency(us)=221.24]  
+2026-05-23 15:49:34:537 193 sec: 38473873 operations; 223123 current ops/sec; est completion in 8 second [READ AverageLatency(us)=220.68] [UPDATE AverageLatency(us)=221.24]  
+2026-05-23 15:49:35:537 194 sec: 38686490 operations; 212617 current ops/sec; est completion in 7 second [READ AverageLatency(us)=231.12] [UPDATE AverageLatency(us)=232.66]  
+2026-05-23 15:49:35:537 194 sec: 38686490 operations; 212617 current ops/sec; est completion in 7 second [READ AverageLatency(us)=231.12] [UPDATE AverageLatency(us)=232.66]  
+2026-05-23 15:49:36:537 195 sec: 38897671 operations; 211181 current ops/sec; est completion in 6 second [READ AverageLatency(us)=232.37] [UPDATE AverageLatency(us)=234.58]  
+2026-05-23 15:49:36:537 195 sec: 38897671 operations; 211181 current ops/sec; est completion in 6 second [READ AverageLatency(us)=232.37] [UPDATE AverageLatency(us)=234.58]  
+2026-05-23 15:49:37:536 196 sec: 39120055 operations; 222384 current ops/sec; est completion in 5 second [READ AverageLatency(us)=220.65] [UPDATE AverageLatency(us)=222.71]  
+2026-05-23 15:49:37:536 196 sec: 39120055 operations; 222384 current ops/sec; est completion in 5 second [READ AverageLatency(us)=220.65] [UPDATE AverageLatency(us)=222.71]  
+2026-05-23 15:49:38:536 197 sec: 39345952 operations; 225897 current ops/sec; est completion in 4 second [READ AverageLatency(us)=218.13] [CLEANUP AverageLatency(us)=2788] [UPDATE AverageLatency(us)=219.39]  
+2026-05-23 15:49:38:536 197 sec: 39345952 operations; 225897 current ops/sec; est completion in 4 second [READ AverageLatency(us)=218.13] [CLEANUP AverageLatency(us)=2788] [UPDATE AverageLatency(us)=219.39]  
+2026-05-23 15:49:39:537 198 sec: 39569911 operations; 223959 current ops/sec; est completion in 3 second [READ AverageLatency(us)=210.93] [CLEANUP AverageLatency(us)=1531] [UPDATE AverageLatency(us)=212.79]  
+2026-05-23 15:49:39:537 198 sec: 39569911 operations; 223959 current ops/sec; est completion in 3 second [READ AverageLatency(us)=210.93] [CLEANUP AverageLatency(us)=1531] [UPDATE AverageLatency(us)=212.79]  
+2026-05-23 15:49:40:537 199 sec: 39775358 operations; 205447 current ops/sec; est completion in 2 second [READ AverageLatency(us)=184.52] [CLEANUP AverageLatency(us)=1134.67] [UPDATE AverageLatency(us)=186.28]  
+2026-05-23 15:49:40:537 199 sec: 39775358 operations; 205447 current ops/sec; est completion in 2 second [READ AverageLatency(us)=184.52] [CLEANUP AverageLatency(us)=1134.67] [UPDATE AverageLatency(us)=186.28]  
+2026-05-23 15:49:41:537 200 sec: 39958472 operations; 183114 current ops/sec; est completion in 1 second [READ AverageLatency(us)=128.7] [CLEANUP AverageLatency(us)=526.48] [UPDATE AverageLatency(us)=130.01]  
+2026-05-23 15:49:41:537 200 sec: 39958472 operations; 183114 current ops/sec; est completion in 1 second [READ AverageLatency(us)=128.7] [CLEANUP AverageLatency(us)=526.48] [UPDATE AverageLatency(us)=130.01]  
+2026-05-23 15:49:42:536 201 sec: 39994518 operations; 36046 current ops/sec; est completion in 1 second [READ AverageLatency(us)=99.27] [CLEANUP AverageLatency(us)=427.83] [UPDATE AverageLatency(us)=101.93]  
+2026-05-23 15:49:42:536 201 sec: 39994518 operations; 36046 current ops/sec; est completion in 1 second [READ AverageLatency(us)=99.27] [CLEANUP AverageLatency(us)=427.83] [UPDATE AverageLatency(us)=101.93]  
+2026-05-23 15:49:43:355 201 sec: 40000000 operations; 6693.53 current ops/sec; [READ AverageLatency(us)=163.14] [CLEANUP AverageLatency(us)=311] [UPDATE AverageLatency(us)=168.96]  
+2026-05-23 15:49:43:355 201 sec: 40000000 operations; 6693.53 current ops/sec; [READ AverageLatency(us)=163.14] [CLEANUP AverageLatency(us)=311] [UPDATE AverageLatency(us)=168.96]  
+[OVERALL], RunTime(ms), 201819
+[OVERALL], Throughput(ops/sec), 198197.39469524674
+[TOTAL_GCS_G1_Young_Generation], Count, 88
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 340
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 0.16846778549095973
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 88
+[TOTAL_GC_TIME], Time(ms), 340
+[TOTAL_GC_TIME_%], Time(%), 0.16846778549095973
+[READ], Operations, 19871731
+[READ], AverageLatency(us), 242.75222329650094
+[READ], MinLatency(us), 29
+[READ], MaxLatency(us), 68357
+[READ], Return=OK, 19875776
+[READ], Return=ERROR, 122496
+[READ], 0, 315.1075900120252
+[READ], 1000, 314.87668840840223
+[READ], 2000, 286.67483143455013
+[READ], 3000, 284.708424711866
+[READ], 4000, 288.3421973656206
+[READ], 5000, 285.2542680796553
+[READ], 6000, 284.9292126751415
+[READ], 7000, 285.1290868160452
+[READ], 8000, 285.7574729923435
+[READ], 9000, 285.8824624044847
+[READ], 10000, 307.5915854284248
+[READ], 11000, 287.11048241264655
+[READ], 12000, 283.43794371738943
+[READ], 13000, 286.0566570528679
+[READ], 14000, 281.7689275362319
+[READ], 15000, 288.5019085558
+[READ], 16000, 288.25049701789266
+[READ], 17000, 287.7505569255328
+[READ], 18000, 286.2723994614529
+[READ], 19000, 287.49636906800174
+[READ], 20000, 286.7952714102004
+[READ], 21000, 287.2440726880257
+[READ], 22000, 285.2392269919957
+[READ], 23000, 284.54071300249643
+[READ], 24000, 304.8142850003748
+[READ], 25000, 285.94320843091333
+[READ], 26000, 286.28353879622915
+[READ], 27000, 281.7721796669903
+[READ], 28000, 277.1479194848138
+[READ], 29000, 280.023586009926
+[READ], 30000, 283.8038354022553
+[READ], 31000, 279.95699112978525
+[READ], 32000, 280.7282054853349
+[READ], 33000, 278.8594231565389
+[READ], 34000, 282.79461236289035
+[READ], 35000, 286.933293127099
+[READ], 36000, 282.6844154038649
+[READ], 37000, 287.01620288418417
+[READ], 38000, 279.09356048012654
+[READ], 39000, 279.6242865690877
+[READ], 40000, 308.1952166700181
+[READ], 41000, 278.29478805042936
+[READ], 42000, 292.4349008789376
+[READ], 43000, 283.8091340685426
+[READ], 44000, 266.2621890882922
+[READ], 45000, 265.8601941747573
+[READ], 46000, 260.01647841559645
+[READ], 47000, 261.7453734867964
+[READ], 48000, 261.7333822145374
+[READ], 49000, 258.96208515425553
+[READ], 50000, 259.30416120186004
+[READ], 51000, 258.7768019154579
+[READ], 52000, 263.35926284732926
+[READ], 53000, 261.33898909554637
+[READ], 54000, 254.99792194092828
+[READ], 55000, 258.9901275335914
+[READ], 56000, 250.9995295576773
+[READ], 57000, 259.0887686267705
+[READ], 58000, 258.10698973626086
+[READ], 59000, 257.75961807573896
+[READ], 60000, 259.82188906195915
+[READ], 61000, 254.45994034004067
+[READ], 62000, 253.4225209522716
+[READ], 63000, 258.0240868268224
+[READ], 64000, 251.13872952523488
+[READ], 65000, 250.03490757636678
+[READ], 66000, 250.47782014321584
+[READ], 67000, 252.81727347952005
+[READ], 68000, 253.7493425694311
+[READ], 69000, 250.2047818079557
+[READ], 70000, 257.375676470268
+[READ], 71000, 258.6971588696066
+[READ], 72000, 258.8008328748206
+[READ], 73000, 251.06686582809223
+[READ], 74000, 243.026968607329
+[READ], 75000, 249.12705833678115
+[READ], 76000, 244.16371968529484
+[READ], 77000, 246.4633262718369
+[READ], 78000, 246.28854196272687
+[READ], 79000, 243.09711091521078
+[READ], 80000, 249.37989376756013
+[READ], 81000, 239.4978981462339
+[READ], 82000, 262.894812156453
+[READ], 83000, 269.0566091988451
+[READ], 84000, 246.56532333448865
+[READ], 85000, 249.37260411012846
+[READ], 86000, 231.4270929478997
+[READ], 87000, 232.04285127683704
+[READ], 88000, 229.59873173633162
+[READ], 89000, 231.04194720271252
+[READ], 90000, 225.21785925044728
+[READ], 91000, 224.41174888724035
+[READ], 92000, 223.3851012412581
+[READ], 93000, 224.70942514726792
+[READ], 94000, 239.04262620700504
+[READ], 95000, 226.94018224847662
+[READ], 96000, 225.00952529956376
+[READ], 97000, 225.07183804258236
+[READ], 98000, 232.8968323885399
+[READ], 99000, 221.31252093157977
+[READ], 100000, 222.07124972784672
+[READ], 101000, 225.5439741219963
+[READ], 102000, 231.4139067814323
+[READ], 103000, 228.0453405201757
+[READ], 104000, 222.3894333191308
+[READ], 105000, 226.43847644589766
+[READ], 106000, 225.75505291783037
+[READ], 107000, 232.74133196992938
+[READ], 108000, 222.26945055741209
+[READ], 109000, 233.1509060453784
+[READ], 110000, 219.2886540749953
+[READ], 111000, 220.15307552696365
+[READ], 112000, 223.8098308918766
+[READ], 113000, 234.192805123653
+[READ], 114000, 228.74995328150695
+[READ], 115000, 224.6649386809302
+[READ], 116000, 231.86773633591366
+[READ], 117000, 226.53465510881594
+[READ], 118000, 224.8654084130054
+[READ], 119000, 225.33707607699358
+[READ], 120000, 223.66990900248175
+[READ], 121000, 229.63172762136375
+[READ], 122000, 236.68031357196844
+[READ], 123000, 228.51392400322115
+[READ], 124000, 244.261929034493
+[READ], 125000, 229.01273047760276
+[READ], 126000, 232.97026015258493
+[READ], 127000, 226.60757697799582
+[READ], 128000, 225.98104949566465
+[READ], 129000, 235.8160073509002
+[READ], 130000, 227.62185889100985
+[READ], 131000, 230.84276453444926
+[READ], 132000, 228.62159147939553
+[READ], 133000, 241.8773658181675
+[READ], 134000, 237.90006589274986
+[READ], 135000, 234.49187535844007
+[READ], 136000, 220.59454229630364
+[READ], 137000, 229.5822120118149
+[READ], 138000, 223.3688282611247
+[READ], 139000, 235.17990761243033
+[READ], 140000, 246.07520327251112
+[READ], 141000, 228.90166920425568
+[READ], 142000, 223.67094355418453
+[READ], 143000, 228.20095924596217
+[READ], 144000, 240.2053650042067
+[READ], 145000, 221.58870967741936
+[READ], 146000, 230.22946322030236
+[READ], 147000, 216.7928131995981
+[READ], 148000, 217.25235501328694
+[READ], 149000, 234.64272533576838
+[READ], 150000, 222.6804144144144
+[READ], 151000, 218.5244971957275
+[READ], 152000, 217.0628615332986
+[READ], 153000, 215.91977769936486
+[READ], 154000, 218.39671729935358
+[READ], 155000, 216.2097520151522
+[READ], 156000, 227.75154727050366
+[READ], 157000, 223.38680558715137
+[READ], 158000, 225.7220759442574
+[READ], 159000, 225.088773181039
+[READ], 160000, 222.23465940054496
+[READ], 161000, 242.92769297263314
+[READ], 162000, 219.9286248530826
+[READ], 163000, 219.34642815699507
+[READ], 164000, 216.01949777656935
+[READ], 165000, 216.89873764366038
+[READ], 166000, 216.72392470031184
+[READ], 167000, 221.0394242295871
+[READ], 168000, 222.79825142162687
+[READ], 169000, 233.03569810465908
+[READ], 170000, 227.15388373229115
+[READ], 171000, 222.73479283385848
+[READ], 172000, 222.53638887130754
+[READ], 173000, 221.18088289470137
+[READ], 174000, 239.94594673462638
+[READ], 175000, 239.87487196495985
+[READ], 176000, 236.43640744545027
+[READ], 177000, 233.67901727564012
+[READ], 178000, 227.41152251926448
+[READ], 179000, 226.15389484693083
+[READ], 180000, 225.83611797448356
+[READ], 181000, 223.72019989622873
+[READ], 182000, 236.75561746128474
+[READ], 183000, 229.8042499230762
+[READ], 184000, 221.59658055188888
+[READ], 185000, 224.73403856527662
+[READ], 186000, 243.63211858681396
+[READ], 187000, 220.1756150020164
+[READ], 188000, 222.65115688231558
+[READ], 189000, 222.71254796309904
+[READ], 190000, 222.68487173426905
+[READ], 191000, 220.90386218394
+[READ], 192000, 220.71156881030092
+[READ], 193000, 243.40577718013844
+[READ], 194000, 221.64339881554238
+[READ], 195000, 218.5421983076281
+[READ], 196000, 213.66640954027574
+[READ], 197000, 192.40106224129133
+[READ], 198000, 143.22335207203622
+[READ], 199000, 102.28286499984196
+[READ], 200000, 145.10139473101617
+[READ], 201000, 190.61621621621623
+[CLEANUP], Operations, 50
+[CLEANUP], AverageLatency(us), 777.58
+[CLEANUP], MinLatency(us), 305
+[CLEANUP], MaxLatency(us), 2788
+[CLEANUP], 0, 1908.0
+[CLEANUP], 1000, 1153.0
+[CLEANUP], 2000, 603.15
+[CLEANUP], 3000, 452.2307692307692
+[CLEANUP], 4000, 311.0
+[UPDATE], Operations, 19998037
+[UPDATE], AverageLatency(us), 246.67561246136307
+[UPDATE], MinLatency(us), 31
+[UPDATE], MaxLatency(us), 68336
+[UPDATE], Return=OK, 20001728
+[UPDATE], 0, 320.57162520892734
+[UPDATE], 1000, 317.14202339632345
+[UPDATE], 2000, 288.0255124699063
+[UPDATE], 3000, 288.80693057812863
+[UPDATE], 4000, 290.0471103551916
+[UPDATE], 5000, 287.99706288672957
+[UPDATE], 6000, 287.0040928485298
+[UPDATE], 7000, 288.0531444063398
+[UPDATE], 8000, 288.05771242589793
+[UPDATE], 9000, 288.7973450192888
+[UPDATE], 10000, 310.62166967147436
+[UPDATE], 11000, 287.5787052098341
+[UPDATE], 12000, 315.8757827043493
+[UPDATE], 13000, 304.6662130382361
+[UPDATE], 14000, 286.4088360979644
+[UPDATE], 15000, 289.10165754878744
+[UPDATE], 16000, 288.21456692913387
+[UPDATE], 17000, 288.58667824074075
+[UPDATE], 18000, 285.381343800508
+[UPDATE], 19000, 288.8099651835722
+[UPDATE], 20000, 288.3251826086956
+[UPDATE], 21000, 287.47517028584735
+[UPDATE], 22000, 286.5121965277938
+[UPDATE], 23000, 287.0140335464182
+[UPDATE], 24000, 308.0901908742512
+[UPDATE], 25000, 288.89672062322154
+[UPDATE], 26000, 333.2553234029791
+[UPDATE], 27000, 304.6770297100329
+[UPDATE], 28000, 282.1002339696857
+[UPDATE], 29000, 283.949058326675
+[UPDATE], 30000, 287.32786450526896
+[UPDATE], 31000, 283.80608659944335
+[UPDATE], 32000, 281.68994330730175
+[UPDATE], 33000, 280.50600047595844
+[UPDATE], 34000, 284.7070140556941
+[UPDATE], 35000, 289.32744002705635
+[UPDATE], 36000, 284.34513529073115
+[UPDATE], 37000, 289.92395304012615
+[UPDATE], 38000, 282.867281379452
+[UPDATE], 39000, 281.8026870748299
+[UPDATE], 40000, 306.296577050482
+[UPDATE], 41000, 281.4393303064699
+[UPDATE], 42000, 333.95795887281037
+[UPDATE], 43000, 316.0638885858696
+[UPDATE], 44000, 275.7407187145516
+[UPDATE], 45000, 275.65265423242465
+[UPDATE], 46000, 268.4064698668158
+[UPDATE], 47000, 268.50625715953055
+[UPDATE], 48000, 267.53951945722866
+[UPDATE], 49000, 264.3333155644637
+[UPDATE], 50000, 265.05248192206517
+[UPDATE], 51000, 262.528106210831
+[UPDATE], 52000, 268.2566082374449
+[UPDATE], 53000, 264.00916002857844
+[UPDATE], 54000, 258.53068889607613
+[UPDATE], 55000, 292.773500487783
+[UPDATE], 56000, 266.4992704867271
+[UPDATE], 57000, 264.1170097852332
+[UPDATE], 58000, 262.02342493825864
+[UPDATE], 59000, 260.1893302376171
+[UPDATE], 60000, 263.0683036944403
+[UPDATE], 61000, 255.87117933250008
+[UPDATE], 62000, 255.73850345492028
+[UPDATE], 63000, 257.91370755399834
+[UPDATE], 64000, 254.37788395625083
+[UPDATE], 65000, 252.77393462210105
+[UPDATE], 66000, 253.59845212934317
+[UPDATE], 67000, 253.89708454210646
+[UPDATE], 68000, 268.1034938701249
+[UPDATE], 69000, 285.17899657552863
+[UPDATE], 70000, 272.5037492211503
+[UPDATE], 71000, 261.7339659444357
+[UPDATE], 72000, 262.9650614287077
+[UPDATE], 73000, 253.670883241912
+[UPDATE], 74000, 245.6748970786161
+[UPDATE], 75000, 250.9519898989899
+[UPDATE], 76000, 247.34605782715508
+[UPDATE], 77000, 250.1896158674366
+[UPDATE], 78000, 249.33709717962898
+[UPDATE], 79000, 245.3619695606167
+[UPDATE], 80000, 252.79368156817927
+[UPDATE], 81000, 242.79242877457952
+[UPDATE], 82000, 292.16989984661194
+[UPDATE], 83000, 309.231681021786
+[UPDATE], 84000, 261.3928700295879
+[UPDATE], 85000, 257.64839253051144
+[UPDATE], 86000, 238.43829489733375
+[UPDATE], 87000, 238.03869659639076
+[UPDATE], 88000, 233.41607163096452
+[UPDATE], 89000, 235.69929002720457
+[UPDATE], 90000, 228.8654638182335
+[UPDATE], 91000, 227.5272197375174
+[UPDATE], 92000, 225.94733194101178
+[UPDATE], 93000, 228.81642156411624
+[UPDATE], 94000, 240.99454359772406
+[UPDATE], 95000, 229.12079907955535
+[UPDATE], 96000, 226.71224067344403
+[UPDATE], 97000, 227.9190165109292
+[UPDATE], 98000, 235.7760829947986
+[UPDATE], 99000, 223.81755514289597
+[UPDATE], 100000, 224.14536129266523
+[UPDATE], 101000, 227.49261169646462
+[UPDATE], 102000, 234.37892622007584
+[UPDATE], 103000, 230.30086813964752
+[UPDATE], 104000, 224.6230066280183
+[UPDATE], 105000, 226.63539689960857
+[UPDATE], 106000, 226.17902820338733
+[UPDATE], 107000, 233.71548549954449
+[UPDATE], 108000, 224.47677939976427
+[UPDATE], 109000, 236.03942590845412
+[UPDATE], 110000, 220.93512881398297
+[UPDATE], 111000, 221.553628141243
+[UPDATE], 112000, 226.0393956290047
+[UPDATE], 113000, 236.1984780927466
+[UPDATE], 114000, 230.0110882232862
+[UPDATE], 115000, 227.29880452578914
+[UPDATE], 116000, 233.1606355474075
+[UPDATE], 117000, 228.26224292170065
+[UPDATE], 118000, 226.478475381475
+[UPDATE], 119000, 226.6924700204604
+[UPDATE], 120000, 225.4266883466854
+[UPDATE], 121000, 231.7889119616867
+[UPDATE], 122000, 239.72968191084271
+[UPDATE], 123000, 231.8152003727866
+[UPDATE], 124000, 245.76899192300397
+[UPDATE], 125000, 231.01248640743935
+[UPDATE], 126000, 234.81442109444455
+[UPDATE], 127000, 227.3580072480389
+[UPDATE], 128000, 227.37766600703605
+[UPDATE], 129000, 236.00549823578348
+[UPDATE], 130000, 228.4561504581018
+[UPDATE], 131000, 231.69179270546525
+[UPDATE], 132000, 230.39024094361807
+[UPDATE], 133000, 242.70826951023133
+[UPDATE], 134000, 239.5835803545481
+[UPDATE], 135000, 236.75463379177108
+[UPDATE], 136000, 222.36475328917848
+[UPDATE], 137000, 231.8323647575446
+[UPDATE], 138000, 223.97390760756318
+[UPDATE], 139000, 235.8883171136957
+[UPDATE], 140000, 248.7713243378311
+[UPDATE], 141000, 230.56608358081124
+[UPDATE], 142000, 224.90338771531896
+[UPDATE], 143000, 231.1157901636888
+[UPDATE], 144000, 240.9164669667037
+[UPDATE], 145000, 223.01516148514048
+[UPDATE], 146000, 232.71380676909206
+[UPDATE], 147000, 217.66351350160008
+[UPDATE], 148000, 218.70224206507393
+[UPDATE], 149000, 235.89467345904976
+[UPDATE], 150000, 224.2789980836678
+[UPDATE], 151000, 220.88446834992888
+[UPDATE], 152000, 218.39118520613818
+[UPDATE], 153000, 218.39622076904797
+[UPDATE], 154000, 219.74867882827886
+[UPDATE], 155000, 217.9746667136291
+[UPDATE], 156000, 228.61442772255234
+[UPDATE], 157000, 224.56659799802162
+[UPDATE], 158000, 226.4111917003305
+[UPDATE], 159000, 226.6387060699947
+[UPDATE], 160000, 223.8634748575139
+[UPDATE], 161000, 244.2161672994826
+[UPDATE], 162000, 220.4587725013164
+[UPDATE], 163000, 221.01768891113534
+[UPDATE], 164000, 217.10645936171898
+[UPDATE], 165000, 219.08270077324383
+[UPDATE], 166000, 218.12457933221742
+[UPDATE], 167000, 222.50326527312416
+[UPDATE], 168000, 223.67971604268402
+[UPDATE], 169000, 233.43121590208264
+[UPDATE], 170000, 228.964106945515
+[UPDATE], 171000, 224.86558612548805
+[UPDATE], 172000, 223.50155278105336
+[UPDATE], 173000, 222.93796623830207
+[UPDATE], 174000, 241.06763171775185
+[UPDATE], 175000, 242.4149853075585
+[UPDATE], 176000, 237.26362385365243
+[UPDATE], 177000, 235.3848051589305
+[UPDATE], 178000, 228.83774574533902
+[UPDATE], 179000, 227.64686109007627
+[UPDATE], 180000, 227.31422161744695
+[UPDATE], 181000, 225.59271226974826
+[UPDATE], 182000, 237.92273463946987
+[UPDATE], 183000, 230.92333009200388
+[UPDATE], 184000, 222.8529575242501
+[UPDATE], 185000, 226.2090406308181
+[UPDATE], 186000, 246.82372111101145
+[UPDATE], 187000, 222.41322670888468
+[UPDATE], 188000, 223.49323970612127
+[UPDATE], 189000, 224.85620820005815
+[UPDATE], 190000, 224.69170630067492
+[UPDATE], 191000, 221.0105268821061
+[UPDATE], 192000, 222.37339183393996
+[UPDATE], 193000, 245.1397105221644
+[UPDATE], 194000, 223.5077145568762
+[UPDATE], 195000, 219.97238976245646
+[UPDATE], 196000, 215.63381694843017
+[UPDATE], 197000, 194.03387310757535
+[UPDATE], 198000, 144.27678544803936
+[UPDATE], 199000, 104.49588954134265
+[UPDATE], 200000, 150.3493603881782
+[UPDATE], 201000, 188.28571428571428
+[READ-FAILED], Operations, 122496
+[READ-FAILED], AverageLatency(us), 278.2837317136886
+[READ-FAILED], MinLatency(us), 51
+[READ-FAILED], MaxLatency(us), 14030
+[READ-FAILED], 0, 728.08
+[READ-FAILED], 1000, 323.2863924050633
+[READ-FAILED], 2000, 359.49107142857144
+[READ-FAILED], 3000, 192.58545680546925
+[READ-FAILED], 4000, 188.45264381173737
+[READ-FAILED], 5000, 175.8994481912937
+[READ-FAILED], 6000, 174.2357336956522
+[READ-FAILED], 7000, 167.81341557440246
+[READ-FAILED], 8000, 195.0863309352518
+[READ-FAILED], 9000, 193.276
+[READ-FAILED], 10000, 195.43788819875778
+[READ-FAILED], 11000, 186.00250626566415
+[READ-FAILED], 12000, 211.0079365079365
+[READ-FAILED], 13000, 225.0729001584786
+[READ-FAILED], 14000, 227.1860465116279
+[READ-FAILED], 15000, 265.25994919559696
+[READ-FAILED], 16000, 255.70823529411766
+[READ-FAILED], 17000, 250.4316
+[READ-FAILED], 18000, 247.80211202938474
+[READ-FAILED], 19000, 231.4945567651633
+[READ-FAILED], 20000, 256.01128031584886
+[READ-FAILED], 21000, 249.76268951878708
+[READ-FAILED], 22000, 226.47357142857143
+[READ-FAILED], 23000, 230.3588932806324
+[READ-FAILED], 24000, 216.19891008174386
+[READ-FAILED], 25000, 210.82423038728896
+[READ-FAILED], 26000, 210.18696581196582
+[READ-FAILED], 27000, 223.78682634730538
+[READ-FAILED], 28000, 224.0818791946309
+[READ-FAILED], 29000, 197.08477237048666
+[READ-FAILED], 30000, 279.2555701179554
+[READ-FAILED], 31000, 286.11649580615097
+[READ-FAILED], 32000, 301.9525462962963
+[READ-FAILED], 33000, 393.93976932934646
+[READ-FAILED], 34000, 385.69531585732705
+[READ-FAILED], 35000, 384.5764705882353
+[READ-FAILED], 36000, 387.6375207526287
+[READ-FAILED], 37000, 370.8456098998232
+[READ-FAILED], 38000, 384.75256322624745
+[READ-FAILED], 39000, 377.51625386996903
+[READ-FAILED], 40000, 362.3715937241949
+[READ-FAILED], 41000, 402.0230414746544
+[READ-FAILED], 42000, 357.3731343283582
+[READ-FAILED], 43000, 348.5044802867383
+[READ-FAILED], 44000, 371.95313489550347
+[READ-FAILED], 45000, 311.6106526631658
+[READ-FAILED], 46000, 221.14526233359436
+[READ-FAILED], 47000, 213.23119777158774
+[READ-FAILED], 48000, 228.89171058936273
+[READ-FAILED], 49000, 230.47771023302937
+[READ-FAILED], 50000, 222.13479809976246
+[READ-FAILED], 51000, 221.37049399198932
+[READ-FAILED], 52000, 233.2462627852085
+[READ-FAILED], 53000, 220.39704675963904
+[READ-FAILED], 54000, 245.4562624254473
+[READ-FAILED], 55000, 234.72934782608695
+[READ-FAILED], 56000, 226.18949771689498
+[READ-FAILED], 57000, 272.46950710108604
+[READ-FAILED], 58000, 289.73569876900797
+[READ-FAILED], 59000, 272.4065934065934
+[READ-FAILED], 60000, 220.16489795918366
+[READ-FAILED], 61000, 223.10400368154626
+[READ-FAILED], 62000, 217.64496745117677
+[READ-FAILED], 63000, 217.8139661756683
+[READ-FAILED], 64000, 224.1615776081425
+[READ-FAILED], 65000, 230.03566433566434
+[READ-FAILED], 66000, 209.77442414614774
+[READ-FAILED], 67000, 214.71906052393857
+[READ-FAILED], 68000, 215.02677651905253
+[READ-FAILED], 69000, 217.50235294117647
+[READ-FAILED], 70000, 224.97321428571428
+[READ-FAILED], 71000, 345.9139515455305
+[READ-FAILED], 72000, 518.3439716312057
+[READ-FAILED], 73000, 420.0500766479305
+[READ-FAILED], 74000, 322.85506072874495
+[READ-FAILED], 75000, 376.3051138805329
+[READ-FAILED], 76000, 341.63747553816046
+[READ-FAILED], 77000, 358.1655518394649
+[READ-FAILED], 78000, 331.3329268292683
+[READ-FAILED], 79000, 312.65384615384613
+[READ-FAILED], 80000, 323.07814871016694
+[READ-FAILED], 81000, 300.0290644868302
+[READ-FAILED], 82000, 354.58492569002124
+[READ-FAILED], 83000, 330.4952494061758
+[READ-FAILED], 84000, 306.7900552486188
+[READ-FAILED], 85000, 300.580303030303
+[READ-FAILED], 86000, 311.5702341137124
+[READ-FAILED], 87000, 274.979674796748
+[READ-FAILED], 88000, 298.3963254593176
+[READ-FAILED], 89000, 328.3314763231198
+[READ-FAILED], 90000, 327.1888544891641
+[READ-FAILED], 91000, 329.5051903114187
+[READ-FAILED], 92000, 341.4624505928854
+[READ-FAILED], 93000, 347.3293172690763
+[READ-FAILED], 94000, 331.7832512315271
+[READ-FAILED], 95000, 314.3333333333333
+[READ-FAILED], 96000, 342.1012658227848
+[READ-FAILED], 97000, 319.9158878504673
+[READ-FAILED], 98000, 304.7196261682243
+[READ-FAILED], 99000, 277.72972972972974
+[READ-FAILED], 100000, 335.51063829787233
+[READ-FAILED], 101000, 310.6933333333333
+[READ-FAILED], 102000, 272.04477611940297
+[READ-FAILED], 103000, 245.9090909090909
+[READ-FAILED], 104000, 279.3030303030303
+[READ-FAILED], 105000, 270.15909090909093
+[READ-FAILED], 106000, 331.6458333333333
+[READ-FAILED], 107000, 268.2
+[READ-FAILED], 108000, 299.5853658536585
+[READ-FAILED], 109000, 242.21428571428572
+[READ-FAILED], 110000, 294.25
+[READ-FAILED], 111000, 255.26315789473685
+[READ-FAILED], 112000, 286.8125
+[READ-FAILED], 113000, 347.8235294117647
+[READ-FAILED], 114000, 321.0
+[READ-FAILED], 115000, 345.8235294117647
+[READ-FAILED], 116000, 395.1666666666667
+[READ-FAILED], 117000, 379.22222222222223
+[READ-FAILED], 118000, 299.6
+[READ-FAILED], 119000, 331.9166666666667
+[READ-FAILED], 120000, 269.85714285714283
+[READ-FAILED], 121000, 384.5
+[READ-FAILED], 122000, 352.2
+[READ-FAILED], 123000, 240.0
+[READ-FAILED], 124000, 249.5
+[READ-FAILED], 126000, 307.75
+[READ-FAILED], 127000, 192.5
+[READ-FAILED], 128000, 201.66666666666666
+[READ-FAILED], 129000, 175.5
+[READ-FAILED], 130000, 260.5
+[READ-FAILED], 132000, 137.66666666666666
+[READ-FAILED], 134000, 279.0
+[READ-FAILED], 139000, 169.0
+[READ-FAILED], 155000, 173.0
+[READ-FAILED], 158000, 342.0
