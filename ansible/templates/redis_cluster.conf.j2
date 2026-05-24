@@ -18,6 +18,11 @@ logfile {{ redis_log_dir }}/{{ inventory_hostname }}__
 # because the directive doesn't exist upstream.
 cluster-rdma-allocator-shadow yes
 cluster-rdma-allocator-skip-lock {{ "yes" if (rdma_allocator_skip_lock | default(false) | bool) else "no" }}
+# Aqueduct TRANSFER/BACKPATCH overlap: donor sends DONE-SLOTS-INIT upfront
+# then pipelined DONE-SLOTS-CHUNK every K slots, so recipient backpatch
+# starts in parallel with the remaining RDMA-WRITEs.
+cluster-rdma-transfer-overlap {{ "yes" if (rdma_transfer_overlap | default(true) | bool) else "no" }}
+cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }}
 # Aqueduct slot-state machine: wrap GET / GETEX replies in
 # [state, peer_endpoint, value] so cooperative clients (e.g. the YCSB
 # driver in ycsb_client/) can drive client-side double reads during

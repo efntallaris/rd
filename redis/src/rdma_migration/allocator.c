@@ -323,6 +323,59 @@ void freelist_print(int slot)
 /* * * * * * * * INTERNAL FUNCTIONS * * * * * *  * */
 /* * * * * * * * * * * * * * * * * * * * * * * * * */
 
+// Internal use
+// Write prologue + initial free-segment header/footer + epilogue into the
+// supplied chunk (must be at least WSIZE + BLOCK_SIZE_BYTES + WSIZE bytes),
+// zero-init the alloc_bloc_t bookkeeping fields, and attach the chunk.
+// Does NOT allocate either the bookkeeping struct or the chunk — caller does.
+static void init_bloc_layout(alloc_bloc_t *new_block, char *block_start)
+{
+    new_block->block_start = block_start;
+
+    // create the dummy/prologue header at the front of the block
+    PUT(new_block->block_start, PACK(0, 1));   /* New prologue/dummy header */
+
+    //put header and boundary footer to the new empty block
+    /* Initialize free block header/footer and the epilogue header */
+    void *fist_segment_ptr = new_block->block_start + WSIZE;
+    PUT(fist_segment_ptr, PACK(BLOCK_SIZE_BYTES, 0));
+    char *footer_start_ptr = fist_segment_ptr + BLOCK_SIZE_BYTES - WSIZE;
+    PUT(footer_start_ptr, PACK(BLOCK_SIZE_BYTES, 0));
+    void *dummy_hdr_ptr = fist_segment_ptr + BLOCK_SIZE_BYTES;    //dummy header is at the end of the "useful" block size
+    // set the flags in the last dummy header as "used" with size 0
+    // this indicates that we reached the end of the block
+    PUT(dummy_hdr_ptr, PACK(0, 1));   /* New epilogue/dummy header */
+
+    // Header/footer will be overwritten when allocator puts data into segments.
+    // Only when segments are written we assume that header/footer is occupied and
+    // maintain the corresponding counters
+    new_block->bytes_free = BLOCK_SIZE_BYTES;
+    new_block->bytes_total_in_use = 0;
+
+    new_block->next = NULL;
+    new_block->prev = NULL;
+
+    //DEBUG
+    new_block->segments_free = 0;
+    new_block->segments_used = 0;
+}
+
+// Internal use
+// Append a fully-initialized alloc_bloc_t to slot's block list (creating the
+// list head if empty). Increments slot_blocks_num.
+static void link_block_into_slot(int slot, alloc_bloc_t *new_blk)
+{
+    if (r_allocator.slot_blocks[slot] == NULL) {
+        r_allocator.slot_blocks[slot] = new_blk;
+        r_allocator.slot_blocks_tail[slot] = new_blk;
+    } else {
+        r_allocator.slot_blocks_tail[slot]->next = new_blk;
+        new_blk->prev = r_allocator.slot_blocks_tail[slot];
+        r_allocator.slot_blocks_tail[slot] = new_blk;
+    }
+    r_allocator.slot_blocks_num[slot]++;
+}
+
 // internal use
 // returns a pointer at the beggining of the new block
 // The caller is responsible to add the new empty block in the free list
@@ -340,42 +393,14 @@ alloc_bloc_t * allocate_new_bloc()
     // one at the front of the block used when coalescing (the prev segment of the 1st segment is the prologue)
     // So allocate additional space for the dummy headers
     // The useful block size for the user payload is BLOCK_SIZE_BYTES
-    new_block->block_start = (char *) zmalloc(WSIZE + BLOCK_SIZE_BYTES + WSIZE);
-    if (new_block->block_start == NULL) {
+    char *block_start = (char *) zmalloc(WSIZE + BLOCK_SIZE_BYTES + WSIZE);
+    if (block_start == NULL) {
         fprintf(stderr, "%s:%d %s() allocation ERROR!\n", __FILE__, __LINE__, __func__);
         exit(1);
     }
-    // printf("%s:%d %s() new block @: %p buf: %p\n", __FILE__, __LINE__, __func__, new_block, new_block->block_start);    
+    // printf("%s:%d %s() new block @: %p buf: %p\n", __FILE__, __LINE__, __func__, new_block, block_start);
 
-    // create the dummy/prologue header at the front of the block
-    PUT(new_block->block_start, PACK(0, 1));   /* New prologue/dummy header */ 
-
-    //put header and boundary footer to the new empty block
-    /* Initialize free block header/footer and the epilogue hceader */
-    void *fist_segment_ptr = new_block->block_start + WSIZE;
-    PUT(fist_segment_ptr, PACK(BLOCK_SIZE_BYTES, 0));
-    char *footer_start_ptr = fist_segment_ptr + BLOCK_SIZE_BYTES - WSIZE;
-    PUT(footer_start_ptr, PACK(BLOCK_SIZE_BYTES, 0));
-    // printf("%s:%d %s() header size %u footer size %u\n", __FILE__, __LINE__, __func__, GET_SIZE(new_block->block_start), GET_SIZE(footer_start_ptr));
-    void *dummy_hdr_ptr = fist_segment_ptr + BLOCK_SIZE_BYTES;    //dummy header is at the end of the "useful" block size
-    // set the flags in the last dummy header as "used" with size 0
-    // this indicates that we reached the end of the block
-    PUT(dummy_hdr_ptr, PACK(0, 1));   /* New epilogue/dummy header */
-    // printf("%s:%d %s() dummy header %p\n", __FILE__, __LINE__, __func__, dummy_hdr_ptr);
-
-    // Header/footer will be overwritten when allocator puts data into segments. 
-    // Only when segments are written we assume that header/footer is occupied and
-    // maintain the corresponding counters
-    new_block->bytes_free = BLOCK_SIZE_BYTES;
-    new_block->bytes_total_in_use = 0;
-
-    new_block->next = NULL;
-    new_block->prev = NULL;
-
-    //DEBUG
-    new_block->segments_free = 0;
-    new_block->segments_used = 0;
-
+    init_bloc_layout(new_block, block_start);
     return new_block;
 }
 
@@ -548,18 +573,7 @@ void * r_allocator_alloc_new_empty_block(int slot)
     // gettimeofday(&start, NULL);
 
     alloc_bloc_t *new_blk = allocate_new_bloc();
-
-    // if this is the first block of the slot
-    if (r_allocator.slot_blocks[slot] == NULL) {
-        r_allocator.slot_blocks[slot] = new_blk;
-        r_allocator.slot_blocks_tail[slot] = new_blk;
-    } else {    //else insert at the end of the list and update tail ptr
-        r_allocator.slot_blocks_tail[slot]->next = new_blk;
-        new_blk->prev = r_allocator.slot_blocks_tail[slot];
-        r_allocator.slot_blocks_tail[slot] = new_blk;
-    }
-
-    r_allocator.slot_blocks_num[slot]++;
+    link_block_into_slot(slot, new_blk);
 
     // gettimeofday(&end, NULL);
     // long seconds = (end.tv_sec - start.tv_sec);
@@ -569,6 +583,32 @@ void * r_allocator_alloc_new_empty_block(int slot)
     // calls_alloc_empty_blocks++;
 
     return new_blk->block_start;
+}
+
+/* Aqueduct PREP fast-path: the caller (recipient REGISTER-BLOCK-SLOTS
+ * worker) has already allocated a contiguous mmap'd pool and registered it
+ * with one ibv_reg_mr. It hands us a stride-sized sub-pointer per slot;
+ * we initialize the prologue/epilogue/header/footer in place and thread the
+ * block into the slot's list. The allocator does NOT take ownership of
+ * block_ptr — the pool's lifetime is owned by the caller (today the pool
+ * is leaked alongside the existing per-block leak at cluster_rdma.c). */
+void * r_allocator_register_existing_block(int slot, void *block_ptr)
+{
+    if (block_ptr == NULL) return NULL;
+
+    alloc_bloc_t *new_block = (alloc_bloc_t *) zmalloc(sizeof(alloc_bloc_t));
+    if (new_block == NULL) {
+        fprintf(stderr, "%s:%d %s() bookkeeping zmalloc failed\n", __FILE__, __LINE__, __func__);
+        return NULL;
+    }
+    init_bloc_layout(new_block, (char *) block_ptr);
+    link_block_into_slot(slot, new_block);
+    return block_ptr;
+}
+
+size_t r_allocator_block_stride_bytes(void)
+{
+    return (size_t) WSIZE + (size_t) BLOCK_SIZE_BYTES + (size_t) WSIZE;
 }
 
 // public API

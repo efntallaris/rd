@@ -2201,6 +2201,14 @@ struct redisServer {
                                        Read once at initServer time; changing at
                                        runtime has no effect because the pool is
                                        constructed during recipientBackpatchThreadStart. */
+    int rdma_transfer_overlap;      /* Aqueduct: when on, donor sends RDMA DONE-SLOTS-INIT
+                                       before TRANSFER + per-chunk DONE-SLOTS-CHUNK during
+                                       TRANSFER so recipient backpatch overlaps with the
+                                       remaining donor RDMA-WRITEs. Off = legacy single
+                                       end-of-TRANSFER DONE-SLOTS RPC (byte-identical to
+                                       pre-overlap behavior). */
+    int rdma_transfer_chunk_slots;  /* Aqueduct: K = slots per DONE-SLOTS-CHUNK RPC.
+                                       Only consulted when rdma_transfer_overlap=1. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */
@@ -4405,6 +4413,8 @@ void rdmaReshardFlipCommand(client *c);
 void rdmaReshardRecvFlipCommand(client *c);
 void rdmaTransferSlotsCommand(client *c);
 void rdmaDoneSlotsCommand(client *c);
+void rdmaDoneSlotsInitCommand(client *c);
+void rdmaDoneSlotsChunkCommand(client *c);
 void rdmaMigrateCommand(client *c);
 void rdmaMigrateStatusCommand(client *c);
 void rdmaBackpatchStatusCommand(client *c);

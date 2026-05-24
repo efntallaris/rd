@@ -128,6 +128,7 @@ void addReplyGetWithMeta(client *c, int slot, robj *value);
 /* Forward decls for the rdma_migration library's opaque types. The full
  * definitions live in redis/src/rdma_migration/. */
 struct rdmamig_server;
+struct rdmamig_buffer;
 struct ibv_mr;
 
 /* Per-connection RDMA state. The recipient owns one of these per connected
@@ -145,6 +146,10 @@ typedef struct rdmaCachedConnection {
     rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];
     int number_of_assigned_slots;
     struct ibv_mr *memory_regions[CLUSTER_SLOTS];
+    /* Aqueduct big-MR PREP: one mmap'd pool + one ibv_reg_mr per PREP call
+     * carved into per-slot sub-pointers; replaces N small ibv_reg_mr ioctls
+     * with 1. Pool is never freed (matches the existing per-block leak). */
+    struct rdmamig_buffer *aqueduct_pool_buf;
 } rdmaCachedConnection;
 
 /* Source-side bootstrap cache for the RDMA migration data path. One entry per

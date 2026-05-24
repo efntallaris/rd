@@ -40,6 +40,7 @@
 #include "kvstore.h"
 #include "hiredis.h"
 #include <arpa/inet.h>
+#include <sys/mman.h>   /* mmap, munmap, MAP_ANONYMOUS — Aqueduct big-MR pool */
 
 /* ---- Connection cache ---------------------------------------------------- */
 
@@ -1043,6 +1044,144 @@ void rdmaDoneSlotsCommand(client *c) {
     addReply(c, shared.ok);
 }
 
+/* Aqueduct TRANSFER/BACKPATCH overlap path.
+ *
+ * RDMA DONE-SLOTS-INIT <src_node_id> <src_mig_id> <total_slots>
+ *
+ * Pre-allocate a backpatchBatch sized to total_slots so per-chunk DONE-SLOTS-CHUNK
+ * RPCs can append per-slot work items onto the pool work queue without needing
+ * to know the final batch size up front. State starts as BACKPATCH_RUNNING so
+ * the donor's BACKPATCH-STATUS poll sees "running" immediately after INIT.
+ * The pool worker that decrements remaining → 0 (cluster_rdma.c around :1258)
+ * transitions to BACKPATCH_DONE and runs the existing dispose path. */
+void rdmaDoneSlotsInitCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c, "DONE-SLOTS-INIT: expected <src_node_id> <src_mig_id> <total_slots>");
+        return;
+    }
+    sds src_node_id = c->argv[2]->ptr;
+    if (sdslen(src_node_id) != CLUSTER_NAMELEN) {
+        addReplyError(c, "src_node_id must be 40 chars");
+        return;
+    }
+    long long src_mig_id, total_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &src_mig_id) != C_OK) {
+        addReplyError(c, "src_mig_id must be an integer");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &total_slots_ll) != C_OK ||
+        total_slots_ll <= 0 || total_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "total_slots out of range");
+        return;
+    }
+    int total_slots = (int) total_slots_ll;
+
+    backpatchBatch *b = zmalloc(sizeof(*b));
+    b->db = c->db;
+    b->n_slots = total_slots;
+    b->slots = NULL;   /* No eager slot list — CHUNK RPCs deliver work items directly. */
+    memcpy(b->src_node_id, src_node_id, CLUSTER_NAMELEN);
+    b->src_node_id[CLUSTER_NAMELEN] = '\0';
+    b->src_mig_id = src_mig_id;
+    atomic_store(&b->idx, 0);
+    atomic_store(&b->applied, 0);
+    atomic_store(&b->state, BACKPATCH_RUNNING);
+    atomic_store(&b->remaining, total_slots);
+    b->err = NULL;
+    pthread_mutex_init(&b->err_mu, NULL);
+    b->t_started = time(NULL);
+    b->t_ended = 0;
+
+    if (backpatch_batches_by_key != NULL) {
+        sds key = backpatchBatchKey(src_node_id, src_mig_id);
+        pthread_mutex_lock(&backpatch_batches_mu);
+        dictReplace(backpatch_batches_by_key, key, b);
+        pthread_mutex_unlock(&backpatch_batches_mu);
+    } else {
+        /* Backpatch infrastructure not initialized — caller is using the
+         * legacy path or running outside cluster mode. Fail loudly. */
+        zfree(b);
+        addReplyError(c, "backpatch infrastructure not initialized");
+        return;
+    }
+
+    serverLog(LL_NOTICE,
+        "RDMA DONE-SLOTS-INIT: batch from %.*s mig_id=%lld total_slots=%d "
+        "(TRANSFER/BACKPATCH overlap)",
+        CLUSTER_NAMELEN, b->src_node_id, src_mig_id, total_slots);
+    addReply(c, shared.ok);
+}
+
+/* RDMA DONE-SLOTS-CHUNK <src_node_id> <src_mig_id> <chunk_seq> <s1> ... <sK>
+ *
+ * Append K per-slot work items onto backpatch_work_queue for the batch
+ * created by a prior DONE-SLOTS-INIT. Pool workers pick them up immediately;
+ * the worker that decrements remaining → 0 finalizes the batch (no change
+ * from the existing single-batch flow). chunk_seq is currently advisory (for
+ * logs/debugging); ordering is not enforced. */
+void rdmaDoneSlotsChunkCommand(client *c) {
+    if (c->argc < 6) {
+        addReplyError(c, "DONE-SLOTS-CHUNK: expected <src_node_id> <src_mig_id> <chunk_seq> <slot> [<slot> ...]");
+        return;
+    }
+    sds src_node_id = c->argv[2]->ptr;
+    if (sdslen(src_node_id) != CLUSTER_NAMELEN) {
+        addReplyError(c, "src_node_id must be 40 chars");
+        return;
+    }
+    long long src_mig_id, chunk_seq;
+    if (getLongLongFromObject(c->argv[3], &src_mig_id) != C_OK) {
+        addReplyError(c, "src_mig_id must be an integer");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &chunk_seq) != C_OK) {
+        addReplyError(c, "chunk_seq must be an integer");
+        return;
+    }
+    int n_slots = c->argc - 5;
+
+    sds key = backpatchBatchKey(src_node_id, src_mig_id);
+    pthread_mutex_lock(&backpatch_batches_mu);
+    backpatchBatch *b = backpatch_batches_by_key
+        ? dictFetchValue(backpatch_batches_by_key, key) : NULL;
+    pthread_mutex_unlock(&backpatch_batches_mu);
+    sdsfree(key);
+    if (b == NULL) {
+        addReplyError(c, "no such backpatch batch — DONE-SLOTS-INIT first");
+        return;
+    }
+
+    /* Validate + build all work items before taking the queue lock, so we
+     * hold the lock only long enough to splice the tail. */
+    backpatchSlotWork **items = zmalloc((size_t) n_slots * sizeof(*items));
+    for (int j = 0; j < n_slots; j++) {
+        long long s;
+        if (getLongLongFromObject(c->argv[5 + j], &s) != C_OK ||
+            s < 0 || s >= CLUSTER_SLOTS) {
+            for (int k = 0; k < j; k++) zfree(items[k]);
+            zfree(items);
+            addReplyError(c, "slot id out of range");
+            return;
+        }
+        backpatchSlotWork *w = zmalloc(sizeof(*w));
+        w->batch = b;
+        w->db    = b->db;
+        w->slot  = (int) s;
+        items[j] = w;
+    }
+
+    pthread_mutex_lock(&backpatch_work_mu);
+    for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
+    pthread_cond_broadcast(&backpatch_work_cv);
+    pthread_mutex_unlock(&backpatch_work_mu);
+    zfree(items);
+
+    serverLog(LL_NOTICE,
+        "RDMA DONE-SLOTS-CHUNK: from %.*s mig_id=%lld seq=%lld n_slots=%d",
+        CLUSTER_NAMELEN, b->src_node_id, src_mig_id, chunk_seq, n_slots);
+    addReply(c, shared.ok);
+}
+
 /* Legacy stubs kept for server.c init-time call; the new recipientBackpatch
  * thread API below replaces these in functionality. */
 void recipientBackpatchWorkerStart(void)  {}
@@ -1541,28 +1680,71 @@ void recipientBackpatchThreadStop(void) {
 static void *registerWorkerThread(void *arg) {
     registerJob *job = arg;
 
+    /* Aqueduct big-MR PREP: instead of one zmalloc + one ibv_reg_mr per
+     * slot (N ioctls into /dev/infiniband/uverbs*), allocate ONE contiguous
+     * mmap pool sized for the whole job and register it with a SINGLE
+     * ibv_reg_mr. Each slot gets a stride-sized sub-pointer; all slots
+     * share the same rkey (standard RDMA semantic — rkey is valid for any
+     * VA inside the registered range). The donor's RDMA WRITE path only
+     * needs (remote_addr, remote_key) per slot, so the wire format is
+     * unchanged. Pool is leaked, matching the existing per-block leak. */
+    size_t total_blocks = 0;
+    for (int i = 0; i < job->n_pairs; i++) {
+        total_blocks += (size_t) job->n_blocks_per_slot[i];
+    }
+    if (total_blocks == 0) {
+        /* Nothing to register; deliver an empty OK reply. */
+        goto deliver;
+    }
+
+    const size_t stride = r_allocator_block_stride_bytes();
+    const size_t pool_bytes = total_blocks * stride;
+
+    void *pool = mmap(NULL, pool_bytes, PROT_READ | PROT_WRITE,
+                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (pool == MAP_FAILED) {
+        job->has_error = 1;
+        snprintf(job->err_msg, sizeof(job->err_msg),
+            "mmap(%zu bytes) failed: %s (check vm.overcommit / available RAM)",
+            pool_bytes, strerror(errno));
+        goto deliver;
+    }
+
+    struct rdmamig_buffer *pool_buf = rdmamig_buffer_create(
+        rdmamig_server_cm_id(job->conn->s),
+        (char *) pool, pool_bytes, 0);
+    if (pool_buf == NULL) {
+        job->has_error = 1;
+        snprintf(job->err_msg, sizeof(job->err_msg),
+            "ibv_reg_mr(%zu bytes) failed: check ulimit -l (RLIMIT_MEMLOCK)",
+            pool_bytes);
+        munmap(pool, pool_bytes);
+        goto deliver;
+    }
+    job->conn->aqueduct_pool_buf = pool_buf;
+    const uint32_t shared_rkey = rdmamig_buffer_rkey(pool_buf);
+
+    serverLog(LL_NOTICE,
+        "RDMA REGISTER-BLOCK-SLOTS: aqueduct big-MR pool base=%p bytes=%zu "
+        "stride=%zu total_blocks=%zu rkey=0x%x (replaces %zu ibv_reg_mr ioctls with 1)",
+        pool, pool_bytes, stride, total_blocks, shared_rkey, total_blocks);
+
+    size_t cursor = 0;
     for (int i = 0; i < job->n_pairs; i++) {
         int slot = job->slot_ids[i];
         int n = job->n_blocks_per_slot[i];
         for (int k = 0; k < n; k++) {
-            void *block_ptr = r_allocator_alloc_new_empty_block(slot);
-            if (block_ptr == NULL) {
+            void *sub = (char *) pool + cursor;
+            cursor += stride;
+            if (r_allocator_register_existing_block(slot, sub) == NULL) {
                 job->has_error = 1;
                 snprintf(job->err_msg, sizeof(job->err_msg),
-                    "r_allocator_alloc_new_empty_block returned NULL (slot=%d)", slot);
+                    "r_allocator_register_existing_block failed (slot=%d block=%d)",
+                    slot, k);
                 goto deliver;
             }
-            struct rdmamig_buffer *rb = rdmamig_buffer_create(
-                rdmamig_server_cm_id(job->conn->s),
-                block_ptr, RDMAMIG_BLOCK_SIZE_BYTES, 0);
-            if (rb == NULL) {
-                job->has_error = 1;
-                snprintf(job->err_msg, sizeof(job->err_msg),
-                    "rdmamig_buffer_create failed (slot=%d block=%d)", slot, k);
-                goto deliver;
-            }
-            job->result[job->total_buffers].ptr  = (uint64_t) block_ptr;
-            job->result[job->total_buffers].rkey = rdmamig_buffer_rkey(rb);
+            job->result[job->total_buffers].ptr  = (uint64_t) sub;
+            job->result[job->total_buffers].rkey = shared_rkey;
             job->total_buffers++;
         }
     }
@@ -2921,11 +3103,76 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
 }
 
 /* EXEC-helper: encode + RDMA-WRITE + DONE-SLOTS. Mirrors reshardTransferWorker
- * (lines ~974-1048). */
+ * (lines ~974-1048).
+ *
+ * Two code paths, gated by server.rdma_transfer_overlap:
+ *   off (default): single end-of-TRANSFER `RDMA DONE-SLOTS` RPC — recipient
+ *                  backpatch starts only AFTER all RDMA-WRITEs complete.
+ *                  Byte-identical to pre-Aqueduct-overlap behavior.
+ *   on:            send `RDMA DONE-SLOTS-INIT` synchronously up front, then
+ *                  pipeline `RDMA DONE-SLOTS-CHUNK` RPCs every K slots so the
+ *                  recipient backpatch worker pool starts applying as soon as
+ *                  the first chunk lands — hiding most of BACKPATCH inside
+ *                  TRANSFER's RDMA-WRITE tail.
+ *
+ * RDMA RC mode invariant: `rdmamig_client_wait_send` returns only after the
+ * recipient's NIC acks the write → by the time we proceed past wait_send, the
+ * slot's data is durable in the recipient's pool. Chunked CHUNK RPCs sent
+ * AFTER each chunk's wait_sends are race-free for the recipient's backpatch
+ * pool worker to consume. */
 static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                                   const int *chosen, int n_slots,
                                   long long mig_id, sds *err_out) {
     pthread_mutex_lock(&L->mu);
+
+    /* Cache the (src_id, mig_id) string forms once — used by both code paths,
+     * and (for overlap) by every CHUNK RPC. */
+    char src_id[CLUSTER_NAMELEN + 1];
+    if (server.cluster != NULL && server.cluster->myself != NULL) {
+        memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
+    } else {
+        memset(src_id, 0, sizeof(src_id));
+    }
+    src_id[CLUSTER_NAMELEN] = '\0';
+    char migid_buf[24];
+    int migid_len = snprintf(migid_buf, sizeof(migid_buf), "%lld", mig_id);
+
+    const int overlap = server.rdma_transfer_overlap;
+    const int K = (server.rdma_transfer_chunk_slots > 0)
+                  ? server.rdma_transfer_chunk_slots : 32;
+    int chunk_seq = 0;
+    int pending_replies = 0;   /* hiredis pipelined replies we still need to drain (overlap path) */
+
+    /* Overlap: send DONE-SLOTS-INIT synchronously so the recipient's
+     * backpatchBatch exists before any CHUNK RPC arrives. TCP ordering on
+     * L->ctrl guarantees subsequent CHUNK RPCs land after the INIT reply. */
+    if (overlap) {
+        char total_buf[16];
+        int total_len = snprintf(total_buf, sizeof(total_buf), "%d", n_slots);
+        const char *init_argv[5] = {
+            "RDMA", "DONE-SLOTS-INIT", src_id, migid_buf, total_buf
+        };
+        size_t init_argvlen[5] = {
+            4, 15, CLUSTER_NAMELEN, (size_t) migid_len, (size_t) total_len
+        };
+        redisReply *ir = redisCommandArgv(L->ctrl, 5, init_argv, init_argvlen);
+        if (ir == NULL || ir->type != REDIS_REPLY_STATUS) {
+            const char *body = (ir && ir->str) ? ir->str : "(no body)";
+            if (err_out) *err_out = sdscatfmt(sdsempty(),
+                "TRANSFER: DONE-SLOTS-INIT failed (%s)", body);
+            if (ir) freeReplyObject(ir);
+            pthread_mutex_unlock(&L->mu);
+            return -1;
+        }
+        freeReplyObject(ir);
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: TRANSFER overlap on (K=%d), DONE-SLOTS-INIT sent",
+            K);
+    }
+
+    /* Per-chunk accumulators (overlap path). Reused across chunks. */
+    int chunk_used = 0;
+    int *chunk_slots = overlap ? zmalloc((size_t) K * sizeof(int)) : NULL;
 
     size_t total_bytes = 0;
     int errs = 0;
@@ -2962,52 +3209,101 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
         serverLog(LL_NOTICE,
             "RDMA MIGRATE worker: slot=%d entries=%u bytes=%d rc=0",
             slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+
+        /* Overlap path: accumulate this slot into the current chunk, and
+         * pipeline-send when we've reached K or the last iteration.
+         * RDMA RC's wait_send already guarantees data is in recipient memory. */
+        if (overlap) {
+            chunk_slots[chunk_used++] = slot;
+            int is_last = (i + 1 == n_slots);
+            if (chunk_used == K || is_last) {
+                int chunk_argc = 5 + chunk_used;
+                const char **cargv = zmalloc((size_t) chunk_argc * sizeof(*cargv));
+                size_t *cargvlen = zmalloc((size_t) chunk_argc * sizeof(*cargvlen));
+                char seq_buf[16];
+                int seq_len = snprintf(seq_buf, sizeof(seq_buf), "%d", chunk_seq);
+                cargv[0] = "RDMA";              cargvlen[0] = 4;
+                cargv[1] = "DONE-SLOTS-CHUNK";  cargvlen[1] = 16;
+                cargv[2] = src_id;              cargvlen[2] = CLUSTER_NAMELEN;
+                cargv[3] = migid_buf;           cargvlen[3] = (size_t) migid_len;
+                cargv[4] = seq_buf;             cargvlen[4] = (size_t) seq_len;
+                char (*cnumbuf)[16] = zmalloc((size_t) chunk_used * sizeof(*cnumbuf));
+                for (int j = 0; j < chunk_used; j++) {
+                    cargvlen[5 + j] = (size_t) snprintf(cnumbuf[j], 16, "%d", chunk_slots[j]);
+                    cargv  [5 + j] = cnumbuf[j];
+                }
+                /* Append + flush, but DO NOT block on reply — that's the
+                 * whole point: while the recipient backpatches this chunk we
+                 * keep RDMA-writing the next K slots. */
+                redisAppendCommandArgv(L->ctrl, chunk_argc, cargv, cargvlen);
+                int wdone = 0;
+                while (!wdone) {
+                    if (redisBufferWrite(L->ctrl, &wdone) == REDIS_ERR) {
+                        serverLog(LL_WARNING,
+                            "RDMA MIGRATE worker: DONE-SLOTS-CHUNK seq=%d buffer write failed",
+                            chunk_seq);
+                        break;
+                    }
+                }
+                pending_replies++;
+                chunk_seq++;
+                chunk_used = 0;
+                zfree(cargv); zfree(cargvlen); zfree(cnumbuf);
+            }
+        }
     }
 
-    /* Notify recipient (Phase 4d):
-     *   "RDMA DONE-SLOTS <src_node_id> <src_mig_id> <s1> ... <sN>"
-     * The two new positional args let the recipient identify the batch in
-     * its backpatch-status tracking dict so the source can later poll
-     * RDMA BACKPATCH-STATUS. The recipient also accepts the legacy 2-arg form
-     * for back-compat (no tracking).                                       */
-    char src_id[CLUSTER_NAMELEN + 1];
-    if (server.cluster != NULL && server.cluster->myself != NULL) {
-        memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
+    if (overlap) {
+        zfree(chunk_slots);
+        /* Drain all pipelined CHUNK replies before returning. We don't error
+         * on individual chunk failures here — BACKPATCH-STATUS polling on the
+         * donor will surface a stuck batch. */
+        for (int i = 0; i < pending_replies; i++) {
+            redisReply *cr = NULL;
+            if (redisGetReply(L->ctrl, (void **) &cr) == REDIS_OK) {
+                if (cr && cr->type == REDIS_REPLY_ERROR) {
+                    serverLog(LL_WARNING,
+                        "RDMA MIGRATE worker: DONE-SLOTS-CHUNK reply error: %s",
+                        cr->str ? cr->str : "(no body)");
+                }
+                if (cr) freeReplyObject(cr);
+            }
+        }
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunks=%d",
+            n_slots, total_bytes, errs, chunk_seq);
     } else {
-        memset(src_id, 0, sizeof(src_id));
-    }
-    src_id[CLUSTER_NAMELEN] = '\0';
-    char migid_buf[24];
-    int migid_len = snprintf(migid_buf, sizeof(migid_buf), "%lld", mig_id);
+        /* Legacy path: single end-of-TRANSFER DONE-SLOTS RPC. The recipient
+         * also accepts the legacy 2-arg form for back-compat (no tracking). */
+        int argc = 4 + n_slots;
+        const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+        size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+        argv[0] = "RDMA";        argvlen[0] = 4;
+        argv[1] = "DONE-SLOTS";  argvlen[1] = 10;
+        argv[2] = src_id;        argvlen[2] = CLUSTER_NAMELEN;
+        argv[3] = migid_buf;     argvlen[3] = (size_t) migid_len;
+        char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
+        for (int i = 0; i < n_slots; i++) {
+            argvlen[4 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
+            argv  [4 + i] = numbuf[i];
+        }
+        redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
+        zfree(argv);
+        zfree(argvlen);
+        zfree(numbuf);
 
-    int argc = 4 + n_slots;
-    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
-    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
-    argv[0] = "RDMA";        argvlen[0] = 4;
-    argv[1] = "DONE-SLOTS";  argvlen[1] = 10;
-    argv[2] = src_id;        argvlen[2] = CLUSTER_NAMELEN;
-    argv[3] = migid_buf;     argvlen[3] = (size_t) migid_len;
-    char (*numbuf)[16] = zmalloc((size_t) n_slots * sizeof(*numbuf));
-    for (int i = 0; i < n_slots; i++) {
-        argvlen[4 + i] = (size_t) snprintf(numbuf[i], 16, "%d", chosen[i]);
-        argv  [4 + i] = numbuf[i];
-    }
-    redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
-    zfree(argv);
-    zfree(argvlen);
-    zfree(numbuf);
+        if (r == NULL || r->type != REDIS_REPLY_STATUS) {
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE worker: DONE-SLOTS reply not OK (data may still have landed)");
+        }
+        if (r) freeReplyObject(r);
 
-    if (r == NULL || r->type != REDIS_REPLY_STATUS) {
-        serverLog(LL_WARNING,
-            "RDMA MIGRATE worker: DONE-SLOTS reply not OK (data may still have landed)");
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d",
+            n_slots, total_bytes, errs);
     }
-    if (r) freeReplyObject(r);
 
     pthread_mutex_unlock(&L->mu);
-
-    serverLog(LL_NOTICE,
-        "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d",
-        n_slots, total_bytes, errs);
 
     if (errs > 0 && err_out) {
         *err_out = sdscatfmt(sdsempty(), "TRANSFER: %i slot writes failed", errs);

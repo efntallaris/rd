@@ -51,14 +51,35 @@ int r_allocator_set_skip_lock_when_idle(int enable);
 unsigned long long r_allocator_get_locks_taken(void);
 unsigned long long r_allocator_get_locks_skipped(void);
 
-/* 
-* Allocates a new empty block for the given slot. 
+/*
+* Allocates a new empty block for the given slot.
 * If slot already has block, it will add the new block at the front of the block list
 * Does not affect the free list of the slot (does not add the new empty block to the free list)
 * The new block (including data buffer and metadata fields) is appended in the slot's block list in the allocator
 * returns a pointer at the data buffer of the block (EXCLUDING block metadata)
 */
 void * r_allocator_alloc_new_empty_block(int slot);
+
+/* Like r_allocator_alloc_new_empty_block, but the caller supplies the
+ * block_ptr (a chunk of r_allocator_block_stride_bytes() bytes). The
+ * allocator writes the prologue/payload-header/footer/epilogue and threads
+ * the block onto slot_blocks[slot] / slot_blocks_tail[slot], but does NOT
+ * take ownership of the memory. Intended for the recipient's PREP path,
+ * where a single mmap'd + ibv_reg_mr'd pool is carved into per-slot
+ * sub-pointers — collapses N ibv_reg_mr ioctls into 1.
+ *
+ * Warning: the returned block must NOT flow into free_slot() or the
+ * coalesce-driven block free at allocator.c's coalesce_free_segments —
+ * both call zfree(block_start), which would corrupt the foreign pool.
+ *
+ * Returns block_ptr on success, NULL on internal bookkeeping failure. */
+void * r_allocator_register_existing_block(int slot, void *block_ptr);
+
+/* Total bytes the caller must allocate per block for use with
+ * r_allocator_register_existing_block (prologue word + BLOCK_SIZE_BYTES +
+ * epilogue word). Use this to size the pool — do not hardcode WSIZE in
+ * callers. */
+size_t r_allocator_block_stride_bytes(void);
 
 /* 
 * creates a new segment in a block that has enough space for the segment

@@ -1221,6 +1221,45 @@ struct COMMAND_ARG RDMA_DONE_SLOTS_Args[] = {
 {MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
 };
 
+/********** RDMA DONE_SLOTS_CHUNK ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+#define RDMA_DONE_SLOTS_CHUNK_History NULL
+#endif
+#ifndef SKIP_CMD_TIPS_TABLE
+#define RDMA_DONE_SLOTS_CHUNK_Tips NULL
+#endif
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+#define RDMA_DONE_SLOTS_CHUNK_Keyspecs NULL
+#endif
+
+/* RDMA DONE_SLOTS_CHUNK argument table */
+struct COMMAND_ARG RDMA_DONE_SLOTS_CHUNK_Args[] = {
+{MAKE_ARG("src_node_id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("src_mig_id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("chunk_seq",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
+};
+
+/********** RDMA DONE_SLOTS_INIT ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+#define RDMA_DONE_SLOTS_INIT_History NULL
+#endif
+#ifndef SKIP_CMD_TIPS_TABLE
+#define RDMA_DONE_SLOTS_INIT_Tips NULL
+#endif
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+#define RDMA_DONE_SLOTS_INIT_Keyspecs NULL
+#endif
+
+/* RDMA DONE_SLOTS_INIT argument table */
+struct COMMAND_ARG RDMA_DONE_SLOTS_INIT_Args[] = {
+{MAKE_ARG("src_node_id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("src_mig_id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("total_slots",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA INIT_CLIENT ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1584,6 +1623,8 @@ struct COMMAND_ARG RDMA_TRANSFER_SLOTS_Args[] = {
 struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("backpatch-status","Recipient side (Phase 4d): report state of a batch the backpatch thread is processing. Reply is a 6-element array: state (string), idx, n_slots, applied_keys, elapsed_seconds, err.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_BACKPATCH_STATUS_History,0,RDMA_BACKPATCH_STATUS_Tips,0,rdmaBackpatchStatusCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_BACKPATCH_STATUS_Keyspecs,0,NULL,2),.args=RDMA_BACKPATCH_STATUS_Args},
 {MAKE_CMD("done-slots","Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_History,0,RDMA_DONE_SLOTS_Tips,0,rdmaDoneSlotsCommand,-3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_Keyspecs,0,NULL,1),.args=RDMA_DONE_SLOTS_Args},
+{MAKE_CMD("done-slots-chunk","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): append a chunk of slots' work items to the backpatch pool's work queue for the pre-existing batch keyed by (src_node_id, src_mig_id).","O(K) where K is the chunk size.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_CHUNK_History,0,RDMA_DONE_SLOTS_CHUNK_Tips,0,rdmaDoneSlotsChunkCommand,-6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_CHUNK_Keyspecs,0,NULL,4),.args=RDMA_DONE_SLOTS_CHUNK_Args},
+{MAKE_CMD("done-slots-init","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): pre-allocate a backpatchBatch sized to total_slots before donor begins TRANSFER. Subsequent DONE-SLOTS-CHUNK calls append work items to its pool queue.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_INIT_History,0,RDMA_DONE_SLOTS_INIT_Tips,0,rdmaDoneSlotsInitCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_INIT_Keyspecs,0,NULL,3),.args=RDMA_DONE_SLOTS_INIT_Args},
 {MAKE_CMD("init-client","Donor side: establish an RDMA queue-pair to a recipient node.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_CLIENT_History,0,RDMA_INIT_CLIENT_Tips,0,rdmaInitClientCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_CLIENT_Keyspecs,0,NULL,2),.args=RDMA_INIT_CLIENT_Args},
 {MAKE_CMD("init-server","Recipient side: start listening on an RDMA endpoint.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_SERVER_History,0,RDMA_INIT_SERVER_Tips,0,rdmaInitServerCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_SERVER_Keyspecs,0,NULL,1),.args=RDMA_INIT_SERVER_Args},
 {MAKE_CMD("migrate","Source side: kick off an autonomous-thread RDMA slot migration that runs the full PREP → REGISTER → FLIP → EXEC pipeline off the event loop. Returns +OK migration_id=<N> running immediately; poll RDMA MIGRATE-STATUS for progress.","O(N) in number of slots (registration is the dominant cost).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_History,0,RDMA_MIGRATE_Tips,0,rdmaMigrateCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_Args},
