@@ -41,33 +41,39 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
                              const char **hosts, int *ports,
                              char *errbuf, size_t errbuf_len);
 
-/* rdmaLeaderChainForward: RDMA-WRITE the leader's src_pool (lazy-allocated
- * on first call) to F1 and send CHAIN-FORWARDED so the chain cascades.
- * fill_pattern: when nonzero, fill the first <length> bytes with
- * byte[i]=i%256 before the WRITE (for DEBUG-only / CHAIN-PING verification).
+/* rdmaLeaderChainForwardPerSlot: pass-through chain forward.
+ *
+ * Caller supplies `snapshot_pool` — a snapshot of the donor's raw 2 MiB
+ * per-slot blocks captured BEFORE the recipient's r_allocator corrupts
+ * them with kvobj segments (see cluster_rdma.c backpatchBatch::donor_snapshot_pool).
+ * Slot at slots[i] sits at offset i * RDMAMIG_BLOCK_SIZE_BYTES within
+ * the snapshot pool. The function memcpys snapshot_pool into the chain
+ * src_pool (registered for RDMA), issues ONE RDMA-WRITE of
+ * n_slots * 2 MiB to F1's landing pool, then sends
+ * `RDMA CHAIN-FORWARDED <sess> <n_slots> <slot_0> ... <slot_n>` to F1.
+ * F1's chain worker cascades the same wire format to F2.
+ *
+ * Replaces the legacy rdmaLeaderChainForward + rdmaChainEncodeBatch combo.
+ * No dense re-encoding: each per-slot block keeps its on-the-wire format
+ * (uint32_t n_entries + (klen, key, vlen, value) tuples). Followers decode
+ * per slot via rdmaApplySlotBlock (in cluster_rdma.c).
+ *
  * Returns C_OK on success; errbuf populated on C_ERR. */
-int rdmaLeaderChainForward(long long src_mig_id, size_t length,
-                           int fill_pattern,
-                           char *errbuf, size_t errbuf_len);
+int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
+                                  const int *slots, int n_slots,
+                                  const char *snapshot_pool,
+                                  size_t snapshot_pool_bytes,
+                                  char *errbuf, size_t errbuf_len);
 
 /* rdmaLeaderChainAckCount: number of CHAIN-ACK messages received from the
  * tail for this session. Returns -1 if no chain state for sess. */
 long long rdmaLeaderChainAckCount(long long src_mig_id);
 
-/* Phase C: caller fills the chain src_pool with real migration data
- * (packed format produced by rdmaChainEncodeBatch in cluster_rdma.c),
- * then calls rdmaLeaderChainForward to RDMA-WRITE it down the chain.
- *
- * rdmaLeaderChainGetSrcPool returns a writable pointer + size for the
- * leader's chain src_pool. Lazy-allocates on first call. Returns NULL
- * if the chain isn't established for sess. */
-void *rdmaLeaderChainGetSrcPool(long long src_mig_id, size_t *out_bytes);
-
-/* Phase C: follower-side hook. Called from rdmaChainForwardedCommand once
- * the chain has delivered `length` bytes into our landing pool. Decodes
- * the packed format and installs entries via dbAdd-style semantics. Pure
- * forward-decl — implemented in cluster_rdma.c so it has access to db /
- * kvstore APIs. */
-void rdmaApplyChainBatch(redisDb *db, const char *buf, size_t length);
+/* Apply one slot's 2 MiB block (uint32_t n_entries header + entry tuples)
+ * into this replica's kvstore. Installs through r_allocator +
+ * kvstoreDictAddRaw with don't-clobber semantics (existing keys win).
+ * Implemented in cluster_rdma.c (needs r_allocator / kvstore access).
+ * Returns number of keys installed. */
+int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size);
 
 #endif /* __CLUSTER_RDMA_CHAIN_H */

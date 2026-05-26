@@ -340,151 +340,62 @@ static void rdmaMigrationSelfName(char *buf /* >= CLUSTER_NAMELEN+1 */) {
  * number of bytes written, or 0 on failure (e.g. buf too small). Callable
  * from main thread; iterates via kvstoreDictIterator the same way
  * rdmaEncodeSlotEntries does. */
-static size_t rdmaChainEncodeBatch(redisDb *db,
-                                   const int *slots, int n_slots,
-                                   char *buf, size_t buf_size) {
-    if (buf_size < 2 * sizeof(uint32_t)) return 0;
-    char *p = buf;
-    char *end = buf + buf_size;
-    uint32_t magic = CHAIN_BATCH_MAGIC;
-    memcpy(p, &magic, sizeof(magic)); p += sizeof(magic);
-    char *n_slots_p = p; p += sizeof(uint32_t);
-    uint32_t encoded_slots = 0;
-
-    for (int i = 0; i < n_slots; i++) {
-        int slot = slots[i];
-        if (kvstoreDictSize(db->keys, slot) == 0) continue;
-        if (p + 2 * sizeof(uint32_t) > end) goto done;
-
-        uint32_t slot32 = (uint32_t) slot;
-        memcpy(p, &slot32, sizeof(slot32)); p += sizeof(slot32);
-        char *n_entries_p = p; p += sizeof(uint32_t);
-        uint32_t n_entries = 0;
-
-        kvstoreDictIterator it;
-        kvstoreInitDictIterator(&it, db->keys, slot);
-        dictEntry *de;
-        while ((de = kvstoreDictIteratorNext(&it)) != NULL) {
-            kvobj *kv = (kvobj *) dictGetKey(de);
-            if (kv->type != OBJ_STRING) continue;
-            sds key_sds = (sds) kvobjGetKey(kv);
-            size_t klen = sdslen(key_sds);
-            size_t vlen;
-            const char *vptr;
-            char vbuf[LONG_STR_SIZE];
-            if (kv->encoding == OBJ_ENCODING_INT) {
-                vlen = ll2string(vbuf, sizeof(vbuf), (long)(intptr_t)kv->ptr);
-                vptr = vbuf;
-            } else {
-                vptr = (const char *) kv->ptr;
-                vlen = sdslen((sds) kv->ptr);
-            }
-            size_t need = sizeof(uint32_t) + klen + sizeof(uint32_t) + vlen;
-            if (p + need > end) {
-                kvstoreResetDictIterator(&it);
-                memcpy(n_entries_p, &n_entries, sizeof(n_entries));
-                encoded_slots++;
-                goto done;
-            }
-            uint32_t klen32 = (uint32_t) klen;
-            uint32_t vlen32 = (uint32_t) vlen;
-            memcpy(p, &klen32, sizeof(klen32)); p += sizeof(klen32);
-            memcpy(p, key_sds, klen);            p += klen;
-            memcpy(p, &vlen32, sizeof(vlen32)); p += sizeof(vlen32);
-            memcpy(p, vptr, vlen);                p += vlen;
-            n_entries++;
-        }
-        kvstoreResetDictIterator(&it);
-        memcpy(n_entries_p, &n_entries, sizeof(n_entries));
-        encoded_slots++;
-    }
-
-done:
-    memcpy(n_slots_p, &encoded_slots, sizeof(encoded_slots));
-    return (size_t) (p - buf);
-}
-
-/* Decode the packed chain batch and install entries into db. Called from
- * cluster_rdma_chain.c's CHAIN-FORWARDED handler on followers (and on the
- * tail for self-confirmation). Skip-existing semantics: if the key already
- * lives in the dict, leave the existing value alone (matches the leader's
- * "don't-clobber" backpatch rule). Returns number of keys installed. */
-int rdmaApplyChainBatchInternal(redisDb *db, const char *buf, size_t length) {
-    if (length < 2 * sizeof(uint32_t)) return 0;
-    const char *p = buf;
-    const char *end = buf + length;
-    uint32_t magic;
-    memcpy(&magic, p, sizeof(magic)); p += sizeof(magic);
-    if (magic != CHAIN_BATCH_MAGIC) {
-        serverLog(LL_VERBOSE,
-            "CHAIN apply: magic mismatch (0x%08x != 0x%08x); skipping",
-            magic, CHAIN_BATCH_MAGIC);
-        return 0;
-    }
-    uint32_t n_slots;
-    memcpy(&n_slots, p, sizeof(n_slots)); p += sizeof(n_slots);
+/* rdmaApplySlotBlock — pass-through chain decoder.
+ *
+ * The recipient leader receives the donor's raw 2 MiB per-slot block via
+ * RDMA-WRITE (encoded by rdmaEncodeSlotEntries: uint32_t n_entries header
+ * followed by (klen, key, vlen, value) tuples). Chain followers receive
+ * the SAME bytes verbatim via chain forwarding — no dense re-encoding.
+ * This helper walks one such block and installs each (k,v) into the
+ * follower's kvstore using r_allocator + kvstoreDictAddRaw with the
+ * existing don't-clobber rule. Returns number of keys installed. */
+int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
+    if (buf_size < sizeof(uint32_t)) return 0;
+    uint32_t n_entries;
+    memcpy(&n_entries, buf, sizeof(n_entries));
+    const char *p = buf + sizeof(uint32_t);
+    const char *end = buf + buf_size;
     int installed = 0;
     int skipped_existing = 0;
-    for (uint32_t s = 0; s < n_slots; s++) {
-        if (p + 2 * sizeof(uint32_t) > end) break;
-        uint32_t slot, n_entries;
-        memcpy(&slot, p, sizeof(slot));         p += sizeof(slot);
-        memcpy(&n_entries, p, sizeof(n_entries)); p += sizeof(n_entries);
-        if (slot >= CLUSTER_SLOTS) continue;
-        for (uint32_t e = 0; e < n_entries; e++) {
-            if (p + sizeof(uint32_t) > end) goto truncated;
-            uint32_t klen;
-            memcpy(&klen, p, sizeof(klen)); p += sizeof(klen);
-            if (p + klen + sizeof(uint32_t) > end) goto truncated;
-            const char *kptr = p; p += klen;
-            uint32_t vlen;
-            memcpy(&vlen, p, sizeof(vlen)); p += sizeof(vlen);
-            if (p + vlen > end) goto truncated;
-            const char *vptr = p; p += vlen;
+    for (uint32_t e = 0; e < n_entries; e++) {
+        if (p + sizeof(uint32_t) > end) break;
+        uint32_t klen;
+        memcpy(&klen, p, sizeof(klen)); p += sizeof(klen);
+        if (p + klen + sizeof(uint32_t) > end) break;
+        const char *kptr = p; p += klen;
+        uint32_t vlen;
+        memcpy(&vlen, p, sizeof(vlen)); p += sizeof(vlen);
+        if (p + vlen > end) break;
+        const char *vptr = p; p += vlen;
 
-            /* Phase C chain install uses r_allocator (the only kvobj allocator
-             * for cluster-mode string adds). No shadow gate any more. */
-            sds key_sds = sdsnewlen(kptr, klen);
-            sds val_sds = sdsnewlen(vptr, vlen);
-            int allocated_new_block = 0;
-            kvobj *kv = r_allocator_insert_kvobj((int) slot, key_sds, val_sds,
-                                                 &allocated_new_block);
-            /* r_allocator_insert_kvobj copies key+val bytes into the kvobj
-             * segment; the source sds are transient. */
-            sdsfree(key_sds);
-            sdsfree(val_sds);
-            initObjectLRUOrLFU(kv);
+        sds key_sds = sdsnewlen(kptr, klen);
+        sds val_sds = sdsnewlen(vptr, vlen);
+        int allocated_new_block = 0;
+        kvobj *kv = r_allocator_insert_kvobj(slot, key_sds, val_sds,
+                                             &allocated_new_block);
+        sdsfree(key_sds);
+        sdsfree(val_sds);
+        initObjectLRUOrLFU(kv);
 
-            dictEntry *existing = NULL;
-            dictEntry *added = kvstoreDictAddRaw(db->keys, (int) slot, kv, &existing);
-            if (added != NULL) {
-                installed++;
-            } else {
-                /* Don't-clobber: existing key wins. Free our new kvobj. */
-                decrRefCount(kv);
-                skipped_existing++;
-            }
+        dictEntry *existing = NULL;
+        dictEntry *added = kvstoreDictAddRaw(db->keys, slot, kv, &existing);
+        if (added != NULL) {
+            installed++;
+        } else {
+            /* Don't-clobber: existing key wins. Free our new kvobj. */
+            decrRefCount(kv);
+            skipped_existing++;
         }
     }
-truncated:
-    serverLog(LL_NOTICE,
-        "CHAIN apply: n_slots=%u installed=%d skipped_existing=%d "
-        "consumed=%zu/%zu bytes",
-        n_slots, installed, skipped_existing,
-        (size_t) (p - buf), length);
+    if (n_entries > 0) {
+        serverLog(LL_VERBOSE,
+            "CHAIN apply: slot=%d n_entries=%u installed=%d skipped_existing=%d "
+            "consumed=%zu/%zu bytes",
+            slot, n_entries, installed, skipped_existing,
+            (size_t) (p - buf), buf_size);
+    }
     return installed;
-}
-
-/* Trampoline declared in cluster_rdma_chain.h. */
-void rdmaApplyChainBatch(redisDb *db, const char *buf, size_t length) {
-    rdmaApplyChainBatchInternal(db, buf, length);
-}
-
-/* Wrapper exposed to cluster_rdma_chain.c for the DEBUG-CHAIN-APPLY-SLOT
- * command (which lives in that file but needs the encoder). */
-size_t rdmaChainEncodeBatch_extern_wrapper(redisDb *db, const int *slots,
-                                           int n, char *buf, size_t buf_size) {
-    return rdmaChainEncodeBatch(db, slots, n, buf, buf_size);
 }
 
 /* ---- Phase B.5 chain establishment helper ------------------------------- */
@@ -527,7 +438,7 @@ static void *chainEstablishThread(void *arg) {
  * detached pthread to drive rdmaLeaderChainEstablish. Returns immediately;
  * the main thread is never blocked by RDMA QP setup. Called from
  * DONE-SLOTS-INIT (main thread). */
-static void rdmaChainSpawnEstablish(long long src_mig_id, int pool_bytes,
+static void rdmaChainSpawnEstablish(long long src_mig_id, long long pool_bytes,
                                     sds followers_str) {
     /* Skip if a chain is already established for this session (e.g., a
      * retry of DONE-SLOTS-INIT). rdmaLeaderChainAckCount returns -1 when
@@ -604,7 +515,7 @@ static void rdmaChainSpawnEstablish(long long src_mig_id, int pool_bytes,
     pthread_detach(tid);
     serverLog(LL_NOTICE,
         "CHAIN: spawned chainEstablishThread sess=%lld n_followers=%d "
-        "pool_bytes=%d",
+        "pool_bytes=%lld",
         src_mig_id, job->n_peers, pool_bytes);
 }
 
@@ -1415,6 +1326,16 @@ typedef struct backpatchBatch {
     int                 *covered_slots;
     int                  covered_slot_count;
     pthread_mutex_t      covered_mu;
+    /* Pass-through chain snapshot: r_allocator's per-slot blocks get
+     * corrupted by rdmaBackpatchSlotFillShadow (kvobj segments are
+     * written on top of the donor's encoded data). To preserve the
+     * donor's raw 2 MiB blocks for chain forwarding, we snapshot each
+     * slot's block[0] into this pool BEFORE shadow-merge runs. Layout:
+     * slot at covered_slots[i] sits at offset i * RDMAMIG_BLOCK_SIZE_BYTES.
+     * Allocated in DONE-SLOTS-INIT / legacy DONE-SLOTS (sized to
+     * n_slots * RDMAMIG_BLOCK_SIZE_BYTES), freed in backpatch dispose. */
+    char                *donor_snapshot_pool;
+    size_t               donor_snapshot_pool_bytes;
 } backpatchBatch;
 
 #define BACKPATCH_RING_CAPACITY 64u
@@ -1591,6 +1512,28 @@ void rdmaDoneSlotsCommand(client *c) {
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
     b->covered_slot_count = n_slots;
     pthread_mutex_init(&b->covered_mu, NULL);
+    /* Pass-through chain snapshot pool: sized to n_slots * 2 MiB. Only
+     * allocated when a chain is configured; otherwise stays NULL and the
+     * shadow-merge snapshot step is a no-op. */
+    if (server.rdma_chain_followers != NULL &&
+        sdslen(server.rdma_chain_followers) > 0) {
+        b->donor_snapshot_pool_bytes = (size_t) n_slots * RDMAMIG_BLOCK_SIZE_BYTES;
+        b->donor_snapshot_pool = zmalloc(b->donor_snapshot_pool_bytes);
+        if (b->donor_snapshot_pool == NULL) {
+            serverLog(LL_WARNING,
+                "DONE-SLOTS: donor_snapshot_pool zmalloc(%zu) failed — "
+                "chain forwarding will use stale/empty data",
+                b->donor_snapshot_pool_bytes);
+            b->donor_snapshot_pool_bytes = 0;
+        } else {
+            /* Zero so unsnapshotted slots forward as n_entries=0 (no-op
+             * on follower) rather than garbage. */
+            memset(b->donor_snapshot_pool, 0, b->donor_snapshot_pool_bytes);
+        }
+    } else {
+        b->donor_snapshot_pool = NULL;
+        b->donor_snapshot_pool_bytes = 0;
+    }
 
     /* Index by (src_node_id, src_mig_id) for BACKPATCH-STATUS lookups. The dict
      * stores the batch under the key sds; we drop+re-add if a previous
@@ -1605,10 +1548,13 @@ void rdmaDoneSlotsCommand(client *c) {
     /* AqRaft chain: when rdma-chain-followers is set, kick off chain
      * establishment to those followers. Mirrors the DONE-SLOTS-INIT hook —
      * legacy DONE-SLOTS path needs it too since not every donor sends
-     * DONE-SLOTS-INIT (depends on cluster-rdma-transfer-overlap on the donor). */
+     * DONE-SLOTS-INIT (depends on cluster-rdma-transfer-overlap on the donor).
+     * Pool sized to n_slots * 2 MiB so the leader can pass-through each
+     * raw block plus per-block padding to the follower's landing pool. */
     if (server.rdma_chain_followers != NULL &&
         sdslen(server.rdma_chain_followers) > 0) {
-        rdmaChainSpawnEstablish(src_mig_id, server.rdma_chain_pool_bytes,
+        long long pool_bytes = (long long) n_slots * RDMAMIG_BLOCK_SIZE_BYTES;
+        rdmaChainSpawnEstablish(src_mig_id, pool_bytes,
                                 server.rdma_chain_followers);
     }
 
@@ -1731,6 +1677,24 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
     b->covered_slot_count = 0;
     pthread_mutex_init(&b->covered_mu, NULL);
+    /* Pass-through chain snapshot pool: sized to total_slots * 2 MiB.
+     * Only allocated when a chain is configured. */
+    if (server.rdma_chain_followers != NULL &&
+        sdslen(server.rdma_chain_followers) > 0) {
+        b->donor_snapshot_pool_bytes = (size_t) total_slots * RDMAMIG_BLOCK_SIZE_BYTES;
+        b->donor_snapshot_pool = zmalloc(b->donor_snapshot_pool_bytes);
+        if (b->donor_snapshot_pool == NULL) {
+            serverLog(LL_WARNING,
+                "DONE-SLOTS-INIT: donor_snapshot_pool zmalloc(%zu) failed",
+                b->donor_snapshot_pool_bytes);
+            b->donor_snapshot_pool_bytes = 0;
+        } else {
+            memset(b->donor_snapshot_pool, 0, b->donor_snapshot_pool_bytes);
+        }
+    } else {
+        b->donor_snapshot_pool = NULL;
+        b->donor_snapshot_pool_bytes = 0;
+    }
 
     if (backpatch_batches_by_key != NULL) {
         sds key = backpatchBatchKey(src_node_id, src_mig_id);
@@ -1750,15 +1714,17 @@ void rdmaDoneSlotsInitCommand(client *c) {
         "(TRANSFER/BACKPATCH overlap)",
         CLUSTER_NAMELEN, b->src_node_id, src_mig_id, total_slots);
 
-    /* Phase B.5: if rdma-chain-followers is configured, kick off chain
-     * establishment to those followers in the background so the chain
-     * landing pools + QPs are up by the time the leader's backpatch
-     * finishes and wants to forward. Single detached pthread per session;
-     * leaderEstablishChain is internally protected against duplicate setup
-     * for the same src_mig_id. */
+    /* Pass-through chain: if rdma-chain-followers is configured, kick off
+     * chain establishment to those followers in the background so the chain
+     * landing pools + QPs are up by the time the leader's backpatch finishes
+     * and wants to forward. Pool sized to total_slots * 2 MiB to fit all
+     * per-slot blocks the leader will RDMA-WRITE through. Single detached
+     * pthread per session; leaderEstablishChain is internally protected
+     * against duplicate setup for the same src_mig_id. */
     if (server.rdma_chain_followers != NULL &&
         sdslen(server.rdma_chain_followers) > 0) {
-        rdmaChainSpawnEstablish(src_mig_id, server.rdma_chain_pool_bytes,
+        long long pool_bytes = (long long) total_slots * RDMAMIG_BLOCK_SIZE_BYTES;
+        rdmaChainSpawnEstablish(src_mig_id, pool_bytes,
                                 server.rdma_chain_followers);
     }
     addReply(c, shared.ok);
@@ -1822,13 +1788,11 @@ void rdmaDoneSlotsChunkCommand(client *c) {
         items[j] = w;
     }
 
-    pthread_mutex_lock(&backpatch_work_mu);
-    for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
-    pthread_cond_broadcast(&backpatch_work_cv);
-    pthread_mutex_unlock(&backpatch_work_mu);
-
-    /* Phase C: also track this chunk's slots on the batch so the chain
-     * encode path knows what to iterate at BACKPATCH_DONE. */
+    /* Phase C: append this chunk's slots to covered_slots BEFORE enqueuing
+     * the worker items. The pass-through chain snapshot in the backpatch
+     * worker looks up the slot's index in covered_slots; if we enqueue
+     * first, the worker can race and find the slot missing (snapshot
+     * skipped → follower gets zero-filled blocks). */
     if (b->covered_slots != NULL) {
         pthread_mutex_lock(&b->covered_mu);
         for (int j = 0; j < n_slots; j++) {
@@ -1838,6 +1802,11 @@ void rdmaDoneSlotsChunkCommand(client *c) {
         }
         pthread_mutex_unlock(&b->covered_mu);
     }
+
+    pthread_mutex_lock(&backpatch_work_mu);
+    for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
+    pthread_cond_broadcast(&backpatch_work_cv);
+    pthread_mutex_unlock(&backpatch_work_mu);
     zfree(items);
 
     serverLog(LL_NOTICE,
@@ -2004,6 +1973,16 @@ static void backpatchFinalize(backpatchBatch *b) {
                  (long long) atomic_load(&b->applied),
                  (long long) atomic_load(&b->clobber_skipped));
         rdmaMgnLogAsync("RECP_TXN_DONE", mgn_payload);
+    }
+    /* Free the donor snapshot pool — chain finalize is done, the bytes
+     * have been RDMA-forwarded and applied on every follower. The batch
+     * itself stays in backpatch_batches_by_key for BACKPATCH-STATUS
+     * lookups (per existing dispose convention), but the 2.67 GiB pool
+     * is no longer needed. */
+    if (b->donor_snapshot_pool != NULL) {
+        zfree(b->donor_snapshot_pool);
+        b->donor_snapshot_pool = NULL;
+        b->donor_snapshot_pool_bytes = 0;
     }
     pthread_mutex_lock(&backpatch_dispose_mu);
     listAddNodeTail(backpatch_dispose_list, b);
@@ -2174,66 +2153,53 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
                 (long long) atomic_load(&b->applied),
                 (long long) atomic_load(&b->clobber_skipped));
 
-            /* Phase B.5: if a chain is established for this session, forward
-             * a marker payload down the chain and DEFER MGN_INDX_UPD /
-             * RECP_TXN_DONE / dispose until CHAIN-ACK arrives. The chain
-             * landing pool is currently a separate region from the migration's
-             * per-slot MRs, so the forwarded bytes are a placeholder for
-             * "this batch is done on the leader" — followers don't yet
-             * consume them (Phase C). */
+            /* Pass-through chain forward: RDMA-WRITE the donor's raw 2 MiB
+             * per-slot blocks (already in r_allocator from the donor's
+             * RDMA-WRITE) into the chain pool and cascade down the chain
+             * with a slot list. No dense re-encoding. */
             int chain_configured = (server.rdma_chain_followers != NULL &&
                                     sdslen(server.rdma_chain_followers) > 0);
             long long ack_count = chain_configured
                 ? rdmaLeaderChainAckCount(b->src_mig_id) : -1;
-            if (chain_configured && ack_count >= 0) {
-                /* Phase C: encode this batch's covered slots into the
-                 * chain src_pool, then RDMA-WRITE the encoded length down
-                 * the chain. Followers will rdmaApplyChainBatch on
-                 * receipt. Pool size from config caps the encoded payload. */
-                size_t pool_bytes = 0;
-                void *pool = rdmaLeaderChainGetSrcPool(b->src_mig_id, &pool_bytes);
-                size_t encoded = 0;
-                if (pool != NULL && pool_bytes > 0 &&
-                    b->covered_slots != NULL && b->covered_slot_count > 0) {
-                    pthread_mutex_lock(&b->covered_mu);
-                    encoded = rdmaChainEncodeBatch(b->db,
-                                                   b->covered_slots,
-                                                   b->covered_slot_count,
-                                                   (char *) pool, pool_bytes);
-                    pthread_mutex_unlock(&b->covered_mu);
-                }
+            if (chain_configured && ack_count >= 0 &&
+                b->covered_slots != NULL && b->covered_slot_count > 0 &&
+                b->donor_snapshot_pool != NULL) {
                 b->chain_baseline_ack_count = ack_count;
-                if (encoded == 0) {
+                /* Snapshot the slot list under covered_mu; the snapshot
+                 * pool itself was filled per-slot in the backpatch worker. */
+                int n = b->covered_slot_count;
+                int *slots_copy = zmalloc((size_t) n * sizeof(int));
+                pthread_mutex_lock(&b->covered_mu);
+                memcpy(slots_copy, b->covered_slots, (size_t) n * sizeof(int));
+                pthread_mutex_unlock(&b->covered_mu);
+
+                char errbuf[256] = {0};
+                int frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
+                                                        slots_copy, n,
+                                                        b->donor_snapshot_pool,
+                                                        b->donor_snapshot_pool_bytes,
+                                                        errbuf, sizeof(errbuf));
+                zfree(slots_copy);
+                if (frc == C_OK) {
+                    b->chain_forwarded = 1;
+                    pthread_mutex_lock(&backpatch_chain_pending_mu);
+                    if (backpatch_chain_pending == NULL)
+                        backpatch_chain_pending = listCreate();
+                    listAddNodeTail(backpatch_chain_pending, b);
+                    pthread_mutex_unlock(&backpatch_chain_pending_mu);
+                    armChainPendingTimer();
                     serverLog(LL_NOTICE,
-                        "CHAIN: sess=%lld batch BACKPATCH_DONE but encoded=0 "
-                        "(empty covered slots) — finalizing without chain",
-                        b->src_mig_id);
-                    backpatchFinalize(b);
+                        "CHAIN: sess=%lld batch BACKPATCH_DONE → "
+                        "pass-through forwarded %d slots (%zu B), "
+                        "MGN_INDX_UPD deferred",
+                        b->src_mig_id, n,
+                        (size_t) n * (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
                 } else {
-                    char errbuf[256] = {0};
-                    int frc = rdmaLeaderChainForward(b->src_mig_id, encoded,
-                                                     /*fill_pattern=*/0,
-                                                     errbuf, sizeof(errbuf));
-                    if (frc == C_OK) {
-                        b->chain_forwarded = 1;
-                        pthread_mutex_lock(&backpatch_chain_pending_mu);
-                        if (backpatch_chain_pending == NULL)
-                            backpatch_chain_pending = listCreate();
-                        listAddNodeTail(backpatch_chain_pending, b);
-                        pthread_mutex_unlock(&backpatch_chain_pending_mu);
-                        armChainPendingTimer();
-                        serverLog(LL_NOTICE,
-                            "CHAIN: sess=%lld batch BACKPATCH_DONE → "
-                            "encoded %zu B over %d slots forwarded, "
-                            "MGN_INDX_UPD deferred",
-                            b->src_mig_id, encoded, b->covered_slot_count);
-                    } else {
-                        serverLog(LL_WARNING,
-                            "CHAIN: sess=%lld leader forward failed (%s) — "
-                            "firing MGN_INDX_UPD immediately as fallback",
-                            b->src_mig_id, errbuf);
-                        backpatchFinalize(b);
-                    }
+                    serverLog(LL_WARNING,
+                        "CHAIN: sess=%lld leader forward failed (%s) — "
+                        "firing MGN_INDX_UPD immediately as fallback",
+                        b->src_mig_id, errbuf);
+                    backpatchFinalize(b);
                 }
             } else {
                 /* No chain configured (or chain not yet established) →
@@ -2279,6 +2245,38 @@ static void *backpatchPoolWorkerMain(void *arg) {
         backpatchSlotWork *w = listNodeValue(ln);
         listDelNode(backpatch_work_queue, ln);
         pthread_mutex_unlock(&backpatch_work_mu);
+
+        /* Pass-through chain snapshot: before the shadow-merge corrupts
+         * r_allocator's block[0] for this slot (by allocating kvobj
+         * segments INTO the same memory the donor RDMA-WROTE), capture
+         * the raw 2 MiB block into the batch's donor_snapshot_pool. The
+         * chain forwarder later RDMA-WRITEs this snapshot to followers
+         * verbatim — no dense re-encode. */
+        if (w->batch->donor_snapshot_pool != NULL) {
+            int n_covered = 0;
+            int *covered = NULL;
+            pthread_mutex_lock(&w->batch->covered_mu);
+            n_covered = w->batch->covered_slot_count;
+            covered = w->batch->covered_slots;
+            int found_idx = -1;
+            for (int i = 0; i < n_covered; i++) {
+                if (covered[i] == w->slot) { found_idx = i; break; }
+            }
+            pthread_mutex_unlock(&w->batch->covered_mu);
+            if (found_idx >= 0) {
+                int nb = 0;
+                char **blocks = r_allocator_get_block_buffers_for_slot(w->slot, &nb);
+                if (blocks != NULL && nb > 0 && blocks[0] != NULL) {
+                    char *dst = w->batch->donor_snapshot_pool
+                              + (size_t) found_idx * RDMAMIG_BLOCK_SIZE_BYTES;
+                    if (dst + RDMAMIG_BLOCK_SIZE_BYTES
+                        <= w->batch->donor_snapshot_pool + w->batch->donor_snapshot_pool_bytes) {
+                        memcpy(dst, blocks[0], RDMAMIG_BLOCK_SIZE_BYTES);
+                    }
+                }
+                if (blocks) zfree(blocks);
+            }
+        }
 
         /* Double-buffer backpatch (option 3): the worker fills a SHADOW
          * dict for this slot (no live keyspace access, no locks). When the

@@ -1,10 +1,10 @@
 {
     "CHAIN-FORWARDED": {
-        "summary": "Phase B chain notification (over TCP). Sent by an upstream peer (leader → F1, or Fk → F(k+1)) after it has completed an RDMA-WRITE into this follower's landing pool, telling this follower the bytes have arrived. If not the chain tail, this follower's chain worker thread RDMA-WRITEs the same bytes onward to its successor.",
-        "complexity": "O(1) plus the RDMA chain hop if not tail.",
+        "summary": "Pass-through chain notification (over TCP). Sent by an upstream peer (leader → F1, or Fk → F(k+1)) after it has completed an RDMA-WRITE of n_slots × RDMAMIG_BLOCK_SIZE_BYTES into this follower's landing pool. The slot list tells the follower which slot id maps to which 2 MiB block (offset i = i × RDMAMIG_BLOCK_SIZE_BYTES). Each block is decoded per-slot via rdmaApplySlotBlock. If not the chain tail, this follower's chain worker thread RDMA-WRITEs the same blocks onward to its successor with the same slot list.",
+        "complexity": "O(n_slots) decode + O(n_slots * 2MiB) RDMA WRITE per hop.",
         "group": "cluster",
         "since": "8.6.2",
-        "arity": 4,
+        "arity": -4,
         "container": "RDMA",
         "function": "rdmaChainForwardedCommand",
         "command_flags": [
@@ -14,7 +14,8 @@
         ],
         "arguments": [
             { "name": "src-mig-id", "type": "integer" },
-            { "name": "length",     "type": "integer" }
+            { "name": "n-slots",    "type": "integer" },
+            { "name": "slot",       "type": "integer", "multiple": true }
         ]
     }
 }
