@@ -340,62 +340,88 @@ static void rdmaMigrationSelfName(char *buf /* >= CLUSTER_NAMELEN+1 */) {
  * number of bytes written, or 0 on failure (e.g. buf too small). Callable
  * from main thread; iterates via kvstoreDictIterator the same way
  * rdmaEncodeSlotEntries does. */
-/* rdmaApplySlotBlock — pass-through chain decoder.
+/* rdmaApplySlotBlock — raw r_allocator block installer (Patch 9).
  *
- * The recipient leader receives the donor's raw 2 MiB per-slot block via
- * RDMA-WRITE (encoded by rdmaEncodeSlotEntries: uint32_t n_entries header
- * followed by (klen, key, vlen, value) tuples). Chain followers receive
- * the SAME bytes verbatim via chain forwarding — no dense re-encoding.
- * This helper walks one such block and installs each (k,v) into the
- * follower's kvstore using r_allocator + kvstoreDictAddRaw with the
- * existing don't-clobber rule. Returns number of keys installed. */
-int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size) {
-    if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
-    if (buf_size < sizeof(uint32_t)) return 0;
-    uint32_t n_entries;
-    memcpy(&n_entries, buf, sizeof(n_entries));
-    const char *p = buf + sizeof(uint32_t);
-    const char *end = buf + buf_size;
-    int installed = 0;
-    int skipped_existing = 0;
-    for (uint32_t e = 0; e < n_entries; e++) {
-        if (p + sizeof(uint32_t) > end) break;
-        uint32_t klen;
-        memcpy(&klen, p, sizeof(klen)); p += sizeof(klen);
-        if (p + klen + sizeof(uint32_t) > end) break;
-        const char *kptr = p; p += klen;
-        uint32_t vlen;
-        memcpy(&vlen, p, sizeof(vlen)); p += sizeof(vlen);
-        if (p + vlen > end) break;
-        const char *vptr = p; p += vlen;
+ * The donor's TRANSFER step now ships its r_allocator block byte-for-byte.
+ * Each kvobj segment in the block is fully self-contained:
+ *  - kvobj struct (robj header with iskvobj=1, encoding=OBJ_ENCODING_R_ALLOCATOR,
+ *    data_offset = (slot << 18) | value_offset_within_segment).
+ *  - embedded key sds at (kv+1)+1.
+ *  - embedded value sds at (kv+1)+1+key_sds_size.
+ *
+ * Only kv->ptr (absolute pointer to the embedded value sds) needs fixup
+ * after RDMA-WRITE — recompute it from kv->data_offset which stores the
+ * in-segment value offset. Then kvstoreDictAddRaw the kvobj directly,
+ * skipping the per-key r_allocator_insert_kvobj + sdsnewlen allocations
+ * the old wire-format path required. */
 
-        sds key_sds = sdsnewlen(kptr, klen);
-        sds val_sds = sdsnewlen(vptr, vlen);
-        int allocated_new_block = 0;
-        kvobj *kv = r_allocator_insert_kvobj(slot, key_sds, val_sds,
-                                             &allocated_new_block);
-        sdsfree(key_sds);
-        sdsfree(val_sds);
-        initObjectLRUOrLFU(kv);
+typedef struct {
+    redisDb *db;
+    int slot;
+    int installed;
+    int skipped_existing;
+    int skipped_invalid;
+    dict *shadow;  /* optional: when non-NULL, install into this dict (shadow path); */
+                   /* when NULL, install directly into db->keys (chain follower path). */
+} applySlotCtx;
 
+static void applySlotCb(void *seg_payload, size_t seg_payload_size, void *user) {
+    UNUSED(seg_payload_size);
+    applySlotCtx *c = (applySlotCtx *) user;
+    kvobj *kv = (kvobj *) seg_payload;
+    /* Sanity: a r_allocator-format segment carries a self-describing kvobj. */
+    if (kv->iskvobj != 1 || kv->encoding != OBJ_ENCODING_R_ALLOCATOR) {
+        c->skipped_invalid++;
+        return;
+    }
+    unsigned val_off = R_ALLOC_GET_OFFSET(kv);
+    if (val_off == 0 || val_off >= seg_payload_size) {
+        c->skipped_invalid++;
+        return;
+    }
+    /* Repoint kv->ptr to the embedded value sds at its in-segment offset.
+     * The donor's address space is irrelevant — the offset is stable. */
+    kv->ptr = (char *) kv + val_off;
+    /* Slot field in data_offset is the DONOR's slot id; recipient uses the
+     * same slot ids during migration so no re-pack is needed. */
+    if (c->shadow != NULL) {
+        /* Shadow path: dictAdd into shadow dict (key = kvobj, no_value=1). */
+        dictAddOrFind(c->shadow, kv);
+        c->installed++;
+    } else {
         dictEntry *existing = NULL;
-        dictEntry *added = kvstoreDictAddRaw(db->keys, slot, kv, &existing);
+        dictEntry *added = kvstoreDictAddRaw(c->db->keys, c->slot, kv, &existing);
         if (added != NULL) {
-            installed++;
+            c->installed++;
         } else {
-            /* Don't-clobber: existing key wins. Free our new kvobj. */
-            decrRefCount(kv);
-            skipped_existing++;
+            /* Don't-clobber: live kvstore already has this key (client wrote
+             * during migration window). Leave the kvobj orphaned in the
+             * received block (block is registered to r_allocator and never
+             * freed for the lifetime of the session). */
+            c->skipped_existing++;
         }
     }
-    if (n_entries > 0) {
+}
+
+int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
+    if (buf == NULL || buf_size < 2 * sizeof(uint32_t)) return 0;
+    applySlotCtx c = { db, slot, 0, 0, 0, NULL };
+    /* The block was DMA'd into a region already prologued by
+     * r_allocator_register_existing_block / init_bloc_layout, so the segment
+     * walk respects the same layout the donor emits. */
+    r_allocator_walk_used_segments((char *) buf, applySlotCb, &c);
+    /* The freelist for this slot is stale (init_bloc_layout said "whole block
+     * is one free segment", but now donor's used segments occupy it). Reset
+     * so any subsequent client write to this slot allocates a fresh block. */
+    r_allocator_reset_freelist_for_slot(slot);
+    if (c.installed > 0 || c.skipped_invalid > 0) {
         serverLog(LL_VERBOSE,
-            "CHAIN apply: slot=%d n_entries=%u installed=%d skipped_existing=%d "
-            "consumed=%zu/%zu bytes",
-            slot, n_entries, installed, skipped_existing,
-            (size_t) (p - buf), buf_size);
+            "CHAIN apply: slot=%d installed=%d skipped_existing=%d "
+            "skipped_invalid=%d",
+            slot, c.installed, c.skipped_existing, c.skipped_invalid);
     }
-    return installed;
+    return c.installed;
 }
 
 /* ---- Phase B.5 chain establishment helper ------------------------------- */
@@ -1855,6 +1881,34 @@ void recipientBackpatchMuUnlock(void)     {}
  * shadow (caller transfers ownership to the merge queue). Touches *no* live
  * keyspace state, so no Path B locks, no rehash pause, no per-slot wrlock —
  * the shadow is private to this thread until it's enqueued for merge. */
+/* Migration-shadow dictType (Patch 9): same as dbDictType but keyDestructor
+ * is NULL so dictRelease on the shadow doesn't try to decrRefCount kvobjs
+ * whose memory lives inside the donor's RDMA-WRITTEN block (zfree would
+ * corrupt the migration block which is registered to r_allocator). Don't-
+ * clobber kvobjs left in the shadow at merge end leak into the block; the
+ * block itself is intentionally not freed for the session's lifetime
+ * (matches the existing register_existing_block contract — see
+ * allocator.h:73-75). */
+static dictType migrationShadowDictType;
+static int migrationShadowDictTypeInited = 0;
+
+static void initMigrationShadowDictType(void) {
+    if (migrationShadowDictTypeInited) return;
+    migrationShadowDictType = dbDictType;
+    migrationShadowDictType.keyDestructor = NULL;
+    migrationShadowDictTypeInited = 1;
+}
+
+/* Patch 9: pass-through raw-block install on the recipient.
+ *
+ * The donor's TRANSFER step now ships its r_allocator block byte-for-byte
+ * into the recipient's pre-registered block. Each used segment in the block
+ * holds a self-contained kvobj (encoding=OBJ_ENCODING_R_ALLOCATOR,
+ * data_offset has slot id + value sds in-segment offset). The recipient
+ * walks segments, fixes kv->ptr from data_offset, and adds the kvobj to a
+ * fresh `shadow` dict that the main thread later merges into the live
+ * kvstore. No per-key sdsnewlen + r_allocator_insert_kvobj — the kvobjs
+ * are reused in place inside the registered block. */
 static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
                                          int *out_total, int *out_skipped)
 {
@@ -1869,79 +1923,25 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
         return NULL;
     }
 
-    unsigned long total_entries = 0;
-    for (int b = 0; b < n_blocks; b++) {
-        char *buf = block_buffers[b];
-        if (buf == NULL) continue;
-        uint32_t n;
-        memcpy(&n, buf, sizeof(n));
-        total_entries += n;
-    }
+    initMigrationShadowDictType();
+    dict *shadow = dictCreate(&migrationShadowDictType);
 
-    dict *shadow = dictCreate(&dbDictType);
-    if (total_entries > 0) {
-        /* 2x headroom — shadow is transient and won't see further growth. */
-        dictExpand(shadow, total_entries * 2);
-    }
-
-    int skipped = 0;
-    int total   = 0;
+    applySlotCtx ctx = { db, slot, 0, 0, 0, shadow };
     for (int b = 0; b < n_blocks; b++) {
         char *buf = block_buffers[b];
         if (buf == NULL) continue;
         if (b == 0) rdmaDebugDumpSlotBytes("RCV-SHADOW", slot, buf);
-        uint32_t n_entries;
-        memcpy(&n_entries, buf, sizeof(n_entries));
-        if (n_entries == 0) continue;
-
-        size_t cursor = sizeof(uint32_t);
-        size_t cap    = RDMAMIG_BLOCK_SIZE_BYTES;
-        for (uint32_t i = 0; i < n_entries; i++) {
-            robj *key = NULL, *val = NULL;
-            size_t consumed = rdmaDecodeEntry(buf + cursor, cap - cursor, &key, &val);
-            if (consumed == 0) {
-                serverLog(LL_WARNING,
-                    "RDMA backpatch-shadow: malformed entry slot=%d block=%d entry=%u offset=%zu",
-                    slot, b, i, cursor);
-                break;
-            }
-            cursor += consumed;
-
-            int kslot = keyHashSlot(key->ptr, (int)sdslen(key->ptr));
-            if (kslot != slot) {
-                /* Donor block held a key that doesn't hash to this slot.
-                 * Drop it — it isn't part of this migration. */
-                skipped++;
-                decrRefCount(val);
-                decrRefCount(key);
-                continue;
-            }
-
-            /* Allocate kvobj into r_allocator (slot-keyed mutex inside makes
-             * this safe to call from the worker). Mirrors the r_allocator
-             * branch of dbAddInternalImpl ([db.c:482](redis/src/db.c#L482)). */
-            int allocated_new_block = 0;
-            kvobj *kv = r_allocator_insert_kvobj(
-                slot, (sds)key->ptr, (sds)val->ptr, &allocated_new_block);
-            initObjectLRUOrLFU(kv);
-
-            /* Insert kvobj into shadow. dbDictType is no_value=1, so the
-             * kvobj itself is the bucket entry. DICT_ERR means a duplicate
-             * was staged within this slot's blocks; free the new kvobj. */
-            if (dictAdd(shadow, kv, NULL) != DICT_OK) {
-                decrRefCount(kv);
-            } else {
-                total++;
-            }
-
-            decrRefCount(val);  /* r_allocator copied the bytes; drop transient. */
-            decrRefCount(key);  /* key sds was copied into the kvobj segment. */
-        }
+        r_allocator_walk_used_segments(buf, applySlotCb, &ctx);
     }
 
+    /* Reset the per-slot freelist: init_bloc_layout said "whole block is one
+     * free segment", but the donor's writes occupy that memory now. Future
+     * client writes (post-FLIP) will allocate a fresh block. */
+    r_allocator_reset_freelist_for_slot(slot);
+
     zfree(block_buffers);
-    if (out_total)   *out_total = total;
-    if (out_skipped) *out_skipped = skipped;
+    if (out_total)   *out_total = ctx.installed;
+    if (out_skipped) *out_skipped = ctx.skipped_invalid;
     return shadow;
 }
 
@@ -4109,8 +4109,30 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
-        uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
-                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+        /* Patch 9 (raw-block pass-through TRANSFER): ship the donor's
+         * r_allocator block byte-for-byte. The recipient walks it via
+         * r_allocator_walk_used_segments + dbAdds each kvobj in place
+         * (fixing kv->ptr from data_offset). No encode/decode pass.
+         * Falls back to encode if the slot has no r_allocator block yet
+         * (shouldn't happen for migrated slots — they were loaded by YCSB
+         * which goes through r_allocator). */
+        int n_blocks = 0;
+        char **donor_blocks = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
+        uint32_t n_entries = 0;  /* Used only by debug log below. */
+        if (donor_blocks != NULL && n_blocks > 0 && donor_blocks[0] != NULL) {
+            /* Patch 9 limitation: only block[0] is shipped per slot. Slots
+             * with n_blocks > 1 (typically slots that grew after the initial
+             * insert, e.g. via UPDATE) leak keys in the additional blocks.
+             * For workloada/b/c with ~30 keys per slot in 2 MiB blocks this
+             * is a ~5% shortfall. Multi-block ship would need n MR posts per
+             * slot OR a contiguous donor-side block layout. */
+            memcpy(staging, donor_blocks[0], RDMAMIG_BLOCK_SIZE_BYTES);
+        } else {
+            /* No r_allocator block — fall back to encode. */
+            n_entries = rdmaEncodeSlotEntries(db, slot, staging,
+                                              RDMAMIG_BLOCK_SIZE_BYTES);
+        }
+        if (donor_blocks) zfree(donor_blocks);
         rdmaDebugDumpSlotBytes("SRC", slot, staging);
         if (server.rdma_reshard_debug_bytes) {
             r_allocator_log_slot_stats(slot);

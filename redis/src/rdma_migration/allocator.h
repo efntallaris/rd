@@ -184,6 +184,30 @@ void r_allocator_log_all_slot_stats(void);
  * plus a final total. Caller must ensure the slot is quiescent (no
  * concurrent inserts/frees) — no internal locking. */
 void r_allocator_log_slot_keys(int slot);
+
+/* Walk every USED segment in `block_start` (a block laid out by
+ * init_bloc_layout / r_allocator_register_existing_block: prologue word at
+ * offset 0, segment headers starting at offset WSIZE). Calls `cb` for each
+ * segment with the segment payload pointer (where a kvobj lives) and the
+ * payload size in bytes (segment size minus header+footer). Stops at the
+ * epilogue (segment size = 0).
+ *
+ * Read-only walk: no freelist mutation, no kvobj inspection beyond reading
+ * the PACK header word at HDRP(payload). Intended for installing kvobj
+ * segments shipped via RDMA pass-through migration — bytes-identical to
+ * what `r_allocator_insert_kvobj` produced on the donor, just at a
+ * different VA on the recipient. */
+void r_allocator_walk_used_segments(
+    char *block_start,
+    void (*cb)(void *seg_payload, size_t seg_payload_size, void *user),
+    void *user);
+
+/* Clear the per-slot freelist (no more free segments visible). After
+ * RDMA-receiving a donor block into a slot, the freelist set up by
+ * init_bloc_layout is stale (it points at "free" segments whose memory now
+ * holds donor's allocated kvobj segments). Calling this forces subsequent
+ * r_allocator_insert_kvobj for the slot to allocate a fresh block. Idempotent. */
+void r_allocator_reset_freelist_for_slot(int slot);
 size_t calculate_required_space_for_segment( 
                             size_t key_size, 
                             size_t value_size,

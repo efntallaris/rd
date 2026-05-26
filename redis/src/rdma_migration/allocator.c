@@ -831,6 +831,46 @@ alloc_bloc_t * r_allocator_get_block_list_for_slot(int slot)
 }
 
 /* public API
+ * Walks every USED segment in `block_start` (init_bloc_layout layout: prologue
+ * at offset 0, headers from WSIZE on, terminated by a size=0 epilogue). Calls
+ * `cb` with each used segment's payload pointer and payload size. */
+void r_allocator_walk_used_segments(
+    char *block_start,
+    void (*cb)(void *seg_payload, size_t seg_payload_size, void *user),
+    void *user)
+{
+    if (block_start == NULL || cb == NULL) return;
+    void *seg = block_start + WSIZE + WSIZE;
+    /* Hard cap to prevent runaway in case of corrupted size headers (free-
+     * segment metadata layout differs subtly between r_allocator versions
+     * and the recipient's freelist state is stale post-RDMA-WRITE). */
+    char *block_end = block_start + BLOCK_SIZE_BYTES;
+    int iters = 0;
+    while ((char *) seg < block_end && GET_SIZE(HDRP(seg)) != 0) {
+        unsigned seg_full = GET_SIZE(HDRP(seg));
+        if (seg_full < MIN_SEGMENT_SIZE) break;  /* corrupt size — bail */
+        if (GET_ALLOC(HDRP(seg))) {
+            size_t payload = (size_t) seg_full - 2 * WSIZE;
+            cb(seg, payload, user);
+        }
+        seg = NEXT_SEGMENT(seg);
+        if (++iters > 100000) break;  /* hard cap */
+    }
+}
+
+/* public API
+ * Reset slot's freelist head to NULL. Called after RDMA-receiving a donor
+ * block so future r_allocator_insert_kvobj allocations don't try to use stale
+ * free-list pointers into the now-occupied block. */
+void r_allocator_reset_freelist_for_slot(int slot)
+{
+    if (slot < 0 || slot >= SLOTS) return;
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    r_allocator.free_list[slot] = NULL;
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+}
+
+/* public API
 * parm number_of_results is populated with the number of the slot blocks (the size of array the function returs)
 * return a pointer to an array that contains pointers to the block buffers of the slot
 */
