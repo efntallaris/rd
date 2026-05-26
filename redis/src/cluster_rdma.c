@@ -442,13 +442,8 @@ int rdmaApplyChainBatchInternal(redisDb *db, const char *buf, size_t length) {
             if (p + vlen > end) goto truncated;
             const char *vptr = p; p += vlen;
 
-            if (!server.rdma_allocator_shadow) {
-                /* Phase C v1 requires r_allocator shadow path — same as
-                 * the leader's BACKPATCH install. Without it we'd need a
-                 * different kvobj allocator path. Test setups always have
-                 * cluster-rdma-allocator-shadow=yes. */
-                continue;
-            }
+            /* Phase C chain install uses r_allocator (the only kvobj allocator
+             * for cluster-mode string adds). No shadow gate any more. */
             sds key_sds = sdsnewlen(kptr, klen);
             sds val_sds = sdsnewlen(vptr, vlen);
             int allocated_new_block = 0;
@@ -1605,6 +1600,16 @@ void rdmaDoneSlotsCommand(client *c) {
         pthread_mutex_lock(&backpatch_batches_mu);
         dictReplace(backpatch_batches_by_key, key, b);
         pthread_mutex_unlock(&backpatch_batches_mu);
+    }
+
+    /* AqRaft chain: when rdma-chain-followers is set, kick off chain
+     * establishment to those followers. Mirrors the DONE-SLOTS-INIT hook —
+     * legacy DONE-SLOTS path needs it too since not every donor sends
+     * DONE-SLOTS-INIT (depends on cluster-rdma-transfer-overlap on the donor). */
+    if (server.rdma_chain_followers != NULL &&
+        sdslen(server.rdma_chain_followers) > 0) {
+        rdmaChainSpawnEstablish(src_mig_id, server.rdma_chain_pool_bytes,
+                                server.rdma_chain_followers);
     }
 
     /* Try to enqueue on the SPSC ring. Safe to run on a dedicated backpatch
@@ -3717,10 +3722,24 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     dictReplace(pending_registrations, key, p);
     pthread_mutex_unlock(&pending_registrations_mu);
 
-    /* Figure out which host:port the recipient should call back. */
-    const char *src_host = (server.cluster && server.cluster->myself &&
-                            server.cluster->myself->ip[0]) ?
-                           server.cluster->myself->ip : "127.0.0.1";
+    /* Figure out which host:port the recipient should call back.
+     * Priority order:
+     *   1. server.cluster->myself->ip (vanilla cluster)
+     *   2. gethostname() (AqRaft mode where server.cluster is NULL — hostname
+     *      resolves to the donor's actual address on cloudlab/LAN setups).
+     *   3. "127.0.0.1" last-resort fallback (forces recipient to dial itself,
+     *      which is the bug that breaks REGISTER-RESULT in AqRaft mode). */
+    char src_host_buf[256];
+    const char *src_host;
+    if (server.cluster && server.cluster->myself &&
+        server.cluster->myself->ip[0]) {
+        src_host = server.cluster->myself->ip;
+    } else if (gethostname(src_host_buf, sizeof(src_host_buf)) == 0) {
+        src_host_buf[sizeof(src_host_buf) - 1] = '\0';
+        src_host = src_host_buf;
+    } else {
+        src_host = "127.0.0.1";
+    }
     int src_port = (int) server.port;
 
     pthread_mutex_lock(&L->mu);

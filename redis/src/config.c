@@ -3136,7 +3136,6 @@ standardConfig static_configs[] = {
     createBoolConfig("syslog-enabled", NULL, IMMUTABLE_CONFIG, server.syslog_enabled, 0, NULL, NULL),
     createBoolConfig("cluster-enabled", NULL, IMMUTABLE_CONFIG, server.cluster_enabled, 0, NULL, NULL),
     createBoolConfig("appendonly", NULL, MODIFIABLE_CONFIG, server.aof_enabled, 0, NULL, updateAppendonly),
-    createBoolConfig("cluster-rdma-allocator-shadow", NULL, MODIFIABLE_CONFIG, server.rdma_allocator_shadow, 0, NULL, NULL),
     createBoolConfig("cluster-rdma-allocator-skip-lock", NULL, MODIFIABLE_CONFIG, server.rdma_allocator_skip_lock, 0, NULL, NULL),
     createBoolConfig("cluster-rdma-reshard-debug-bytes", NULL, MODIFIABLE_CONFIG, server.rdma_reshard_debug_bytes, 0, NULL, NULL),
     createBoolConfig("cluster-rdma-transfer-overlap", NULL, MODIFIABLE_CONFIG, server.rdma_transfer_overlap, 0, NULL, NULL),

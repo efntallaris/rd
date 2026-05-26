@@ -1,14 +1,18 @@
 ---
-# Bring up the migration target as a 3-node vanilla cluster:
-#   redis3 (master, RECIPIENT LEADER)  ← rdma-chain-followers points here at redis4 + ycsb1
-#   redis4 (REPLICA via chain only — NOT standard PSYNC)
-#   ycsb1 (REPLICA via chain only)
+# Bring up the migration target as a 3-node INDEPENDENT vanilla cluster:
+#   redis3 (master)   ← rdma-chain-followers points here at redis4 + ycsb1
+#   redis4 (replica of redis3, vanilla PSYNC)
+#   ycsb1  (replica of redis3, vanilla PSYNC)
 #
-# The migration's data path bypasses standard Redis command replication
-# (writes via kvstoreDictAddRaw skip AOF/PSYNC), so chain replication is
-# the ONLY way the post-FLIP keys reach redis4 + ycsb1. Cluster membership
-# is still needed so jedis routes correctly and so CLUSTER SLOTS shows
-# the migration master as a real shard.
+# It is NOT joined to the redisraft donor cluster — redisraft's cluster
+# gossip doesn't compose with vanilla CLUSTER MEET. The donor dials redis3
+# directly by host:port for the RDMA migration control plane; recipient
+# identification flows via CLUSTER MYID over the TCP control channel.
+#
+# Chain replication: the migration writes via kvstoreDictAddRaw bypass
+# standard Redis PSYNC, so chain code on redis3 forwards the migrated
+# bytes to redis4 + ycsb1 separately. (PSYNC carries everything else
+# — RDB snapshot + the AOF stream of normal Redis commands.)
 - name: "Start redis-server on migration master + replicas"
   hosts: redis_migrate:redis_migrate_replicas
   become: yes
@@ -55,42 +59,54 @@
         port: "{{ master_port }}"
         timeout: 30
 
-# Membership: add redis3 as a new master to the existing redisraft cluster
-# (same as before). Then add redis4 + ycsb1 as REPLICAS of redis3 — note
-# they get cluster membership via PSYNC initially (empty kvstore), and the
-# chain code is what carries migrated bytes to them later.
-- name: "Resolve IPs for all migration nodes"
+# Form a 3-node vanilla cluster with redis3 as the master and redis4 +
+# ycsb1 as replicas. redis3 claims ALL slots (0-16383) so it can accept
+# writes from the donor for any slot the migration moves in.
+- name: "Form the migration recipient cluster (redis3 master, redis4+ycsb1 replicas)"
   hosts: redis_migrate
   become: yes
   tasks:
-    - name: Resolve migrate-master IP (self)
+    - name: Resolve self IP
       shell: "getent hosts {{ inventory_hostname }} | awk '{print $1}'"
-      register: migrate_master_ip
+      register: master_ip
       changed_when: false
 
-    - name: Resolve master_host IP (existing cluster entrypoint)
-      shell: "getent hosts {{ master_host }} | awk '{print $1}'"
-      register: master_host_ip
+    - name: Resolve replica IPs
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: replica_ip_lookup
       changed_when: false
+      loop: "{{ groups['redis_migrate_replicas'] }}"
 
-    - name: Add migration master to the existing cluster (no slots yet — migration moves slots in)
-      command: >
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }}
-        --cluster add-node {{ migrate_master_ip.stdout }}:{{ master_port }}
-        {{ master_host_ip.stdout }}:{{ master_port }}
-
-    - name: Get redis3's cluster node ID (needed below for CLUSTER REPLICATE)
-      shell: |
-        {{ redis_bin_dir }}/redis-cli -h {{ migrate_master_ip.stdout }} -p {{ master_port }} CLUSTER MYID
-      register: migrate_master_id
-      changed_when: false
-
-    - name: Stash migrate-master id + ip as host facts so replicas can read them
+    - name: Build replica host -> IP map
       set_fact:
-        migrate_master_node_id: "{{ migrate_master_id.stdout }}"
-        migrate_master_node_ip: "{{ migrate_master_ip.stdout }}"
+        replica_ip_map: >-
+          {{
+            dict(
+              replica_ip_lookup.results
+                | map(attribute='item')
+                | zip(replica_ip_lookup.results | map(attribute='stdout'))
+            )
+          }}
 
-- name: "Add chain-replica nodes (redis4 + ycsb1) as replicas of the migration master"
+    - name: Reset any prior cluster state on redis3
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER RESET HARD || true
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} FLUSHALL || true
+
+    - name: Give redis3 all 16384 slots so the donor can flip any slot in
+      command: "{{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER ADDSLOTSRANGE 0 16383"
+
+    - name: Get redis3's cluster node ID (for replicas to REPLICATE)
+      command: "{{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER MYID"
+      register: master_node_id
+      changed_when: false
+
+    - name: Stash master id + ip as host facts so replica play can read them
+      set_fact:
+        migrate_master_node_id: "{{ master_node_id.stdout }}"
+        migrate_master_node_ip: "{{ master_ip.stdout }}"
+
+- name: "Attach redis4 + ycsb1 as PSYNC replicas of redis3"
   hosts: redis_migrate_replicas
   become: yes
   tasks:
@@ -99,15 +115,17 @@
       register: replica_self_ip
       changed_when: false
 
-    - name: Resolve master_host IP (for add-node entrypoint)
-      shell: "getent hosts {{ master_host }} | awk '{print $1}'"
-      register: replica_master_host_ip
-      changed_when: false
+    - name: Reset any prior cluster state on this replica
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER RESET HARD || true
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} FLUSHALL || true
 
-    - name: Add replica to the cluster as a SLAVE of redis3
-      command: >
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }}
-        --cluster add-node {{ replica_self_ip.stdout }}:{{ master_port }}
-        {{ replica_master_host_ip.stdout }}:{{ master_port }}
-        --cluster-slave
-        --cluster-master-id {{ hostvars[groups['redis_migrate'][0]]['migrate_master_node_id'] }}
+    - name: CLUSTER MEET the migration master so we share the cluster topology
+      command: "{{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER MEET {{ hostvars[groups['redis_migrate'][0]]['migrate_master_node_ip'] }} {{ master_port }}"
+
+    - name: Wait for cluster gossip to converge
+      pause:
+        seconds: 3
+
+    - name: CLUSTER REPLICATE the migration master (become its PSYNC replica)
+      command: "{{ redis_bin_dir }}/redis-cli -p {{ master_port }} CLUSTER REPLICATE {{ hostvars[groups['redis_migrate'][0]]['migrate_master_node_id'] }}"

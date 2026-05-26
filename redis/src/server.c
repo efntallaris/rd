@@ -6834,12 +6834,10 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info,
             "# Allocator\r\n"
-            "rdma_allocator_shadow:%d\r\n"
             "rdma_allocator_inserts:%lld\r\n"
             "rdma_allocator_skip_lock:%d\r\n"
             "rdma_allocator_locks_taken:%llu\r\n"
             "rdma_allocator_locks_skipped:%llu\r\n",
-            server.rdma_allocator_shadow,
             server.rdma_alloc_inserts,
             server.rdma_allocator_skip_lock,
             r_allocator_get_locks_taken(),
@@ -8178,8 +8176,7 @@ int main(int argc, char **argv) {
     r_allocator_init();
     r_allocator_set_skip_lock_when_idle(server.rdma_allocator_skip_lock);
     serverLog(LL_NOTICE,
-        "RDMA migration allocator initialized. Shadow policy (cluster-rdma-allocator-shadow): %s. Skip-lock policy (cluster-rdma-allocator-skip-lock): %s",
-        server.rdma_allocator_shadow ? "ENABLED — every cluster-mode dbAdd will populate the allocator" : "disabled",
+        "RDMA migration allocator initialized — r_allocator is now the default kvobj allocator for cluster-mode string adds. Skip-lock policy (cluster-rdma-allocator-skip-lock): %s",
         server.rdma_allocator_skip_lock ? "ENABLED — UNSAFE for concurrent intra-slot writers" : "disabled");
 
     redisSetCpuAffinity(server.server_cpulist);

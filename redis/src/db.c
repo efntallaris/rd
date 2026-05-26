@@ -491,12 +491,12 @@ static kvobj *dbAddInternalImpl(redisDb *db, robj *key, robj **valref, dictEntry
      * address. INT-encoded values fall back to the jemalloc kvobjSet path,
      * which handles INT encoding correctly (it does not call sdslen). */
     kvobj *kv;
-    /* AqRaft: enable allocator-shadow under either cluster_enabled (vanilla
-     * cluster donor) or rdma_migration_redisraft_mode (RedisRaft donor).
-     * Without this, redisraft donors' dbAdd writes never populate r_allocator
-     * and migrationWorker finds nothing to ship. */
-    int use_r_allocator = (server.rdma_allocator_shadow
-                           && (server.cluster_enabled || server.rdma_migration_redisraft_mode)
+    /* Always allocate string kvobjs through r_allocator when the slot-keyed
+     * pool is meaningful (cluster_enabled or AqRaft redisraft mode). r_allocator
+     * is the only kvobj allocator we keep — no separate "shadow" gate. Falls
+     * through to kvobjSet for ineligible cases (non-string, INT encoding,
+     * module-set metabits). */
+    int use_r_allocator = ((server.cluster_enabled || server.rdma_migration_redisraft_mode)
                            && val->type == OBJ_STRING
                            && (val->encoding == OBJ_ENCODING_RAW
                                || val->encoding == OBJ_ENCODING_EMBSTR)
@@ -747,8 +747,7 @@ static void dbSetValueImpl(redisDb *db, robj *key, robj **valref, dictEntryLink 
     if (server.memory_tracking_enabled)
         oldsize = kvobjAllocSize(old);
 
-    int use_r_allocator = (server.rdma_allocator_shadow
-                           && (server.cluster_enabled || server.rdma_migration_redisraft_mode)
+    int use_r_allocator = ((server.cluster_enabled || server.rdma_migration_redisraft_mode)
                            && val->type == OBJ_STRING
                            && (val->encoding == OBJ_ENCODING_RAW
                                || val->encoding == OBJ_ENCODING_EMBSTR)

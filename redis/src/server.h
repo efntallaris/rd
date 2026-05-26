@@ -2175,9 +2175,10 @@ struct redisServer {
     double *latency_tracking_info_percentiles; /* Extended latency tracking info output percentile list configuration. */
     int latency_tracking_info_percentiles_len;
     int memory_tracking_enabled;    /* Account used memory per slot */
-    int rdma_allocator_shadow;      /* If true, dbAdd shadows the kvobj into the
-                                       RDMA-migration allocator (smoke test). */
-    long long rdma_alloc_inserts;   /* Counter of allocator shadow inserts. */
+    /* r_allocator is the only kvobj allocator for cluster-mode string adds —
+     * the old cluster-rdma-allocator-shadow config knob was removed; allocator
+     * use is now implicit when cluster_enabled || rdma_migration_redisraft_mode. */
+    long long rdma_alloc_inserts;   /* Counter of allocator inserts. */
     int rdma_allocator_skip_lock;   /* If true, allocator skips per-slot mutex when slot
                                        not under migration. UNSAFE for concurrent
                                        intra-slot writers — smoke-test only. */

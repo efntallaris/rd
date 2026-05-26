@@ -57,9 +57,10 @@
           --logfile {{ redis_log_dir }}/{{ inventory_hostname }}_{{ sg.id }}.log \
           --pidfile /tmp/redis_{{ inventory_hostname }}_{{ sg.id }}.pid \
           {% if 'custom' in (redis_variant | default('custom')) %}--rdma-chain-followers "{{ sg.nodes | rejectattr('host', 'equalto', inventory_hostname) | map(attribute='host') | map('regex_replace', '^(.+)$', '\1:' + sg.port|string) | join(' ') }}" \
-          --rdma-chain-pool-bytes 4194304 \
+          --rdma-chain-pool-bytes 67108864 \
           --rdma-migration-redisraft-mode yes \
           --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \
+          --slot-meta-reply yes \
           {% endif %}--loadmodule {{ redisraft_module }} \
           --raft.append-req-max-count 1024 \
           --raft.id {{ (sg.nodes | selectattr('host', 'equalto', inventory_hostname) | first).raft_id }} \
