@@ -3322,23 +3322,30 @@ void rdmaReshardFlipCommand(client *c) {
     recipient_id[CLUSTER_NAMELEN] = '\0';
     freeReplyObject(r);
 
-    /* Look up the local clusterNode * for the recipient. The recipient must
-     * be known to us via cluster gossip (it joined the cluster as a normal
-     * master earlier via CLUSTER MEET). */
-    clusterNode *recipient_node = clusterLookupNode(recipient_id, CLUSTER_NAMELEN);
-    if (recipient_node == NULL) {
-        pthread_mutex_unlock(&L->mu);
-        zfree(chosen);
-        addReplyErrorFormat(c,
-            "RESHARD-FLIP: recipient %s not in local cluster view "
-            "(have you done CLUSTER MEET?)", recipient_id);
-        return;
+    /* Look up the local clusterNode * for the recipient. In vanilla cluster
+     * mode the recipient is known to us via cluster gossip (it joined via
+     * CLUSTER MEET). In AqRaft mode (server.cluster == NULL on the donor),
+     * we skip the lookup — the recipient is identified by its host:port
+     * endpoint (already in L->host / L->port) for the control plane, and
+     * by recipient_id for the RECV-FLIP RPC. The local slot table flip
+     * (step 3) is also skipped in AqRaft mode. */
+    clusterNode *recipient_node = NULL;
+    if (server.cluster != NULL) {
+        recipient_node = clusterLookupNode(recipient_id, CLUSTER_NAMELEN);
+        if (recipient_node == NULL) {
+            pthread_mutex_unlock(&L->mu);
+            zfree(chosen);
+            addReplyErrorFormat(c,
+                "RESHARD-FLIP: recipient %s not in local cluster view "
+                "(have you done CLUSTER MEET?)", recipient_id);
+            return;
+        }
     }
 
-    /* Our own (source's) node id — recipient uses it for SETSLOT IMPORTING. */
+    /* Our own (source's) node id — recipient uses it for SETSLOT IMPORTING.
+     * In AqRaft mode synthesize via rdmaMigrationSelfName(). */
     char src_id[CLUSTER_NAMELEN + 1];
-    memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
-    src_id[CLUSTER_NAMELEN] = '\0';
+    rdmaMigrationSelfName(src_id);
 
     int flipped = 0;
 
@@ -3885,18 +3892,23 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
     recipient_id[CLUSTER_NAMELEN] = '\0';
     freeReplyObject(r);
 
-    clusterNode *recipient_node = clusterLookupNode(recipient_id, CLUSTER_NAMELEN);
-    if (recipient_node == NULL) {
-        if (err_out) *err_out = sdscatfmt(sdsempty(),
-            "FLIP: recipient %s not in local cluster view (CLUSTER MEET?)",
-            recipient_id);
-        pthread_mutex_unlock(&L->mu);
-        return -1;
+    /* recipient_node only needed for the local clusterDelSlot/AddSlot flip;
+     * in AqRaft mode (server.cluster == NULL) we skip that step entirely
+     * and identify the recipient by host:port + recipient_id for RPCs. */
+    clusterNode *recipient_node = NULL;
+    if (server.cluster != NULL) {
+        recipient_node = clusterLookupNode(recipient_id, CLUSTER_NAMELEN);
+        if (recipient_node == NULL) {
+            if (err_out) *err_out = sdscatfmt(sdsempty(),
+                "FLIP: recipient %s not in local cluster view (CLUSTER MEET?)",
+                recipient_id);
+            pthread_mutex_unlock(&L->mu);
+            return -1;
+        }
     }
 
     char src_id[CLUSTER_NAMELEN + 1];
-    memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
-    src_id[CLUSTER_NAMELEN] = '\0';
+    rdmaMigrationSelfName(src_id);
 
     /* Lock source blocks for all N slots up front. */
     for (int i = 0; i < n_slots; i++) {
@@ -4385,8 +4397,7 @@ static void *migrationWorker(void *arg) {
     migSetState(mig, RDMA_MIG_BACKPATCH);
     {
         char src_id[CLUSTER_NAMELEN + 1];
-        memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
-        src_id[CLUSTER_NAMELEN] = '\0';
+        rdmaMigrationSelfName(src_id);
 
         const int max_polls = 6000;  /* ~60 s at 10 ms each */
         int polls = 0;
