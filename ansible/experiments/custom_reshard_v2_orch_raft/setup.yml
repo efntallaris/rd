@@ -1,0 +1,18 @@
+---
+# custom_reshard_v2_orch_raft: setup
+#
+# Mirrors custom_raft_baseline/setup.yml — builds the aqueduct fork + the
+# RedisRaft module + YCSB. The workload step then loads redisraft.so on
+# each redis-server (via start_redisraft_instances.yml) and drives an
+# RDMA-orchestrated reshard while YCSB runs.
+#
+# Goal: exercise the MGN_TXN_START / MGN_RECP_TXN_START / MGN_INDX_UPD /
+# MGN_RECP_TXN_DONE / MGN_TXN_DONE protocol log entries end-to-end on a
+# real RDMA migration. The aqueduct fork must be built with the new
+# cluster_rdma.c instrumentation; redisraft must be loaded so that the
+# RAFT.MGN-LOG command actually persists the events in the Raft log.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/build_redis_custom.yml
+- import_playbook: ../../tasks/build/build_redisraft.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

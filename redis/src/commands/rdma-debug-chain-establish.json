@@ -1,0 +1,22 @@
+{
+    "DEBUG-CHAIN-ESTABLISH": {
+        "summary": "Debug-only orchestrator for chain replication. Given a session id, the per-follower landing-pool size, and an ordered list of (host, port) pairs for the followers, drive two passes: CHAIN-PREP each follower in order, then CHAIN-WIRE each with predecessor + successor info. Removed once registerWorkerThread invokes the orchestrator directly.",
+        "complexity": "O(N) RPCs where N is the follower count.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -6,
+        "container": "RDMA",
+        "function": "rdmaDebugChainEstablishCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" },
+            { "name": "pool-bytes", "type": "integer" },
+            { "name": "host",       "type": "string"  },
+            { "name": "port",       "type": "integer" }
+        ]
+    }
+}

@@ -1,0 +1,20 @@
+{
+    "CHAIN-PING": {
+        "summary": "Recipient-side chain replication (Phase A verification only): assert the follower's landing buffer holds the expected pattern after a chain RDMA-WRITE round-trip. Removed once Phase B carries real TRANSFER data.",
+        "complexity": "O(1)",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaChainPingCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id",     "type": "integer" },
+            { "name": "expected-bytes", "type": "integer" }
+        ]
+    }
+}

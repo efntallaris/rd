@@ -2,7 +2,7 @@
 # Like clean_cluster.yml but preserves {{ local_setup_dir }} (redis binaries)
 # and {{ ycsb_dir }} (ycsb binaries) — wipes only per-run state.
 - name: "Clean per-run state (preserve binaries)"
-  hosts: redis_masters:redis_migrate
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
   become: yes
   tasks:
     - name: Remove node config file

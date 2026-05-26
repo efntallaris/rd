@@ -1,0 +1,20 @@
+{
+    "CHAIN-ACK": {
+        "summary": "Sent by the chain TAIL to the recipient leader after its landing pool has been written with the bytes the leader originally RDMA-WRITE'd into F1. Phase B.4: leader records last_acked_length / count for the session; Phase B.5+ will use this to gate firing MGN_INDX_UPD until the chain has tail-committed.",
+        "complexity": "O(1)",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaChainAckCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" },
+            { "name": "length",     "type": "integer" }
+        ]
+    }
+}

@@ -1,0 +1,19 @@
+{
+    "CHAIN-INIT-QP": {
+        "summary": "Recipient-side chain replication (Phase A.full, redesigned): follower lazy-bootstraps its local rdmamig_server (binds on server.rdma_migration_port if not already up) and replies with its RDMA port so the leader can rdmamig_client_connect to it. Must be called before CHAIN-PREP under the connect-then-register order required by the rdmamig API.",
+        "complexity": "O(1) plus first-time rdmamig_server bind.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 3,
+        "container": "RDMA",
+        "function": "rdmaChainInitQpCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" }
+        ]
+    }
+}

@@ -34,6 +34,13 @@
       register: dispatch
       changed_when: "'OK' in dispatch.stdout"
 
+    - name: "DEBUG: show MIGRATE-ALL dispatch result"
+      debug:
+        msg: |
+          stdout: {{ dispatch.stdout | default('<none>') }}
+          stderr: {{ dispatch.stderr | default('<none>') }}
+          rc:     {{ dispatch.rc | default('<none>') }}
+
     - name: "Parse orchestration_id"
       set_fact:
         orch_id: "{{ dispatch.stdout

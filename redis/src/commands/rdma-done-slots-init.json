@@ -1,0 +1,21 @@
+{
+    "DONE-SLOTS-INIT": {
+        "summary": "Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): pre-allocate a backpatchBatch sized to total_slots before donor begins TRANSFER. Subsequent DONE-SLOTS-CHUNK calls append work items to its pool queue.",
+        "complexity": "O(1).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaDoneSlotsInitCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-node-id", "type": "string"  },
+            { "name": "src-mig-id",  "type": "integer" },
+            { "name": "total-slots", "type": "integer" }
+        ]
+    }
+}

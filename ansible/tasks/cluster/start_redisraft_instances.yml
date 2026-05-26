@@ -1,9 +1,9 @@
 ---
-# Start 3 redis-server processes per redis_masters host (one per shardgroup).
-# Each instance loads redisraft.so with its --raft.* configuration and runs
-# in cluster + sharding mode. Persistence is owned by RedisRaft (raft.db);
-# RDB/AOF are disabled.
-- name: "Start RedisRaft instances (3 per host)"
+# Start one redis-server process per shardgroup-node membership. The 3
+# donor shardgroups (sg1/sg2/sg3) live on redis_masters (redis0/1/2). The
+# migration recipient is a separate vanilla cluster — see add_migrate_nodes.yml.
+# Persistence is owned by RedisRaft (raft.db); RDB/AOF are disabled.
+- name: "Start RedisRaft instances"
   hosts: redis_masters
   become: yes
   tasks:
@@ -20,11 +20,13 @@
         - "{{ redis_log_dir }}"
 
     # RedisRaft requires --raft.addr to be an IP, not a hostname.
-    - name: Resolve redis_masters hostnames to IPs
+    # Resolve every host that any shardgroup references (sg1/sg2/sg3 use
+    # redis0/1/2; sg4 uses redis3/redis4/ycsb1).
+    - name: Resolve all shardgroup-member hostnames to IPs
       shell: "getent hosts {{ item }} | awk '{print $1}'"
       register: host_ip_lookup
       changed_when: false
-      loop: "{{ groups['redis_masters'] }}"
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | sum(start=[]) | map(attribute='host') | unique | list }}"
 
     - name: Build host->IP map
       set_fact:
@@ -37,7 +39,10 @@
             )
           }}
 
-    - name: Start one redis-server per shardgroup
+    # Each host iterates all shardgroups but only starts an instance when
+    # this host is one of the shardgroup's nodes. Without the `when:` filter
+    # the jinja first() lookup of raft_id would fail for non-member hosts.
+    - name: Start one redis-server per shardgroup membership
       shell: |
         {{ redis_bin_dir }}/redis-server \
           --port {{ sg.port }} \
@@ -51,17 +56,24 @@
           --dbfilename {{ inventory_hostname }}_{{ sg.id }}.rdb \
           --logfile {{ redis_log_dir }}/{{ inventory_hostname }}_{{ sg.id }}.log \
           --pidfile /tmp/redis_{{ inventory_hostname }}_{{ sg.id }}.pid \
-          --loadmodule {{ redisraft_module }} \
+          {% if 'custom' in (redis_variant | default('custom')) %}--rdma-chain-followers "{{ sg.nodes | rejectattr('host', 'equalto', inventory_hostname) | map(attribute='host') | map('regex_replace', '^(.+)$', '\1:' + sg.port|string) | join(' ') }}" \
+          --rdma-chain-pool-bytes 4194304 \
+          --rdma-migration-redisraft-mode yes \
+          --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \
+          {% endif %}--loadmodule {{ redisraft_module }} \
+          --raft.append-req-max-count 1024 \
           --raft.id {{ (sg.nodes | selectattr('host', 'equalto', inventory_hostname) | first).raft_id }} \
           --raft.addr {{ host_ip_map[inventory_hostname] }}:{{ sg.port }} \
           --raft.log-filename {{ raft_log_dir }}/raft_{{ sg.id }}_{{ inventory_hostname }}.db \
-          --raft.slot-config {{ sg.slot_config }} \
+          --raft.slot-config "{{ sg.slot_config }}" \
           --raft.sharding yes \
-          --raft.follower-proxy no \
-          --raft.quorum-reads no
+          --raft.follower-proxy yes \
+          --raft.quorum-reads no \
+          --raft.log-fsync no
       loop: "{{ redisraft_shardgroups }}"
       loop_control:
         loop_var: sg
+      when: inventory_hostname in (sg.nodes | map(attribute='host') | list)
 
     - name: Wait for each instance to bind its port
       wait_for:
@@ -71,3 +83,4 @@
       loop: "{{ redisraft_shardgroups }}"
       loop_control:
         loop_var: sg
+      when: inventory_hostname in (sg.nodes | map(attribute='host') | list)

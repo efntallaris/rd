@@ -1,6 +1,9 @@
 ---
+# Build on every host that runs redis-server: the 3 redisraft donor masters
+# (redis_masters), the migration recipient master (redis_migrate), and the
+# migration recipient chain replicas (redis_migrate_replicas = redis4 + ycsb1).
 - name: "Build and install Redis (with deps)"
-  hosts: redis_masters:redis_migrate
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
   become: yes
   tasks:
     - name: Force-clean rdma_migration sub-library (avoid stale .a after git checkout — git resets mtimes so make would otherwise see "nothing to do")

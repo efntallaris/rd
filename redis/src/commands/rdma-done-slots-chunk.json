@@ -1,0 +1,22 @@
+{
+    "DONE-SLOTS-CHUNK": {
+        "summary": "Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): append K per-slot work items onto backpatch_work_queue for the batch created by a prior DONE-SLOTS-INIT. Pool workers pick them up immediately.",
+        "complexity": "O(K) per call where K is the number of slots in the chunk.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": -6,
+        "container": "RDMA",
+        "function": "rdmaDoneSlotsChunkCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-node-id", "type": "string"  },
+            { "name": "src-mig-id",  "type": "integer" },
+            { "name": "chunk-seq",   "type": "integer" },
+            { "name": "slot",        "type": "integer", "multiple": true }
+        ]
+    }
+}

@@ -3,11 +3,18 @@
   hosts: ycsb_nodes[0]
   become: yes
   tasks:
+    # status.interval=10 + -s makes ycsb.sh print "<N> sec: <ops> operations" once
+    # every 10 seconds. Without these flags the load command goes silent until it
+    # completes, which for the default workloada (recordcount=10M) is ~30 minutes —
+    # looks like a hang to anyone watching the sweep. Redirect to a file so the
+    # progress trail is preserved for post-run inspection.
     - name: Run YCSB load phase
-      command: >
+      shell: >
         {{ ycsb_dir_bin }}/ycsb.sh load redis
         -p "redis.host={{ master_host }}"
         -p "redis.port={{ master_port }}"
         -p "redis.cluster=true"
         -P {{ redis_workload_path }}{{ redis_workload }}
+        -p status.interval=10 -s
         -threads {{ ycsb_threads_load }}
+        > {{ ycsb_log_filename }}_load_{{ inventory_hostname }} 2>&1

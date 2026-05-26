@@ -3030,7 +3030,12 @@ void initServer(void) {
     /* Create the Redis databases, and initialize other internal state. */
     int slot_count_bits = 0;
     int flags = KVSTORE_ALLOCATE_DICTS_ON_DEMAND;
-    if (server.cluster_enabled) {
+    /* AqRaft: when running under RedisRaft, cluster_enabled is forced off
+     * (the module refuses to load otherwise). But the migration path needs
+     * a per-slot kvstore so rdmaEncodeSlotEntries / rdmaChainEncodeBatch /
+     * rdmaBackpatchSlotWithStats can iterate per-slot. Honor the same
+     * 16384-slot layout under either flag. */
+    if (server.cluster_enabled || server.rdma_migration_redisraft_mode) {
         slot_count_bits = CLUSTER_SLOT_MASK_BITS;
         flags |= KVSTORE_FREE_EMPTY_DICTS;
     }

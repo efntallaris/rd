@@ -2012,6 +2012,14 @@ struct redisServer {
     struct rdmamig_server *rdma_server; /* Recipient side: listening RDMA endpoint */
     dict *rdma_outbound_links;         /* Source side: per-recipient RDMA bootstrap cache, keyed "host:port" */
     int rdma_migration_port;           /* Port the recipient binds for RDMA when asked via INIT-SERVER */
+    sds rdma_chain_followers;          /* Space-separated "host:port host:port" — recipient followers to chain-replicate migration data to. Empty disables chain. */
+    int rdma_chain_pool_bytes;         /* Per-session landing pool size for chain (Phase B.5: placeholder size since the chain pool is separate from the migration's per-slot MRs). */
+    /* AqRaft layer: when on, treat this node as participating in RDMA
+     * migration even though cluster_enabled=no (RedisRaft is loaded and
+     * refuses cluster_enabled). Toggles slot-aware kvstore + allocator-shadow
+     * gating so migration's per-slot read path finds data. */
+    int rdma_migration_redisraft_mode;
+    sds rdma_migration_redisraft_slots; /* "low:high" — this node's owned slot range from redisraft's --raft.slot-config. cluster_rdma.c uses it for slot-ownership lookups when server.cluster is NULL. */
     dict *rdma_migrations;             /* Source side: in-flight + recently-finished RDMA MIGRATE state, keyed by migration id as decimal sds */
     long long rdma_migration_next_id;  /* Monotonic counter for new migrations. */
     long long rdma_migration_last_id;  /* Id of the most-recently-dispatched migration (for RDMA MIGRATE-STATUS with no arg). */
@@ -4422,6 +4430,16 @@ void rdmaMigrateAllCommand(client *c);
 void rdmaMigrateAllStatusCommand(client *c);
 void rdmaMigrateCompleteCommand(client *c);
 void rdmaRegisterResultCommand(client *c);
+void rdmaChainInitQpCommand(client *c);
+void rdmaChainPrepCommand(client *c);
+void rdmaChainWireCommand(client *c);
+void rdmaChainForwardedCommand(client *c);
+void rdmaChainAckCommand(client *c);
+void rdmaChainPingCommand(client *c);
+void rdmaDebugChainEstablishCommand(client *c);
+void rdmaDebugChainForwardCommand(client *c);
+void rdmaDebugChainStatusCommand(client *c);
+void rdmaDebugChainApplySlotCommand(client *c);
 void restoreCommand(client *c);
 void migrateCommand(client *c);
 void askingCommand(client *c);

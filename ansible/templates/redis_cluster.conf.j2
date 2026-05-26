@@ -29,5 +29,12 @@ cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }}
 # migration and skip the MOVED/ASK topology refresh storm. Off by default
 # upstream; on for the custom_reshard_v2 experiment.
 slot-meta-reply {{ "yes" if (slot_meta_reply | default(true) | bool) else "no" }}
+# Phase B.5 chain replication: recipient leader's chain followers (the other
+# 2 vanilla-cluster nodes in the migration-target replica set). On the
+# recipient leader (redis3) this is "redis4:8000 ycsb1:8000". On the
+# follower nodes this is empty — they don't initiate chain establishment,
+# only respond to CHAIN-PREP/WIRE/FORWARDED RPCs.
+rdma-chain-followers "{{ rdma_chain_followers | default('') }}"
+rdma-chain-pool-bytes {{ rdma_chain_pool_bytes | default(4194304) }}
 {% endif %}
 save ""

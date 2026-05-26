@@ -1,0 +1,20 @@
+{
+    "DEBUG-CHAIN-FORWARD": {
+        "summary": "Debug-only Phase B test. On the leader: lazy-register a source pool against peers[0].client's PD, fill it with the test pattern (byte[i] = i % 256), RDMA-WRITE <length> bytes to peers[0] (F1) and send CHAIN-FORWARDED. F1 cascades down the chain on its worker thread. Caller then runs CHAIN-PING against each follower to verify byte equality. Removed once Phase B is wired into the real mergeBackpatchTick path.",
+        "complexity": "O(length) RDMA WRITE plus one chain TCP RPC.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaDebugChainForwardCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" },
+            { "name": "length",     "type": "integer" }
+        ]
+    }
+}

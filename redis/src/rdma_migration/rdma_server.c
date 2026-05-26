@@ -105,11 +105,37 @@ static void *listen_thread_main(void *data) {
         RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_listen: %s", strerror(errno));
         return NULL;
     }
-    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: listening on port %s, waiting for first donor", s->serverPort);
-    wait_for_first_request(s);
-    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: donor connection request received, calling rdma_accept");
-    accept_pending_connection(s);
-    RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: donor connection accepted, cm_id=%p", (void*)s->id);
+    RMIG_LOG(RDMAMIG_LOG_NOTICE,
+             "rdma_server: listening on port %s, accept loop running",
+             s->serverPort);
+
+    /* Loop-accept multiple peers. Originally one-shot (one donor per
+     * recipient session); chain replication needs N inbound peers per
+     * server (leader for PREP-time cm_id, then upstream chain follower
+     * for chain forwarding). Each accept stores the newest cm_id into
+     * s->id (rdmamig_server_cm_id returns the latest); earlier cm_ids
+     * remain live on their respective connections — the application is
+     * responsible for tracking them if it needs to address pre-existing
+     * MRs. */
+    while (1) {
+        if (rdma_get_request(s->listen_id, &s->id) != 0) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING,
+                     "rdma_server: rdma_get_request: %s — exiting accept loop",
+                     strerror(errno));
+            return NULL;
+        }
+        RMIG_LOG(RDMAMIG_LOG_NOTICE,
+                 "rdma_server: incoming connection request, calling rdma_accept");
+        if (rdma_accept(s->id, &s->conn_param) != 0) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING,
+                     "rdma_server: rdma_accept: %s — continuing accept loop",
+                     strerror(errno));
+            continue;
+        }
+        RMIG_LOG(RDMAMIG_LOG_NOTICE,
+                 "rdma_server: connection accepted, cm_id=%p (latest)",
+                 (void*) s->id);
+    }
     return NULL;
 }
 

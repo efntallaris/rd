@@ -1199,6 +1199,246 @@ struct COMMAND_ARG RDMA_BACKPATCH_STATUS_Args[] = {
 {MAKE_ARG("source-migration-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA CHAIN_ACK ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA CHAIN_ACK history */
+#define RDMA_CHAIN_ACK_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA CHAIN_ACK tips */
+#define RDMA_CHAIN_ACK_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA CHAIN_ACK key specs */
+#define RDMA_CHAIN_ACK_Keyspecs NULL
+#endif
+
+/* RDMA CHAIN_ACK argument table */
+struct COMMAND_ARG RDMA_CHAIN_ACK_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("length",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA CHAIN_FORWARDED ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA CHAIN_FORWARDED history */
+#define RDMA_CHAIN_FORWARDED_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA CHAIN_FORWARDED tips */
+#define RDMA_CHAIN_FORWARDED_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA CHAIN_FORWARDED key specs */
+#define RDMA_CHAIN_FORWARDED_Keyspecs NULL
+#endif
+
+/* RDMA CHAIN_FORWARDED argument table */
+struct COMMAND_ARG RDMA_CHAIN_FORWARDED_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("length",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA CHAIN_INIT_QP ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA CHAIN_INIT_QP history */
+#define RDMA_CHAIN_INIT_QP_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA CHAIN_INIT_QP tips */
+#define RDMA_CHAIN_INIT_QP_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA CHAIN_INIT_QP key specs */
+#define RDMA_CHAIN_INIT_QP_Keyspecs NULL
+#endif
+
+/* RDMA CHAIN_INIT_QP argument table */
+struct COMMAND_ARG RDMA_CHAIN_INIT_QP_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA CHAIN_PING ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA CHAIN_PING history */
+#define RDMA_CHAIN_PING_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA CHAIN_PING tips */
+#define RDMA_CHAIN_PING_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA CHAIN_PING key specs */
+#define RDMA_CHAIN_PING_Keyspecs NULL
+#endif
+
+/* RDMA CHAIN_PING argument table */
+struct COMMAND_ARG RDMA_CHAIN_PING_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("expected-bytes",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA CHAIN_PREP ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA CHAIN_PREP history */
+#define RDMA_CHAIN_PREP_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA CHAIN_PREP tips */
+#define RDMA_CHAIN_PREP_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA CHAIN_PREP key specs */
+#define RDMA_CHAIN_PREP_Keyspecs NULL
+#endif
+
+/* RDMA CHAIN_PREP argument table */
+struct COMMAND_ARG RDMA_CHAIN_PREP_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("pool-bytes",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA CHAIN_WIRE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA CHAIN_WIRE history */
+#define RDMA_CHAIN_WIRE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA CHAIN_WIRE tips */
+#define RDMA_CHAIN_WIRE_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA CHAIN_WIRE key specs */
+#define RDMA_CHAIN_WIRE_Keyspecs NULL
+#endif
+
+/* RDMA CHAIN_WIRE argument table */
+struct COMMAND_ARG RDMA_CHAIN_WIRE_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("position",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("n-peers",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("pred-host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("pred-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("succ-host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("succ-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("succ-rdma-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("succ-addr",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("succ-rkey",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("leader-host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("leader-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA DEBUG_CHAIN_APPLY_SLOT ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DEBUG_CHAIN_APPLY_SLOT history */
+#define RDMA_DEBUG_CHAIN_APPLY_SLOT_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DEBUG_CHAIN_APPLY_SLOT tips */
+#define RDMA_DEBUG_CHAIN_APPLY_SLOT_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DEBUG_CHAIN_APPLY_SLOT key specs */
+#define RDMA_DEBUG_CHAIN_APPLY_SLOT_Keyspecs NULL
+#endif
+
+/* RDMA DEBUG_CHAIN_APPLY_SLOT argument table */
+struct COMMAND_ARG RDMA_DEBUG_CHAIN_APPLY_SLOT_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA DEBUG_CHAIN_ESTABLISH ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DEBUG_CHAIN_ESTABLISH history */
+#define RDMA_DEBUG_CHAIN_ESTABLISH_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DEBUG_CHAIN_ESTABLISH tips */
+#define RDMA_DEBUG_CHAIN_ESTABLISH_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DEBUG_CHAIN_ESTABLISH key specs */
+#define RDMA_DEBUG_CHAIN_ESTABLISH_Keyspecs NULL
+#endif
+
+/* RDMA DEBUG_CHAIN_ESTABLISH argument table */
+struct COMMAND_ARG RDMA_DEBUG_CHAIN_ESTABLISH_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("pool-bytes",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA DEBUG_CHAIN_FORWARD ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DEBUG_CHAIN_FORWARD history */
+#define RDMA_DEBUG_CHAIN_FORWARD_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DEBUG_CHAIN_FORWARD tips */
+#define RDMA_DEBUG_CHAIN_FORWARD_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DEBUG_CHAIN_FORWARD key specs */
+#define RDMA_DEBUG_CHAIN_FORWARD_Keyspecs NULL
+#endif
+
+/* RDMA DEBUG_CHAIN_FORWARD argument table */
+struct COMMAND_ARG RDMA_DEBUG_CHAIN_FORWARD_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("length",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
+/********** RDMA DEBUG_CHAIN_STATUS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DEBUG_CHAIN_STATUS history */
+#define RDMA_DEBUG_CHAIN_STATUS_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DEBUG_CHAIN_STATUS tips */
+#define RDMA_DEBUG_CHAIN_STATUS_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DEBUG_CHAIN_STATUS key specs */
+#define RDMA_DEBUG_CHAIN_STATUS_Keyspecs NULL
+#endif
+
+/* RDMA DEBUG_CHAIN_STATUS argument table */
+struct COMMAND_ARG RDMA_DEBUG_CHAIN_STATUS_Args[] = {
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA DONE_SLOTS ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1224,40 +1464,50 @@ struct COMMAND_ARG RDMA_DONE_SLOTS_Args[] = {
 /********** RDMA DONE_SLOTS_CHUNK ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DONE_SLOTS_CHUNK history */
 #define RDMA_DONE_SLOTS_CHUNK_History NULL
 #endif
+
 #ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DONE_SLOTS_CHUNK tips */
 #define RDMA_DONE_SLOTS_CHUNK_Tips NULL
 #endif
+
 #ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DONE_SLOTS_CHUNK key specs */
 #define RDMA_DONE_SLOTS_CHUNK_Keyspecs NULL
 #endif
 
 /* RDMA DONE_SLOTS_CHUNK argument table */
 struct COMMAND_ARG RDMA_DONE_SLOTS_CHUNK_Args[] = {
-{MAKE_ARG("src_node_id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
-{MAKE_ARG("src_mig_id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
-{MAKE_ARG("chunk_seq",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("src-node-id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("chunk-seq",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 {MAKE_ARG("slot",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_MULTIPLE,0,NULL)},
 };
 
 /********** RDMA DONE_SLOTS_INIT ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA DONE_SLOTS_INIT history */
 #define RDMA_DONE_SLOTS_INIT_History NULL
 #endif
+
 #ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA DONE_SLOTS_INIT tips */
 #define RDMA_DONE_SLOTS_INIT_Tips NULL
 #endif
+
 #ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA DONE_SLOTS_INIT key specs */
 #define RDMA_DONE_SLOTS_INIT_Keyspecs NULL
 #endif
 
 /* RDMA DONE_SLOTS_INIT argument table */
 struct COMMAND_ARG RDMA_DONE_SLOTS_INIT_Args[] = {
-{MAKE_ARG("src_node_id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
-{MAKE_ARG("src_mig_id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
-{MAKE_ARG("total_slots",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("src-node-id",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("total-slots",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
 /********** RDMA INIT_CLIENT ********************/
@@ -1622,8 +1872,18 @@ struct COMMAND_ARG RDMA_TRANSFER_SLOTS_Args[] = {
 /* RDMA command table */
 struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("backpatch-status","Recipient side (Phase 4d): report state of a batch the backpatch thread is processing. Reply is a 6-element array: state (string), idx, n_slots, applied_keys, elapsed_seconds, err.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_BACKPATCH_STATUS_History,0,RDMA_BACKPATCH_STATUS_Tips,0,rdmaBackpatchStatusCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_BACKPATCH_STATUS_Keyspecs,0,NULL,2),.args=RDMA_BACKPATCH_STATUS_Args},
+{MAKE_CMD("chain-ack","Sent by the chain TAIL to the recipient leader after its landing pool has been written with the bytes the leader originally RDMA-WRITE'd into F1. Phase B.4: leader records last_acked_length / count for the session; Phase B.5+ will use this to gate firing MGN_INDX_UPD until the chain has tail-committed.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_ACK_History,0,RDMA_CHAIN_ACK_Tips,0,rdmaChainAckCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_ACK_Keyspecs,0,NULL,2),.args=RDMA_CHAIN_ACK_Args},
+{MAKE_CMD("chain-forwarded","Phase B chain notification (over TCP). Sent by an upstream peer (leader → F1, or Fk → F(k+1)) after it has completed an RDMA-WRITE into this follower's landing pool, telling this follower the bytes have arrived. If not the chain tail, this follower's chain worker thread RDMA-WRITEs the same bytes onward to its successor.","O(1) plus the RDMA chain hop if not tail.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_FORWARDED_History,0,RDMA_CHAIN_FORWARDED_Tips,0,rdmaChainForwardedCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_FORWARDED_Keyspecs,0,NULL,2),.args=RDMA_CHAIN_FORWARDED_Args},
+{MAKE_CMD("chain-init-qp","Recipient-side chain replication (Phase A.full, redesigned): follower lazy-bootstraps its local rdmamig_server (binds on server.rdma_migration_port if not already up) and replies with its RDMA port so the leader can rdmamig_client_connect to it. Must be called before CHAIN-PREP under the connect-then-register order required by the rdmamig API.","O(1) plus first-time rdmamig_server bind.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_INIT_QP_History,0,RDMA_CHAIN_INIT_QP_Tips,0,rdmaChainInitQpCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_INIT_QP_Keyspecs,0,NULL,1),.args=RDMA_CHAIN_INIT_QP_Args},
+{MAKE_CMD("chain-ping","Recipient-side chain replication (Phase A verification only): assert the follower's landing buffer holds the expected pattern after a chain RDMA-WRITE round-trip. Removed once Phase B carries real TRANSFER data.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_PING_History,0,RDMA_CHAIN_PING_Tips,0,rdmaChainPingCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_PING_Keyspecs,0,NULL,2),.args=RDMA_CHAIN_PING_Args},
+{MAKE_CMD("chain-prep","Recipient-side chain replication (Phase A): follower allocates a landing pool of <pool_bytes>, RDMA-registers it, and replies with (addr, rkey) for the recipient leader to forward to this follower's chain predecessor.","O(pool_bytes)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_PREP_History,0,RDMA_CHAIN_PREP_Tips,0,rdmaChainPrepCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_PREP_Keyspecs,0,NULL,2),.args=RDMA_CHAIN_PREP_Args},
+{MAKE_CMD("chain-wire","Recipient-side chain replication: tell a follower its chain position, predecessor (informational), successor (host, port, rdma_port, addr, rkey), and leader (host, port) for tail-ack. Follower opens an RDMA QP to its successor via rdmamig_client_create + connect when it is not the chain tail; the tail uses leader_host:leader_port to send CHAIN-ACK back.","O(1) plus QP setup latency.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_WIRE_History,0,RDMA_CHAIN_WIRE_Tips,0,rdmaChainWireCommand,14,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_WIRE_Keyspecs,0,NULL,12),.args=RDMA_CHAIN_WIRE_Args},
+{MAKE_CMD("debug-chain-apply-slot","Debug-only Phase C test. On the leader: encode the given slot's kvstore entries into the chain src_pool (packed CHAIN_BATCH format), RDMA-WRITE to F1, send CHAIN-FORWARDED. Each follower decodes via rdmaApplyChainBatch and installs entries via r_allocator + kvstoreDictAddRaw (don't-clobber). Returns the encoded byte length. After running, GET against any follower should return the keys that lived in the leader's slot.","O(n_entries) encode + O(length) RDMA WRITE per hop.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_APPLY_SLOT_History,0,RDMA_DEBUG_CHAIN_APPLY_SLOT_Tips,0,rdmaDebugChainApplySlotCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_APPLY_SLOT_Keyspecs,0,NULL,2),.args=RDMA_DEBUG_CHAIN_APPLY_SLOT_Args},
+{MAKE_CMD("debug-chain-establish","Debug-only orchestrator for chain replication. Given a session id, the per-follower landing-pool size, and an ordered list of (host, port) pairs for the followers, drive two passes: CHAIN-PREP each follower in order, then CHAIN-WIRE each with predecessor + successor info. Removed once registerWorkerThread invokes the orchestrator directly.","O(N) RPCs where N is the follower count.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_ESTABLISH_History,0,RDMA_DEBUG_CHAIN_ESTABLISH_Tips,0,rdmaDebugChainEstablishCommand,-6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_ESTABLISH_Keyspecs,0,NULL,4),.args=RDMA_DEBUG_CHAIN_ESTABLISH_Args},
+{MAKE_CMD("debug-chain-forward","Debug-only Phase B test. On the leader: lazy-register a source pool against peers[0].client's PD, fill it with the test pattern (byte[i] = i % 256), RDMA-WRITE <length> bytes to peers[0] (F1) and send CHAIN-FORWARDED. F1 cascades down the chain on its worker thread. Caller then runs CHAIN-PING against each follower to verify byte equality. Removed once Phase B is wired into the real mergeBackpatchTick path.","O(length) RDMA WRITE plus one chain TCP RPC.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_FORWARD_History,0,RDMA_DEBUG_CHAIN_FORWARD_Tips,0,rdmaDebugChainForwardCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_FORWARD_Keyspecs,0,NULL,2),.args=RDMA_DEBUG_CHAIN_FORWARD_Args},
+{MAKE_CMD("debug-chain-status","Debug-only Phase B.4 verification. On the leader: returns a 3-element array [ack_count, last_acked_length, last_acked_at_ms] for the given session, so a test can confirm CHAIN-ACK from the chain tail arrived after DEBUG-CHAIN-FORWARD. ack_count == 0 means no tail ack received yet.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_STATUS_History,0,RDMA_DEBUG_CHAIN_STATUS_Tips,0,rdmaDebugChainStatusCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_STATUS_Keyspecs,0,NULL,1),.args=RDMA_DEBUG_CHAIN_STATUS_Args},
 {MAKE_CMD("done-slots","Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_History,0,RDMA_DONE_SLOTS_Tips,0,rdmaDoneSlotsCommand,-3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_Keyspecs,0,NULL,1),.args=RDMA_DONE_SLOTS_Args},
-{MAKE_CMD("done-slots-chunk","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): append a chunk of slots' work items to the backpatch pool's work queue for the pre-existing batch keyed by (src_node_id, src_mig_id).","O(K) where K is the chunk size.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_CHUNK_History,0,RDMA_DONE_SLOTS_CHUNK_Tips,0,rdmaDoneSlotsChunkCommand,-6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_CHUNK_Keyspecs,0,NULL,4),.args=RDMA_DONE_SLOTS_CHUNK_Args},
+{MAKE_CMD("done-slots-chunk","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): append K per-slot work items onto backpatch_work_queue for the batch created by a prior DONE-SLOTS-INIT. Pool workers pick them up immediately.","O(K) per call where K is the number of slots in the chunk.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_CHUNK_History,0,RDMA_DONE_SLOTS_CHUNK_Tips,0,rdmaDoneSlotsChunkCommand,-6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_CHUNK_Keyspecs,0,NULL,4),.args=RDMA_DONE_SLOTS_CHUNK_Args},
 {MAKE_CMD("done-slots-init","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): pre-allocate a backpatchBatch sized to total_slots before donor begins TRANSFER. Subsequent DONE-SLOTS-CHUNK calls append work items to its pool queue.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_INIT_History,0,RDMA_DONE_SLOTS_INIT_Tips,0,rdmaDoneSlotsInitCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_INIT_Keyspecs,0,NULL,3),.args=RDMA_DONE_SLOTS_INIT_Args},
 {MAKE_CMD("init-client","Donor side: establish an RDMA queue-pair to a recipient node.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_CLIENT_History,0,RDMA_INIT_CLIENT_Tips,0,rdmaInitClientCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_CLIENT_Keyspecs,0,NULL,2),.args=RDMA_INIT_CLIENT_Args},
 {MAKE_CMD("init-server","Recipient side: start listening on an RDMA endpoint.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_INIT_SERVER_History,0,RDMA_INIT_SERVER_Tips,0,rdmaInitServerCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_INIT_SERVER_Keyspecs,0,NULL,1),.args=RDMA_INIT_SERVER_Args},

@@ -1,0 +1,4 @@
+---
+# custom_reshard_v2_orch_raft: final teardown.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml

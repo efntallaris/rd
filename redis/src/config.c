@@ -3143,6 +3143,10 @@ standardConfig static_configs[] = {
     createIntConfig("cluster-rdma-transfer-chunk-slots", NULL, MODIFIABLE_CONFIG, 1, 256, server.rdma_transfer_chunk_slots, 32, INTEGER_CONFIG, NULL, NULL),
     createBoolConfig("slot-meta-reply", NULL, MODIFIABLE_CONFIG, server.slot_meta_reply, 0, NULL, NULL),
     createIntConfig("rdma-migration-port", NULL, MODIFIABLE_CONFIG, 1, 65535, server.rdma_migration_port, 17777, INTEGER_CONFIG, NULL, NULL), /* Source side picks this; recipient binds it when asked via RDMA INIT-SERVER. */
+    createSDSConfig("rdma-chain-followers", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.rdma_chain_followers, "", NULL, NULL),
+    createIntConfig("rdma-chain-pool-bytes", NULL, MODIFIABLE_CONFIG, 1024, 268435456, server.rdma_chain_pool_bytes, 65536, INTEGER_CONFIG, NULL, NULL),
+    createBoolConfig("rdma-migration-redisraft-mode", NULL, IMMUTABLE_CONFIG, server.rdma_migration_redisraft_mode, 0, NULL, NULL),
+    createSDSConfig("rdma-migration-redisraft-slots", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.rdma_migration_redisraft_slots, "", NULL, NULL),
     createBoolConfig("cluster-allow-reads-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_reads_when_down, 0, NULL, NULL),
     createBoolConfig("cluster-allow-pubsubshard-when-down", NULL, MODIFIABLE_CONFIG, server.cluster_allow_pubsubshard_when_down, 1, NULL, NULL),
     createBoolConfig("crash-log-enabled", NULL, MODIFIABLE_CONFIG, server.crashlog_enabled, 1, NULL, updateSighandlerEnabled),

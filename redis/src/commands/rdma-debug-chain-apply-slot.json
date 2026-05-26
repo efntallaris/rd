@@ -1,0 +1,20 @@
+{
+    "DEBUG-CHAIN-APPLY-SLOT": {
+        "summary": "Debug-only Phase C test. On the leader: encode the given slot's kvstore entries into the chain src_pool (packed CHAIN_BATCH format), RDMA-WRITE to F1, send CHAIN-FORWARDED. Each follower decodes via rdmaApplyChainBatch and installs entries via r_allocator + kvstoreDictAddRaw (don't-clobber). Returns the encoded byte length. After running, GET against any follower should return the keys that lived in the leader's slot.",
+        "complexity": "O(n_entries) encode + O(length) RDMA WRITE per hop.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaDebugChainApplySlotCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" },
+            { "name": "slot",       "type": "integer" }
+        ]
+    }
+}

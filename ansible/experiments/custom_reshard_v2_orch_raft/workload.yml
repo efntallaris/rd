@@ -1,0 +1,27 @@
+---
+# custom_reshard_v2_orch_raft: per-workload run.
+#
+# Composition:
+#   - start_redisraft_instances.yml: 3 redis-server procs per host, each
+#     loads redisraft.so. Redis runs WITHOUT --cluster-enabled (RedisRaft
+#     fakes cluster mode at the module layer).
+#   - init_redisraft_shardgroups.yml: drive the redisraft cluster init.
+#   - YCSB load + run concurrently.
+#   - reshard_cluster_rdma_v2_orchestrated.yml: issue RDMA MIGRATE-ALL
+#     against the redisraft cluster mid-YCSB. This is the experimental
+#     bridge between the aqueduct's RDMA migration path and redisraft.
+#     Expected to surface compatibility issues between the cluster_enabled
+#     check inside redisraft and the cluster routing the RDMA migration
+#     relies on. Captured failures inform next design step.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/cluster/add_migrate_nodes.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/cluster/pause_pre_reshard.yml
+- import_playbook: ../../tasks/cluster/reshard_cluster_rdma_v2_orchestrated.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

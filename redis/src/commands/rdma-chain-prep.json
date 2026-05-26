@@ -1,0 +1,20 @@
+{
+    "CHAIN-PREP": {
+        "summary": "Recipient-side chain replication (Phase A): follower allocates a landing pool of <pool_bytes>, RDMA-registers it, and replies with (addr, rkey) for the recipient leader to forward to this follower's chain predecessor.",
+        "complexity": "O(pool_bytes)",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 4,
+        "container": "RDMA",
+        "function": "rdmaChainPrepCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" },
+            { "name": "pool-bytes", "type": "integer" }
+        ]
+    }
+}

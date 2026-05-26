@@ -1,6 +1,16 @@
 ---
-- name: "Start and add migration nodes to cluster"
-  hosts: redis_migrate
+# Bring up the migration target as a 3-node vanilla cluster:
+#   redis3 (master, RECIPIENT LEADER)  ← rdma-chain-followers points here at redis4 + ycsb1
+#   redis4 (REPLICA via chain only — NOT standard PSYNC)
+#   ycsb1 (REPLICA via chain only)
+#
+# The migration's data path bypasses standard Redis command replication
+# (writes via kvstoreDictAddRaw skip AOF/PSYNC), so chain replication is
+# the ONLY way the post-FLIP keys reach redis4 + ycsb1. Cluster membership
+# is still needed so jedis routes correctly and so CLUSTER SLOTS shows
+# the migration master as a real shard.
+- name: "Start redis-server on migration master + replicas"
+  hosts: redis_migrate:redis_migrate_replicas
   become: yes
   tasks:
     - name: Set ulimit for open files
@@ -11,19 +21,27 @@
         path: "{{ node_conf }}"
         state: absent
 
-    - name: Create Redis log directory
+    - name: Create Redis log + data directories
       file:
-        path: "{{ redis_log_dir }}"
+        path: "{{ item }}"
         state: directory
         mode: "0755"
+      loop:
+        - "{{ redis_log_dir }}"
+        - "{{ redis_data_dir }}"
 
-    - name: Create Redis data directory
-      file:
-        path: "{{ redis_data_dir }}"
-        state: directory
-        mode: "0755"
+    - name: Compute rdma_chain_followers for this host
+      set_fact:
+        # On the migration master (redis3) the chain followers are the two
+        # replicas. On a replica the chain config is empty — replicas don't
+        # initiate chain establishment; they receive CHAIN-PREP/WIRE/FORWARDED.
+        rdma_chain_followers: >-
+          {% if inventory_hostname in groups['redis_migrate'] -%}
+          {{ groups['redis_migrate_replicas'] | map('regex_replace', '^(.+)$', '\1:' + master_port|string) | join(' ') }}
+          {%- else -%}
+          {%- endif %}
 
-    - name: Generate cluster config
+    - name: Generate cluster config (with chain config for master)
       template:
         src: ../../templates/redis_cluster.conf.j2
         dest: "{{ node_conf }}"
@@ -37,21 +55,59 @@
         port: "{{ master_port }}"
         timeout: 30
 
-    # Redis <7.0 (the vanilla_redis branch is 6.2.16) rejects hostnames in
-    # CLUSTER MEET / cluster add-node — only IP literals are accepted.
-    # Resolve at runtime so the same task works against both 6.2 and 8.x.
-    - name: Resolve migrate-node IP (self)
+# Membership: add redis3 as a new master to the existing redisraft cluster
+# (same as before). Then add redis4 + ycsb1 as REPLICAS of redis3 — note
+# they get cluster membership via PSYNC initially (empty kvstore), and the
+# chain code is what carries migrated bytes to them later.
+- name: "Resolve IPs for all migration nodes"
+  hosts: redis_migrate
+  become: yes
+  tasks:
+    - name: Resolve migrate-master IP (self)
       shell: "getent hosts {{ inventory_hostname }} | awk '{print $1}'"
-      register: migrate_self_ip
+      register: migrate_master_ip
       changed_when: false
 
-    - name: Resolve master_host IP
+    - name: Resolve master_host IP (existing cluster entrypoint)
       shell: "getent hosts {{ master_host }} | awk '{print $1}'"
       register: master_host_ip
       changed_when: false
 
-    - name: Add node to cluster
+    - name: Add migration master to the existing cluster (no slots yet — migration moves slots in)
       command: >
         {{ redis_bin_dir }}/redis-cli -p {{ master_port }}
-        --cluster add-node {{ migrate_self_ip.stdout }}:{{ master_port }}
+        --cluster add-node {{ migrate_master_ip.stdout }}:{{ master_port }}
         {{ master_host_ip.stdout }}:{{ master_port }}
+
+    - name: Get redis3's cluster node ID (needed below for CLUSTER REPLICATE)
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ migrate_master_ip.stdout }} -p {{ master_port }} CLUSTER MYID
+      register: migrate_master_id
+      changed_when: false
+
+    - name: Stash migrate-master id + ip as host facts so replicas can read them
+      set_fact:
+        migrate_master_node_id: "{{ migrate_master_id.stdout }}"
+        migrate_master_node_ip: "{{ migrate_master_ip.stdout }}"
+
+- name: "Add chain-replica nodes (redis4 + ycsb1) as replicas of the migration master"
+  hosts: redis_migrate_replicas
+  become: yes
+  tasks:
+    - name: Resolve self IP
+      shell: "getent hosts {{ inventory_hostname }} | awk '{print $1}'"
+      register: replica_self_ip
+      changed_when: false
+
+    - name: Resolve master_host IP (for add-node entrypoint)
+      shell: "getent hosts {{ master_host }} | awk '{print $1}'"
+      register: replica_master_host_ip
+      changed_when: false
+
+    - name: Add replica to the cluster as a SLAVE of redis3
+      command: >
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }}
+        --cluster add-node {{ replica_self_ip.stdout }}:{{ master_port }}
+        {{ replica_master_host_ip.stdout }}:{{ master_port }}
+        --cluster-slave
+        --cluster-master-id {{ hostvars[groups['redis_migrate'][0]]['migrate_master_node_id'] }}

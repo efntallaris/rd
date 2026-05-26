@@ -1,0 +1,30 @@
+{
+    "CHAIN-WIRE": {
+        "summary": "Recipient-side chain replication: tell a follower its chain position, predecessor (informational), successor (host, port, rdma_port, addr, rkey), and leader (host, port) for tail-ack. Follower opens an RDMA QP to its successor via rdmamig_client_create + connect when it is not the chain tail; the tail uses leader_host:leader_port to send CHAIN-ACK back.",
+        "complexity": "O(1) plus QP setup latency.",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 14,
+        "container": "RDMA",
+        "function": "rdmaChainWireCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id",     "type": "integer" },
+            { "name": "position",       "type": "integer" },
+            { "name": "n-peers",        "type": "integer" },
+            { "name": "pred-host",      "type": "string"  },
+            { "name": "pred-port",      "type": "integer" },
+            { "name": "succ-host",      "type": "string"  },
+            { "name": "succ-port",      "type": "integer" },
+            { "name": "succ-rdma-port", "type": "integer" },
+            { "name": "succ-addr",      "type": "integer" },
+            { "name": "succ-rkey",      "type": "integer" },
+            { "name": "leader-host",    "type": "string"  },
+            { "name": "leader-port",    "type": "integer" }
+        ]
+    }
+}

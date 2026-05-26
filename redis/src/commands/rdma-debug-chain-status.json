@@ -1,0 +1,19 @@
+{
+    "DEBUG-CHAIN-STATUS": {
+        "summary": "Debug-only Phase B.4 verification. On the leader: returns a 3-element array [ack_count, last_acked_length, last_acked_at_ms] for the given session, so a test can confirm CHAIN-ACK from the chain tail arrived after DEBUG-CHAIN-FORWARD. ack_count == 0 means no tail ack received yet.",
+        "complexity": "O(1)",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 3,
+        "container": "RDMA",
+        "function": "rdmaDebugChainStatusCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "src-mig-id", "type": "integer" }
+        ]
+    }
+}

@@ -491,7 +491,12 @@ static kvobj *dbAddInternalImpl(redisDb *db, robj *key, robj **valref, dictEntry
      * address. INT-encoded values fall back to the jemalloc kvobjSet path,
      * which handles INT encoding correctly (it does not call sdslen). */
     kvobj *kv;
-    int use_r_allocator = (server.rdma_allocator_shadow && server.cluster_enabled
+    /* AqRaft: enable allocator-shadow under either cluster_enabled (vanilla
+     * cluster donor) or rdma_migration_redisraft_mode (RedisRaft donor).
+     * Without this, redisraft donors' dbAdd writes never populate r_allocator
+     * and migrationWorker finds nothing to ship. */
+    int use_r_allocator = (server.rdma_allocator_shadow
+                           && (server.cluster_enabled || server.rdma_migration_redisraft_mode)
                            && val->type == OBJ_STRING
                            && (val->encoding == OBJ_ENCODING_RAW
                                || val->encoding == OBJ_ENCODING_EMBSTR)
@@ -564,7 +569,10 @@ int calculateKeySlot(sds key) {
 
 /* Return slot-specific dictionary for key based on key's hash slot when cluster mode is enabled, else 0.*/
 int getKeySlot(sds key) {
-    if (!server.cluster_enabled) return 0;
+    /* AqRaft: under redisraft, cluster_enabled is forced off but kvstore is
+     * still slot-aware (CLUSTER_SLOT_MASK_BITS), so we still need the real
+     * slot index for kvstore dispatch. */
+    if (!server.cluster_enabled && !server.rdma_migration_redisraft_mode) return 0;
     /* This is performance optimization that uses pre-set slot id from the current command,
      * in order to avoid calculation of the key hash.
      *
@@ -739,7 +747,8 @@ static void dbSetValueImpl(redisDb *db, robj *key, robj **valref, dictEntryLink 
     if (server.memory_tracking_enabled)
         oldsize = kvobjAllocSize(old);
 
-    int use_r_allocator = (server.rdma_allocator_shadow && server.cluster_enabled
+    int use_r_allocator = (server.rdma_allocator_shadow
+                           && (server.cluster_enabled || server.rdma_migration_redisraft_mode)
                            && val->type == OBJ_STRING
                            && (val->encoding == OBJ_ENCODING_RAW
                                || val->encoding == OBJ_ENCODING_EMBSTR)

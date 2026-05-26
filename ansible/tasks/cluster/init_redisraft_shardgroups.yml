@@ -11,11 +11,14 @@
   hosts: redis_masters[0]
   become: yes
   tasks:
-    - name: Resolve redis_masters hostnames to IPs
+    # Resolve every hostname that appears in any shardgroup. sg1/sg2/sg3 use
+    # redis0/1/2; sg4 uses redis3 + redis4 + ycsb1 so they must be in the
+    # map for INIT/JOIN/LINK to dial them by IP.
+    - name: Resolve all shardgroup-member hostnames to IPs
       shell: "getent hosts {{ item }} | awk '{print $1}'"
       register: host_ip_lookup
       changed_when: false
-      loop: "{{ groups['redis_masters'] }}"
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | sum(start=[]) | map(attribute='host') | unique | list }}"
 
     - name: Build host->IP map
       set_fact:
