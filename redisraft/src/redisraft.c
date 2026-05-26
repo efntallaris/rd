@@ -1279,6 +1279,28 @@ static int cmdRaftShardGroup(RedisModuleCtx *ctx, RedisModuleString **argv, int 
 
         ShardGroupReplace(rr, ctx, argv, argc);
         return REDISMODULE_OK;
+    } else if (!strncasecmp(cmd, "NARROW", cmd_len)) {
+        /* AqRaft Patch 10: RAFT.SHARDGROUP NARROW <new_local_cfg> <ext_sg_spec>
+         * Narrow the local cluster's slot ownership AND announce a new
+         * external shardgroup taking over the freed slots, atomically. */
+        if (argc < 4) {
+            RedisModule_WrongArity(ctx);
+            return REDISMODULE_OK;
+        }
+        ShardGroupNarrow(rr, ctx, argv, argc);
+        return REDISMODULE_OK;
+    } else if (!strncasecmp(cmd, "WRITE_FLIP", cmd_len)) {
+        /* AqRaft Patch 13: RAFT.SHARDGROUP WRITE_FLIP <lo:hi> <ext_sg_spec>
+         * Early write-flip: route writes for slots [lo, hi] to the external
+         * sg via -MOVED while reads keep serving locally on the donor. Used
+         * by the orchestrator before MIGRATE-ALL dispatch to start the
+         * traffic shift at the beginning of the migration window. */
+        if (argc < 4) {
+            RedisModule_WrongArity(ctx);
+            return REDISMODULE_OK;
+        }
+        ShardGroupWriteFlip(rr, ctx, argv, argc);
+        return REDISMODULE_OK;
     } else if (!strncasecmp(cmd, "LINK", cmd_len)) {
         if (argc != 3) {
             RedisModule_WrongArity(ctx);
@@ -1288,7 +1310,7 @@ static int cmdRaftShardGroup(RedisModuleCtx *ctx, RedisModuleString **argv, int 
         ShardGroupLink(rr, ctx, argv, argc);
         return REDISMODULE_OK;
     } else {
-        RedisModule_ReplyWithError(ctx, "RAFT.SHARDGROUP supports GET/ADD/REPLACE/LINK only");
+        RedisModule_ReplyWithError(ctx, "RAFT.SHARDGROUP supports GET/ADD/REPLACE/LINK/NARROW/WRITE_FLIP only");
         return REDISMODULE_OK;
     }
 }

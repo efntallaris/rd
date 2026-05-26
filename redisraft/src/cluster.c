@@ -1127,6 +1127,7 @@ void ShardingInfoReset(RedisModuleCtx *ctx, ShardingInfo *si)
         si->stable_slots_map[i] = NULL;
         si->importing_slots_map[i] = NULL;
         si->migrating_slots_map[i] = NULL;
+        si->write_redirect_slots_map[i] = NULL;
     }
 
     si->is_sharding = false;
@@ -1915,4 +1916,250 @@ out:
         ShardGroupFree(sg[i]);
     }
     RedisModule_Free(sg);
+}
+
+/* AqRaft Patch 10: RAFT.SHARDGROUP NARROW <new_local_cfg> <ext_sg_spec...>
+ *
+ * Narrows the local cluster's slot ownership AND announces a new external
+ * shardgroup (typically sg4, the AqRaft migration recipient) that takes over
+ * the freed slots — atomically, in one Raft log entry.
+ *
+ * Use case: after AqRaft RDMA migration completes, the orchestrator runs this
+ * on each donor's leader so the donor's CLUSTER SLOTS reply reflects the new
+ * topology and YCSB clients get MOVED→sg4 for the migrated slots.
+ *
+ * Entry payload (RAFT_LOGTYPE_NARROW_LOCAL_AND_ADD_EXT):
+ *   "<new_local_cfg_len>\n<new_local_cfg_bytes>\n<ext_sg_payload_len>\n<ext_sg_payload>\n"
+ *
+ * Validation:
+ *  - new_local_cfg must parse via validSlotConfig.
+ *  - ext sg must pass ShardingInfoValidateShardGroup (which already checks
+ *    that ext sg's slot ranges don't overlap with the CURRENT local sg's;
+ *    we further check they don't overlap with the NEW narrowed ranges).
+ */
+void ShardGroupNarrow(RedisRaftCtx *rr,
+                      RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    if (argc < 4) {
+        RedisModule_WrongArity(ctx);
+        return;
+    }
+    if (!raft_is_leader(rr->raft)) {
+        RedisModule_ReplyWithError(ctx, "ERR not leader");
+        return;
+    }
+
+    /* argv layout from the dispatcher: argv[0]=RAFT.SHARDGROUP, argv[1]=NARROW,
+     * argv[2]=<new_local_cfg string>, argv[3..]=<external sg spec>. */
+    size_t cfg_len = 0;
+    const char *cfg_str = RedisModule_StringPtrLen(argv[2], &cfg_len);
+    if (cfg_len == 0 || cfg_len >= 256) {
+        RedisModule_ReplyWithError(ctx, "ERR new_local_cfg empty or too long");
+        return;
+    }
+    /* validSlotConfig() lives in config.c; we duplicate the minimal check here
+     * (the parser tolerates a single range "lo:hi"; expand later for comma-
+     * separated multiranges if needed). */
+    {
+        char tmp[256];
+        memcpy(tmp, cfg_str, cfg_len);
+        tmp[cfg_len] = '\0';
+        const char *colon = strchr(tmp, ':');
+        if (colon == NULL) {
+            RedisModule_ReplyWithError(ctx, "ERR new_local_cfg must be 'lo:hi'");
+            return;
+        }
+        char *end;
+        long lo = strtol(tmp, &end, 10);
+        if (end != colon || lo < 0 || lo > REDIS_RAFT_HASH_MAX_SLOT) {
+            RedisModule_ReplyWithError(ctx, "ERR new_local_cfg lo out of range");
+            return;
+        }
+        long hi = strtol(colon + 1, &end, 10);
+        if (*end != '\0' || hi < lo || hi > REDIS_RAFT_HASH_MAX_SLOT) {
+            RedisModule_ReplyWithError(ctx, "ERR new_local_cfg hi out of range");
+            return;
+        }
+    }
+
+    /* Parse the external sg spec — same format as RAFT.SHARDGROUP ADD argv tail. */
+    int consumed = 0;
+    ShardGroup *ext_sg = ShardGroupParse(ctx, &argv[3], argc - 3, 3, &consumed);
+    if (ext_sg == NULL) {
+        /* error reply already produced by ShardGroupParse */
+        return;
+    }
+
+    /* DO NOT call ShardingInfoValidateShardGroup here: it would reject
+     * ext_sg because its slot ranges overlap with the CURRENT local sg
+     * (the very slots we're about to narrow away). The apply handler
+     * (narrowLocalAndAddExternal) updates the local sg's slot range
+     * BEFORE adding ext_sg, so the overlap is resolved atomically inside
+     * the apply step. We do basic slot-range bounds validation here
+     * instead: */
+    for (unsigned int i = 0; i < ext_sg->slot_ranges_num; i++) {
+        if (!HashSlotRangeValid(ext_sg->slot_ranges[i].start_slot,
+                                ext_sg->slot_ranges[i].end_slot)) {
+            RedisModule_ReplyWithError(ctx,
+                "ERR ext_sg slot range out of bounds");
+            ShardGroupFree(ext_sg);
+            return;
+        }
+    }
+
+    /* Build the payload. */
+    char *ext_payload = ShardGroupSerialize(ext_sg);
+    if (ext_payload == NULL) {
+        RedisModule_ReplyWithError(ctx, "ERR external shardgroup serialize failed");
+        ShardGroupFree(ext_sg);
+        return;
+    }
+    size_t ext_payload_len = strlen(ext_payload);
+
+    /* Allocate a buffer for the framed entry. */
+    size_t buflen = cfg_len + ext_payload_len + 64;
+    char *buf = RedisModule_Calloc(1, buflen);
+    int written = snprintf(buf, buflen,
+                           "%zu\n%.*s\n%zu\n%s\n",
+                           cfg_len, (int) cfg_len, cfg_str,
+                           ext_payload_len, ext_payload);
+    RedisModule_Free(ext_payload);
+    if (written < 0 || (size_t) written >= buflen) {
+        RedisModule_ReplyWithError(ctx, "ERR narrow payload format failed");
+        RedisModule_Free(buf);
+        ShardGroupFree(ext_sg);
+        return;
+    }
+    size_t payload_len = (size_t) written;
+
+    raft_entry_t *entry = raft_entry_new(payload_len);
+    entry->type = RAFT_LOGTYPE_NARROW_LOCAL_AND_ADD_EXT;
+    RaftReq *req = RaftReqInit(ctx, RR_SHARDGROUP_NARROW);
+    entry->user_data = req;
+    memcpy(entry->data, buf, payload_len);
+    RedisModule_Free(buf);
+
+    int e = raft_recv_entry(rr->raft, entry, NULL);
+    raft_entry_release(entry);
+    ShardGroupFree(ext_sg);
+
+    if (e != 0) {
+        LOG_WARNING("RAFT.SHARDGROUP NARROW: raft_recv_entry failed: %d", e);
+        RedisModule_ReplyWithError(req->ctx, "ERR raft_recv_entry failed");
+        RaftReqFree(req);
+        return;
+    }
+    /* Reply is sent from the apply handler (narrowLocalAndAddExternal) so
+     * the client sees +OK only after consensus + local apply. */
+}
+
+/* AqRaft Patch 13: RAFT.SHARDGROUP WRITE_FLIP <lo:hi> <ext_sg_spec...>
+ *
+ * Mirrors ShardGroupNarrow's structure but emits a RAFT_LOGTYPE_MGN_WRITE_FLIP
+ * entry. Apply handler (applyWriteFlip in raft.c) marks slots [lo, hi] for
+ * write-redirect to the external sg via write_redirect_slots_map[]; reads
+ * keep using stable/migrating maps so the donor still serves them locally.
+ * Payload format is identical to NARROW. */
+void ShardGroupWriteFlip(RedisRaftCtx *rr,
+                         RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    if (argc < 4) {
+        RedisModule_WrongArity(ctx);
+        return;
+    }
+    if (!raft_is_leader(rr->raft)) {
+        RedisModule_ReplyWithError(ctx, "ERR not leader");
+        return;
+    }
+
+    /* argv: argv[0]=RAFT.SHARDGROUP, argv[1]=WRITE_FLIP,
+     * argv[2]=<lo:hi>, argv[3..]=<external sg spec>. */
+    size_t cfg_len = 0;
+    const char *cfg_str = RedisModule_StringPtrLen(argv[2], &cfg_len);
+    if (cfg_len == 0 || cfg_len >= 256) {
+        RedisModule_ReplyWithError(ctx, "ERR slot-range empty or too long");
+        return;
+    }
+    {
+        char tmp[256];
+        memcpy(tmp, cfg_str, cfg_len);
+        tmp[cfg_len] = '\0';
+        const char *colon = strchr(tmp, ':');
+        if (colon == NULL) {
+            RedisModule_ReplyWithError(ctx, "ERR slot-range must be 'lo:hi'");
+            return;
+        }
+        char *end;
+        long lo = strtol(tmp, &end, 10);
+        if (end != colon || lo < 0 || lo > REDIS_RAFT_HASH_MAX_SLOT) {
+            RedisModule_ReplyWithError(ctx, "ERR slot-range lo out of range");
+            return;
+        }
+        long hi = strtol(colon + 1, &end, 10);
+        if (*end != '\0' || hi < lo || hi > REDIS_RAFT_HASH_MAX_SLOT) {
+            RedisModule_ReplyWithError(ctx, "ERR slot-range hi out of range");
+            return;
+        }
+    }
+
+    int consumed = 0;
+    ShardGroup *ext_sg = ShardGroupParse(ctx, &argv[3], argc - 3, 3, &consumed);
+    if (ext_sg == NULL) {
+        return;
+    }
+
+    /* Bounds-only validation. The donor's STABLE sg still owns these slots
+     * at this point; the apply handler does not modify the stable_slots_map,
+     * so there's no overlap to enforce. */
+    for (unsigned int i = 0; i < ext_sg->slot_ranges_num; i++) {
+        if (!HashSlotRangeValid(ext_sg->slot_ranges[i].start_slot,
+                                ext_sg->slot_ranges[i].end_slot)) {
+            RedisModule_ReplyWithError(ctx,
+                "ERR ext_sg slot range out of bounds");
+            ShardGroupFree(ext_sg);
+            return;
+        }
+    }
+
+    char *ext_payload = ShardGroupSerialize(ext_sg);
+    if (ext_payload == NULL) {
+        RedisModule_ReplyWithError(ctx, "ERR external shardgroup serialize failed");
+        ShardGroupFree(ext_sg);
+        return;
+    }
+    size_t ext_payload_len = strlen(ext_payload);
+
+    size_t buflen = cfg_len + ext_payload_len + 64;
+    char *buf = RedisModule_Calloc(1, buflen);
+    int written = snprintf(buf, buflen,
+                           "%zu\n%.*s\n%zu\n%s\n",
+                           cfg_len, (int) cfg_len, cfg_str,
+                           ext_payload_len, ext_payload);
+    RedisModule_Free(ext_payload);
+    if (written < 0 || (size_t) written >= buflen) {
+        RedisModule_ReplyWithError(ctx, "ERR write-flip payload format failed");
+        RedisModule_Free(buf);
+        ShardGroupFree(ext_sg);
+        return;
+    }
+    size_t payload_len = (size_t) written;
+
+    raft_entry_t *entry = raft_entry_new(payload_len);
+    entry->type = RAFT_LOGTYPE_MGN_WRITE_FLIP;
+    RaftReq *req = RaftReqInit(ctx, RR_SHARDGROUP_WRITE_FLIP);
+    entry->user_data = req;
+    memcpy(entry->data, buf, payload_len);
+    RedisModule_Free(buf);
+
+    int e = raft_recv_entry(rr->raft, entry, NULL);
+    raft_entry_release(entry);
+    ShardGroupFree(ext_sg);
+
+    if (e != 0) {
+        LOG_WARNING("RAFT.SHARDGROUP WRITE_FLIP: raft_recv_entry failed: %d", e);
+        RedisModule_ReplyWithError(req->ctx, "ERR raft_recv_entry failed");
+        RaftReqFree(req);
+        return;
+    }
+    /* Reply emitted from applyWriteFlip after consensus + local apply. */
 }

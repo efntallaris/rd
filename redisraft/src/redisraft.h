@@ -486,6 +486,8 @@ enum RaftReqType {
     RR_SHARDGROUP_ADD,
     RR_SHARDGROUPS_REPLACE,
     RR_SHARDGROUP_LINK,
+    RR_SHARDGROUP_NARROW,  /* AqRaft Patch 10 */
+    RR_SHARDGROUP_WRITE_FLIP,  /* AqRaft Patch 13 */
     RR_TRANSFER_LEADER,
     RR_IMPORT_KEYS,
     RR_MIGRATE_KEYS,
@@ -593,6 +595,36 @@ typedef struct ShardGroup {
 #define RAFT_LOGTYPE_MGN_RECP_TXN_DONE   (RAFT_LOGTYPE_NUM + 13)
 #define RAFT_LOGTYPE_MGN_TXN_DONE        (RAFT_LOGTYPE_NUM + 14)
 
+/* AqRaft Patch 10: runtime slot-config narrowing. Payload:
+ *   uint32_t local_cfg_len  | local_cfg_bytes  (new slot-config string for
+ *                                                the local cluster, e.g.
+ *                                                "1365:5460")
+ *   uint32_t ext_sg_len     | ext_sg_bytes     (output of ShardGroupSerialize
+ *                                                for the new external sg taking
+ *                                                ownership of the freed range,
+ *                                                typically sg4)
+ * Applied atomically: local sg shrinks AND external sg is added to the
+ * shardgroup_map in one Raft log apply step so subsequent CLUSTER SLOTS
+ * replies see a consistent post-narrow topology. */
+#define RAFT_LOGTYPE_NARROW_LOCAL_AND_ADD_EXT (RAFT_LOGTYPE_NUM + 15)
+
+/* AqRaft Patch 13: RAFT.SHARDGROUP WRITE_FLIP — early write redirect.
+ *
+ * Mirrors custom_reshard's early-FLIP semantics: during a migration window,
+ * writes for the migrating slot range get -MOVED to the recipient external
+ * shardgroup, while reads keep serving locally on the donor (preserving the
+ * client-side double-read protocol). Apply populates
+ * `write_redirect_slots_map[]` for the named slot range and idempotently adds
+ * the recipient sg to `shard_group_map` (without touching its slot maps —
+ * we only want it reachable for replyRedirect, not as a stable/migrating
+ * owner from the donor's perspective). NARROW finalisation later clears
+ * the per-slot entry once stable_slots_map points at the recipient.
+ *
+ * Payload format: same as NARROW.
+ *   "<lo:hi local-slot-range>\n<ext_sg_serialised_len>\n<ext_sg_serialised>\n"
+ */
+#define RAFT_LOGTYPE_MGN_WRITE_FLIP           (RAFT_LOGTYPE_NUM + 16)
+
 #define MAX_AUTH_STRING_ARG_LENGTH 255
 
 /* Sharding information, used when cluster_mode is enabled and multiple
@@ -612,6 +644,13 @@ typedef struct ShardingInfo {
     ShardGroup *stable_slots_map[REDIS_RAFT_HASH_SLOTS];
     ShardGroup *importing_slots_map[REDIS_RAFT_HASH_SLOTS];
     ShardGroup *migrating_slots_map[REDIS_RAFT_HASH_SLOTS];
+
+    /* AqRaft Patch 13: when non-NULL, write commands for this slot redirect
+     * to the referenced (external) shardgroup via replyRedirect. Reads keep
+     * using stable_slots_map/migrating_slots_map. Populated by
+     * RAFT.SHARDGROUP WRITE_FLIP apply; cleared by NARROW apply for the
+     * narrowed range. */
+    ShardGroup *write_redirect_slots_map[REDIS_RAFT_HASH_SLOTS];
 
     raft_term_t max_importing_term[REDIS_RAFT_HASH_SLOTS];
 } ShardingInfo;
@@ -951,6 +990,12 @@ void ShardGroupLink(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **a
 void ShardGroupGet(RedisRaftCtx *rr, RedisModuleCtx *ctx);
 void ShardGroupAdd(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void ShardGroupReplace(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+void ShardGroupNarrow(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+void narrowLocalAndAddExternal(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req);
+
+/* AqRaft Patch 13: early write-flip — see RAFT_LOGTYPE_MGN_WRITE_FLIP doc. */
+void ShardGroupWriteFlip(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+void applyWriteFlip(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req);
 ShardGroup *GetShardGroupById(RedisRaftCtx *rr, const char *id);
 
 /* join.c */

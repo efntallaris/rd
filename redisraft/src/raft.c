@@ -25,6 +25,8 @@ const char *RaftReqTypeStr[] = {
     [RR_SHARDGROUP_ADD] = "RR_SHARDGROUP_ADD",
     [RR_SHARDGROUPS_REPLACE] = "RR_SHARDGROUPS_REPLACE",
     [RR_SHARDGROUP_LINK] = "RR_SHARDGROUP_LINK",
+    [RR_SHARDGROUP_NARROW] = "RR_SHARDGROUP_NARROW",
+    [RR_SHARDGROUP_WRITE_FLIP] = "RR_SHARDGROUP_WRITE_FLIP",
     [RR_TRANSFER_LEADER] = "RR_TRANSFER_LEADER",
     [RR_IMPORT_KEYS] = "RR_IMPORT_KEYS",
     [RR_MIGRATE_KEYS] = "RR_MIGRATE_KEYS",
@@ -162,8 +164,19 @@ static KeysStatus validateKeyExistence(RedisRaftCtx *rr, RaftRedisCommandArray *
  * 3) a shardgroup marked as local (i.e. corresponding to this cluster) that owns the slot as an importing slot and
  *    has a RaftRedisCommandArray marked as asking
  */
-static ShardGroup *getSlotShardGroup(RedisRaftCtx *rr, unsigned int slot, bool asking)
+static ShardGroup *getSlotShardGroup(RedisRaftCtx *rr, unsigned int slot, bool asking, bool is_write)
 {
+    /* AqRaft Patch 13: write-flip early-redirect — writes for slots in the
+     * migration window go to the recipient external sg (-MOVED), while reads
+     * fall through to the standard stable/migrating/importing lookup so the
+     * client-side double-read protocol keeps fanning out donor + recipient. */
+    if (is_write) {
+        ShardGroup *wsg = rr->sharding_info->write_redirect_slots_map[slot];
+        if (wsg != NULL) {
+            return wsg;
+        }
+    }
+
     ShardGroup *sg = rr->sharding_info->stable_slots_map[slot];
     if (sg != NULL) {
         return sg;
@@ -190,7 +203,8 @@ static RRStatus validateRaftRedisCommandArray(RedisRaftCtx *rr, RedisModuleCtx *
     RedisModule_Assert(slot <= REDIS_RAFT_HASH_MAX_SLOT);
 
     /* Make sure hash slot is mapped and handled locally. */
-    ShardGroup *sg = getSlotShardGroup(rr, slot, cmds->asking);
+    bool is_write = (cmds->cmd_flags & CMD_SPEC_WRITE) != 0;
+    ShardGroup *sg = getSlotShardGroup(rr, slot, cmds->asking, is_write);
     if (!sg) {
         if (reply_ctx) {
             RedisModule_ReplyWithError(reply_ctx, "CLUSTERDOWN Hash slot is not served");
@@ -1070,6 +1084,9 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
         case RAFT_LOGTYPE_REPLACE_SHARDGROUPS:
             replaceShardGroups(rr, entry, req);
             break;
+        case RAFT_LOGTYPE_NARROW_LOCAL_AND_ADD_EXT:
+            narrowLocalAndAddExternal(rr, entry, req);
+            break;
         case RAFT_LOGTYPE_IMPORT_KEYS:
             importKeys(rr, entry, req);
             break;
@@ -1088,6 +1105,9 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
             break;
         case RAFT_LOGTYPE_TIMEOUT_BLOCKED:
             timeoutBlockedCommand(rr, entry, req);
+            break;
+        case RAFT_LOGTYPE_MGN_WRITE_FLIP:
+            applyWriteFlip(rr, entry, req);
             break;
         case RAFT_LOGTYPE_MGN_TXN_START:
         case RAFT_LOGTYPE_MGN_RECP_TXN_START:
@@ -1953,6 +1973,295 @@ void applyShardGroupChange(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req)
         } else {
             RedisModule_ReplyWithError(req->ctx, "ERR Invalid ShardGroup Update");
         }
+        RaftReqFree(req);
+    }
+}
+
+/* AqRaft Patch 10: apply RAFT_LOGTYPE_NARROW_LOCAL_AND_ADD_EXT.
+ *
+ * Atomically:
+ *  1. Narrows the LOCAL shardgroup's slot_ranges to the new config in the
+ *     entry payload.
+ *  2. Adds the EXTERNAL shardgroup (typically sg4) to the local
+ *     shard_group_map so subsequent CLUSTER SLOTS / MOVED responses know
+ *     where the freed slots are served.
+ *  3. Rebuilds stable_slots_map[] entries for both the old (released) and
+ *     new (claimed) ranges to ensure no stale pointers remain.
+ *
+ * Entry payload format (see ShardGroupNarrow in cluster.c):
+ *   "<new_local_cfg_len>\n<new_local_cfg>\n<ext_sg_len>\n<ext_sg_payload>\n"
+ */
+void narrowLocalAndAddExternal(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req)
+{
+    char *payload = entry->data;
+    char *nl;
+    char *endptr;
+
+    nl = memchr(payload, '\n', entry->data_len);
+    if (nl == NULL) {
+        LOG_WARNING("NARROW: malformed payload (no first newline)");
+        goto fail;
+    }
+    size_t local_cfg_len = strtoul(payload, &endptr, 10);
+    if (endptr != nl) {
+        LOG_WARNING("NARROW: malformed payload (bad local_cfg_len)");
+        goto fail;
+    }
+    char *local_cfg_str = nl + 1;
+    if (local_cfg_str + local_cfg_len + 1 > payload + entry->data_len) {
+        LOG_WARNING("NARROW: payload truncated at local_cfg");
+        goto fail;
+    }
+
+    char *after_cfg = local_cfg_str + local_cfg_len + 1;
+    nl = memchr(after_cfg, '\n', entry->data_len - (after_cfg - payload));
+    if (nl == NULL) {
+        LOG_WARNING("NARROW: malformed payload (no second newline)");
+        goto fail;
+    }
+    size_t ext_payload_len = strtoul(after_cfg, &endptr, 10);
+    if (endptr != nl) {
+        LOG_WARNING("NARROW: malformed payload (bad ext_sg_len)");
+        goto fail;
+    }
+    char *ext_payload = nl + 1;
+    if (ext_payload + ext_payload_len > payload + entry->data_len) {
+        LOG_WARNING("NARROW: payload truncated at ext_sg");
+        goto fail;
+    }
+
+    char cfg_buf[256];
+    if (local_cfg_len >= sizeof(cfg_buf)) {
+        LOG_WARNING("NARROW: local_cfg too long");
+        goto fail;
+    }
+    memcpy(cfg_buf, local_cfg_str, local_cfg_len);
+    cfg_buf[local_cfg_len] = '\0';
+    const char *colon = strchr(cfg_buf, ':');
+    if (colon == NULL) {
+        LOG_WARNING("NARROW: local_cfg missing ':'");
+        goto fail;
+    }
+    long lo = strtol(cfg_buf, &endptr, 10);
+    long hi = strtol(colon + 1, &endptr, 10);
+    if (lo < 0 || lo > REDIS_RAFT_HASH_MAX_SLOT ||
+        hi < lo || hi > REDIS_RAFT_HASH_MAX_SLOT) {
+        LOG_WARNING("NARROW: local_cfg range invalid (%ld:%ld)", lo, hi);
+        goto fail;
+    }
+
+    ShardGroup *ext_sg = ShardGroupDeserialize(ext_payload, ext_payload_len);
+    if (ext_sg == NULL) {
+        LOG_WARNING("NARROW: ext_sg deserialize failed");
+        goto fail;
+    }
+
+    ShardingInfo *si = rr->sharding_info;
+    ShardGroup *local_sg = GetShardGroupById(rr, rr->meta.dbid);
+    if (local_sg == NULL) {
+        LOG_WARNING("NARROW: no local sg in shard_group_map (dbid=%s)",
+                    rr->meta.dbid);
+        ShardGroupFree(ext_sg);
+        goto fail;
+    }
+
+    /* Clear slot maps for ALL slots local_sg owned BEFORE the narrow, and for
+     * all slots ext_sg will claim. Then we'll re-populate from the narrowed
+     * local + the new external sg. Other shardgroups (sg2, sg3) keep their
+     * slot maps intact. */
+    for (unsigned int i = 0; i < local_sg->slot_ranges_num; i++) {
+        for (unsigned int j = local_sg->slot_ranges[i].start_slot;
+             j <= local_sg->slot_ranges[i].end_slot; j++) {
+            si->stable_slots_map[j] = NULL;
+            si->migrating_slots_map[j] = NULL;
+            si->importing_slots_map[j] = NULL;
+        }
+    }
+    for (unsigned int i = 0; i < ext_sg->slot_ranges_num; i++) {
+        for (unsigned int j = ext_sg->slot_ranges[i].start_slot;
+             j <= ext_sg->slot_ranges[i].end_slot; j++) {
+            si->stable_slots_map[j] = NULL;
+            si->migrating_slots_map[j] = NULL;
+            si->importing_slots_map[j] = NULL;
+            /* AqRaft Patch 13: NARROW finalises the migration — clear the
+             * write-redirect entry; stable_slots_map[j] will now point at
+             * ext_sg directly, so the write-redirect shortcut is redundant. */
+            si->write_redirect_slots_map[j] = NULL;
+        }
+    }
+
+    /* Update local_sg's slot_ranges in place. */
+    RedisModule_Free(local_sg->slot_ranges);
+    local_sg->slot_ranges_num = 1;
+    local_sg->slot_ranges = RedisModule_Calloc(1, sizeof(ShardGroupSlotRange));
+    local_sg->slot_ranges[0].start_slot = (unsigned int) lo;
+    local_sg->slot_ranges[0].end_slot = (unsigned int) hi;
+    local_sg->slot_ranges[0].type = SLOTRANGE_TYPE_STABLE;
+    local_sg->slot_ranges[0].migration_session_key = 0;
+
+    for (unsigned int j = local_sg->slot_ranges[0].start_slot;
+         j <= local_sg->slot_ranges[0].end_slot; j++) {
+        si->stable_slots_map[j] = local_sg;
+    }
+
+    /* Idempotent re-narrow: if ext_sg id already present, replace it. */
+    {
+        ShardGroup *existing = GetShardGroupById(rr, ext_sg->id);
+        if (existing != NULL) {
+            RedisModule_DictDelC(si->shard_group_map, existing->id,
+                                 strlen(existing->id), NULL);
+            si->shard_groups_num--;
+            ShardGroupFree(existing);
+        }
+    }
+    if (ShardingInfoAddShardGroup(rr, ext_sg) != RR_OK) {
+        LOG_WARNING("NARROW: ShardingInfoAddShardGroup(ext) failed");
+        /* ext_sg already freed by ShardingInfoAddShardGroup on failure. */
+        goto fail;
+    }
+
+    LOG_NOTICE("RAFT.SHARDGROUP NARROW applied: local now %ld:%ld, ext %s added (%u slot ranges)",
+               lo, hi, ext_sg->id, ext_sg->slot_ranges_num);
+
+    if (req) {
+        RedisModule_ReplyWithSimpleString(req->ctx, "OK");
+        RaftReqFree(req);
+    }
+    return;
+
+fail:
+    if (req) {
+        RedisModule_ReplyWithError(req->ctx, "ERR narrow apply failed");
+        RaftReqFree(req);
+    }
+}
+
+/* AqRaft Patch 13: apply RAFT.SHARDGROUP WRITE_FLIP.
+ *
+ * Payload (identical format to NARROW):
+ *   "<lo:hi>\n<ext_sg_serialised_len>\n<ext_sg_serialised>\n"
+ *
+ * Semantics:
+ *   - Mark slots [lo, hi] for write-redirect to the (external) sg carried in
+ *     the payload. Future write commands for those slots get -MOVED to one of
+ *     ext_sg->nodes via the redisraft router (see getSlotShardGroup).
+ *   - Reads for the same slots are unaffected — stable_slots_map/migrating_slots_map
+ *     are NOT touched, so the donor keeps serving GETs locally and the
+ *     client-side double-read protocol can keep fanning out.
+ *   - Idempotently register ext_sg in shard_group_map WITHOUT populating any
+ *     of the stable/migrating/importing maps (we only want it reachable for
+ *     replyRedirect). NARROW later replaces this with a fully-stable entry.
+ */
+void applyWriteFlip(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req)
+{
+    char *payload = entry->data;
+    char *nl;
+    char *endptr;
+
+    nl = memchr(payload, '\n', entry->data_len);
+    if (nl == NULL) {
+        LOG_WARNING("WRITE_FLIP: malformed payload (no first newline)");
+        goto fail;
+    }
+    size_t local_cfg_len = strtoul(payload, &endptr, 10);
+    if (endptr != nl) {
+        LOG_WARNING("WRITE_FLIP: malformed payload (bad local_cfg_len)");
+        goto fail;
+    }
+    char *local_cfg_str = nl + 1;
+    if (local_cfg_str + local_cfg_len + 1 > payload + entry->data_len) {
+        LOG_WARNING("WRITE_FLIP: payload truncated at local_cfg");
+        goto fail;
+    }
+
+    char *after_cfg = local_cfg_str + local_cfg_len + 1;
+    nl = memchr(after_cfg, '\n', entry->data_len - (after_cfg - payload));
+    if (nl == NULL) {
+        LOG_WARNING("WRITE_FLIP: malformed payload (no second newline)");
+        goto fail;
+    }
+    size_t ext_payload_len = strtoul(after_cfg, &endptr, 10);
+    if (endptr != nl) {
+        LOG_WARNING("WRITE_FLIP: malformed payload (bad ext_sg_len)");
+        goto fail;
+    }
+    char *ext_payload = nl + 1;
+    if (ext_payload + ext_payload_len > payload + entry->data_len) {
+        LOG_WARNING("WRITE_FLIP: payload truncated at ext_sg");
+        goto fail;
+    }
+
+    char cfg_buf[256];
+    if (local_cfg_len >= sizeof(cfg_buf)) {
+        LOG_WARNING("WRITE_FLIP: local_cfg too long");
+        goto fail;
+    }
+    memcpy(cfg_buf, local_cfg_str, local_cfg_len);
+    cfg_buf[local_cfg_len] = '\0';
+    const char *colon = strchr(cfg_buf, ':');
+    if (colon == NULL) {
+        LOG_WARNING("WRITE_FLIP: local_cfg missing ':'");
+        goto fail;
+    }
+    long lo = strtol(cfg_buf, &endptr, 10);
+    long hi = strtol(colon + 1, &endptr, 10);
+    if (lo < 0 || lo > REDIS_RAFT_HASH_MAX_SLOT ||
+        hi < lo || hi > REDIS_RAFT_HASH_MAX_SLOT) {
+        LOG_WARNING("WRITE_FLIP: local_cfg range invalid (%ld:%ld)", lo, hi);
+        goto fail;
+    }
+
+    ShardGroup *ext_sg = ShardGroupDeserialize(ext_payload, ext_payload_len);
+    if (ext_sg == NULL) {
+        LOG_WARNING("WRITE_FLIP: ext_sg deserialize failed");
+        goto fail;
+    }
+
+    ShardingInfo *si = rr->sharding_info;
+
+    /* Idempotent ext_sg registration. If already known, free the new one and
+     * point at the existing entry; otherwise insert WITHOUT populating any of
+     * the stable/migrating/importing maps (writes-only redirect — we don't
+     * want this entry stealing read traffic). NARROW later replaces this with
+     * a fully-stable entry. */
+    ShardGroup *registered = GetShardGroupById(rr, ext_sg->id);
+    if (registered != NULL) {
+        ShardGroupFree(ext_sg);
+        ext_sg = registered;
+    } else {
+        if (strlen(ext_sg->id) >= sizeof(ext_sg->id)) {
+            ShardGroupFree(ext_sg);
+            goto fail;
+        }
+        if (RedisModule_DictSetC(si->shard_group_map, ext_sg->id,
+                                 strlen(ext_sg->id), ext_sg) != REDISMODULE_OK) {
+            ShardGroupFree(ext_sg);
+            goto fail;
+        }
+        si->shard_groups_num++;
+        ext_sg->next_redir = 0;
+        ext_sg->use_conn_addr = false;
+        ext_sg->node_conn_idx = 0;
+        ext_sg->conn = NULL;
+        registered = ext_sg;
+    }
+
+    for (long j = lo; j <= hi; j++) {
+        si->write_redirect_slots_map[j] = registered;
+    }
+
+    LOG_NOTICE("RAFT.SHARDGROUP WRITE_FLIP applied: write-redirect %ld..%ld -> ext %s",
+               lo, hi, registered->id);
+
+    if (req) {
+        RedisModule_ReplyWithSimpleString(req->ctx, "OK");
+        RaftReqFree(req);
+    }
+    return;
+
+fail:
+    if (req) {
+        RedisModule_ReplyWithError(req->ctx, "ERR write-flip apply failed");
         RaftReqFree(req);
     }
 }
