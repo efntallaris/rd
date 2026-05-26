@@ -3476,12 +3476,22 @@ void rdmaReshardRecvFlipCommand(client *c) {
         return;
     }
 
+    /* In AqRaft, the source is a redisraft donor whose synthesized node id
+     * ("AQRAFT_…") is not in this recipient's vanilla gossip — clusterLookupNode
+     * returns NULL. Two cases:
+     *   - src_node != NULL: vanilla→vanilla migration, set the importing_from
+     *     marker so the v2 -ASK-on-miss predicate in getNodeByQuery() works.
+     *   - src_node == NULL (AqRaft): skip importing_slots_from[] (the ASK-back
+     *     redirect for in-flight reads of moved keys is the only thing lost;
+     *     misses on the recipient just fall through, and the chain delivers
+     *     post-FLIP keys to followers via the chain code separately). */
     clusterNode *src_node = clusterLookupNode(src_id_str, CLUSTER_NAMELEN);
-    if (src_node == NULL) {
-        addReplyErrorFormat(c,
-            "RESHARD-RECV-FLIP: source %s not in local cluster view "
-            "(have you done CLUSTER MEET?)", src_id_str);
-        return;
+    int aqraft_src = (src_node == NULL);
+    if (aqraft_src) {
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD-RECV-FLIP: source %s not in local cluster gossip — "
+            "treating as AqRaft donor (skipping importing_slots_from tracking)",
+            src_id_str);
     }
 
     int flipped = 0;
@@ -3502,8 +3512,11 @@ void rdmaReshardRecvFlipCommand(client *c) {
         int slot = (int) slot_ll;
 
         /* 1. Set importing marker first — the v2 -ASK-on-miss predicate
-         *    in getNodeByQuery() keys off getImportingSlotSource(slot). */
-        server.cluster->importing_slots_from[slot] = src_node;
+         *    in getNodeByQuery() keys off getImportingSlotSource(slot).
+         *    Skipped in AqRaft mode (src_node == NULL). */
+        if (!aqraft_src) {
+            server.cluster->importing_slots_from[slot] = src_node;
+        }
 
         /* 2. Take ownership of the slot. */
         clusterDelSlot(slot);
@@ -3512,8 +3525,8 @@ void rdmaReshardRecvFlipCommand(client *c) {
         flipped++;
 
         serverLog(LL_NOTICE,
-            "RDMA RESHARD-RECV-FLIP: slot=%d imported from %s, ownership claimed",
-            slot, src_id_str);
+            "RDMA RESHARD-RECV-FLIP: slot=%d imported from %s, ownership claimed%s",
+            slot, src_id_str, aqraft_src ? " (AqRaft: no ASK fallback)" : "");
     }
     clusterTopoUnlock();
 
