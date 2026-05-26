@@ -3476,23 +3476,38 @@ void rdmaReshardRecvFlipCommand(client *c) {
         return;
     }
 
-    if (server.cluster == NULL || server.cluster->myself == NULL) {
+    /* Recipient mode:
+     *   - server.cluster != NULL: vanilla cluster recipient. Take slot
+     *     ownership via the legacy cluster tables (clusterDel/AddSlot).
+     *   - server.cluster == NULL but rdma-migration-redisraft-mode: AqRaft
+     *     redisraft recipient. Slot ownership lives in raft.slot-config
+     *     (sg4 owns 0:16383 already); cluster tables don't exist. Skip
+     *     the cluster-table mutations and only update the aqueduct
+     *     slot-state machine below.
+     *   - Neither: error. */
+    int aqraft_recipient = (server.cluster == NULL);
+    if (aqraft_recipient && !(server.rdma_migration_redisraft_mode &&
+                              server.rdma_migration_redisraft_slots != NULL &&
+                              sdslen(server.rdma_migration_redisraft_slots) > 0)) {
         addReplyError(c, "cluster mode not enabled on this node");
         return;
     }
 
     /* In AqRaft, the source is a redisraft donor whose synthesized node id
-     * ("AQRAFT_…") is not in this recipient's vanilla gossip — clusterLookupNode
+     * ("AQRAFT_…") is not in this recipient's gossip — clusterLookupNode
      * returns NULL. Two cases:
      *   - src_node != NULL: vanilla→vanilla migration, set the importing_from
      *     marker so the v2 -ASK-on-miss predicate in getNodeByQuery() works.
-     *   - src_node == NULL (AqRaft): skip importing_slots_from[] (the ASK-back
+     *   - src_node == NULL: skip importing_slots_from[] (the ASK-back
      *     redirect for in-flight reads of moved keys is the only thing lost;
      *     misses on the recipient just fall through, and the chain delivers
      *     post-FLIP keys to followers via the chain code separately). */
-    clusterNode *src_node = clusterLookupNode(src_id_str, CLUSTER_NAMELEN);
+    clusterNode *src_node = NULL;
+    if (!aqraft_recipient) {
+        src_node = clusterLookupNode(src_id_str, CLUSTER_NAMELEN);
+    }
     int aqraft_src = (src_node == NULL);
-    if (aqraft_src) {
+    if (aqraft_src && !aqraft_recipient) {
         serverLog(LL_NOTICE,
             "RDMA RESHARD-RECV-FLIP: source %s not in local cluster gossip — "
             "treating as AqRaft donor (skipping importing_slots_from tracking)",
@@ -3503,13 +3518,14 @@ void rdmaReshardRecvFlipCommand(client *c) {
     /* Multi-slot mutation across user-supplied slot list. Topology wrlock
      * for the whole loop; the early-return on bad-slot must drop the lock
      * (pre-existing bug: slots already flipped before the bad one stay
-     * flipped — not addressed here). */
-    clusterTopoLockWrite();
+     * flipped — not addressed here). AqRaft recipient: no cluster table,
+     * no lock needed. */
+    if (!aqraft_recipient) clusterTopoLockWrite();
     for (int j = 3; j < c->argc; j++) {
         long long slot_ll;
         if (getLongLongFromObject(c->argv[j], &slot_ll) != C_OK ||
             slot_ll < 0 || slot_ll >= CLUSTER_SLOTS) {
-            clusterTopoUnlock();
+            if (!aqraft_recipient) clusterTopoUnlock();
             addReplyErrorFormat(c, "RESHARD-RECV-FLIP: bad slot %s",
                                 (char *) c->argv[j]->ptr);
             return;
@@ -3518,22 +3534,26 @@ void rdmaReshardRecvFlipCommand(client *c) {
 
         /* 1. Set importing marker first — the v2 -ASK-on-miss predicate
          *    in getNodeByQuery() keys off getImportingSlotSource(slot).
-         *    Skipped in AqRaft mode (src_node == NULL). */
-        if (!aqraft_src) {
-            server.cluster->importing_slots_from[slot] = src_node;
+         *    Skipped in AqRaft mode (src_node == NULL OR recipient is AqRaft).
+         * 2. Take ownership of the slot.
+         * Both skipped for AqRaft recipient — redisraft already owns this. */
+        if (!aqraft_recipient) {
+            if (!aqraft_src) {
+                server.cluster->importing_slots_from[slot] = src_node;
+            }
+            clusterDelSlot(slot);
+            clusterAddSlot(server.cluster->myself, slot);
         }
-
-        /* 2. Take ownership of the slot. */
-        clusterDelSlot(slot);
-        clusterAddSlot(server.cluster->myself, slot);
 
         flipped++;
 
         serverLog(LL_NOTICE,
             "RDMA RESHARD-RECV-FLIP: slot=%d imported from %s, ownership claimed%s",
-            slot, src_id_str, aqraft_src ? " (AqRaft: no ASK fallback)" : "");
+            slot, src_id_str,
+            aqraft_recipient ? " (AqRaft recipient: raft.slot-config owns it)"
+                             : (aqraft_src ? " (AqRaft: no ASK fallback)" : ""));
     }
-    clusterTopoUnlock();
+    if (!aqraft_recipient) clusterTopoUnlock();
 
     /* Aqueduct slot-state: recipient now owns the slots cleanly, clear
      * MIGRATING and return to STABLE. (Originally we tried deferring this
@@ -3903,9 +3923,30 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
                                   sds *err_out) {
     pthread_mutex_lock(&L->mu);
 
+    /* Probe the recipient's node id via CLUSTER MYID. On an AqRaft redisraft
+     * recipient (cluster_enabled=no), CLUSTER MYID returns ERR Unknown
+     * subcommand — we synthesize a placeholder recipient_id since the value
+     * is only consumed by clusterLookupNode/clusterAddSlot which we skip
+     * when server.cluster is NULL on the donor. The recipient itself doesn't
+     * inspect this id either (RESHARD-RECV-FLIP only validates length). */
     redisReply *r = redisCommand(L->ctrl, "CLUSTER MYID");
-    if (r == NULL || r->type != REDIS_REPLY_STRING ||
-        (int) strlen(r->str) < CLUSTER_NAMELEN) {
+    char recipient_id[CLUSTER_NAMELEN + 1];
+    int recipient_id_synthesized = 0;
+    if (r != NULL && r->type == REDIS_REPLY_STRING &&
+        (int) strlen(r->str) >= CLUSTER_NAMELEN) {
+        memcpy(recipient_id, r->str, CLUSTER_NAMELEN);
+        recipient_id[CLUSTER_NAMELEN] = '\0';
+    } else if (server.cluster == NULL) {
+        /* AqRaft donor + AqRaft recipient: synthesize a fixed-length opaque
+         * placeholder; the recipient only validates length, the donor only
+         * uses it for clusterLookupNode (skipped under server.cluster==NULL). */
+        snprintf(recipient_id, sizeof(recipient_id),
+                 "AQRECP_%s", "ppppppppppppppppppppppppppppppppp");
+        recipient_id[CLUSTER_NAMELEN] = '\0';
+        recipient_id_synthesized = 1;
+        serverLog(LL_NOTICE,
+            "FLIP: CLUSTER MYID unsupported on AqRaft recipient — using placeholder id");
+    } else {
         const char *why = r == NULL ? "hiredis_null"
                         : r->type == REDIS_REPLY_ERROR ? "redis_error"
                         : r->type == REDIS_REPLY_NIL   ? "nil_reply"
@@ -3919,10 +3960,8 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
         pthread_mutex_unlock(&L->mu);
         return -1;
     }
-    char recipient_id[CLUSTER_NAMELEN + 1];
-    memcpy(recipient_id, r->str, CLUSTER_NAMELEN);
-    recipient_id[CLUSTER_NAMELEN] = '\0';
-    freeReplyObject(r);
+    if (r) freeReplyObject(r);
+    (void) recipient_id_synthesized;
 
     /* recipient_node only needed for the local clusterDelSlot/AddSlot flip;
      * in AqRaft mode (server.cluster == NULL) we skip that step entirely

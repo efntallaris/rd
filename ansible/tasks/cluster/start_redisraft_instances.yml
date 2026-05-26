@@ -4,7 +4,11 @@
 # migration recipient is a separate vanilla cluster — see add_migrate_nodes.yml.
 # Persistence is owned by RedisRaft (raft.db); RDB/AOF are disabled.
 - name: "Start RedisRaft instances"
-  hosts: redis_masters
+  # Includes the migration recipient cluster (sg4 nodes redis3 + redis4 +
+  # ycsb1) so all four shardgroups boot from one place. Per-host membership
+  # is gated below by `when: inventory_hostname in (sg.nodes ...)` so each
+  # box only starts its own shardgroup instances.
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
   become: yes
   tasks:
     - name: Bump open-files ulimit

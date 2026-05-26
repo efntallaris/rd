@@ -131,6 +131,8 @@ static const CommandSpec commands[] = {
     {"rdma|reshard-transfer",       CMD_SPEC_DONT_INTERCEPT                      },
     {"rdma|transfer-slots",         CMD_SPEC_DONT_INTERCEPT                      },
     {"rdma|done-slots",             CMD_SPEC_DONT_INTERCEPT                      },
+    {"rdma|done-slots-init",        CMD_SPEC_DONT_INTERCEPT                      },
+    {"rdma|done-slots-chunk",       CMD_SPEC_DONT_INTERCEPT                      },
     {"rdma|backpatch-status",       CMD_SPEC_DONT_INTERCEPT                      },
     {"raft.scan",                   CMD_SPEC_READONLY                            },
     {"client",                      CMD_SPEC_SUBCOMMAND | CMD_SPEC_DONT_INTERCEPT},

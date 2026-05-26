@@ -18,7 +18,9 @@
 - import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
 - import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
 - import_playbook: ../../tasks/ycsb/load_ycsb.yml
-- import_playbook: ../../tasks/cluster/add_migrate_nodes.yml
+# Recipient is sg4 (redisraft cluster on redis3 + redis4 + ycsb1) brought
+# up alongside sg1/2/3 above. The legacy add_migrate_nodes vanilla-cluster
+# setup is no longer needed; sg4 owns 0:16383 from raft.slot-config.
 - import_playbook: ../../tasks/monitor/start_monitoring.yml
 - import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
 - import_playbook: ../../tasks/cluster/pause_pre_reshard.yml

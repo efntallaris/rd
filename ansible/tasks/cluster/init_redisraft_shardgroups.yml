@@ -107,6 +107,10 @@
         link_specs: []
 
     - name: Build link spec for each (src, dst) shardgroup pair
+      # sg4 is the migration recipient — a SEPARATE redisraft cluster from
+      # sg1/2/3. It owns 0:16383 in its own slot-config; if we LINKed it
+      # to sg1/2/3 the donor cluster would refuse the overlapping slot
+      # ranges. So skip any pair touching sg4.
       set_fact:
         link_specs: >-
           {{
@@ -123,7 +127,10 @@
       loop: "{{ redisraft_shardgroups | product(redisraft_shardgroups) | list }}"
       loop_control:
         label: "{{ item[0].id }} -> {{ item[1].id }}"
-      when: item[0].id != item[1].id
+      when:
+        - item[0].id != item[1].id
+        - item[0].id != 'sg4'
+        - item[1].id != 'sg4'
 
     - name: RAFT.SHARDGROUP LINK each pair (sequential, with settle)
       shell: |

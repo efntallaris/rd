@@ -19,11 +19,12 @@
 
     - name: Build redisraft.so
       command: cmake --build {{ redisraft_src }}/build -j
-      args:
-        creates: "{{ redisraft_module }}"
+      changed_when: true
 
 - name: "Distribute redisraft.so to all redis hosts"
-  hosts: redis_masters
+  # Recipient cluster (sg4 on redis3/4/ycsb1) also loads redisraft.so so
+  # MGN_INDX_UPD / MGN_RECP_TXN_DONE protocol-log appends work there too.
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
   become: yes
   tasks:
     - name: Stat module on control node

@@ -88,3 +88,19 @@ redisraft_shardgroups:
         raft_id: 2
       - host: redis1
         raft_id: 3
+  # sg4: migration recipient cluster — a SEPARATE redisraft cluster from
+  # sg1/2/3 (no RAFT.SHARDGROUP LINK between them). Owns the full slot
+  # space (0:16383) so migrations from any donor shardgroup can target it
+  # without slot-range conflicts. The 3 nodes form sg4's raft replica set;
+  # redis3 is initial leader, redis4 + ycsb1 are followers that consume
+  # chain-delivered RDMA buffers via wrapped body-less AppendEntries.
+  - id: sg4
+    port: 8000
+    slot_config: "0:16383"
+    nodes:
+      - host: redis3
+        raft_id: 1
+      - host: redis4
+        raft_id: 2
+      - host: ycsb1
+        raft_id: 3
