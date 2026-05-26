@@ -4021,14 +4021,12 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
     pthread_mutex_lock(&L->mu);
 
     /* Cache the (src_id, mig_id) string forms once — used by both code paths,
-     * and (for overlap) by every CHUNK RPC. */
+     * and (for overlap) by every CHUNK RPC. MUST match what the BACKPATCH-STATUS
+     * poller in migrationWorker uses (rdmaMigrationSelfName) so the recipient's
+     * batch dict key — built from this src_id on DONE-SLOTS-INIT — matches the
+     * key the donor later polls under. */
     char src_id[CLUSTER_NAMELEN + 1];
-    if (server.cluster != NULL && server.cluster->myself != NULL) {
-        memcpy(src_id, server.cluster->myself->name, CLUSTER_NAMELEN);
-    } else {
-        memset(src_id, 0, sizeof(src_id));
-    }
-    src_id[CLUSTER_NAMELEN] = '\0';
+    rdmaMigrationSelfName(src_id);
     char migid_buf[24];
     int migid_len = snprintf(migid_buf, sizeof(migid_buf), "%lld", mig_id);
 
@@ -4273,9 +4271,9 @@ static void migNotifyOrchestratorIfAny(rdmaMigration *mig,
         return;
     }
 
-    /* Best-effort node id: copy our own. */
-    const char *my_id = (server.cluster && server.cluster->myself)
-                       ? server.cluster->myself->name : "?";
+    /* Best-effort node id: copy our own (AqRaft-mode synth if cluster==NULL). */
+    char my_id[CLUSTER_NAMELEN + 1];
+    rdmaMigrationSelfName(my_id);
 
     struct timeval tv = {.tv_sec = 2, .tv_usec = 0};
     redisContext *cc = redisConnectWithTimeout(host_buf, port, tv);
@@ -4499,10 +4497,14 @@ static void *migrationWorker(void *arg) {
      * Direct byte-write rather than per-slot slotMigStateSet to avoid 1365
      * lock cycles racing with the donor's main thread serving live client
      * traffic. */
-    for (int i = 0; i < mig->n_slots; i++) {
-        int s = mig->chosen[i];
-        server.cluster->slot_mig_state[s] = (uint8_t) SLOT_STATE_STABLE;
-        server.cluster->slot_peer_endpoint[s][0] = '\0';
+    /* Slot-meta cleanup is a vanilla-cluster concept; AqRaft donors (no
+     * server.cluster) don't maintain slot_mig_state / slot_peer_endpoint. */
+    if (server.cluster != NULL) {
+        for (int i = 0; i < mig->n_slots; i++) {
+            int s = mig->chosen[i];
+            server.cluster->slot_mig_state[s] = (uint8_t) SLOT_STATE_STABLE;
+            server.cluster->slot_peer_endpoint[s][0] = '\0';
+        }
     }
 
     /* NOTE: previously cleared migrating_slots_to[] here to close the
