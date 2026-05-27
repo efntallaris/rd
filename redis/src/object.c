@@ -442,6 +442,15 @@ robj *dupStringObject(const robj *o) {
         d->encoding = OBJ_ENCODING_INT;
         d->ptr = o->ptr;
         return d;
+    case OBJ_ENCODING_R_ALLOCATOR:
+        /* AqRaft Patch 14: r_allocator-backed kvobj. The value sds lives
+         * inside an r_allocator segment (not jemalloc), so we can't share
+         * the pointer with a new robj — the segment may be coalesced/freed
+         * when the original kvobj is decrRef'd. Copy the bytes out into a
+         * fresh RAW string so the duplicate has independent jemalloc
+         * lifetime. Callers: slowlogCreateEntry (argv copy on slow command),
+         * lazyfree (deferred reply bulkStrRef dup), COPY command, etc. */
+        return createRawStringObject(o->ptr, sdslen(o->ptr));
     default:
         serverPanic("Wrong encoding.");
         break;
