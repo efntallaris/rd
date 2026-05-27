@@ -1,0 +1,719 @@
+/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+Command line: -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+2026-05-26 21:14:06:675 0 sec: 0 operations; est completion in 0 second 
+2026-05-26 21:14:06:675 0 sec: 0 operations; est completion in 0 second 
+2026-05-26 21:14:07:638 1 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:07:638 1 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:08:639 2 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:08:639 2 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:09:638 3 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:09:638 3 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:10:638 4 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:10:638 4 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:11:638 5 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:11:638 5 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:12:638 6 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:14:12:638 6 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-05-26 21:14:13:638 7 sec: 39254 operations; 39254 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=410.23] [UPDATE AverageLatency(us)=1406.2] 
+2026-05-26 21:14:13:638 7 sec: 39254 operations; 39254 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=410.23] [UPDATE AverageLatency(us)=1406.2] 
+2026-05-26 21:14:14:638 8 sec: 93008 operations; 53754 current ops/sec; est completion in 14 minutes [READ AverageLatency(us)=435.37] [UPDATE AverageLatency(us)=1409.44] 
+2026-05-26 21:14:14:638 8 sec: 93008 operations; 53754 current ops/sec; est completion in 14 minutes [READ AverageLatency(us)=435.37] [UPDATE AverageLatency(us)=1409.44] 
+2026-05-26 21:14:15:639 9 sec: 146884 operations; 53876 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=445.97] [UPDATE AverageLatency(us)=1407.28] 
+2026-05-26 21:14:15:639 9 sec: 146884 operations; 53876 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=445.97] [UPDATE AverageLatency(us)=1407.28] 
+2026-05-26 21:14:16:638 10 sec: 202586 operations; 55702 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=427.87] [UPDATE AverageLatency(us)=1355.74] 
+2026-05-26 21:14:16:638 10 sec: 202586 operations; 55702 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=427.87] [UPDATE AverageLatency(us)=1355.74] 
+2026-05-26 21:14:17:638 11 sec: 258650 operations; 56064 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=434.02] [UPDATE AverageLatency(us)=1347.7] 
+2026-05-26 21:14:17:638 11 sec: 258650 operations; 56064 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=434.02] [UPDATE AverageLatency(us)=1347.7] 
+2026-05-26 21:14:18:638 12 sec: 316244 operations; 57594 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=421.04] [UPDATE AverageLatency(us)=1301.78] 
+2026-05-26 21:14:18:638 12 sec: 316244 operations; 57594 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=421.04] [UPDATE AverageLatency(us)=1301.78] 
+2026-05-26 21:14:19:638 13 sec: 373587 operations; 57343 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=423.98] [UPDATE AverageLatency(us)=1309.59] 
+2026-05-26 21:14:19:638 13 sec: 373587 operations; 57343 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=423.98] [UPDATE AverageLatency(us)=1309.59] 
+2026-05-26 21:14:20:638 14 sec: 431618 operations; 58031 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=413.02] [UPDATE AverageLatency(us)=1302.31] 
+2026-05-26 21:14:20:638 14 sec: 431618 operations; 58031 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=413.02] [UPDATE AverageLatency(us)=1302.31] 
+2026-05-26 21:14:21:638 15 sec: 487862 operations; 56244 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=419.5] [UPDATE AverageLatency(us)=1348.75] 
+2026-05-26 21:14:21:638 15 sec: 487862 operations; 56244 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=419.5] [UPDATE AverageLatency(us)=1348.75] 
+2026-05-26 21:14:22:638 16 sec: 543824 operations; 55962 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=426.76] [UPDATE AverageLatency(us)=1355.31] 
+2026-05-26 21:14:22:638 16 sec: 543824 operations; 55962 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=426.76] [UPDATE AverageLatency(us)=1355.31] 
+2026-05-26 21:14:23:638 17 sec: 599577 operations; 55753 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=421.29] [UPDATE AverageLatency(us)=1364.08] 
+2026-05-26 21:14:23:638 17 sec: 599577 operations; 55753 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=421.29] [UPDATE AverageLatency(us)=1364.08] 
+2026-05-26 21:14:24:639 18 sec: 655707 operations; 56130 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=422.96] [UPDATE AverageLatency(us)=1350.86] 
+2026-05-26 21:14:24:639 18 sec: 655707 operations; 56130 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=422.96] [UPDATE AverageLatency(us)=1350.86] 
+2026-05-26 21:14:25:638 19 sec: 713075 operations; 57368 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=424.1] [UPDATE AverageLatency(us)=1307.97] 
+2026-05-26 21:14:25:638 19 sec: 713075 operations; 57368 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=424.1] [UPDATE AverageLatency(us)=1307.97] 
+2026-05-26 21:14:26:639 20 sec: 748180 operations; 35105 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=985.16] [UPDATE AverageLatency(us)=1856.6] 
+2026-05-26 21:14:26:639 20 sec: 748180 operations; 35105 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=985.16] [UPDATE AverageLatency(us)=1856.6] 
+2026-05-26 21:14:27:639 21 sec: 806068 operations; 57888 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=422.17] [UPDATE AverageLatency(us)=1296.4] 
+2026-05-26 21:14:27:639 21 sec: 806068 operations; 57888 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=422.17] [UPDATE AverageLatency(us)=1296.4] 
+2026-05-26 21:14:28:638 22 sec: 865243 operations; 59175 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=420.43] [UPDATE AverageLatency(us)=1261.94] 
+2026-05-26 21:14:28:638 22 sec: 865243 operations; 59175 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=420.43] [UPDATE AverageLatency(us)=1261.94] 
+2026-05-26 21:14:29:638 23 sec: 922127 operations; 56884 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=426.4] [UPDATE AverageLatency(us)=1325.5] 
+2026-05-26 21:14:29:638 23 sec: 922127 operations; 56884 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=426.4] [UPDATE AverageLatency(us)=1325.5] 
+2026-05-26 21:14:30:638 24 sec: 980268 operations; 58141 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=421.11] [UPDATE AverageLatency(us)=1293.13] 
+2026-05-26 21:14:30:638 24 sec: 980268 operations; 58141 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=421.11] [UPDATE AverageLatency(us)=1293.13] 
+2026-05-26 21:14:31:638 25 sec: 1039774 operations; 59506 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=411.41] [UPDATE AverageLatency(us)=1260.99] 
+2026-05-26 21:14:31:638 25 sec: 1039774 operations; 59506 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=411.41] [UPDATE AverageLatency(us)=1260.99] 
+2026-05-26 21:14:32:638 26 sec: 1098063 operations; 58289 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=417.04] [UPDATE AverageLatency(us)=1280.39] 
+2026-05-26 21:14:32:638 26 sec: 1098063 operations; 58289 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=417.04] [UPDATE AverageLatency(us)=1280.39] 
+2026-05-26 21:14:33:638 27 sec: 1156951 operations; 58888 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.55] [UPDATE AverageLatency(us)=1275.18] 
+2026-05-26 21:14:33:638 27 sec: 1156951 operations; 58888 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.55] [UPDATE AverageLatency(us)=1275.18] 
+2026-05-26 21:14:34:638 28 sec: 1213929 operations; 56978 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.19] [UPDATE AverageLatency(us)=1322.98] 
+2026-05-26 21:14:34:638 28 sec: 1213929 operations; 56978 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.19] [UPDATE AverageLatency(us)=1322.98] 
+2026-05-26 21:14:35:638 29 sec: 1271766 operations; 57837 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=426.85] [UPDATE AverageLatency(us)=1298.92] 
+2026-05-26 21:14:35:638 29 sec: 1271766 operations; 57837 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=426.85] [UPDATE AverageLatency(us)=1298.92] 
+2026-05-26 21:14:36:638 30 sec: 1329872 operations; 58106 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=419.51] [UPDATE AverageLatency(us)=1288.28] 
+2026-05-26 21:14:36:638 30 sec: 1329872 operations; 58106 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=419.51] [UPDATE AverageLatency(us)=1288.28] 
+2026-05-26 21:14:37:638 31 sec: 1385853 operations; 55981 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=437.48] [UPDATE AverageLatency(us)=1335.45] 
+2026-05-26 21:14:37:638 31 sec: 1385853 operations; 55981 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=437.48] [UPDATE AverageLatency(us)=1335.45] 
+2026-05-26 21:14:38:638 32 sec: 1442602 operations; 56749 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=424.03] [UPDATE AverageLatency(us)=1317.7] 
+2026-05-26 21:14:38:638 32 sec: 1442602 operations; 56749 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=424.03] [UPDATE AverageLatency(us)=1317.7] 
+2026-05-26 21:14:39:638 33 sec: 1500068 operations; 57466 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=424.29] [UPDATE AverageLatency(us)=1310.21] 
+2026-05-26 21:14:39:638 33 sec: 1500068 operations; 57466 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=424.29] [UPDATE AverageLatency(us)=1310.21] 
+2026-05-26 21:14:40:638 34 sec: 1541494 operations; 41426 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=554.48] [UPDATE AverageLatency(us)=1856.5] 
+2026-05-26 21:14:40:638 34 sec: 1541494 operations; 41426 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=554.48] [UPDATE AverageLatency(us)=1856.5] 
+2026-05-26 21:14:41:638 35 sec: 1590679 operations; 49185 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=466.56] [UPDATE AverageLatency(us)=1559.07] 
+2026-05-26 21:14:41:638 35 sec: 1590679 operations; 49185 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=466.56] [UPDATE AverageLatency(us)=1559.07] 
+2026-05-26 21:14:42:638 36 sec: 1645619 operations; 54940 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=444.78] [UPDATE AverageLatency(us)=1370.04] 
+2026-05-26 21:14:42:638 36 sec: 1645619 operations; 54940 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=444.78] [UPDATE AverageLatency(us)=1370.04] 
+2026-05-26 21:14:43:638 37 sec: 1698130 operations; 52511 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.39] [UPDATE AverageLatency(us)=1414.18] 
+2026-05-26 21:14:43:638 37 sec: 1698130 operations; 52511 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.39] [UPDATE AverageLatency(us)=1414.18] 
+2026-05-26 21:14:44:638 38 sec: 1700224 operations; 2094 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=19670.19] [UPDATE AverageLatency(us)=24614.34] 
+2026-05-26 21:14:44:638 38 sec: 1700224 operations; 2094 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=19670.19] [UPDATE AverageLatency(us)=24614.34] 
+2026-05-26 21:14:45:638 39 sec: 1751306 operations; 51082 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=433.63] [UPDATE AverageLatency(us)=1520.39] 
+2026-05-26 21:14:45:638 39 sec: 1751306 operations; 51082 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=433.63] [UPDATE AverageLatency(us)=1520.39] 
+2026-05-26 21:14:46:638 40 sec: 1803191 operations; 51885 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=482.29] [UPDATE AverageLatency(us)=1434.4] 
+2026-05-26 21:14:46:638 40 sec: 1803191 operations; 51885 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=482.29] [UPDATE AverageLatency(us)=1434.4] 
+2026-05-26 21:14:47:638 41 sec: 1859109 operations; 55918 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=432.05] [UPDATE AverageLatency(us)=1347.41] 
+2026-05-26 21:14:47:638 41 sec: 1859109 operations; 55918 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=432.05] [UPDATE AverageLatency(us)=1347.41] 
+2026-05-26 21:14:48:638 42 sec: 1913785 operations; 54676 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=436.79] [UPDATE AverageLatency(us)=1381.27] 
+2026-05-26 21:14:48:638 42 sec: 1913785 operations; 54676 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=436.79] [UPDATE AverageLatency(us)=1381.27] 
+2026-05-26 21:14:49:638 43 sec: 1969102 operations; 55317 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=430.73] [UPDATE AverageLatency(us)=1368.78] 
+2026-05-26 21:14:49:638 43 sec: 1969102 operations; 55317 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=430.73] [UPDATE AverageLatency(us)=1368.78] 
+2026-05-26 21:14:50:638 44 sec: 2024004 operations; 54902 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=433.37] [UPDATE AverageLatency(us)=1377.98] 
+2026-05-26 21:14:50:638 44 sec: 2024004 operations; 54902 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=433.37] [UPDATE AverageLatency(us)=1377.98] 
+2026-05-26 21:14:51:638 45 sec: 2079793 operations; 55789 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=433.05] [UPDATE AverageLatency(us)=1356.91] 
+2026-05-26 21:14:51:638 45 sec: 2079793 operations; 55789 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=433.05] [UPDATE AverageLatency(us)=1356.91] 
+2026-05-26 21:14:52:638 46 sec: 2133224 operations; 53431 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=455.68] [UPDATE AverageLatency(us)=1407.42] 
+2026-05-26 21:14:52:638 46 sec: 2133224 operations; 53431 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=455.68] [UPDATE AverageLatency(us)=1407.42] 
+2026-05-26 21:14:53:638 47 sec: 2189371 operations; 56147 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.46] [UPDATE AverageLatency(us)=1347.57] 
+2026-05-26 21:14:53:638 47 sec: 2189371 operations; 56147 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.46] [UPDATE AverageLatency(us)=1347.57] 
+2026-05-26 21:14:54:638 48 sec: 2245369 operations; 55998 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=426.51] [UPDATE AverageLatency(us)=1345.95] 
+2026-05-26 21:14:54:638 48 sec: 2245369 operations; 55998 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=426.51] [UPDATE AverageLatency(us)=1345.95] 
+2026-05-26 21:14:55:638 49 sec: 2301540 operations; 56171 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.12] [UPDATE AverageLatency(us)=1344.06] 
+2026-05-26 21:14:55:638 49 sec: 2301540 operations; 56171 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.12] [UPDATE AverageLatency(us)=1344.06] 
+2026-05-26 21:14:56:638 50 sec: 2358108 operations; 56568 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=423.31] [UPDATE AverageLatency(us)=1342.19] 
+2026-05-26 21:14:56:638 50 sec: 2358108 operations; 56568 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=423.31] [UPDATE AverageLatency(us)=1342.19] 
+2026-05-26 21:14:57:638 51 sec: 2411339 operations; 53231 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=444.34] [UPDATE AverageLatency(us)=1425.66] 
+2026-05-26 21:14:57:638 51 sec: 2411339 operations; 53231 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=444.34] [UPDATE AverageLatency(us)=1425.66] 
+2026-05-26 21:14:58:639 52 sec: 2466063 operations; 54724 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=429.18] [UPDATE AverageLatency(us)=1386.48] 
+2026-05-26 21:14:58:639 52 sec: 2466063 operations; 54724 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=429.18] [UPDATE AverageLatency(us)=1386.48] 
+2026-05-26 21:14:59:638 53 sec: 2521718 operations; 55655 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.01] [UPDATE AverageLatency(us)=1355.25] 
+2026-05-26 21:14:59:638 53 sec: 2521718 operations; 55655 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.01] [UPDATE AverageLatency(us)=1355.25] 
+2026-05-26 21:15:00:638 54 sec: 2576415 operations; 54697 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=427.67] [UPDATE AverageLatency(us)=1390.68] 
+2026-05-26 21:15:00:638 54 sec: 2576415 operations; 54697 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=427.67] [UPDATE AverageLatency(us)=1390.68] 
+2026-05-26 21:15:01:638 55 sec: 2630768 operations; 54353 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=435.37] [UPDATE AverageLatency(us)=1398.41] 
+2026-05-26 21:15:01:638 55 sec: 2630768 operations; 54353 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=435.37] [UPDATE AverageLatency(us)=1398.41] 
+2026-05-26 21:15:02:638 56 sec: 2684698 operations; 53930 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=440.18] [UPDATE AverageLatency(us)=1411.77] 
+2026-05-26 21:15:02:638 56 sec: 2684698 operations; 53930 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=440.18] [UPDATE AverageLatency(us)=1411.77] 
+2026-05-26 21:15:03:639 57 sec: 2740537 operations; 55839 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.8] [UPDATE AverageLatency(us)=1358.89] 
+2026-05-26 21:15:03:639 57 sec: 2740537 operations; 55839 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.8] [UPDATE AverageLatency(us)=1358.89] 
+2026-05-26 21:15:04:638 58 sec: 2796664 operations; 56127 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=429.05] [UPDATE AverageLatency(us)=1344.02] 
+2026-05-26 21:15:04:638 58 sec: 2796664 operations; 56127 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=429.05] [UPDATE AverageLatency(us)=1344.02] 
+2026-05-26 21:15:05:638 59 sec: 2852718 operations; 56054 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.99] [UPDATE AverageLatency(us)=1351.93] 
+2026-05-26 21:15:05:638 59 sec: 2852718 operations; 56054 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.99] [UPDATE AverageLatency(us)=1351.93] 
+2026-05-26 21:15:06:639 60 sec: 2902573 operations; 49855 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=453.61] [UPDATE AverageLatency(us)=1541.75] 
+2026-05-26 21:15:06:639 60 sec: 2902573 operations; 49855 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=453.61] [UPDATE AverageLatency(us)=1541.75] 
+2026-05-26 21:15:07:638 61 sec: 2954795 operations; 52222 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=457.71] [UPDATE AverageLatency(us)=1449.28] 
+2026-05-26 21:15:07:638 61 sec: 2954795 operations; 52222 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=457.71] [UPDATE AverageLatency(us)=1449.28] 
+2026-05-26 21:15:08:638 62 sec: 3009629 operations; 54834 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.99] [UPDATE AverageLatency(us)=1327.72] 
+2026-05-26 21:15:08:638 62 sec: 3009629 operations; 54834 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.99] [UPDATE AverageLatency(us)=1327.72] 
+2026-05-26 21:15:09:638 63 sec: 3063391 operations; 53762 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=484.78] [UPDATE AverageLatency(us)=1430.13] 
+2026-05-26 21:15:09:638 63 sec: 3063391 operations; 53762 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=484.78] [UPDATE AverageLatency(us)=1430.13] 
+2026-05-26 21:15:10:638 64 sec: 3117476 operations; 54085 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=444.21] [UPDATE AverageLatency(us)=1393.32] 
+2026-05-26 21:15:10:638 64 sec: 3117476 operations; 54085 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=444.21] [UPDATE AverageLatency(us)=1393.32] 
+2026-05-26 21:15:11:638 65 sec: 3171925 operations; 54449 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=441.66] [UPDATE AverageLatency(us)=1388.95] 
+2026-05-26 21:15:11:638 65 sec: 3171925 operations; 54449 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=441.66] [UPDATE AverageLatency(us)=1388.95] 
+redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.redis.clients.jedis.exceptions.JedisConnectionException: java.net.SocketException: Connection reset
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:202)
+
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+
+	at site.ycsb.ClientThread.run(ClientThread.java:122)	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+
+	at java.base/java.lang.Thread.run(Thread.java:829)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:186)
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:140)
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:126)
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:196)
+	... 15 more
+redis.clients.jedis.exceptions.JedisConnectionException: java.net.SocketException: Connection reset
+redis.clients.jedis.exceptions.JedisConnectionException: java.net.SocketException: Connection reset	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:202)
+
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:202)
+
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+Command line: -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+2026-05-26 21:26:47:800 0 sec: 0 operations; est completion in 0 second 
+2026-05-26 21:26:47:800 0 sec: 0 operations; est completion in 0 second 
+2026-05-26 21:26:48:764 1 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:48:764 1 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:49:764 2 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:49:764 2 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:50:764 3 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:50:764 3 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:51:764 4 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:51:764 4 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:52:764 5 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:26:52:764 5 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-05-26 21:26:53:764 6 sec: 1381 operations; 1381 current ops/sec; est completion in 12 hours 4 minutes [READ AverageLatency(us)=277.08] [UPDATE AverageLatency(us)=1078.39] 
+2026-05-26 21:26:53:764 6 sec: 1381 operations; 1381 current ops/sec; est completion in 12 hours 4 minutes [READ AverageLatency(us)=277.08] [UPDATE AverageLatency(us)=1078.39] 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-05-26 21:26:54:764 7 sec: 49533 operations; 48152 current ops/sec; est completion in 23 minutes [READ AverageLatency(us)=424.29] [UPDATE AverageLatency(us)=1463.78] 
+2026-05-26 21:26:54:764 7 sec: 49533 operations; 48152 current ops/sec; est completion in 23 minutes [READ AverageLatency(us)=424.29] [UPDATE AverageLatency(us)=1463.78] 
+2026-05-26 21:26:55:764 8 sec: 105013 operations; 55480 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=419.96] [UPDATE AverageLatency(us)=1366.22] 
+2026-05-26 21:26:55:764 8 sec: 105013 operations; 55480 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=419.96] [UPDATE AverageLatency(us)=1366.22] 
+2026-05-26 21:26:56:764 9 sec: 160113 operations; 55100 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=420.19] [UPDATE AverageLatency(us)=1384.44] 
+2026-05-26 21:26:56:764 9 sec: 160113 operations; 55100 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=420.19] [UPDATE AverageLatency(us)=1384.44] 
+2026-05-26 21:26:57:764 10 sec: 216155 operations; 56042 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=428.71] [UPDATE AverageLatency(us)=1343.43] 
+2026-05-26 21:26:57:764 10 sec: 216155 operations; 56042 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=428.71] [UPDATE AverageLatency(us)=1343.43] 
+2026-05-26 21:26:58:764 11 sec: 271040 operations; 54885 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=435.17] [UPDATE AverageLatency(us)=1374.79] 
+2026-05-26 21:26:58:764 11 sec: 271040 operations; 54885 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=435.17] [UPDATE AverageLatency(us)=1374.79] 
+2026-05-26 21:26:59:764 12 sec: 326780 operations; 55740 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=428.07] [UPDATE AverageLatency(us)=1353.16] 
+2026-05-26 21:26:59:764 12 sec: 326780 operations; 55740 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=428.07] [UPDATE AverageLatency(us)=1353.16] 
+2026-05-26 21:27:00:764 13 sec: 384797 operations; 58017 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=416.29] [UPDATE AverageLatency(us)=1297.45] 
+2026-05-26 21:27:00:764 13 sec: 384797 operations; 58017 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=416.29] [UPDATE AverageLatency(us)=1297.45] 
+2026-05-26 21:27:01:764 14 sec: 441480 operations; 56683 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=427.66] [UPDATE AverageLatency(us)=1326] 
+2026-05-26 21:27:01:764 14 sec: 441480 operations; 56683 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=427.66] [UPDATE AverageLatency(us)=1326] 
+2026-05-26 21:27:02:764 15 sec: 498570 operations; 57090 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=420.83] [UPDATE AverageLatency(us)=1329.34] 
+2026-05-26 21:27:02:764 15 sec: 498570 operations; 57090 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=420.83] [UPDATE AverageLatency(us)=1329.34] 
+2026-05-26 21:27:03:764 16 sec: 554669 operations; 56099 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=424.48] [UPDATE AverageLatency(us)=1343.48] 
+2026-05-26 21:27:03:764 16 sec: 554669 operations; 56099 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=424.48] [UPDATE AverageLatency(us)=1343.48] 
+2026-05-26 21:27:04:764 17 sec: 611820 operations; 57151 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=418.91] [UPDATE AverageLatency(us)=1316.59] 
+2026-05-26 21:27:04:764 17 sec: 611820 operations; 57151 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=418.91] [UPDATE AverageLatency(us)=1316.59] 
+2026-05-26 21:27:05:764 18 sec: 668382 operations; 56562 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=424.1] [UPDATE AverageLatency(us)=1330.65] 
+2026-05-26 21:27:05:764 18 sec: 668382 operations; 56562 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=424.1] [UPDATE AverageLatency(us)=1330.65] 
+2026-05-26 21:27:06:764 19 sec: 725987 operations; 57605 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=423.46] [UPDATE AverageLatency(us)=1299.23] 
+2026-05-26 21:27:06:764 19 sec: 725987 operations; 57605 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=423.46] [UPDATE AverageLatency(us)=1299.23] 
+2026-05-26 21:27:07:764 20 sec: 760059 operations; 34072 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=984.1] [UPDATE AverageLatency(us)=1936.05] 
+2026-05-26 21:27:07:764 20 sec: 760059 operations; 34072 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=984.1] [UPDATE AverageLatency(us)=1936.05] 
+2026-05-26 21:27:08:764 21 sec: 818972 operations; 58913 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=415.09] [UPDATE AverageLatency(us)=1268.82] 
+2026-05-26 21:27:08:764 21 sec: 818972 operations; 58913 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=415.09] [UPDATE AverageLatency(us)=1268.82] 
+2026-05-26 21:27:09:764 22 sec: 877397 operations; 58425 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=416.82] [UPDATE AverageLatency(us)=1281] 
+2026-05-26 21:27:09:764 22 sec: 877397 operations; 58425 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=416.82] [UPDATE AverageLatency(us)=1281] 
+2026-05-26 21:27:10:764 23 sec: 935079 operations; 57682 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=424.12] [UPDATE AverageLatency(us)=1299.96] 
+2026-05-26 21:27:10:764 23 sec: 935079 operations; 57682 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=424.12] [UPDATE AverageLatency(us)=1299.96] 
+2026-05-26 21:27:11:764 24 sec: 994182 operations; 59103 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.36] [UPDATE AverageLatency(us)=1268.5] 
+2026-05-26 21:27:11:764 24 sec: 994182 operations; 59103 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.36] [UPDATE AverageLatency(us)=1268.5] 
+2026-05-26 21:27:12:764 25 sec: 1052843 operations; 58661 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=420.68] [UPDATE AverageLatency(us)=1273.19] 
+2026-05-26 21:27:12:764 25 sec: 1052843 operations; 58661 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=420.68] [UPDATE AverageLatency(us)=1273.19] 
+2026-05-26 21:27:13:764 26 sec: 1111708 operations; 58865 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=417.88] [UPDATE AverageLatency(us)=1271.79] 
+2026-05-26 21:27:13:764 26 sec: 1111708 operations; 58865 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=417.88] [UPDATE AverageLatency(us)=1271.79] 
+2026-05-26 21:27:14:764 27 sec: 1169687 operations; 57979 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=420.27] [UPDATE AverageLatency(us)=1296.57] 
+2026-05-26 21:27:14:764 27 sec: 1169687 operations; 57979 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=420.27] [UPDATE AverageLatency(us)=1296.57] 
+2026-05-26 21:27:15:764 28 sec: 1227852 operations; 58165 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.57] [UPDATE AverageLatency(us)=1292.66] 
+2026-05-26 21:27:15:764 28 sec: 1227852 operations; 58165 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.57] [UPDATE AverageLatency(us)=1292.66] 
+2026-05-26 21:27:16:764 29 sec: 1285259 operations; 57407 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=425.29] [UPDATE AverageLatency(us)=1305.8] 
+2026-05-26 21:27:16:764 29 sec: 1285259 operations; 57407 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=425.29] [UPDATE AverageLatency(us)=1305.8] 
+2026-05-26 21:27:17:764 30 sec: 1343743 operations; 58484 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=418.92] [UPDATE AverageLatency(us)=1285.83] 
+2026-05-26 21:27:17:764 30 sec: 1343743 operations; 58484 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=418.92] [UPDATE AverageLatency(us)=1285.83] 
+2026-05-26 21:27:18:764 31 sec: 1403266 operations; 59523 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=411.98] [UPDATE AverageLatency(us)=1261.95] 
+2026-05-26 21:27:18:764 31 sec: 1403266 operations; 59523 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=411.98] [UPDATE AverageLatency(us)=1261.95] 
+2026-05-26 21:27:19:764 32 sec: 1462178 operations; 58912 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.65] [UPDATE AverageLatency(us)=1276.55] 
+2026-05-26 21:27:19:764 32 sec: 1462178 operations; 58912 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.65] [UPDATE AverageLatency(us)=1276.55] 
+2026-05-26 21:27:20:764 33 sec: 1516335 operations; 54157 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=478.69] [UPDATE AverageLatency(us)=1361.92] 
+2026-05-26 21:27:20:764 33 sec: 1516335 operations; 54157 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=478.69] [UPDATE AverageLatency(us)=1361.92] 
+2026-05-26 21:27:21:764 34 sec: 1570917 operations; 54582 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=418.85] [UPDATE AverageLatency(us)=1331.42] 
+2026-05-26 21:27:21:764 34 sec: 1570917 operations; 54582 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=418.85] [UPDATE AverageLatency(us)=1331.42] 
+2026-05-26 21:27:22:764 35 sec: 1629396 operations; 58479 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=443.42] [UPDATE AverageLatency(us)=1326.46] 
+2026-05-26 21:27:22:764 35 sec: 1629396 operations; 58479 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=443.42] [UPDATE AverageLatency(us)=1326.46] 
+2026-05-26 21:27:23:764 36 sec: 1688833 operations; 59437 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=410.66] [UPDATE AverageLatency(us)=1263.27] 
+2026-05-26 21:27:23:764 36 sec: 1688833 operations; 59437 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=410.66] [UPDATE AverageLatency(us)=1263.27] 
+2026-05-26 21:27:24:764 37 sec: 1699422 operations; 10589 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=854.93] [UPDATE AverageLatency(us)=2280.03] 
+2026-05-26 21:27:24:764 37 sec: 1699422 operations; 10589 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=854.93] [UPDATE AverageLatency(us)=2280.03] 
+2026-05-26 21:27:25:764 38 sec: 1748274 operations; 48852 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=399.73] [UPDATE AverageLatency(us)=3020.82] 
+2026-05-26 21:27:25:764 38 sec: 1748274 operations; 48852 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=399.73] [UPDATE AverageLatency(us)=3020.82] 
+2026-05-26 21:27:26:764 39 sec: 1803503 operations; 55229 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=460.22] [UPDATE AverageLatency(us)=1346.64] 
+2026-05-26 21:27:26:764 39 sec: 1803503 operations; 55229 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=460.22] [UPDATE AverageLatency(us)=1346.64] 
+2026-05-26 21:27:27:764 40 sec: 1862813 operations; 59310 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=405.05] [UPDATE AverageLatency(us)=1268.62] 
+2026-05-26 21:27:27:764 40 sec: 1862813 operations; 59310 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=405.05] [UPDATE AverageLatency(us)=1268.62] 
+2026-05-26 21:27:28:764 41 sec: 1922611 operations; 59798 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=402.66] [UPDATE AverageLatency(us)=1264.41] 
+2026-05-26 21:27:28:764 41 sec: 1922611 operations; 59798 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=402.66] [UPDATE AverageLatency(us)=1264.41] 
+2026-05-26 21:27:29:764 42 sec: 1979323 operations; 56712 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=431.07] [UPDATE AverageLatency(us)=1320.09] 
+2026-05-26 21:27:29:764 42 sec: 1979323 operations; 56712 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=431.07] [UPDATE AverageLatency(us)=1320.09] 
+2026-05-26 21:27:30:764 43 sec: 2037390 operations; 58067 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=417.31] [UPDATE AverageLatency(us)=1295.92] 
+2026-05-26 21:27:30:764 43 sec: 2037390 operations; 58067 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=417.31] [UPDATE AverageLatency(us)=1295.92] 
+2026-05-26 21:27:31:764 44 sec: 2095213 operations; 57823 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.56] [UPDATE AverageLatency(us)=1294.55] 
+2026-05-26 21:27:31:764 44 sec: 2095213 operations; 57823 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.56] [UPDATE AverageLatency(us)=1294.55] 
+2026-05-26 21:27:32:764 45 sec: 2151084 operations; 55871 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=431.68] [UPDATE AverageLatency(us)=1344.38] 
+2026-05-26 21:27:32:764 45 sec: 2151084 operations; 55871 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=431.68] [UPDATE AverageLatency(us)=1344.38] 
+2026-05-26 21:27:33:764 46 sec: 2206986 operations; 55902 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.53] [UPDATE AverageLatency(us)=1348.68] 
+2026-05-26 21:27:33:764 46 sec: 2206986 operations; 55902 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=425.53] [UPDATE AverageLatency(us)=1348.68] 
+2026-05-26 21:27:34:764 47 sec: 2263974 operations; 56988 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.58] [UPDATE AverageLatency(us)=1323.93] 
+2026-05-26 21:27:34:764 47 sec: 2263974 operations; 56988 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=428.58] [UPDATE AverageLatency(us)=1323.93] 
+2026-05-26 21:27:35:764 48 sec: 2321210 operations; 57236 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=421.33] [UPDATE AverageLatency(us)=1317.28] 
+2026-05-26 21:27:35:764 48 sec: 2321210 operations; 57236 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=421.33] [UPDATE AverageLatency(us)=1317.28] 
+2026-05-26 21:27:36:764 49 sec: 2378779 operations; 57569 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=416.8] [UPDATE AverageLatency(us)=1310.26] 
+2026-05-26 21:27:36:764 49 sec: 2378779 operations; 57569 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=416.8] [UPDATE AverageLatency(us)=1310.26] 
+2026-05-26 21:27:37:764 50 sec: 2436326 operations; 57547 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=418.06] [UPDATE AverageLatency(us)=1306.67] 
+2026-05-26 21:27:37:764 50 sec: 2436326 operations; 57547 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=418.06] [UPDATE AverageLatency(us)=1306.67] 
+2026-05-26 21:27:38:764 51 sec: 2494012 operations; 57686 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=417.82] [UPDATE AverageLatency(us)=1309.32] 
+2026-05-26 21:27:38:764 51 sec: 2494012 operations; 57686 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=417.82] [UPDATE AverageLatency(us)=1309.32] 
+2026-05-26 21:27:39:764 52 sec: 2551274 operations; 57262 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=421.74] [UPDATE AverageLatency(us)=1316.9] 
+2026-05-26 21:27:39:764 52 sec: 2551274 operations; 57262 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=421.74] [UPDATE AverageLatency(us)=1316.9] 
+2026-05-26 21:27:40:764 53 sec: 2607892 operations; 56618 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=418.78] [UPDATE AverageLatency(us)=1337.36] 
+2026-05-26 21:27:40:764 53 sec: 2607892 operations; 56618 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=418.78] [UPDATE AverageLatency(us)=1337.36] 
+2026-05-26 21:27:41:764 54 sec: 2664197 operations; 56305 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=426.85] [UPDATE AverageLatency(us)=1335.79] 
+2026-05-26 21:27:41:764 54 sec: 2664197 operations; 56305 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=426.85] [UPDATE AverageLatency(us)=1335.79] 
+2026-05-26 21:27:42:764 55 sec: 2721860 operations; 57663 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=419.06] [UPDATE AverageLatency(us)=1309.61] 
+2026-05-26 21:27:42:764 55 sec: 2721860 operations; 57663 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=419.06] [UPDATE AverageLatency(us)=1309.61] 
+2026-05-26 21:27:43:764 56 sec: 2780015 operations; 58155 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=418.73] [UPDATE AverageLatency(us)=1289.38] 
+2026-05-26 21:27:43:764 56 sec: 2780015 operations; 58155 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=418.73] [UPDATE AverageLatency(us)=1289.38] 
+2026-05-26 21:27:44:764 57 sec: 2838976 operations; 58961 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=411.69] [UPDATE AverageLatency(us)=1279.44] 
+2026-05-26 21:27:44:764 57 sec: 2838976 operations; 58961 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=411.69] [UPDATE AverageLatency(us)=1279.44] 
+2026-05-26 21:27:45:764 58 sec: 2888090 operations; 49114 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=438.19] [UPDATE AverageLatency(us)=1595.02] 
+2026-05-26 21:27:45:764 58 sec: 2888090 operations; 49114 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=438.19] [UPDATE AverageLatency(us)=1595.02] 
+2026-05-26 21:27:46:764 59 sec: 2943245 operations; 55155 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=429.56] [UPDATE AverageLatency(us)=1376.54] 
+2026-05-26 21:27:46:764 59 sec: 2943245 operations; 55155 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=429.56] [UPDATE AverageLatency(us)=1376.54] 
+2026-05-26 21:27:47:764 60 sec: 2997199 operations; 53954 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=435.82] [UPDATE AverageLatency(us)=1332.77] 
+2026-05-26 21:27:47:764 60 sec: 2997199 operations; 53954 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=435.82] [UPDATE AverageLatency(us)=1332.77] 
+2026-05-26 21:27:48:764 61 sec: 3052289 operations; 55090 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=474.17] [UPDATE AverageLatency(us)=1403.35] 
+2026-05-26 21:27:48:764 61 sec: 3052289 operations; 55090 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=474.17] [UPDATE AverageLatency(us)=1403.35] 
+2026-05-26 21:27:49:763 62 sec: 3110829 operations; 58540 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=413.89] [UPDATE AverageLatency(us)=1287.57] 
+2026-05-26 21:27:49:763 62 sec: 3110829 operations; 58540 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=413.89] [UPDATE AverageLatency(us)=1287.57] 
+2026-05-26 21:27:50:764 63 sec: 3171625 operations; 60796 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=401.68] [UPDATE AverageLatency(us)=1240.29] 
+2026-05-26 21:27:50:764 63 sec: 3171625 operations; 60796 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=401.68] [UPDATE AverageLatency(us)=1240.29] 
+2026-05-26 21:27:51:764 64 sec: 3231528 operations; 59903 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=405.69] [UPDATE AverageLatency(us)=1254.12] 
+2026-05-26 21:27:51:764 64 sec: 3231528 operations; 59903 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=405.69] [UPDATE AverageLatency(us)=1254.12] 
+2026-05-26 21:27:52:764 65 sec: 3290399 operations; 58871 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=415.34] [UPDATE AverageLatency(us)=1273.5] 
+2026-05-26 21:27:52:764 65 sec: 3290399 operations; 58871 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=415.34] [UPDATE AverageLatency(us)=1273.5] 
+redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)	at java.base/java.lang.Thread.run(Thread.java:829)
+
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)redis.clients.jedis.exceptions.JedisConnectionException: Unexpected end of stream.
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:199)
+
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+
+	at site.ycsb.ClientThread.run(ClientThread.java:122)	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+
+	at java.base/java.lang.Thread.run(Thread.java:829)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+Command line: -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -threads 50
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+2026-05-26 21:38:21:537 0 sec: 0 operations; est completion in 0 second 
+2026-05-26 21:38:21:537 0 sec: 0 operations; est completion in 0 second 
+2026-05-26 21:38:22:501 1 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:22:501 1 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:23:501 2 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:23:501 2 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:24:501 3 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:24:501 3 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:25:501 4 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:25:501 4 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:26:501 5 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+2026-05-26 21:38:26:501 5 sec: 0 operations; est completion in 106751991167300 days 15 hours 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-05-26 21:38:27:501 6 sec: 74 operations; 74 current ops/sec; est completion in 9 days 9 hours [READ AverageLatency(us)=336.02] [UPDATE AverageLatency(us)=1172.51] 
+2026-05-26 21:38:27:501 6 sec: 74 operations; 74 current ops/sec; est completion in 9 days 9 hours [READ AverageLatency(us)=336.02] [UPDATE AverageLatency(us)=1172.51] 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-05-26 21:38:28:500 7 sec: 43740 operations; 43666 current ops/sec; est completion in 26 minutes [READ AverageLatency(us)=431.96] [UPDATE AverageLatency(us)=1411.57] 
+2026-05-26 21:38:28:500 7 sec: 43740 operations; 43666 current ops/sec; est completion in 26 minutes [READ AverageLatency(us)=431.96] [UPDATE AverageLatency(us)=1411.57] 
+2026-05-26 21:38:29:501 8 sec: 95336 operations; 51596 current ops/sec; est completion in 13 minutes [READ AverageLatency(us)=466.58] [UPDATE AverageLatency(us)=1458.71] 
+2026-05-26 21:38:29:501 8 sec: 95336 operations; 51596 current ops/sec; est completion in 13 minutes [READ AverageLatency(us)=466.58] [UPDATE AverageLatency(us)=1458.71] 
+2026-05-26 21:38:30:501 9 sec: 148222 operations; 52886 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=452.5] [UPDATE AverageLatency(us)=1425.78] 
+2026-05-26 21:38:30:501 9 sec: 148222 operations; 52886 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=452.5] [UPDATE AverageLatency(us)=1425.78] 
+2026-05-26 21:38:31:501 10 sec: 200616 operations; 52394 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=460.37] [UPDATE AverageLatency(us)=1435.75] 
+2026-05-26 21:38:31:501 10 sec: 200616 operations; 52394 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=460.37] [UPDATE AverageLatency(us)=1435.75] 
+2026-05-26 21:38:32:501 11 sec: 254251 operations; 53635 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=442.15] [UPDATE AverageLatency(us)=1406.64] 
+2026-05-26 21:38:32:501 11 sec: 254251 operations; 53635 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=442.15] [UPDATE AverageLatency(us)=1406.64] 
+2026-05-26 21:38:33:501 12 sec: 309970 operations; 55719 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=432.76] [UPDATE AverageLatency(us)=1345.49] 
+2026-05-26 21:38:33:501 12 sec: 309970 operations; 55719 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=432.76] [UPDATE AverageLatency(us)=1345.49] 
+2026-05-26 21:38:34:501 13 sec: 366121 operations; 56151 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=430.53] [UPDATE AverageLatency(us)=1337.89] 
+2026-05-26 21:38:34:501 13 sec: 366121 operations; 56151 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=430.53] [UPDATE AverageLatency(us)=1337.89] 
+2026-05-26 21:38:35:501 14 sec: 422584 operations; 56463 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=432.21] [UPDATE AverageLatency(us)=1324.69] 
+2026-05-26 21:38:35:501 14 sec: 422584 operations; 56463 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=432.21] [UPDATE AverageLatency(us)=1324.69] 
+2026-05-26 21:38:36:501 15 sec: 478426 operations; 55842 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=430.86] [UPDATE AverageLatency(us)=1357.01] 
+2026-05-26 21:38:36:501 15 sec: 478426 operations; 55842 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=430.86] [UPDATE AverageLatency(us)=1357.01] 
+2026-05-26 21:38:37:501 16 sec: 532274 operations; 53848 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=434.84] [UPDATE AverageLatency(us)=1414.65] 
+2026-05-26 21:38:37:501 16 sec: 532274 operations; 53848 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=434.84] [UPDATE AverageLatency(us)=1414.65] 
+2026-05-26 21:38:38:501 17 sec: 588090 operations; 55816 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=425.32] [UPDATE AverageLatency(us)=1348.34] 
+2026-05-26 21:38:38:501 17 sec: 588090 operations; 55816 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=425.32] [UPDATE AverageLatency(us)=1348.34] 
+2026-05-26 21:38:39:501 18 sec: 645094 operations; 57004 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=421.56] [UPDATE AverageLatency(us)=1318.66] 
+2026-05-26 21:38:39:501 18 sec: 645094 operations; 57004 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=421.56] [UPDATE AverageLatency(us)=1318.66] 
+2026-05-26 21:38:40:501 19 sec: 702512 operations; 57418 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=421.2] [UPDATE AverageLatency(us)=1318.56] 
+2026-05-26 21:38:40:501 19 sec: 702512 operations; 57418 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=421.2] [UPDATE AverageLatency(us)=1318.56] 
+2026-05-26 21:38:41:501 20 sec: 737148 operations; 34636 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=845.89] [UPDATE AverageLatency(us)=2022.69] 
+2026-05-26 21:38:41:501 20 sec: 737148 operations; 34636 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=845.89] [UPDATE AverageLatency(us)=2022.69] 
+2026-05-26 21:38:42:501 21 sec: 795224 operations; 58076 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=420.44] [UPDATE AverageLatency(us)=1291.51] 
+2026-05-26 21:38:42:501 21 sec: 795224 operations; 58076 current ops/sec; est completion in 4 minutes [READ AverageLatency(us)=420.44] [UPDATE AverageLatency(us)=1291.51] 
+2026-05-26 21:38:43:501 22 sec: 854644 operations; 59420 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.31] [UPDATE AverageLatency(us)=1256.52] 
+2026-05-26 21:38:43:501 22 sec: 854644 operations; 59420 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=414.31] [UPDATE AverageLatency(us)=1256.52] 
+2026-05-26 21:38:44:501 23 sec: 911436 operations; 56792 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=435.53] [UPDATE AverageLatency(us)=1314.72] 
+2026-05-26 21:38:44:501 23 sec: 911436 operations; 56792 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=435.53] [UPDATE AverageLatency(us)=1314.72] 
+2026-05-26 21:38:45:501 24 sec: 968507 operations; 57071 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.52] [UPDATE AverageLatency(us)=1307.18] 
+2026-05-26 21:38:45:501 24 sec: 968507 operations; 57071 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.52] [UPDATE AverageLatency(us)=1307.18] 
+2026-05-26 21:38:46:501 25 sec: 1026348 operations; 57841 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=423.28] [UPDATE AverageLatency(us)=1294.66] 
+2026-05-26 21:38:46:501 25 sec: 1026348 operations; 57841 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=423.28] [UPDATE AverageLatency(us)=1294.66] 
+2026-05-26 21:38:47:501 26 sec: 1081660 operations; 55312 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=442.03] [UPDATE AverageLatency(us)=1357.11] 
+2026-05-26 21:38:47:501 26 sec: 1081660 operations; 55312 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=442.03] [UPDATE AverageLatency(us)=1357.11] 
+2026-05-26 21:38:48:501 27 sec: 1138719 operations; 57059 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=429.57] [UPDATE AverageLatency(us)=1309.81] 
+2026-05-26 21:38:48:501 27 sec: 1138719 operations; 57059 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=429.57] [UPDATE AverageLatency(us)=1309.81] 
+2026-05-26 21:38:49:501 28 sec: 1197292 operations; 58573 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=421.29] [UPDATE AverageLatency(us)=1274.86] 
+2026-05-26 21:38:49:501 28 sec: 1197292 operations; 58573 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=421.29] [UPDATE AverageLatency(us)=1274.86] 
+2026-05-26 21:38:50:501 29 sec: 1254649 operations; 57357 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=422.6] [UPDATE AverageLatency(us)=1309.47] 
+2026-05-26 21:38:50:501 29 sec: 1254649 operations; 57357 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=422.6] [UPDATE AverageLatency(us)=1309.47] 
+2026-05-26 21:38:51:501 30 sec: 1313560 operations; 58911 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=412.81] [UPDATE AverageLatency(us)=1277.23] 
+2026-05-26 21:38:51:501 30 sec: 1313560 operations; 58911 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=412.81] [UPDATE AverageLatency(us)=1277.23] 
+2026-05-26 21:38:52:501 31 sec: 1372992 operations; 59432 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=412.73] [UPDATE AverageLatency(us)=1257.36] 
+2026-05-26 21:38:52:501 31 sec: 1372992 operations; 59432 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=412.73] [UPDATE AverageLatency(us)=1257.36] 
+2026-05-26 21:38:53:501 32 sec: 1432166 operations; 59174 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=410.98] [UPDATE AverageLatency(us)=1263.42] 
+2026-05-26 21:38:53:501 32 sec: 1432166 operations; 59174 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=410.98] [UPDATE AverageLatency(us)=1263.42] 
+2026-05-26 21:38:54:501 33 sec: 1491702 operations; 59536 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=409.54] [UPDATE AverageLatency(us)=1263.36] 
+2026-05-26 21:38:54:501 33 sec: 1491702 operations; 59536 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=409.54] [UPDATE AverageLatency(us)=1263.36] 
+2026-05-26 21:38:55:501 34 sec: 1538268 operations; 46566 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=496.18] [UPDATE AverageLatency(us)=1644.57] 
+2026-05-26 21:38:55:501 34 sec: 1538268 operations; 46566 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=496.18] [UPDATE AverageLatency(us)=1644.57] 
+2026-05-26 21:38:56:501 35 sec: 1589247 operations; 50979 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=498.82] [UPDATE AverageLatency(us)=1456.49] 
+2026-05-26 21:38:56:501 35 sec: 1589247 operations; 50979 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=498.82] [UPDATE AverageLatency(us)=1456.49] 
+2026-05-26 21:38:57:501 36 sec: 1646434 operations; 57187 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=425.48] [UPDATE AverageLatency(us)=1314.64] 
+2026-05-26 21:38:57:501 36 sec: 1646434 operations; 57187 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=425.48] [UPDATE AverageLatency(us)=1314.64] 
+2026-05-26 21:38:58:501 37 sec: 1691587 operations; 45153 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=429.75] [UPDATE AverageLatency(us)=1288.62] 
+2026-05-26 21:38:58:501 37 sec: 1691587 operations; 45153 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=429.75] [UPDATE AverageLatency(us)=1288.62] 
+2026-05-26 21:38:59:501 38 sec: 1705748 operations; 14161 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=706.09] [UPDATE AverageLatency(us)=7808.51] 
+2026-05-26 21:38:59:501 38 sec: 1705748 operations; 14161 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=706.09] [UPDATE AverageLatency(us)=7808.51] 
+2026-05-26 21:39:00:501 39 sec: 1759879 operations; 54131 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=462.63] [UPDATE AverageLatency(us)=1374.4] 
+2026-05-26 21:39:00:501 39 sec: 1759879 operations; 54131 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=462.63] [UPDATE AverageLatency(us)=1374.4] 
+2026-05-26 21:39:01:501 40 sec: 1817177 operations; 57298 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.78] [UPDATE AverageLatency(us)=1311.58] 
+2026-05-26 21:39:01:501 40 sec: 1817177 operations; 57298 current ops/sec; est completion in 3 minutes [READ AverageLatency(us)=428.78] [UPDATE AverageLatency(us)=1311.58] 
+2026-05-26 21:39:02:501 41 sec: 1874994 operations; 57817 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=421.46] [UPDATE AverageLatency(us)=1299.31] 
+2026-05-26 21:39:02:501 41 sec: 1874994 operations; 57817 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=421.46] [UPDATE AverageLatency(us)=1299.31] 
+2026-05-26 21:39:03:501 42 sec: 1904334 operations; 29340 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=423.85] [UPDATE AverageLatency(us)=1300.09] 
+2026-05-26 21:39:03:501 42 sec: 1904334 operations; 29340 current ops/sec; est completion in 2 minutes [READ AverageLatency(us)=423.85] [UPDATE AverageLatency(us)=1300.09] 
+2026-05-26 21:39:04:501 43 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:04:501 43 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:05:500 44 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:05:500 44 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:06:501 45 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:06:501 45 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:07:501 46 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:07:501 46 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:08:500 47 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:08:500 47 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:09:500 48 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+2026-05-26 21:39:09:500 48 sec: 1904334 operations; 0 current ops/sec; est completion in 3 minutes   
+redis.clients.jedis.exceptions.JedisConnectionException: java.net.SocketException: Connection reset
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:202)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:186)
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:140)
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:126)
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:196)
+	... 15 more
+redis.clients.jedis.exceptions.JedisConnectionException: java.net.SocketException: Connection reset
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:202)
+	at redis.clients.util.RedisInputStream.readByte(RedisInputStream.java:40)
+	at redis.clients.jedis.Protocol.process(Protocol.java:151)
+	at redis.clients.jedis.Protocol.read(Protocol.java:215)
+	at redis.clients.jedis.Connection.readProtocolWithCheckingBroken(Connection.java:340)
+	at redis.clients.jedis.Connection.getStatusCodeReply(Connection.java:239)
+	at redis.clients.jedis.Jedis.set(Jedis.java:121)
+	at site.ycsb.db.RedisClient.lambda$setForSlot$1(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.execForSlot(RedisClient.java:412)
+	at site.ycsb.db.RedisClient.setForSlot(RedisClient.java:430)
+	at site.ycsb.db.RedisClient.update(RedisClient.java:564)
+	at site.ycsb.DBWrapper.update(DBWrapper.java:204)
+	at site.ycsb.workloads.CoreWorkload.doTransactionUpdate(CoreWorkload.java:849)
+	at site.ycsb.workloads.CoreWorkload.doTransaction(CoreWorkload.java:678)
+	at site.ycsb.ClientThread.run(ClientThread.java:122)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:186)
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:140)
+	at java.base/java.net.SocketInputStream.read(SocketInputStream.java:126)
+	at redis.clients.util.RedisInputStream.ensureFill(RedisInputStream.java:196)
+	... 15 more

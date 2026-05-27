@@ -411,6 +411,12 @@ int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size) 
      * r_allocator_register_existing_block / init_bloc_layout, so the segment
      * walk respects the same layout the donor emits. */
     r_allocator_walk_used_segments((char *) buf, applySlotCb, &c);
+    /* AqRaft Patch 17: sanitize donor-shipped block. Flips every free
+     * segment's alloc-bit to 1 so future coalesce-on-free never tries to
+     * merge with a "free" neighbor whose freelist pointers refer to the
+     * donor's address space (would SIGSEGV in freelist_remove_segment).
+     * Done AFTER the walker so applySlotCb sees the real alloc bits. */
+    r_allocator_sanitize_imported_block((char *) buf);
     /* The freelist for this slot is stale (init_bloc_layout said "whole block
      * is one free segment", but now donor's used segments occupy it). Reset
      * so any subsequent client write to this slot allocates a fresh block. */
@@ -451,6 +457,21 @@ static void *chainEstablishThread(void *arg) {
         serverLog(LL_NOTICE,
             "CHAIN: leaderEstablish sess=%lld OK (%d followers)",
             job->src_mig_id, job->n_peers);
+
+        /* AqRaft Patch 15: pre-register the leader's src pool HERE, off the
+         * main thread. The ibv_reg_mr for 2.86 GB takes ~3 sec — if we let
+         * rdmaLeaderChainForwardPerSlot lazy-init it on the main thread the
+         * first time a backpatch batch finishes, the event loop stalls past
+         * the raft check-quorum window (election_timeout * 2 = 2000ms) and
+         * the leader steps down. */
+        char ensure_err[256] = {0};
+        if (rdmaLeaderChainEnsureSrcPool(job->src_mig_id, ensure_err,
+                                         sizeof(ensure_err)) != C_OK) {
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld src pool pre-register failed: %s "
+                "(will fall back to main-thread lazy-init)",
+                job->src_mig_id, ensure_err);
+        }
     }
     zfree(host_arr);
     for (int i = 0; i < job->n_peers; i++) sdsfree(job->hosts[i]);
@@ -459,6 +480,13 @@ static void *chainEstablishThread(void *arg) {
     zfree(job);
     return NULL;
 }
+
+/* AqRaft Patch 16(B/C/D) chainForwardJob + chainForwardWorker definitions live
+ * further down, after `backpatchBatch` is fully declared (around line 1410)
+ * and after `backpatchFinalize` is defined. Forward-declared here so
+ * mergeBackpatchTick can spawn the worker. */
+struct chainForwardJob;
+static void *chainForwardWorker(void *arg);
 
 /* Parse "host1:port1 host2:port2 ..." from rdma_chain_followers, spawn one
  * detached pthread to drive rdmaLeaderChainEstablish. Returns immediately;
@@ -1551,11 +1579,17 @@ void rdmaDoneSlotsCommand(client *c) {
                 "chain forwarding will use stale/empty data",
                 b->donor_snapshot_pool_bytes);
             b->donor_snapshot_pool_bytes = 0;
-        } else {
-            /* Zero so unsnapshotted slots forward as n_entries=0 (no-op
-             * on follower) rather than garbage. */
-            memset(b->donor_snapshot_pool, 0, b->donor_snapshot_pool_bytes);
         }
+        /* AqRaft Patch 16: do NOT memset the 2.86 GB pool here. memset on
+         * a freshly-allocated pool of this size triggers ~700K page faults
+         * (kernel lazy allocation), which blocks the main thread for ~1-2
+         * sec → raft check-quorum trips (election_timeout * 2 = 2 s) and
+         * the leader steps down. The chain-forwarded RPC carries an
+         * explicit slot list (covered_slots), and F1 only walks that list
+         * via rdmaApplySlotBlock — uncovered offsets in the pool are
+         * never read on the follower side. Per-slot memcpys in the
+         * backpatch worker thread (off main thread) populate the covered
+         * offsets as snapshots arrive. */
     } else {
         b->donor_snapshot_pool = NULL;
         b->donor_snapshot_pool_bytes = 0;
@@ -1714,9 +1748,11 @@ void rdmaDoneSlotsInitCommand(client *c) {
                 "DONE-SLOTS-INIT: donor_snapshot_pool zmalloc(%zu) failed",
                 b->donor_snapshot_pool_bytes);
             b->donor_snapshot_pool_bytes = 0;
-        } else {
-            memset(b->donor_snapshot_pool, 0, b->donor_snapshot_pool_bytes);
         }
+        /* AqRaft Patch 16: see DONE-SLOTS path above — skip the 2.86 GB
+         * memset to avoid blocking the main thread on ~700K page faults
+         * (triggers raft check-quorum step-down). F1 reads only covered
+         * slot offsets; uncovered offsets are never accessed. */
     } else {
         b->donor_snapshot_pool = NULL;
         b->donor_snapshot_pool_bytes = 0;
@@ -1932,6 +1968,12 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
         if (buf == NULL) continue;
         if (b == 0) rdmaDebugDumpSlotBytes("RCV-SHADOW", slot, buf);
         r_allocator_walk_used_segments(buf, applySlotCb, &ctx);
+        /* AqRaft Patch 17: sanitize donor-shipped block AFTER the walker
+         * has identified kvobj segments. Flips free-segment alloc-bits to 1
+         * so a later coalesce-on-free for a migrated kvobj never tries to
+         * merge with a "free" neighbor whose freelist pointers refer to
+         * donor memory (would SIGSEGV in freelist_remove_segment). */
+        r_allocator_sanitize_imported_block(buf);
     }
 
     /* Reset the per-slot freelist: init_bloc_layout said "whole block is one
@@ -1992,6 +2034,90 @@ static void backpatchFinalize(backpatchBatch *b) {
     (void) wr;
 }
 
+/* AqRaft Patch 16(D): pthread-friendly wrapper for backpatchFinalize.
+ * Casting a `void (*)(backpatchBatch*)` to `void *(*)(void *)` is undefined
+ * behavior under strict C; this shim keeps the conversion well-defined. */
+static void *backpatchFinalizeWorker(void *arg) {
+    backpatchFinalize((backpatchBatch *) arg);
+    return NULL;
+}
+
+/* AqRaft Patch 16(B/C/D): one-shot detached pthread that takes a batch from
+ * BACKPATCH_DONE through chain-forward + finalize without touching the main
+ * thread. Replaces the inline mergeBackpatchTick code path that previously
+ * did kvstoreFenwickRebuild (~100 ms) + rdmaLeaderChainForwardPerSlot (2.86
+ * GB memcpy + 1365 RDMA-WRITE WR posts, ~1+ sec). The raft check-quorum
+ * mechanism trips at election_timeout * 2 = 2 s of zero AppendEntries acks,
+ * so any sub-2-sec main-thread block could leave the leader without quorum
+ * and force a step-down. Running this off-main keeps the event loop free
+ * to send/receive heartbeats throughout the migration window. */
+typedef struct chainForwardJob {
+    backpatchBatch *batch;        /* not owned: lives in backpatch_batches_by_key */
+    int            *slots_copy;   /* owned: zfree on exit */
+    int             n_slots;
+    int             chain_configured;
+} chainForwardJob;
+
+static void *chainForwardWorker(void *arg) {
+    chainForwardJob *job = arg;
+    backpatchBatch *b = job->batch;
+
+    /* (C) Defer Fenwick rebuild: kvstoreFenwickRebuild takes kvs->shared_mu
+     * so it's thread-safe vs main-thread reads. Run it off-main. */
+    kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+    kvstoreFenwickRebuild(server.db[0].keys);
+
+    serverLog(LL_NOTICE,
+        "RDMA backpatch-merge: batch DONE from %.*s mig_id=%lld "
+        "n_slots=%d applied=%lld clobber_skipped=%lld [off-main]",
+        CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots,
+        (long long) atomic_load(&b->applied),
+        (long long) atomic_load(&b->clobber_skipped));
+
+    if (job->chain_configured) {
+        /* (B) Chain forward off-main. rdmaLeaderChainForwardPerSlot is the
+         * 2.86 GB memcpy + RDMA-WRITE WR posts that used to block main. */
+        char errbuf[256] = {0};
+        int frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
+                                                job->slots_copy, job->n_slots,
+                                                b->donor_snapshot_pool,
+                                                b->donor_snapshot_pool_bytes,
+                                                errbuf, sizeof(errbuf));
+        if (frc == C_OK) {
+            b->chain_forwarded = 1;
+            pthread_mutex_lock(&backpatch_chain_pending_mu);
+            if (backpatch_chain_pending == NULL)
+                backpatch_chain_pending = listCreate();
+            listAddNodeTail(backpatch_chain_pending, b);
+            pthread_mutex_unlock(&backpatch_chain_pending_mu);
+            /* armChainPendingTimer() is main-thread-only (aeCreateTimeEvent
+             * is not thread-safe). Poke the dispose pipe to wake main; the
+             * dispose handler arms the timer. */
+            char tick = 1;
+            ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+            (void) wr;
+            serverLog(LL_NOTICE,
+                "CHAIN: sess=%lld batch BACKPATCH_DONE -> "
+                "pass-through forwarded %d slots (%zu B), MGN_INDX_UPD deferred [off-main]",
+                b->src_mig_id, job->n_slots,
+                (size_t) job->n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
+        } else {
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld leader forward failed (%s) - "
+                "firing MGN_INDX_UPD immediately as fallback",
+                b->src_mig_id, errbuf);
+            backpatchFinalize(b);  /* (D) finalize runs in this worker thread */
+        }
+    } else {
+        /* No chain configured -> finalize directly (off-main). */
+        backpatchFinalize(b);
+    }
+
+    zfree(job->slots_copy);
+    zfree(job);
+    return NULL;
+}
+
 /* Main thread: poll the per-batch chain-ack state. For each pending batch:
  *   - if chain ack arrived (ack_count > baseline) → fire MGN_INDX_UPD and
  *     proceed with dispose;
@@ -2037,10 +2163,23 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
     int remaining = (int) listLength(backpatch_chain_pending);
     pthread_mutex_unlock(&backpatch_chain_pending_mu);
 
-    /* Finalize outside the lock. */
+    /* AqRaft Patch 16(D): finalize off main. backpatchFinalize does a
+     * zfree of the 2.86 GB donor_snapshot_pool which involves kernel
+     * page-table teardown (tens of ms) plus rdmaMgnLogAsync calls. With
+     * many batches ready in one tick, doing this inline can add up to a
+     * noticeable main-thread stall. Spawn a tiny detached thread per
+     * batch instead — main thread returns to the event loop immediately. */
     listRewind(ready, &li);
     while ((ln = listNext(&li)) != NULL) {
-        backpatchFinalize((backpatchBatch *) listNodeValue(ln));
+        backpatchBatch *b = (backpatchBatch *) listNodeValue(ln);
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, backpatchFinalizeWorker, b) != 0) {
+            /* Thread spawn failed — fall back to inline finalize so the
+             * batch doesn't leak its 2.86 GB pool. */
+            backpatchFinalize(b);
+        } else {
+            pthread_detach(tid);
+        }
     }
     listRelease(ready);
 
@@ -2144,72 +2283,51 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
             atomic_store_explicit(&b->state, BACKPATCH_DONE, memory_order_release);
             b->t_ended = time(NULL);
             atomicDecr(server.recipient_backpatch_in_progress, 1);
-            kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
-            kvstoreFenwickRebuild(server.db[0].keys);
-            serverLog(LL_NOTICE,
-                "RDMA backpatch-merge: batch DONE from %.*s mig_id=%lld "
-                "n_slots=%d applied=%lld clobber_skipped=%lld",
-                CLUSTER_NAMELEN, b->src_node_id, b->src_mig_id, b->n_slots,
-                (long long) atomic_load(&b->applied),
-                (long long) atomic_load(&b->clobber_skipped));
 
-            /* Pass-through chain forward: RDMA-WRITE the donor's raw 2 MiB
-             * per-slot blocks (already in r_allocator from the donor's
-             * RDMA-WRITE) into the chain pool and cascade down the chain
-             * with a slot list. No dense re-encoding. */
+            /* AqRaft Patch 16: heavy post-merge work (Fenwick rebuild,
+             * chain forward memcpy + 1365 RDMA-WRITE WR posts, finalize
+             * zfree of 2.86 GB pool) moves off main thread into a one-shot
+             * chainForwardWorker. Main thread does only argv shuffling
+             * here, then returns to the event loop to keep raft heartbeats
+             * flowing. Without this the main thread block tripped raft
+             * check-quorum (election_timeout * 2 = 2 s) and caused the sg4
+             * leader to step down mid-migration. */
             int chain_configured = (server.rdma_chain_followers != NULL &&
                                     sdslen(server.rdma_chain_followers) > 0);
             long long ack_count = chain_configured
                 ? rdmaLeaderChainAckCount(b->src_mig_id) : -1;
-            if (chain_configured && ack_count >= 0 &&
-                b->covered_slots != NULL && b->covered_slot_count > 0 &&
-                b->donor_snapshot_pool != NULL) {
-                b->chain_baseline_ack_count = ack_count;
-                /* Snapshot the slot list under covered_mu; the snapshot
-                 * pool itself was filled per-slot in the backpatch worker. */
-                int n = b->covered_slot_count;
-                int *slots_copy = zmalloc((size_t) n * sizeof(int));
-                pthread_mutex_lock(&b->covered_mu);
-                memcpy(slots_copy, b->covered_slots, (size_t) n * sizeof(int));
-                pthread_mutex_unlock(&b->covered_mu);
+            int chain_ready = (chain_configured && ack_count >= 0 &&
+                               b->covered_slots != NULL &&
+                               b->covered_slot_count > 0 &&
+                               b->donor_snapshot_pool != NULL);
 
-                char errbuf[256] = {0};
-                int frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
-                                                        slots_copy, n,
-                                                        b->donor_snapshot_pool,
-                                                        b->donor_snapshot_pool_bytes,
-                                                        errbuf, sizeof(errbuf));
-                zfree(slots_copy);
-                if (frc == C_OK) {
-                    b->chain_forwarded = 1;
-                    pthread_mutex_lock(&backpatch_chain_pending_mu);
-                    if (backpatch_chain_pending == NULL)
-                        backpatch_chain_pending = listCreate();
-                    listAddNodeTail(backpatch_chain_pending, b);
-                    pthread_mutex_unlock(&backpatch_chain_pending_mu);
-                    armChainPendingTimer();
-                    serverLog(LL_NOTICE,
-                        "CHAIN: sess=%lld batch BACKPATCH_DONE → "
-                        "pass-through forwarded %d slots (%zu B), "
-                        "MGN_INDX_UPD deferred",
-                        b->src_mig_id, n,
-                        (size_t) n * (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
-                } else {
-                    serverLog(LL_WARNING,
-                        "CHAIN: sess=%lld leader forward failed (%s) — "
-                        "firing MGN_INDX_UPD immediately as fallback",
-                        b->src_mig_id, errbuf);
-                    backpatchFinalize(b);
-                }
-            } else {
-                /* No chain configured (or chain not yet established) →
-                 * preserve original behavior: fire MGN_INDX_UPD now. */
-                if (chain_configured) {
-                    serverLog(LL_VERBOSE,
-                        "CHAIN: sess=%lld no chain state yet — firing "
-                        "MGN_INDX_UPD without gate", b->src_mig_id);
-                }
+            chainForwardJob *job = zcalloc(sizeof(*job));
+            job->batch = b;
+            job->chain_configured = chain_ready;
+            if (chain_ready) {
+                b->chain_baseline_ack_count = ack_count;
+                int n = b->covered_slot_count;
+                job->slots_copy = zmalloc((size_t) n * sizeof(int));
+                pthread_mutex_lock(&b->covered_mu);
+                memcpy(job->slots_copy, b->covered_slots,
+                       (size_t) n * sizeof(int));
+                pthread_mutex_unlock(&b->covered_mu);
+                job->n_slots = n;
+            }
+
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, chainForwardWorker, job) != 0) {
+                serverLog(LL_WARNING,
+                    "CHAIN: pthread_create(chainForwardWorker) failed for "
+                    "sess=%lld - falling back to main-thread finalize",
+                    b->src_mig_id);
+                if (job->slots_copy) zfree(job->slots_copy);
+                zfree(job);
+                kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+                kvstoreFenwickRebuild(server.db[0].keys);
                 backpatchFinalize(b);
+            } else {
+                pthread_detach(tid);
             }
         }
 
@@ -2383,6 +2501,12 @@ static void backpatchDisposePipeHandler(aeEventLoop *el, int fd, void *priv, int
      *   2. The dispatch tail (last slot of a batch DONE) → batch in dispose_list.
      * Both paths just write a byte; the handler does the cheap thing for each. */
     armMergeTimer();
+    /* AqRaft Patch 16: chainForwardWorker (off-main) writes the pipe after
+     * appending to backpatch_chain_pending. The chain-pending timer is
+     * main-thread-only (aeCreateTimeEvent is not thread-safe), so arm it
+     * here. Safe to call when there's nothing pending — armChainPendingTimer
+     * is a no-op if a timer already exists. */
+    armChainPendingTimer();
     /* The completed batches stay in backpatch_batches_by_key until cleanup.
      * For now we don't free here — BACKPATCH-STATUS needs them. */
 }

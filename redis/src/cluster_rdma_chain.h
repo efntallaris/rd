@@ -69,6 +69,15 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
  * tail for this session. Returns -1 if no chain state for sess. */
 long long rdmaLeaderChainAckCount(long long src_mig_id);
 
+/* AqRaft Patch 15: pre-register the leader's chain source pool so the first
+ * rdmaLeaderChainForwardPerSlot call doesn't block the main thread on a 2.86
+ * GB ibv_reg_mr. Idempotent. Returns C_OK on success / already-registered;
+ * C_ERR otherwise with errbuf populated. Designed to be called from
+ * chainEstablishThread immediately after rdmaLeaderChainEstablish succeeds,
+ * so the heavy ibv_reg_mr happens off the main event loop. */
+int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
+                                 char *errbuf, size_t errbuf_len);
+
 /* Apply one slot's 2 MiB block (uint32_t n_entries header + entry tuples)
  * into this replica's kvstore. Installs through r_allocator +
  * kvstoreDictAddRaw with don't-clobber semantics (existing keys win).

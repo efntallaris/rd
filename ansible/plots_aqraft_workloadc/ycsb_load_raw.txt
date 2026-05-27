@@ -1,0 +1,90 @@
+/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -load -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloadc -p status.interval=10 -s -threads 50
+Command line: -load -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloadc -p status.interval=10 -s -threads 50
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+2026-05-26 14:08:50:187 0 sec: 0 operations; est completion in 0 second 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-05-26 14:09:00:153 10 sec: 40383 operations; 4037.9 current ops/sec; est completion in 1 minute [INSERT: Count=40387, Max=73599, Min=1696, Avg=4633.63, 50=4551, 90=5771, 99=6751, 99.9=24607, 99.99=37951] 
+2026-05-26 14:09:10:153 20 sec: 143912 operations; 10352.9 current ops/sec; est completion in 50 seconds [INSERT: Count=103538, Max=31215, Min=867, Avg=4817.76, 50=4767, 90=6055, 99=7231, 99.9=9063, 99.99=28319] 
+2026-05-26 14:09:20:153 30 sec: 240856 operations; 9694.4 current ops/sec; est completion in 33 seconds [INSERT: Count=96954, Max=56991, Min=1117, Avg=5148.82, 50=5095, 90=6407, 99=7535, 99.9=33503, 99.99=55423] 
+2026-05-26 14:09:30:153 40 sec: 336187 operations; 9533.1 current ops/sec; est completion in 20 seconds [INSERT: Count=95313, Max=246399, Min=1011, Avg=5233.07, 50=5055, 90=6363, 99=7455, 99.9=52703, 99.99=243455] 
+2026-05-26 14:09:40:153 50 sec: 429168 operations; 9298.1 current ops/sec; est completion in 9 second [INSERT: Count=92982, Max=161663, Min=717, Avg=5375.32, 50=5103, 90=6535, 99=8119, 99.9=83263, 99.99=159871] 
+2026-05-26 14:09:48:210 58 sec: 500000 operations; 8791.36 current ops/sec; [CLEANUP: Count=50, Max=6543, Min=791, Avg=1848.94, 50=1562, 90=2885, 99=6543, 99.9=6543, 99.99=6543] [INSERT: Count=70826, Max=252799, Min=747, Avg=5505.03, 50=5199, 90=6667, 99=8887, 99.9=60319, 99.99=252671] 
+[OVERALL], RunTime(ms), 58057
+[OVERALL], Throughput(ops/sec), 8612.225915910227
+[TOTAL_GCS_G1_Young_Generation], Count, 14
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 127
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 0.21875053826411975
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 14
+[TOTAL_GC_TIME], Time(ms), 127
+[TOTAL_GC_TIME_%], Time(%), 0.21875053826411975
+[CLEANUP], Operations, 50
+[CLEANUP], AverageLatency(us), 1848.94
+[CLEANUP], MinLatency(us), 791
+[CLEANUP], MaxLatency(us), 6543
+[CLEANUP], 50thPercentileLatency(us), 1562
+[CLEANUP], 95thPercentileLatency(us), 3137
+[CLEANUP], 99thPercentileLatency(us), 6543
+[INSERT], Operations, 500000
+[INSERT], AverageLatency(us), 5147.290788
+[INSERT], MinLatency(us), 717
+[INSERT], MaxLatency(us), 252799
+[INSERT], 50thPercentileLatency(us), 4987
+[INSERT], 95thPercentileLatency(us), 6755
+[INSERT], 99thPercentileLatency(us), 7691
+[INSERT], Return=OK, 500000

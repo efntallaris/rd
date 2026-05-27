@@ -57,6 +57,7 @@ import redis.clients.util.SafeEncoder;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -242,6 +243,59 @@ public class RedisClient extends DB {
     return j;
   }
 
+  /** Drop a broken cached Jedis so the next getOrOpen reopens it. */
+  private synchronized void evictConn(HostAndPort hp) {
+    if (hp == null) return;
+    Jedis bad = conns.remove(hp);
+    if (bad != null) {
+      try { bad.close(); } catch (Exception ignore) { /* drain */ }
+    }
+  }
+
+  /** Re-resolve slot ownership via CLUSTER SLOTS on any reachable host.
+   * Used after a JedisConnectionException — typically when the donor
+   * relinquishes a slot via RAFT.SHARDGROUP NARROW and the pinned client
+   * connection gets dropped. Updates slotOwner[slot] and returns the new
+   * owner, or null if no reachable host returns a mapping for this slot. */
+  @SuppressWarnings("unchecked")
+  private HostAndPort refreshSlotOwner(int slot) {
+    List<HostAndPort> probes = new ArrayList<>();
+    probes.add(seedHostPort);
+    if (conns != null) {
+      for (HostAndPort hp : conns.keySet()) {
+        if (!hp.equals(seedHostPort)) probes.add(hp);
+      }
+    }
+    for (HostAndPort probe : probes) {
+      Jedis j = null;
+      try {
+        j = (timeoutMs != null) ? new Jedis(probe.getHost(), probe.getPort(), timeoutMs)
+                                : new Jedis(probe.getHost(), probe.getPort());
+        j.connect();
+        j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
+        Object reply = j.getClient().getOne();
+        if (!(reply instanceof List)) continue;
+        for (Object rangeObj : (List<Object>) reply) {
+          List<Object> range = (List<Object>) rangeObj;
+          long startSlot = (Long) range.get(0);
+          long endSlot   = (Long) range.get(1);
+          if (slot < startSlot || slot > endSlot) continue;
+          List<Object> masterInfo = (List<Object>) range.get(2);
+          String mh = SafeEncoder.encode((byte[]) masterInfo.get(0));
+          long   mp = (Long) masterInfo.get(1);
+          HostAndPort newOwner = new HostAndPort(mh, (int) mp);
+          if (slotOwner != null) slotOwner[slot] = newOwner;
+          return newOwner;
+        }
+      } catch (Exception ignore) {
+        /* try next probe */
+      } finally {
+        if (j != null) { try { j.close(); } catch (Exception ignore) { /* drain */ } }
+      }
+    }
+    return null;
+  }
+
   public void cleanup() throws DBException {
     try {
       if (peerProbeExec != null) peerProbeExec.shutdownNow();
@@ -403,6 +457,8 @@ public class RedisClient extends DB {
     for (int attempt = 0; attempt < 8; attempt++) {
       if (hp == null) hp = seedHostPort;
       Jedis j = getOrOpen(hp);
+      boolean connDropped = false;
+      HostAndPort badHp = null;
       synchronized (j) {
         try {
           if (ask) {
@@ -419,7 +475,19 @@ public class RedisClient extends DB {
           hp = new HostAndPort(ax.getTargetNode().getHost(),
                                ax.getTargetNode().getPort());
           ask = true;
+        } catch (JedisConnectionException ce) {
+          /* TCP-level drop. Common after RAFT.SHARDGROUP NARROW: the donor
+           * surrenders the slot to sg4 and the pinned client connection
+           * gets reset. Evict + re-resolve outside the synchronized block. */
+          connDropped = true;
+          badHp = hp;
         }
+      }
+      if (connDropped) {
+        evictConn(badHp);
+        HostAndPort newOwner = refreshSlotOwner(slot);
+        hp = (newOwner != null) ? newOwner : seedHostPort;
+        ask = false;
       }
     }
     throw new redis.clients.jedis.exceptions.JedisException(

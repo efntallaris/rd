@@ -790,6 +790,54 @@ void rdmaChainWireCommand(client *c) {
  *      the same slot list so the worker cascades downstream.
  *   3. If the tail, enqueues a CHAIN_WORK_ACK_LEADER item.
  */
+/* AqRaft Patch 16(E): chain follower apply job + worker.
+ *
+ * Used to live inline on the follower's main thread (1365 slots ×
+ * r_allocator_walk_used_segments + kvstoreDictAddRaw → hundreds of ms of
+ * CPU). That stall caused the follower to miss AppendEntries acks, which
+ * (combined with the leader's own main-thread stalls fixed by Patches 15
+ * and 16(A-D)) contributed to the sg4 leader's check-quorum step-down.
+ *
+ * The worker iterates the slot list, wraps each rdmaApplySlotBlock in
+ * clusterSlotLockWriteNoTopology(slot) ... clusterSlotUnlockNoTopology(slot)
+ * so that concurrent raft-apply on main thread (for YCSB SETs in the
+ * same slot) serialises against our insertion.
+ *
+ * Ownership: worker frees its job + slots array. local_pool is borrowed
+ * (lives in the follower's chain state for the session lifetime). */
+typedef struct {
+    redisDb     *db;
+    long long    src_mig_id;
+    int         *slots;        /* owned: zfree on exit */
+    int          n_slots;
+    void        *local_pool;
+    size_t       pool_bytes;
+} chainApplyJob;
+
+static void *chainApplyWorker(void *arg) {
+    chainApplyJob *job = arg;
+    size_t length = (size_t) job->n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+    int total_installed = 0;
+    if (job->local_pool != NULL && length <= job->pool_bytes && job->n_slots > 0) {
+        for (int i = 0; i < job->n_slots; i++) {
+            int slot = job->slots[i];
+            const char *block = (const char *) job->local_pool
+                              + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
+            clusterSlotLockWriteNoTopology(slot);
+            total_installed += rdmaApplySlotBlock(job->db, slot,
+                                                  block, RDMAMIG_BLOCK_SIZE_BYTES);
+            clusterSlotUnlockNoTopology(slot);
+        }
+        serverLog(LL_NOTICE,
+            "CHAIN apply: sess=%lld n_slots=%d installed=%d "
+            "consumed=%zu/%zu bytes [off-main, Patch 16(E)]",
+            job->src_mig_id, job->n_slots, total_installed, length, job->pool_bytes);
+    }
+    zfree(job->slots);
+    zfree(job);
+    return NULL;
+}
+
 void rdmaChainForwardedCommand(client *c) {
     if (c->argc < 4) {
         addReplyError(c,
@@ -843,25 +891,50 @@ void rdmaChainForwardedCommand(client *c) {
     size_t pool_bytes = st->landing_pool_bytes;
     pthread_mutex_unlock(&g_chain_state_mu);
 
-    /* Pass-through apply: per slot, decode the 2 MiB block at offset
-     * i * RDMAMIG_BLOCK_SIZE_BYTES and install via rdmaApplySlotBlock. */
-    int total_installed = 0;
+    /* AqRaft Patch 16(E): per-slot apply (1365 slots × walk_used_segments
+     * + kvstoreDictAddRaw) moves OFF the follower main thread into a
+     * one-shot detached pthread chainApplyWorker. Main thread proceeds
+     * straight to enqueueing the forward to the next chain peer (or the
+     * tail ack), then replies OK. The follower's event loop stays free
+     * to send AppendEntries acks to the sg4 leader. */
+    int apply_spawned = 0;
     if (local_pool != NULL && length <= pool_bytes && n_slots > 0) {
-        for (int i = 0; i < n_slots; i++) {
-            const char *block = (const char *) local_pool
-                              + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-            total_installed += rdmaApplySlotBlock(c->db, slots[i],
-                                                  block, RDMAMIG_BLOCK_SIZE_BYTES);
+        chainApplyJob *job = zcalloc(sizeof(*job));
+        job->db          = c->db;
+        job->src_mig_id  = src_mig_id;
+        job->slots       = zmalloc((size_t) n_slots * sizeof(int));
+        memcpy(job->slots, slots, (size_t) n_slots * sizeof(int));
+        job->n_slots     = n_slots;
+        job->local_pool  = local_pool;
+        job->pool_bytes  = pool_bytes;
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, chainApplyWorker, job) != 0) {
+            serverLog(LL_WARNING,
+                "CHAIN apply: pthread_create(chainApplyWorker) failed for "
+                "sess=%lld — falling back to inline apply", src_mig_id);
+            int total_installed = 0;
+            for (int i = 0; i < n_slots; i++) {
+                const char *block = (const char *) local_pool
+                                  + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
+                total_installed += rdmaApplySlotBlock(c->db, slots[i],
+                                                      block, RDMAMIG_BLOCK_SIZE_BYTES);
+            }
+            serverLog(LL_NOTICE,
+                "CHAIN apply: sess=%lld n_slots=%d installed=%d "
+                "consumed=%zu/%zu bytes [INLINE fallback]",
+                src_mig_id, n_slots, total_installed, length, pool_bytes);
+            zfree(job->slots);
+            zfree(job);
+        } else {
+            pthread_detach(tid);
+            apply_spawned = 1;
         }
-        serverLog(LL_NOTICE,
-            "CHAIN apply: sess=%lld n_slots=%d installed=%d "
-            "consumed=%zu/%zu bytes",
-            src_mig_id, n_slots, total_installed, length, pool_bytes);
     } else if (length > pool_bytes) {
         serverLog(LL_WARNING,
             "CHAIN apply: sess=%lld length %zu > pool %zu — dropping",
             src_mig_id, length, pool_bytes);
     }
+    (void) apply_spawned;
 
     /* If not tail, ALWAYS enqueue forward — the worker pops FIFO, so any
      * pending OPEN_SUCC_QP enqueued by CHAIN-WIRE is processed first and
@@ -1396,6 +1469,83 @@ void rdmaDebugChainEstablishCommand(client *c) {
  * same pool size to each follower) — caller is responsible for ensuring
  * the chain was established with pool_bytes >= n_slots * 2 MiB.
  */
+/* AqRaft Patch 15: pre-register the leader's chain source pool off-main-thread.
+ *
+ * Without this, the first call to rdmaLeaderChainForwardPerSlot triggers a
+ * lazy ibv_reg_mr(2.86 GB) inside mergeBackpatchTick — which runs on the
+ * main thread and blocks the event loop for ~3 seconds while the kernel pins
+ * the pages. During that window raft can't send / process AppendEntries acks,
+ * so the leader's check-quorum (election_timeout * 2 = 2000 ms by default)
+ * trips and the leader steps down to follower in the same term. Clients
+ * pinned to the old leader then see "TIMEOUT no reply from leader" until a
+ * new election settles. By pre-registering inside chainEstablishThread (which
+ * is already a detached pthread), the heavy work stays off the event loop.
+ *
+ * Idempotent: returns C_OK immediately if the src_pool is already registered. */
+int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
+                                 char *errbuf, size_t errbuf_len) {
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaLeaderChainState *st = findLeaderState(src_mig_id);
+    if (st == NULL || st->n_peers < 1 || st->peers[0].client == NULL) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        snprintf(errbuf, errbuf_len,
+                 "chain not established for sess=%lld", src_mig_id);
+        return C_ERR;
+    }
+    if (st->src_pool != NULL) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        return C_OK;   /* already registered */
+    }
+
+    size_t bytes = st->peers[0].peer_pool_bytes;
+    /* Capture cm_id under the lock; rdmamig_buffer_create may take a while
+     * (it's the ibv_reg_mr that we're trying to keep off the main thread). */
+    struct rdma_cm_id *cm = rdmamig_client_cm_id(st->peers[0].client);
+    pthread_mutex_unlock(&g_chain_state_mu);
+
+    void *pool = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (pool == MAP_FAILED) {
+        snprintf(errbuf, errbuf_len,
+                 "mmap(%zu) failed: %s", bytes, strerror(errno));
+        return C_ERR;
+    }
+    struct rdmamig_buffer *buf =
+        rdmamig_buffer_create(cm, (char *) pool, bytes, 0);
+    if (buf == NULL) {
+        munmap(pool, bytes);
+        snprintf(errbuf, errbuf_len,
+                 "rdmamig_buffer_create on leader src failed");
+        return C_ERR;
+    }
+
+    pthread_mutex_lock(&g_chain_state_mu);
+    /* Re-find state in case it was torn down while we were registering. */
+    st = findLeaderState(src_mig_id);
+    if (st == NULL) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        /* Leak the MR + pool (no rdmamig_buffer_destroy helper exists; the
+         * existing recipient pool register has the same leak comment). */
+        snprintf(errbuf, errbuf_len, "chain state torn down during register");
+        return C_ERR;
+    }
+    if (st->src_pool != NULL) {
+        /* Lost the race with another caller — leak our buffer (same as above). */
+        pthread_mutex_unlock(&g_chain_state_mu);
+        return C_OK;
+    }
+    st->src_pool = pool;
+    st->src_pool_bytes = bytes;
+    st->src_buf = buf;
+    pthread_mutex_unlock(&g_chain_state_mu);
+
+    serverLog(LL_NOTICE,
+        "CHAIN: sess=%lld leader src pool registered @ %p (%zu B) "
+        "[off-main-thread, AqRaft Patch 15]",
+        src_mig_id, pool, bytes);
+    return C_OK;
+}
+
 int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
                                   const int *slots, int n_slots,
                                   const char *snapshot_pool,
@@ -1430,35 +1580,32 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
         return C_ERR;
     }
 
-    /* Lazy-init the leader's src pool, registered against peers[0].client's
-     * cm_id / PD. Sized to the chain pool (which is n_slots * 2 MiB per the
-     * PREP request in rdmaChainSpawnEstablish). */
+    /* AqRaft Patch 15: src pool is now pre-registered by chainEstablishThread
+     * (via rdmaLeaderChainEnsureSrcPool below) so the heavy ibv_reg_mr happens
+     * off the main thread. If for some reason that didn't run (e.g., the
+     * chain establish thread hasn't completed yet), fall back to lazy-init
+     * here — but log a warning since this means we'll block the main thread. */
     if (st->src_pool == NULL) {
-        size_t bytes = st->peers[0].peer_pool_bytes;
-        void *pool = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
-                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        if (pool == MAP_FAILED) {
-            pthread_mutex_unlock(&g_chain_state_mu);
+        pthread_mutex_unlock(&g_chain_state_mu);
+        serverLog(LL_WARNING,
+            "CHAIN: sess=%lld src pool not pre-registered — falling back to "
+            "main-thread ibv_reg_mr (may stall raft heartbeats)",
+            src_mig_id);
+        char fallback_err[256] = {0};
+        if (rdmaLeaderChainEnsureSrcPool(src_mig_id, fallback_err,
+                                         sizeof(fallback_err)) != C_OK) {
             snprintf(errbuf, errbuf_len,
-                     "mmap(%zu) failed: %s", bytes, strerror(errno));
+                     "src pool fallback init failed: %s", fallback_err);
             return C_ERR;
         }
-        struct rdma_cm_id *cm = rdmamig_client_cm_id(st->peers[0].client);
-        struct rdmamig_buffer *buf =
-            rdmamig_buffer_create(cm, (char *) pool, bytes, 0);
-        if (buf == NULL) {
-            munmap(pool, bytes);
+        pthread_mutex_lock(&g_chain_state_mu);
+        st = findLeaderState(src_mig_id);
+        if (st == NULL || st->src_pool == NULL) {
             pthread_mutex_unlock(&g_chain_state_mu);
             snprintf(errbuf, errbuf_len,
-                     "rdmamig_buffer_create on leader src failed");
+                     "src pool fallback init: state vanished");
             return C_ERR;
         }
-        st->src_pool = pool;
-        st->src_pool_bytes = bytes;
-        st->src_buf = buf;
-        serverLog(LL_NOTICE,
-            "CHAIN: sess=%lld leader src pool registered @ %p (%zu B)",
-            src_mig_id, pool, bytes);
     }
 
     /* Snapshot what we need to do the WRITE outside the lock. */

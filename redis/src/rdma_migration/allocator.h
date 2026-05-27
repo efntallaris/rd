@@ -208,6 +208,15 @@ void r_allocator_walk_used_segments(
  * holds donor's allocated kvobj segments). Calling this forces subsequent
  * r_allocator_insert_kvobj for the slot to allocate a fresh block. Idempotent. */
 void r_allocator_reset_freelist_for_slot(int slot);
+
+/* AqRaft Patch 17: sanitize a donor-shipped block so coalesce never tries to
+ * merge into a "free" segment whose inline freelist pointers refer to donor
+ * memory (would deref garbage and SIGSEGV). Flips every free segment's
+ * alloc-bit to 1 on header + footer; coalesce then sees all neighbors as
+ * allocated and skips the merge. Idempotent; bounded iteration. Call ONCE
+ * per RDMA-shipped block AFTER any reader (e.g. r_allocator_walk_used_segments)
+ * has identified true kvobjs vs free segments. */
+void r_allocator_sanitize_imported_block(char *block_start);
 size_t calculate_required_space_for_segment( 
                             size_t key_size, 
                             size_t value_size,

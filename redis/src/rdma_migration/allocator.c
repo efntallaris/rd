@@ -858,6 +858,43 @@ void r_allocator_walk_used_segments(
     }
 }
 
+/* AqRaft Patch 17: sanitize a donor-shipped block.
+ *
+ * Donor-shipped 2 MiB blocks contain segments that look free (alloc-bit = 0)
+ * to the recipient, but the inline freelist pointers (PREV_FREEP/NEXT_FREEP
+ * stored in free-segment payloads) refer to the DONOR's address space. When
+ * the recipient later runs coalesce on a SET-overwrite of a migrated key,
+ * coalesce checks the neighbor's alloc bit; if it reads 0 (free), it calls
+ * freelist_remove_segment(slot, neighbor) which dereferences the donor's
+ * PREV_FREEP/NEXT_FREEP -> SIGSEGV in coalesce+0x1d0.
+ *
+ * Walk every segment in this block once and flip alloc-bit to 1 on header +
+ * footer for any segment whose alloc-bit is currently 0. After sanitize all
+ * neighbors appear "allocated" so coalesce skips the merge and never derefs
+ * the stale donor freelist pointers. Idempotent. Same iteration scheme as
+ * r_allocator_walk_used_segments (hard-bounded by block_end + 100K iteration
+ * cap to survive corrupted sizes). Trade-off: the recipient never reclaims
+ * the donor's free space in this block — but free space in migrated blocks
+ * is already abandoned via r_allocator_reset_freelist_for_slot, so no
+ * behavior change. */
+void r_allocator_sanitize_imported_block(char *block_start)
+{
+    if (block_start == NULL) return;
+    void *seg = block_start + WSIZE + WSIZE;     /* first segment payload */
+    char *block_end = block_start + BLOCK_SIZE_BYTES;
+    int iters = 0;
+    while ((char *) seg < block_end && GET_SIZE(HDRP(seg)) != 0) {
+        unsigned size = GET_SIZE(HDRP(seg));
+        if (size < MIN_SEGMENT_SIZE) break;       /* corrupted size — bail */
+        if (!GET_ALLOC(HDRP(seg))) {
+            PUT_WTAG(HDRP(seg), PACK(size, 1));
+            PUT_WTAG(FTRP(seg), PACK(size, 1));
+        }
+        seg = NEXT_SEGMENT(seg);
+        if (++iters > 100000) break;              /* hard cap */
+    }
+}
+
 /* public API
  * Reset slot's freelist head to NULL. Called after RDMA-receiving a donor
  * block so future r_allocator_insert_kvobj allocations don't try to use stale
