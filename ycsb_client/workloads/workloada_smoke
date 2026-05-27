@@ -1,0 +1,19 @@
+# AqRaft smoke variant of workloada.
+# - 100K records (fast load: ~5 sec vs ~2 min for 500K)
+# - 3M operations cap (enough headroom past migration window)
+# - maxexecutiontime=45 (auto-kill so the full sweep finishes in ~75 sec instead of ~5 min)
+# - Still 50/50 read/update zipfian — same shape as full workloada.
+
+recordcount=100000
+operationcount=3000000
+maxexecutiontime=45
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

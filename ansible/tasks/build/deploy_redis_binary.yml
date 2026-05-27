@@ -1,0 +1,31 @@
+---
+# Fast path: skip remote `make install` and just copy the locally-built
+# redis-server binary to /users/entall/rd/redis_bin/bin/redis-server on
+# every host. Use this after editing redis source + running `make -j`
+# locally — saves the 1-2 min per-host remote rebuild.
+#
+# Assumes local + remote are the same arch (x86_64) and the same OS family
+# (so libc / RDMA libs match). For a fresh clean build, fall back to
+# tasks/build/build_redis_custom.yml.
+- name: "Deploy locally-built redis-server binary"
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
+  become: yes
+  tasks:
+    - name: Ensure target bin dir exists
+      file:
+        path: "/users/entall/rd/redis_bin/bin"
+        state: directory
+        owner: entall
+        group: streamstore-PG0
+        mode: '0755'
+
+    - name: Copy redis-server + redis-cli
+      copy:
+        src: "/users/entall/rd/redis/src/{{ item }}"
+        dest: "/users/entall/rd/redis_bin/bin/{{ item }}"
+        owner: entall
+        group: streamstore-PG0
+        mode: '0755'
+      loop:
+        - redis-server
+        - redis-cli

@@ -366,16 +366,51 @@ typedef struct {
 } applySlotCtx;
 
 static void applySlotCb(void *seg_payload, size_t seg_payload_size, void *user) {
-    UNUSED(seg_payload_size);
     applySlotCtx *c = (applySlotCtx *) user;
     kvobj *kv = (kvobj *) seg_payload;
-    /* Sanity: a r_allocator-format segment carries a self-describing kvobj. */
+    /* Sanity #1: an r_allocator-format segment carries a self-describing
+     * kvobj. iskvobj is 1 bit, encoding is 4 bits — together 5 bits of
+     * filtering. With thousands of segments scanned, garbage that happens
+     * to satisfy these two checks will sneak past at ~1/32 rate; further
+     * validation below catches the rest. */
     if (kv->iskvobj != 1 || kv->encoding != OBJ_ENCODING_R_ALLOCATOR) {
         c->skipped_invalid++;
         return;
     }
     unsigned val_off = R_ALLOC_GET_OFFSET(kv);
     if (val_off == 0 || val_off >= seg_payload_size) {
+        c->skipped_invalid++;
+        return;
+    }
+    /* Sanity #2 (AqRaft Patch 18): validate the embedded key sds layout
+     * BEFORE we let dictAddOrFind hash it. kvobjGetKey reads hdr_size from
+     * the byte right after the robj header, then advances 1+hdr_size to
+     * reach the sds char data; siphash then calls sdslen which reads more
+     * metadata. If hdr_size is garbage (random byte 0..255) the key ptr
+     * lands off in space and siphash dereferences invalid memory -> SEGV.
+     * Valid sds hdr_size is one of {0, 2, 4, 8, 16} for sdshdr5/8/16/32/64,
+     * and the resulting key sds end must fit inside the segment. */
+    unsigned char *kv_data = (unsigned char *)(kv + 1);
+    /* Bounds: kv_data must be inside the segment payload. */
+    if ((char *)kv_data >= (char *)kv + seg_payload_size) {
+        c->skipped_invalid++;
+        return;
+    }
+    uint8_t hdr_size = *kv_data;
+    /* Strict allowlist of sds header sizes. sdsHdrSize() returns the byte
+     * count of the sds header INCLUDING the 1-byte flags/type field, which
+     * is one of {1, 3, 5, 9, 17} for sdshdr5/sdshdr8/sdshdr16/sdshdr32/sdshdr64
+     * respectively (see redis/src/sds.h). Anything else = garbage. */
+    if (hdr_size != 1 && hdr_size != 3 && hdr_size != 5 &&
+        hdr_size != 9 && hdr_size != 17) {
+        c->skipped_invalid++;
+        return;
+    }
+    /* The key sds char* lives at kv_data + 1 + hdr_size. It must be
+     * inside the segment payload, and the implied value-offset must come
+     * after the key. */
+    size_t key_meta_end_off = (size_t)((char *)kv_data - (char *)kv) + 1 + hdr_size;
+    if (key_meta_end_off >= seg_payload_size || key_meta_end_off >= val_off) {
         c->skipped_invalid++;
         return;
     }

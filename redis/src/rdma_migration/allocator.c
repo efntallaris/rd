@@ -882,13 +882,29 @@ void r_allocator_sanitize_imported_block(char *block_start)
     if (block_start == NULL) return;
     void *seg = block_start + WSIZE + WSIZE;     /* first segment payload */
     char *block_end = block_start + BLOCK_SIZE_BYTES;
+    /* The actual allocation extends WSIZE past block_end (the epilogue
+     * header, see init_bloc_layout). FTRP(seg) for the initial whole-block
+     * free segment lives at offset BLOCK_SIZE_BYTES, and writing 4 bytes
+     * there ends at BLOCK_SIZE_BYTES + WSIZE — still inside the allocation.
+     * Use block_alloc_end as the strict bound for writes. */
+    char *block_alloc_end = block_start + BLOCK_SIZE_BYTES + WSIZE;
     int iters = 0;
     while ((char *) seg < block_end && GET_SIZE(HDRP(seg)) != 0) {
         unsigned size = GET_SIZE(HDRP(seg));
-        if (size < MIN_SEGMENT_SIZE) break;       /* corrupted size — bail */
+        /* Sanity: keep walker's existing checks. Sizes are 8-byte aligned
+         * by ALIGN in r_allocator_insert_kvobj, so a non-aligned size is
+         * almost certainly garbage. */
+        if (size < MIN_SEGMENT_SIZE) break;
+        if (size % ALIGNMENT != 0) break;
+        if (size > (unsigned) BLOCK_SIZE_BYTES) break;
+        char *ftr = (char *) seg + size - DSIZE;  /* FTRP(seg) */
+        /* Only write if BOTH header and footer fit inside the allocation.
+         * (HDRP(seg) = (char*)seg - WSIZE is always within block_alloc_end
+         * because seg < block_end.) */
+        if (ftr < block_start || ftr + WSIZE > block_alloc_end) break;
         if (!GET_ALLOC(HDRP(seg))) {
             PUT_WTAG(HDRP(seg), PACK(size, 1));
-            PUT_WTAG(FTRP(seg), PACK(size, 1));
+            PUT_WTAG(ftr, PACK(size, 1));
         }
         seg = NEXT_SEGMENT(seg);
         if (++iters > 100000) break;              /* hard cap */
