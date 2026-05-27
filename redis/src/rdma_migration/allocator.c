@@ -742,6 +742,21 @@ kvobj * r_allocator_insert_kvobj(int slot, sds key, sds value, int *allocated_ne
     size_t key_len = sdslen(key);
     size_t val_len = sdslen(value);
 
+    /* AqRaft Patch 23: defensive validation. The follower has been seen
+     * crashing in this function after applying a raft-replicated SET — if
+     * the raft entry deserialization produced an sds with a corrupt length
+     * header, the math below overflows and writes through a garbage pointer.
+     * Reject anything implausible up front and log it. */
+    if (key_len == 0 || key_len > (1ULL << 28) ||
+        val_len == 0 || val_len > (1ULL << 28) ||
+        slot < 0 || slot >= SLOTS) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING,
+            "r_alloc_insert REFUSED: slot=%d key_len=%zu val_len=%zu (suspicious — likely "
+            "corrupt sds header on raft-replicated SET)",
+            slot, key_len, val_len);
+        return NULL;
+    }
+
     char key_sds_type = sdsReqType(key_len);
     size_t key_sds_size = sdsReqSize(key_len, key_sds_type);
     /* Mirror kvobjCreateEmbedString: value sds is always SDS_TYPE_8. */

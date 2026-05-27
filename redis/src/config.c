@@ -3142,6 +3142,7 @@ standardConfig static_configs[] = {
     createIntConfig("cluster-rdma-transfer-chunk-slots", NULL, MODIFIABLE_CONFIG, 1, 256, server.rdma_transfer_chunk_slots, 32, INTEGER_CONFIG, NULL, NULL),
     createBoolConfig("slot-meta-reply", NULL, MODIFIABLE_CONFIG, server.slot_meta_reply, 0, NULL, NULL),
     createIntConfig("rdma-migration-port", NULL, MODIFIABLE_CONFIG, 1, 65535, server.rdma_migration_port, 17777, INTEGER_CONFIG, NULL, NULL), /* Source side picks this; recipient binds it when asked via RDMA INIT-SERVER. */
+    createIntConfig("rdma-migration-peer-stagger-ms", NULL, MODIFIABLE_CONFIG, 0, 600000, server.rdma_migration_peer_stagger_ms, 30000, INTEGER_CONFIG, NULL, NULL), /* AqRaft Patch 22: per-peer start delay = (peer_index + 1) * this. 30s default = 10s gap after each ~20s donor RDMA+finalize round. 0 disables stagger. */
     createSDSConfig("rdma-chain-followers", NULL, MODIFIABLE_CONFIG, ALLOW_EMPTY_STRING, server.rdma_chain_followers, "", NULL, NULL),
     createIntConfig("rdma-chain-pool-bytes", NULL, MODIFIABLE_CONFIG, 1024, 268435456, server.rdma_chain_pool_bytes, 65536, INTEGER_CONFIG, NULL, NULL),
     createBoolConfig("rdma-migration-redisraft-mode", NULL, IMMUTABLE_CONFIG, server.rdma_migration_redisraft_mode, 0, NULL, NULL),

@@ -996,6 +996,16 @@ void narrowLocalAndAddExternal(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *r
 /* AqRaft Patch 13: early write-flip — see RAFT_LOGTYPE_MGN_WRITE_FLIP doc. */
 void ShardGroupWriteFlip(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void applyWriteFlip(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req);
+
+/* AqRaft Patch 19: slotMigStateGet override exported to core Redis.
+ *
+ * Return type is `int` (not `slotMigState`) to avoid pulling redis core's
+ * cluster.h enum into the module — the values are wire-compatible with
+ * the enum (0=STABLE, 1=MIGRATING, 2=MIGRATED) and the function pointer
+ * type in core is declared with matching signature. The peer string is
+ * written as "host:port" when the slot has a write-redirect entry, or
+ * "" when STABLE. */
+int redisraftSlotMigStateOverride(int slot, char *peer_out, size_t peer_out_sz);
 ShardGroup *GetShardGroupById(RedisRaftCtx *rr, const char *id);
 
 /* join.c */

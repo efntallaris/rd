@@ -1076,8 +1076,20 @@ void slotMigStateSet(int slot, slotMigState state, const char *peer_endpoint) {
     clusterSlotUnlock(slot);
 }
 
+/* AqRaft Patch 19: optional override consulted when server.cluster is
+ * NULL (redisraft mode). Set by the redisraft module's
+ * RedisModule_OnLoad. Bridges slotMigStateGet into the module's
+ * ShardingInfo.write_redirect_slots_map[] so the slot-meta-reply path
+ * actually reports MIGRATING during the AqRaft migration window.
+ * Returns int (cast to slotMigState) so the module side doesn't need
+ * to include core Redis's cluster.h enum. */
+int (*rdmaSlotMigStateOverride)(int, char *, size_t) = NULL;
+
 slotMigState slotMigStateGet(int slot, char *peer_out, size_t peer_out_sz) {
     if (server.cluster == NULL) {
+        if (rdmaSlotMigStateOverride != NULL) {
+            return (slotMigState) rdmaSlotMigStateOverride(slot, peer_out, peer_out_sz);
+        }
         if (peer_out && peer_out_sz > 0) peer_out[0] = '\0';
         return SLOT_STATE_STABLE;
     }

@@ -120,6 +120,22 @@ void slotMigStateSet(int slot, slotMigState state, const char *peer_endpoint);
  * receives a copy of the snapshotted endpoint (or empty string when STABLE). */
 slotMigState slotMigStateGet(int slot, char *peer_out, size_t peer_out_sz);
 
+/* AqRaft Patch 19: optional override consulted by slotMigStateGet when
+ * server.cluster == NULL (redisraft mode). When the redisraft module is
+ * loaded, it sets this pointer at RedisModule_OnLoad to a function that
+ * reads its ShardingInfo.write_redirect_slots_map[] (populated by
+ * RAFT.SHARDGROUP WRITE_FLIP). Without this, the legacy slot-meta-reply
+ * path always reports STABLE/no-peer under redisraft, and the YCSB
+ * client-side double-read fanout never fires during the migration window.
+ *
+ * Returns int (wire-compatible with slotMigState enum values:
+ * 0=STABLE, 1=MIGRATING, 2=MIGRATED) so the redisraft module doesn't
+ * need to include core Redis's cluster.h. The caller in cluster_legacy.c
+ * casts the result to slotMigState. */
+extern int (*rdmaSlotMigStateOverride)(int slot,
+                                       char *peer_out,
+                                       size_t peer_out_sz);
+
 /* Reply helper: append `[state, peer_endpoint, value_or_nil]` as a 3-element
  * array on the wire. Used by GET / GETEX when server.slot_meta_reply is on.
  * `value` may be NULL (writes a nil bulk). */
@@ -217,6 +233,14 @@ typedef struct rdmaMigration {
      * Read-only after dispatch; no lock needed. */
     sds       orchestrator_endpoint;  /* "host:port" or NULL */
     long long orchestrator_orch_id;   /* 0 if no orchestrator */
+
+    /* AqRaft Patch 22: server-side stagger. The orchestrator stamps each
+     * peer dispatch with a per-peer delay so peer migrations start at
+     * different wall-clock times even though MIGRATE-ALL fans them out
+     * back-to-back. migrationWorker sleeps for this many ms before
+     * issuing PREP. 0 = no delay (default, used by self-dispatch and by
+     * any direct `RDMA MIGRATE` without the new flag). */
+    int       start_delay_ms;
 
     /* All fields below are guarded by mu. */
     pthread_mutex_t mu;

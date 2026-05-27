@@ -18,7 +18,7 @@ cd "$(dirname "$0")/../.."
 
 EXTRA_VARS=(
   -e "redis_variant=custom"
-  -e "pre_reshard_pause=8"
+  -e "pre_reshard_pause=10"
 )
 
 TS="$(date +%Y%m%d_%H%M%S)"

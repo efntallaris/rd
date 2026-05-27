@@ -64,9 +64,10 @@
           --rdma-chain-pool-bytes 67108864 \
           --rdma-migration-redisraft-mode yes \
           --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \
+          --rdma-migration-peer-stagger-ms {{ rdma_migration_peer_stagger_ms | default(30000) }} \
           --slot-meta-reply yes \
           {% endif %}--loadmodule {{ redisraft_module }} \
-          --raft.append-req-max-count 1024 \
+          --raft.append-req-max-count 2147483647 \
           --raft.id {{ (sg.nodes | selectattr('host', 'equalto', inventory_hostname) | first).raft_id }} \
           --raft.addr {{ host_ip_map[inventory_hostname] }}:{{ sg.port }} \
           --raft.log-filename {{ raft_log_dir }}/raft_{{ sg.id }}_{{ inventory_hostname }}.db \

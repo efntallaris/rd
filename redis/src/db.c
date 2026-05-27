@@ -504,16 +504,26 @@ static kvobj *dbAddInternalImpl(redisDb *db, robj *key, robj **valref, dictEntry
     if (use_r_allocator) {
         int allocated_new_block = 0;
         kv = r_allocator_insert_kvobj(slot, key->ptr, (sds)val->ptr, &allocated_new_block);
-        server.rdma_alloc_inserts++;
-        if ((server.rdma_alloc_inserts % 100000) == 0) {
-            serverLog(LL_NOTICE,
-                "RDMA allocator: %lld inserts (last slot=%d, kv_size_aprox=%zu)",
-                server.rdma_alloc_inserts, slot,
-                sdslen(key->ptr) + sdslen((sds)val->ptr));
+        if (kv == NULL) {
+            /* AqRaft Patch 23: defensive — r_allocator refused the insert
+             * (suspicious sds lengths). Fall back to the jemalloc path so
+             * the SET still applies; better than crashing the follower. */
+            serverLog(LL_WARNING,
+                "r_allocator refused insert (slot=%d) — falling back to kvobjSet",
+                slot);
+            kv = kvobjSet(key->ptr, val, keymeta->metabits);
+        } else {
+            server.rdma_alloc_inserts++;
+            if ((server.rdma_alloc_inserts % 100000) == 0) {
+                serverLog(LL_NOTICE,
+                    "RDMA allocator: %lld inserts (last slot=%d, kv_size_aprox=%zu)",
+                    server.rdma_alloc_inserts, slot,
+                    sdslen(key->ptr) + sdslen((sds)val->ptr));
+            }
+            /* val's sds bytes are copied into the segment; release the transient
+             * input robj/sds. */
+            decrRefCount(val);
         }
-        /* val's sds bytes are copied into the segment; release the transient
-         * input robj/sds. */
-        decrRefCount(val);
     } else {
         kv = kvobjSet(key->ptr, val, keymeta->metabits);
     }
@@ -768,6 +778,13 @@ static void dbSetValueImpl(redisDb *db, robj *key, robj **valref, dictEntryLink 
          * the existing decrRefCount / lazyfree path. */
         int allocated_new_block = 0;
         kvNew = r_allocator_insert_kvobj(slot, key->ptr, (sds)val->ptr, &allocated_new_block);
+        if (kvNew == NULL) {
+            /* AqRaft Patch 23: r_allocator refused — fall back to kvobjSet. */
+            serverLog(LL_WARNING,
+                "r_allocator refused overwrite (slot=%d) — falling back to kvobjSet",
+                slot);
+            kvNew = kvobjSet(key->ptr, val, 0);
+        }
         kvstoreDictSetAtLink(db->keys, slot, kvNew, &link, 0);
 
         /* Mirror the else-branch expires-dict bookkeeping. newKeyMetaBits==0

@@ -2033,7 +2033,22 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
  * push it onto the dispose list. Called both from the no-chain immediate
  * path and from chainPendingTick after chain-ack arrives. Caller must hold
  * NO mutex on b. */
+/* AqRaft Patch 24: detached worker for the 2.86 GB zfree, so it doesn't
+ * block the main thread when backpatchFinalize is called from
+ * chainPendingTick. jemalloc's free of a 2.86 GB pool ~165 ms which
+ * propagates into Jedis pool exhaustion on YCSB. */
+static void *backpatchPoolFreeWorker(void *arg) {
+    zfree(arg);
+    return NULL;
+}
+
 static void backpatchFinalize(backpatchBatch *b) {
+    /* AqRaft Patch 24: timing probe. backpatchFinalize is called from
+     * chainPendingTick on the MAIN thread when chain-ack arrives. The 2.86
+     * GB zfree might block the event loop long enough to exhaust YCSB
+     * connection pool. Measure to confirm. */
+    long long t0 = ustime();
+
     {
         char mgn_payload[160];
         snprintf(mgn_payload, sizeof(mgn_payload),
@@ -2051,22 +2066,45 @@ static void backpatchFinalize(backpatchBatch *b) {
                  (long long) atomic_load(&b->clobber_skipped));
         rdmaMgnLogAsync("RECP_TXN_DONE", mgn_payload);
     }
+    long long t1 = ustime();
+    size_t pool_size = b->donor_snapshot_pool_bytes;
     /* Free the donor snapshot pool — chain finalize is done, the bytes
      * have been RDMA-forwarded and applied on every follower. The batch
      * itself stays in backpatch_batches_by_key for BACKPATCH-STATUS
      * lookups (per existing dispose convention), but the 2.67 GiB pool
-     * is no longer needed. */
+     * is no longer needed.
+     *
+     * AqRaft Patch 24: spawn a detached pthread for the zfree. Direct
+     * zfree blocks the main thread ~165 ms (jemalloc munmaps 2.86 GB
+     * across many arenas). Off-main means main thread keeps servicing
+     * YCSB requests during the free. */
     if (b->donor_snapshot_pool != NULL) {
-        zfree(b->donor_snapshot_pool);
+        void *pool = b->donor_snapshot_pool;
         b->donor_snapshot_pool = NULL;
         b->donor_snapshot_pool_bytes = 0;
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, backpatchPoolFreeWorker, pool) == 0) {
+            pthread_detach(tid);
+        } else {
+            zfree(pool); /* fallback: inline if pthread_create fails */
+        }
     }
+    long long t2 = ustime();
     pthread_mutex_lock(&backpatch_dispose_mu);
     listAddNodeTail(backpatch_dispose_list, b);
     pthread_mutex_unlock(&backpatch_dispose_mu);
     char tick = 1;
     ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
     (void) wr;
+    long long t3 = ustime();
+
+    long long total_us = t3 - t0;
+    if (total_us > 50000) {
+        serverLog(LL_WARNING,
+            "backpatchFinalize sess=%lld: total=%lld us "
+            "(mgn_log=%lld us, zfree(%zu B)=%lld us, dispose=%lld us) — main-thread blocked",
+            b->src_mig_id, total_us, t1 - t0, pool_size, t2 - t1, t3 - t2);
+    }
 }
 
 /* AqRaft Patch 16(D): pthread-friendly wrapper for backpatchFinalize.
@@ -2249,12 +2287,19 @@ static void armMergeTimer(void) {
 static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *clientData) {
     UNUSED(el); UNUSED(id); UNUSED(clientData);
 
+    /* AqRaft Patch 24: timing probe to measure how long each main-thread
+     * tick takes. YCSB connection pool exhaustion correlates with finalize
+     * — this tells us if individual ticks are blocking >10s (YCSB timeout)
+     * or if cumulative tick churn is the cause. */
+    long long t_enter = ustime();
+
     pthread_mutex_lock(&backpatch_merge_mu);
     if (backpatch_merge_queue == NULL || listLength(backpatch_merge_queue) == 0) {
         pthread_mutex_unlock(&backpatch_merge_mu);
         backpatch_merge_timer_id = -1;
         return AE_NOMORE;
     }
+    int queue_depth = (int) listLength(backpatch_merge_queue);
     listNode *ln = listFirst(backpatch_merge_queue);
     backpatchMergeWork *w = listNodeValue(ln);
     pthread_mutex_unlock(&backpatch_merge_mu);
@@ -2374,10 +2419,24 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
 
         if (!more) {
             backpatch_merge_timer_id = -1;
+            long long t_exit = ustime();
+            long long us = t_exit - t_enter;
+            if (us > 50000) {
+                serverLog(LL_WARNING,
+                    "mergeBackpatchTick LAST: took %lld us (queue_depth=%d) — main-thread blocked",
+                    us, queue_depth);
+            }
             return AE_NOMORE;
         }
     }
 
+    long long t_exit = ustime();
+    long long us = t_exit - t_enter;
+    if (us > 50000) {
+        serverLog(LL_WARNING,
+            "mergeBackpatchTick: took %lld us (queue_depth=%d) — main-thread blocked",
+            us, queue_depth);
+    }
     return MERGE_TICK_DELAY_MS;
 }
 
@@ -4545,8 +4604,23 @@ static void *migrationWorker(void *arg) {
     sds err = NULL;
 
     serverLog(LL_NOTICE,
-        "RDMA MIGRATE worker: started id=%lld addr=%s n_slots=%d",
-        mig->id, mig->addr, mig->n_slots);
+        "RDMA MIGRATE worker: started id=%lld addr=%s n_slots=%d start_delay_ms=%d",
+        mig->id, mig->addr, mig->n_slots, mig->start_delay_ms);
+
+    /* AqRaft Patch 22: server-side stagger. When the orchestrator dispatches
+     * to multiple donor peers, each peer is stamped with a per-peer delay
+     * so they don't all start hammering the recipient simultaneously. We
+     * sleep here (on the worker thread, not the main loop) before doing
+     * any work, including the PREP RPC. */
+    if (mig->start_delay_ms > 0) {
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: id=%lld sleeping %d ms before PREP (stagger)",
+            mig->id, mig->start_delay_ms);
+        struct timespec ts;
+        ts.tv_sec  = mig->start_delay_ms / 1000;
+        ts.tv_nsec = (long) (mig->start_delay_ms % 1000) * 1000000L;
+        nanosleep(&ts, NULL);
+    }
 
     /* Protocol log: donor opens a migration session. All donor replicas
      * record the event via the Raft log. */
@@ -4766,6 +4840,7 @@ static void *migrationWorker(void *arg) {
  * free it after a successful call). On failure the function frees it. */
 static long long startLocalMigration(const char *host, int port, int n_slots,
                                      sds orch_endpoint, long long orch_id,
+                                     int start_delay_ms,
                                      const char **err_out) {
     *err_out = NULL;
 
@@ -4822,6 +4897,7 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
     mig->L         = L;
     mig->orchestrator_endpoint = orch_endpoint;   /* takes ownership */
     mig->orchestrator_orch_id  = orch_id;
+    mig->start_delay_ms        = (start_delay_ms > 0) ? start_delay_ms : 0;
     pthread_mutex_init(&mig->mu, NULL);
     mig->state     = RDMA_MIG_INIT;
     mig->registered = 0;
@@ -4843,8 +4919,16 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
 }
 
 void rdmaMigrateCommand(client *c) {
-    if (c->argc != 5 && c->argc != 8) {
-        addReplyError(c, "syntax: RDMA MIGRATE recipient-host recipient-port n-slots [--orchestrator orch-host:orch-port orch-id]");
+    /* Accepted argcs:
+     *   5  : RDMA MIGRATE host port n-slots
+     *   7  : RDMA MIGRATE host port n-slots --start-delay-ms N
+     *   8  : RDMA MIGRATE host port n-slots --orchestrator ep id
+     *   10 : RDMA MIGRATE host port n-slots --orchestrator ep id --start-delay-ms N
+     */
+    if (c->argc != 5 && c->argc != 7 && c->argc != 8 && c->argc != 10) {
+        addReplyError(c, "syntax: RDMA MIGRATE recipient-host recipient-port n-slots "
+                         "[--orchestrator orch-host:orch-port orch-id] "
+                         "[--start-delay-ms N]");
         return;
     }
     const char *host = c->argv[2]->ptr;
@@ -4862,30 +4946,43 @@ void rdmaMigrateCommand(client *c) {
     int port = (int) port_ll;
     int n_slots = (int) n_slots_ll;
 
-    sds       orch_endpoint = NULL;
-    long long orch_id       = 0;
-    if (c->argc == 8) {
-        if (strcasecmp(c->argv[5]->ptr, "--orchestrator") != 0) {
-            addReplyError(c, "expected --orchestrator as the 6th argument");
-            return;
-        }
+    sds       orch_endpoint  = NULL;
+    long long orch_id        = 0;
+    long long start_delay_ms = 0;
+
+    int idx = 5;
+    /* Optional --orchestrator block (3 tokens). */
+    if (c->argc >= 8 && strcasecmp(c->argv[5]->ptr, "--orchestrator") == 0) {
         orch_endpoint = sdsdup((sds) c->argv[6]->ptr);
         if (getLongLongFromObject(c->argv[7], &orch_id) != C_OK || orch_id <= 0) {
             sdsfree(orch_endpoint);
             addReplyError(c, "orchestrator id must be a positive integer");
             return;
         }
+        idx = 8;
+    }
+    /* Optional --start-delay-ms block (2 tokens). */
+    if (c->argc > idx) {
+        if (c->argc != idx + 2 ||
+            strcasecmp(c->argv[idx]->ptr, "--start-delay-ms") != 0 ||
+            getLongLongFromObject(c->argv[idx + 1], &start_delay_ms) != C_OK ||
+            start_delay_ms < 0 || start_delay_ms > 600000) {
+            if (orch_endpoint) sdsfree(orch_endpoint);
+            addReplyError(c, "--start-delay-ms must be in [0..600000] (ms)");
+            return;
+        }
     }
 
     const char *err = NULL;
     long long mig_id = startLocalMigration(host, port, n_slots,
-                                           orch_endpoint, orch_id, &err);
+                                           orch_endpoint, orch_id,
+                                           (int) start_delay_ms, &err);
     if (mig_id < 0) {
         addReplyError(c, err ? err : "RDMA MIGRATE: dispatch failed");
         return;
     }
-    addReplyStatusFormat(c, "OK migration_id=%lld running (n_slots=%d, %s:%d)",
-                         mig_id, n_slots, host, port);
+    addReplyStatusFormat(c, "OK migration_id=%lld running (n_slots=%d, %s:%d, start_delay_ms=%d)",
+                         mig_id, n_slots, host, port, (int) start_delay_ms);
 }
 
 /* RDMA MIGRATE-STATUS [migration_id] */
@@ -5011,6 +5108,7 @@ static long long orchDispatchPeer(const char *peer_host, int peer_port,
                                   const char *recipient_host, int recipient_port,
                                   int n_slots, int rdma_port,
                                   const char *orch_endpoint, long long orch_id,
+                                  int start_delay_ms,
                                   const char **err_out) {
     *err_out = NULL;
     struct timeval tv = {.tv_sec = 5, .tv_usec = 0};
@@ -5043,9 +5141,9 @@ static long long orchDispatchPeer(const char *peer_host, int peer_port,
     }
 
     redisReply *r = redisCommand(cc,
-        "RDMA MIGRATE %s %d %d --orchestrator %s %lld",
+        "RDMA MIGRATE %s %d %d --orchestrator %s %lld --start-delay-ms %d",
         recipient_host, recipient_port, n_slots,
-        orch_endpoint, orch_id);
+        orch_endpoint, orch_id, start_delay_ms);
     long long peer_mig_id = -1;
     if (r == NULL) {
         *err_out = "peer dispatch timed out";
@@ -5143,7 +5241,14 @@ static long long orchAllocateAndDispatch(client *c,
     const int RDMA_PORT_BASE = 17777;
 
     /* Dispatch to peer donors first (so they're already in-flight while we
-     * set up our own). */
+     * set up our own).
+     *
+     * AqRaft Patch 22: server-side stagger. Each peer is stamped with a
+     * per-peer start delay so peers don't all start RDMA-WRITEing the
+     * recipient simultaneously. Self gets delay=0 (runs immediately).
+     * Stagger amount is from CONFIG rdma-migration-peer-stagger-ms
+     * (default 10000ms, 0 disables). Peer i gets (i+1)*stagger. */
+    const int PEER_STAGGER_MS = server.rdma_migration_peer_stagger_ms;
     int n_dispatched = 0;
     for (int i = 0; i < n_peers; i++) {
         char host_buf[256]; int peer_port;
@@ -5158,11 +5263,13 @@ static long long orchAllocateAndDispatch(client *c,
             continue;
         }
         int peer_rdma_port = RDMA_PORT_BASE + 1 + i;
+        int peer_delay_ms = (i + 1) * PEER_STAGGER_MS;
         const char *perr = NULL;
         long long peer_mig_id = orchDispatchPeer(host_buf, peer_port,
                                                  recipient_host, recipient_port,
                                                  n_slots_per_source, peer_rdma_port,
                                                  self_endpoint, orch->id,
+                                                 peer_delay_ms,
                                                  &perr);
         if (peer_mig_id < 0) {
             serverLog(LL_WARNING, "RDMA MIGRATE-ALL: failed to dispatch to %s: %s",
@@ -5190,9 +5297,13 @@ static long long orchAllocateAndDispatch(client *c,
     {
         const char *self_err = NULL;
         sds self_orch_ep = sdsdup(self_endpoint);   /* startLocalMigration takes ownership */
+        /* Self gets start_delay_ms=0 — runs immediately. Peers are
+         * staggered by (peer_index + 1) * stagger inside orchDispatchPeer
+         * below. */
         long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
                                                     n_slots_per_source,
-                                                    self_orch_ep, orch->id, &self_err);
+                                                    self_orch_ep, orch->id,
+                                                    0, &self_err);
         if (self_mig_id < 0) {
             serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
                       self_err ? self_err : "?");

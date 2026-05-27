@@ -2012,6 +2012,7 @@ struct redisServer {
     struct rdmamig_server *rdma_server; /* Recipient side: listening RDMA endpoint */
     dict *rdma_outbound_links;         /* Source side: per-recipient RDMA bootstrap cache, keyed "host:port" */
     int rdma_migration_port;           /* Port the recipient binds for RDMA when asked via INIT-SERVER */
+    int rdma_migration_peer_stagger_ms; /* AqRaft Patch 22: orchestrator stamps peer i with start_delay_ms = (i+1) * this value. 0 = no stagger (all peers start together). */
     sds rdma_chain_followers;          /* Space-separated "host:port host:port" — recipient followers to chain-replicate migration data to. Empty disables chain. */
     int rdma_chain_pool_bytes;         /* Per-session landing pool size for chain (Phase B.5: placeholder size since the chain pool is separate from the migration's per-slot MRs). */
     /* AqRaft layer: when on, treat this node as participating in RDMA

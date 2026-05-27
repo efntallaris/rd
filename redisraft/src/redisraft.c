@@ -2168,6 +2168,32 @@ __attribute__((__unused__)) int RedisModule_OnLoad(RedisModuleCtx *ctx, RedisMod
     RedisModule_RegisterInfoFunc(ctx, handleInfo);
     RedisModule_RegisterCommandFilter(ctx, interceptRedisCommands, 0);
 
+    /* AqRaft Patch 19: wire the slotMigStateGet override so core Redis's
+     * slot-meta-reply path reads from ShardingInfo.write_redirect_slots_map
+     * (populated by RAFT.SHARDGROUP WRITE_FLIP). Without this, the YCSB
+     * client-side double-read fanout never fires under redisraft because
+     * server.cluster == NULL and the legacy slot_mig_state[] arrays don't
+     * exist. The extern pointer is defined in redis core (cluster_legacy.c)
+     * and resolves at dynamic-link time when the .so is dlopen'd into
+     * redis-server (which is built with -rdynamic).
+     *
+     * The extern is declared with __attribute__((weak)) so the standalone
+     * redisraft `main` test binary (which is NOT linked against redis-server)
+     * still links — there the symbol resolves to address 0 and we skip the
+     * assignment. When the .so is loaded into redis-server, the strong
+     * definition from cluster_legacy.c wins and &rdmaSlotMigStateOverride
+     * is non-NULL. */
+    {
+        extern int (*rdmaSlotMigStateOverride)(int, char *, size_t)
+            __attribute__((weak));
+        if (&rdmaSlotMigStateOverride != NULL) {
+            rdmaSlotMigStateOverride = redisraftSlotMigStateOverride;
+            RedisModule_Log(ctx, REDISMODULE_LOGLEVEL_NOTICE,
+                            "AqRaft Patch 19: rdmaSlotMigStateOverride registered "
+                            "(slot-meta-reply now consults write_redirect_slots_map)");
+        }
+    }
+
     if (registerRaftCommands(ctx) == RR_ERROR) {
         LOG_WARNING("Failed to register commands");
         goto error;

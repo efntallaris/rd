@@ -2390,3 +2390,54 @@ void handleBeforeSleep(RedisRaftCtx *rr)
         RedisModule_EventLoopAddOneShot(noopCallback, NULL);
     }
 }
+
+/* AqRaft Patch 19: slotMigStateGet override for redisraft mode.
+ *
+ * Core Redis's slotMigStateGet (cluster_legacy.c) hard-returns
+ * SLOT_STATE_STABLE when server.cluster == NULL — which is always the
+ * case under redisraft. That collapses the slot-meta-reply path: every
+ * GET reply looks like [STABLE, "", value], the YCSB client never enters
+ * the parallel-fanout branch of its double-read protocol, and
+ * post-WRITE_FLIP reads on not-yet-migrated keys fail with Status.ERROR
+ * because the recipient (sg4) doesn't have them yet.
+ *
+ * This function is registered via the function-pointer hook
+ * `rdmaSlotMigStateOverride` at module load. When the donor's
+ * write_redirect_slots_map[slot] is non-NULL (set by applyWriteFlip for
+ * a slot in the migration window, cleared by narrowLocalAndAddExternal
+ * at NARROW), we report SLOT_STATE_MIGRATING + the recipient's first
+ * node address as the peer endpoint. The YCSB client then fans the GET
+ * out to donor + recipient in parallel; the recipient wins when it has
+ * the value, the donor backstops everything else.
+ *
+ * Return type is `int` (not slotMigState) so the module doesn't need to
+ * include core Redis's cluster.h. Wire-compatible values:
+ * 0=STABLE, 1=MIGRATING, 2=MIGRATED. */
+int redisraftSlotMigStateOverride(int slot, char *peer_out, size_t peer_out_sz)
+{
+    if (peer_out && peer_out_sz > 0) peer_out[0] = '\0';
+    if (slot < 0 || slot >= REDIS_RAFT_HASH_SLOTS) {
+        return 0; /* STABLE */
+    }
+    ShardingInfo *si = redis_raft.sharding_info;
+    if (si == NULL) {
+        return 0;
+    }
+    /* Single-word pointer read. write_redirect_slots_map[] is written
+     * only by the Raft apply thread (single-writer). For an experiment
+     * the racy read is fine; on x86-64 aligned pointer reads are atomic. */
+    ShardGroup *wsg = si->write_redirect_slots_map[slot];
+    if (wsg == NULL || wsg->nodes == NULL || wsg->nodes_num == 0) {
+        return 0;
+    }
+    /* Return the recipient's first listed node. For our static topology
+     * that's always sg4's initial leader (redis3:8000). If sg4 has a
+     * leader election mid-migration, --raft.follower-proxy yes on the
+     * sg4 nodes silently bridges the request to the current leader. */
+    NodeAddr addr = wsg->nodes[0].addr;
+    if (peer_out && peer_out_sz > 0) {
+        snprintf(peer_out, peer_out_sz, "%s:%u", addr.host,
+                 (unsigned) addr.port);
+    }
+    return 1; /* MIGRATING */
+}
