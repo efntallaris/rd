@@ -1008,6 +1008,25 @@ void r_allocator_free_kv(int slot, void *key_meta_ptr)
         return;
     }
 
+    /* AqRaft Patch 25: foreign-segment guard. On the recipient (and its
+     * chain followers) migrated kvobjs are installed directly out of the
+     * RDMA landing pool / donor-shipped block, NOT out of an r_allocator-
+     * managed block. Those kvobjs still carry encoding=OBJ_ENCODING_R_ALLOCATOR,
+     * so a client SET that overwrites a migrated key routes the old value
+     * here. If we proceed, coalesce() inserts the landing-pool segment into
+     * this slot's freelist (allocator.c:535) — or, if it mis-detects the
+     * block as empty, tries to zfree() the landing pool (allocator.c:528).
+     * Either way a later r_allocator_insert_kvobj picks up the foreign
+     * segment via freelist_find_fit and SIGSEGVs on its stale pointers.
+     *
+     * Guard: if the segment isn't inside any block this allocator owns for
+     * the slot, just orphan it. The landing pool's lifetime is owned by the
+     * chain session, not by r_allocator, so there is nothing to free here. */
+    if (get_block_from_ptr(slot, segment) == NULL) {
+        pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+        return;
+    }
+
     size_t size = GET_SIZE(HDRP(segment));
 
     PUT_WTAG(HDRP(segment), PACK(size, 0));

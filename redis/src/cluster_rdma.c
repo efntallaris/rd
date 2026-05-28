@@ -2293,6 +2293,24 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
      * or if cumulative tick churn is the cause. */
     long long t_enter = ustime();
 
+    /* AqRaft Patch 26 probe: cumulative per-second accounting. Logs how many
+     * ticks ran and how many microseconds of main-thread time they consumed
+     * each wall-clock second, so we can confirm whether mergeBackpatchTick is
+     * the consumer starving raft apply during the migration-window stall. */
+    static long long mbt_window_start_us = 0;
+    static long long mbt_accum_us = 0;
+    static long long mbt_calls = 0;
+    if (mbt_window_start_us == 0) mbt_window_start_us = t_enter;
+    if (t_enter - mbt_window_start_us >= 1000000) {
+        serverLog(LL_NOTICE,
+            "mergeBackpatchTick 1s window: calls=%lld main_thread_us=%lld (%.1f%% of 1s)",
+            mbt_calls, mbt_accum_us, (double) mbt_accum_us / 10000.0);
+        mbt_window_start_us = t_enter;
+        mbt_accum_us = 0;
+        mbt_calls = 0;
+    }
+    mbt_calls++;
+
     pthread_mutex_lock(&backpatch_merge_mu);
     if (backpatch_merge_queue == NULL || listLength(backpatch_merge_queue) == 0) {
         pthread_mutex_unlock(&backpatch_merge_mu);
@@ -2421,6 +2439,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
             backpatch_merge_timer_id = -1;
             long long t_exit = ustime();
             long long us = t_exit - t_enter;
+            mbt_accum_us += us;
             if (us > 50000) {
                 serverLog(LL_WARNING,
                     "mergeBackpatchTick LAST: took %lld us (queue_depth=%d) — main-thread blocked",
@@ -2432,6 +2451,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
 
     long long t_exit = ustime();
     long long us = t_exit - t_enter;
+    mbt_accum_us += us;
     if (us > 50000) {
         serverLog(LL_WARNING,
             "mergeBackpatchTick: took %lld us (queue_depth=%d) — main-thread blocked",

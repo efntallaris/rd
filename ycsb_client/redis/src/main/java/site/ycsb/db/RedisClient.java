@@ -243,6 +243,21 @@ public class RedisClient extends DB {
     return j;
   }
 
+  /** getOrOpen variant that returns null instead of throwing when the host
+   * is unreachable. Used on the read path, which already tolerates a null
+   * Jedis (treats that side as "no answer" and falls back to the peer). A
+   * mid-migration connect failure should degrade the read, not kill the
+   * worker thread. */
+  private Jedis getOrOpenSafe(HostAndPort hp) {
+    if (hp == null) return null;
+    try {
+      return getOrOpen(hp);
+    } catch (JedisConnectionException ce) {
+      evictConn(hp);
+      return null;
+    }
+  }
+
   /** Drop a broken cached Jedis so the next getOrOpen reopens it. */
   private synchronized void evictConn(HostAndPort hp) {
     if (hp == null) return;
@@ -453,12 +468,35 @@ public class RedisClient extends DB {
      * Jedis instances. Synchronize per-connection so reply pipelining
      * doesn't interleave + corrupt Jedis's protocol parser. Loop bounded
      * to handle a brief cascade of ASK/MOVED while the donor + recipient
-     * concurrently swap ownership. */
-    for (int attempt = 0; attempt < 8; attempt++) {
+     * concurrently swap ownership. Budget is large (200) because transient
+     * redisraft errors ("TIMEOUT no reply from leader") during a deep
+     * migration-window dip can persist for ~1-2 s; at ~10 ms/retry that is
+     * up to ~2 s of patience before giving up, enough to ride out a dip
+     * without killing the worker thread. MOVED/ASK loops can't run away
+     * now that Patch 25 stopped the donor↔recipient redirect ping-pong. */
+    for (int attempt = 0; attempt < 200; attempt++) {
       if (hp == null) hp = seedHostPort;
-      Jedis j = getOrOpen(hp);
       boolean connDropped = false;
       HostAndPort badHp = null;
+      Jedis j;
+      /* getOrOpen does j.connect(), which can throw JedisConnectionException
+       * if the target host is briefly unreachable (e.g., mid-migration when
+       * a slot owner is being swapped). Previously this throw escaped the
+       * retry loop and killed the YCSB worker thread. Catch it here so a
+       * transient connect failure triggers the same evict + re-resolve +
+       * retry path as an in-flight drop. */
+      try {
+        j = getOrOpen(hp);
+      } catch (JedisConnectionException ce) {
+        evictConn(hp);
+        HostAndPort newOwner = refreshSlotOwner(slot);
+        hp = (newOwner != null) ? newOwner : seedHostPort;
+        ask = false;
+        try { Thread.sleep(5); } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+        }
+        continue;
+      }
       synchronized (j) {
         try {
           if (ask) {
@@ -481,6 +519,29 @@ public class RedisClient extends DB {
            * gets reset. Evict + re-resolve outside the synchronized block. */
           connDropped = true;
           badHp = hp;
+        } catch (redis.clients.jedis.exceptions.JedisDataException de) {
+          /* Transient redisraft errors during the migration window:
+           *   - "TIMEOUT no reply from leader": leader saturated (deep dip)
+           *     or a brief leader election; the command never committed.
+           *   - "TRYAGAIN": slot is MIGRATING/IMPORTING and keys are
+           *     mid-transfer.
+           *   - "CLUSTERDOWN": momentary loss of quorum.
+           * All are retryable — the write simply hasn't landed yet. Sleep a
+           * little and retry the same owner. Previously these JedisData
+           * exceptions escaped the loop and killed the YCSB worker thread,
+           * which collapsed the whole run mid-migration. Genuine errors
+           * (wrong type, syntax) are not expected on a pure SET/GET workload,
+           * so retrying is safe here. */
+          String msg = de.getMessage();
+          if (msg != null && (msg.contains("TIMEOUT") || msg.contains("TRYAGAIN")
+              || msg.contains("CLUSTERDOWN") || msg.contains("LOADING"))) {
+            try { Thread.sleep(10); } catch (InterruptedException ie) {
+              Thread.currentThread().interrupt();
+            }
+            /* keep hp, ask unchanged — retry the same leader */
+          } else {
+            throw de;
+          }
         }
       }
       if (connDropped) {
@@ -537,7 +598,7 @@ public class RedisClient extends DB {
     SlotEntry s = slotCache[slot];
 
     HostAndPort ownerHp = slotOwner[slot];
-    final Jedis ownerJ = (ownerHp != null) ? getOrOpen(ownerHp) : null;
+    final Jedis ownerJ = getOrOpenSafe(ownerHp);
 
     // Stable-slot fast path: single donor read. May discover a state flip on
     // the reply; if so, follow up with the freshly-learned peer.
@@ -549,8 +610,9 @@ public class RedisClient extends DB {
         return Status.OK;
       }
       if (ra != null && ra.state != SLOT_STABLE && ra.peer != null) {
-        GetReply rb = sendGet(getOrOpen(ra.peer), key);
-        if (rb.value != null) {
+        Jedis pj = getOrOpenSafe(ra.peer);
+        GetReply rb = (pj != null) ? sendGet(pj, key) : null;
+        if (rb != null && rb.value != null) {
           result.put(resultField, new StringByteIterator(rb.value));
           return Status.OK;
         }
@@ -566,7 +628,8 @@ public class RedisClient extends DB {
     Future<GetReply> peerFuture = peerProbeExec.submit(new Callable<GetReply>() {
       @Override
       public GetReply call() {
-        return sendGet(getOrOpen(peerHp), keyFinal);
+        Jedis pj = getOrOpenSafe(peerHp);
+        return (pj != null) ? sendGet(pj, keyFinal) : null;
       }
     });
     GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;

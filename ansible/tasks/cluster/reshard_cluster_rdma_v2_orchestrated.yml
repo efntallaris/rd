@@ -152,28 +152,44 @@
                       | regex_search('orchestration_id=([0-9]+)', '\\1')
                       | first }}"
 
+    # Poll the orchestration to terminal state. The retry loop lives in the
+    # shell (not ansible until/retries) so we can: (a) put a hard timeout on
+    # each redis-cli call so a momentary unresponsive leader during the
+    # migration NIC-saturation window can't wedge a single attempt, and
+    # (b) extract the TOP-LEVEL state robustly regardless of redis-cli array
+    # formatting (raw `DONE` vs prefixed `1) "DONE"`). The status reply is a
+    # 6-element array whose first line is the state; per-donor "state=DONE"
+    # details are on later lines, so we only inspect line 1. Emits
+    # `FINAL_STATE=<DONE|FAILED|TIMEOUT>` for the gates below to key on.
+    #
+    # History: the previous ansible-`until` version exact-matched the first
+    # line against 'DONE' and always exhausted, so NARROW was skipped and the
+    # migrated slots stayed permanently MIGRATING (double-reads, ~half
+    # throughput post-migration).
     - name: "Poll RDMA MIGRATE-ALL-STATUS until DONE or FAILED"
       shell: |
-        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL-STATUS {{ orch_id }}
+        final="TIMEOUT"
+        for i in $(seq 1 240); do
+          out=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS {{ orch_id }} 2>/dev/null)
+          state=$(printf '%s\n' "$out" | head -1 | grep -oE 'DONE|FAILED|RUNNING|INIT|DISPATCHING' | head -1)
+          if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ]; then
+            final="$state"
+            break
+          fi
+          sleep 0.5
+        done
+        echo "FINAL_STATE=$final attempts=$i"
       register: orch_status
       changed_when: false
-      # 500 ms × 240 = 2 min cap. Short because the AqRaft topology has the
-      # orchestrator dispatching to SG1 followers (no slots) — only SG1 leader
-      # actually moves data, and that completes quickly. After SG1's batch
-      # finishes (+ chain delivery), the other workers stay stuck but we
-      # want to fall through to collect_results so the partial run produces
-      # YCSB output for plotting.
-      retries: 240
-      delay: 0.5
-      until: >
-        orch_status.stdout is defined and
-        (orch_status.stdout_lines | first | default('')) in ['DONE','FAILED']
-      ignore_errors: yes
 
-    - name: "Note MIGRATE-ALL stall (AqRaft known limitation, not a hard error)"
+    - name: "DEBUG: orchestration poll result"
       debug:
-        msg: "MIGRATE-ALL orch_id={{ orch_id }} did not reach DONE/FAILED within poll window — SG1 likely migrated, SG2/SG3 stuck on orchestrator peer_endpoints mismatch. Continuing to collect_results."
-      when: (orch_status.stdout_lines | first | default('')) not in ['DONE','FAILED']
+        msg: "{{ orch_status.stdout | default('<none>') }}"
+
+    - name: "Note MIGRATE-ALL did not finalize within poll window"
+      debug:
+        msg: "MIGRATE-ALL orch_id={{ orch_id }} did not reach DONE/FAILED — continuing to collect_results (NARROW will be skipped)."
+      when: "'FINAL_STATE=DONE' not in (orch_status.stdout | default(''))"
 
     # ==================================================================
     # AqRaft Patch 10: post-migration NARROW.
@@ -209,7 +225,7 @@
       loop_control:
         loop_var: spec
         label: "{{ spec.sg_id }}: narrow to {{ spec.new_local_lo }}:{{ spec.new_local_hi }}, sg4 gets {{ spec.migrated_lo }}-{{ spec.migrated_hi }}"
-      when: (orch_status.stdout_lines | first | default('')) == 'DONE'
+      when: "'FINAL_STATE=DONE' in (orch_status.stdout | default(''))"
       retries: 5
       delay: 1
       until: narrow_results.rc == 0 and 'OK' in (narrow_results.stdout | default(''))
@@ -226,7 +242,7 @@
       loop_control:
         loop_var: spec
         label: "{{ spec.sg_id }}"
-      when: (orch_status.stdout_lines | first | default('')) == 'DONE'
+      when: "'FINAL_STATE=DONE' in (orch_status.stdout | default(''))"
 
     - name: "NARROW: log CLUSTER SLOTS for each donor (post-narrow)"
       debug:
@@ -235,6 +251,6 @@
       loop_control:
         label: "{{ item.spec.sg_id }}"
       when:
-        - (orch_status.stdout_lines | first | default('')) == 'DONE'
+        - "'FINAL_STATE=DONE' in (orch_status.stdout | default(''))"
         - post_narrow_slots is defined
         - post_narrow_slots.results is defined
