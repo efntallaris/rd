@@ -85,4 +85,13 @@ int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
  * Returns number of keys installed. */
 int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size);
 
+/* AqRaft Patch 29: recipient-follower per-slot merge enqueue. Builds the
+ * shadow dict off-main from the slot's r_allocator-registered blocks and
+ * hands it to the main-thread merge queue (mergeBackpatchTick) with a NULL
+ * batch, so the live-keyspace insert runs serialized on the event loop —
+ * same as the leader. Precondition: the slot's landing-pool slice must
+ * already be registered via r_allocator_register_existing_block.
+ * Implemented in cluster_rdma.c. Returns staged key count. */
+int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot);
+
 #endif /* __CLUSTER_RDMA_CHAIN_H */

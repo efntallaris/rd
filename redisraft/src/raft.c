@@ -1038,7 +1038,12 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
     RedisRaftCtx *rr = user_data;
     RaftReq *req = entryDetachRaftReq(rr, entry);
 
-    LOG_NOTICE("RAFT_LOG apply:  idx=%ld term=%ld type=%s(%d) size=%llu",
+    /* AqRaft: was LOG_NOTICE — fired on EVERY applied entry, synchronous
+     * write() to the logfile on the main thread. See the matching note in
+     * logImplAppend (log.c). Demoted to LOG_DEBUG to stop the per-entry
+     * logging from dragging throughput; raise --raft.loglevel to debug to
+     * re-enable. */
+    LOG_DEBUG("RAFT_LOG apply:  idx=%ld term=%ld type=%s(%d) size=%llu",
                entry_idx,
                entry->term,
                raftLogTypeName(entry->type), entry->type,
@@ -2244,6 +2249,42 @@ void applyWriteFlip(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req)
         ext_sg->node_conn_idx = 0;
         ext_sg->conn = NULL;
         registered = ext_sg;
+    }
+
+    /* AqRaft fix: a write-redirect entry must point at a shardgroup whose
+     * slot_ranges actually cover the slot — validateRaftRedisCommandArray
+     * derives slot_type from slot_ranges, and an uncovered slot is rejected
+     * with "couldn't associate a shardgroup slot". On the FIRST WRITE_FLIP the
+     * freshly-deserialized ext_sg already covers [lo,hi] (so this is a no-op).
+     * But on a SUBSEQUENT round (multi-round / chunked migration) ext_sg is
+     * already registered with only the earlier round's ranges, so [lo,hi] is
+     * uncovered and every write to it would error for the whole round until
+     * NARROW. Append [lo,hi] as a STABLE range (metadata only — we deliberately
+     * do NOT touch stable_slots_map, preserving the writes-only-redirect intent
+     * so reads still fall through to the donor). Idempotent via the coverage
+     * check, so re-send / replica re-apply never accumulates duplicates.
+     * NARROW later frees + rebuilds ext_sg with the canonical cumulative range. */
+    {
+        bool covered = false;
+        for (unsigned int i = 0; i < registered->slot_ranges_num; i++) {
+            if (registered->slot_ranges[i].start_slot <= (unsigned int) lo &&
+                (unsigned int) hi <= registered->slot_ranges[i].end_slot) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) {
+            registered->slot_ranges = RedisModule_Realloc(
+                registered->slot_ranges,
+                sizeof(ShardGroupSlotRange) * (registered->slot_ranges_num + 1));
+            ShardGroupSlotRange *sr =
+                &registered->slot_ranges[registered->slot_ranges_num];
+            sr->start_slot = (unsigned int) lo;
+            sr->end_slot = (unsigned int) hi;
+            sr->type = SLOTRANGE_TYPE_STABLE;
+            sr->migration_session_key = 0;
+            registered->slot_ranges_num++;
+        }
     }
 
     for (long j = lo; j <= hi; j++) {

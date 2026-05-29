@@ -1058,6 +1058,28 @@ int equalStringObjects(robj *a, robj *b) {
 size_t stringObjectLen(robj *o) {
     serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
     if (sdsEncodedObject(o)) {
+        /* AqRaft Patch 28 (diagnostic guard): a valid OBJ_ENCODING_R_ALLOCATOR
+         * kvobj keeps its value sds embedded at (kv + packed_offset), so
+         * o->ptr must equal (char*)o + R_ALLOC_GET_OFFSET(o) (see
+         * r_allocator_insert_kvobj + applySlotCb). On the migration recipient
+         * / chain followers we are seeing an intermittent SIGSEGV here when a
+         * kvobj's value pointer has drifted — its backing r_allocator block
+         * was freed or a migration buffer it referenced went stale. Detect
+         * the drift, log it (so we can trace the corruption's origin), and
+         * return 0 instead of dereferencing a dangling pointer, so the node
+         * survives and the run can continue. */
+        if (o->encoding == OBJ_ENCODING_R_ALLOCATOR) {
+            unsigned voff = R_ALLOC_GET_OFFSET(o);
+            const char *expected = (const char *)o + voff;
+            if (voff == 0 || (const char *)o->ptr != expected) {
+                serverLog(LL_WARNING,
+                    "stringObjectLen: corrupt R_ALLOCATOR kvobj o=%p ptr=%p "
+                    "expected=%p voff=%u slot=%d — returning 0 (skipping sdslen)",
+                    (void *) o, (void *) o->ptr, (const void *) expected,
+                    voff, R_ALLOC_GET_SLOT(o));
+                return 0;
+            }
+        }
         return sdslen(o->ptr);
     } else {
         return sdigits10((long)o->ptr);

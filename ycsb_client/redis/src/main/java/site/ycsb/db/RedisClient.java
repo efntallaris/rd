@@ -93,6 +93,48 @@ public class RedisClient extends DB {
   private static final int SLOT_MIGRATING = 1;
   private static final int SLOT_MIGRATED  = 2;
 
+  // ---- AqRaft instrumentation (TEMPORARY): diagnose why post-migration
+  // throughput stays halved despite Patch 30. Counts read-path routing so we
+  // can see if the Patch 30 collapse ever fires and what the donor returns for
+  // a migrated slot. Logged to stderr (lands in ycsb_output) every ~3s. ----
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_FAST = new java.util.concurrent.atomic.AtomicLong();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_TWOSIDED = new java.util.concurrent.atomic.AtomicLong();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_COLLAPSE = new java.util.concurrent.atomic.AtomicLong();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_DONOR_MOVED = new java.util.concurrent.atomic.AtomicLong();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_DONOR_META_MIGRATING = new java.util.concurrent.atomic.AtomicLong();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_DONOR_META_MIGRATED = new java.util.concurrent.atomic.AtomicLong();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_LAST_LOG_MS = new java.util.concurrent.atomic.AtomicLong();
+  // Per-target-host read latency: host -> [sumNanos, count]. Reveals whether
+  // reads to the recipient (sg4) are slower than reads to donors.
+  private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder[]> INSTR_HOST_LAT =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  private static void instrRecordLat(HostAndPort hp, long nanos) {
+    if (hp == null) return;
+    java.util.concurrent.atomic.LongAdder[] e = INSTR_HOST_LAT.computeIfAbsent(hp.toString(),
+        k -> new java.util.concurrent.atomic.LongAdder[]{
+            new java.util.concurrent.atomic.LongAdder(), new java.util.concurrent.atomic.LongAdder()});
+    e[0].add(nanos);
+    e[1].add(1);
+  }
+  private static void instrMaybeLog() {
+    long now = System.currentTimeMillis();
+    long last = INSTR_LAST_LOG_MS.get();
+    if (now - last >= 3000 && INSTR_LAST_LOG_MS.compareAndSet(last, now)) {
+      StringBuilder hl = new StringBuilder();
+      for (java.util.Map.Entry<String, java.util.concurrent.atomic.LongAdder[]> en : INSTR_HOST_LAT.entrySet()) {
+        long c = en.getValue()[1].sum();
+        long us = (c > 0) ? (en.getValue()[0].sum() / c / 1000) : 0;
+        hl.append(' ').append(en.getKey()).append("=").append(us).append("us/").append(c);
+      }
+      System.err.println("[AQRAFT-INSTR] t=" + now
+          + " fast=" + INSTR_FAST.get()
+          + " twoSided=" + INSTR_TWOSIDED.get()
+          + " collapse=" + INSTR_COLLAPSE.get()
+          + " donorMoved=" + INSTR_DONOR_MOVED.get()
+          + " | fastReadLatByHost(cumulative):" + hl);
+    }
+  }
+
   /** Per-slot record. Volatile, no synchronization: per-reply self-healing
    *  via the metadata in every GET response. */
   private static final class SlotEntry {
@@ -423,6 +465,7 @@ public class RedisClient extends DB {
       // hit the wrong (donor) node and silently fail with Status.ERROR.
       HostAndPort target = mv.getTargetNode();
       if (target != null) {
+        INSTR_DONOR_MOVED.incrementAndGet();
         r.state = SLOT_MIGRATED;
         r.peer  = target;
         getOrOpen(target);
@@ -442,6 +485,36 @@ public class RedisClient extends DB {
   private void updateSlotCache(int slot, GetReply r) {
     if (!r.ok) return;
     SlotEntry se = slotCache[slot];
+    /* AqRaft Patch 30: a -MOVED on a READ means the donor has NARROWed this
+     * slot away — migration is finalized and the recipient (r.peer) is now
+     * the sole STABLE owner. Collapse the slot to the single-read fast path:
+     * route directly to the recipient and drop the double-read fanout.
+     * (During the migration window the donor still serves reads locally and
+     * returns slot-meta MIGRATING — not MOVED — so SLOT_MIGRATED only ever
+     * arrives post-NARROW.) Without this the slot stays at SLOT_MIGRATED
+     * forever: every read keeps fanning out to donor + recipient, and the
+     * narrowed donor leg fails (READ-FAILED, ~2-3ms), which is what pinned
+     * post-migration throughput at ~half baseline. */
+    if (r.state == SLOT_MIGRATED && r.peer != null) {
+      INSTR_COLLAPSE.incrementAndGet();
+      /* AqRaft fix: route to the recipient's LEADER, not the -MOVED target.
+       * The donor's -MOVED round-robins across ALL recipient-shardgroup nodes
+       * (raft.c getSlotShardGroup: sg->nodes[next_redir]), so ~2/3 of targets
+       * are FOLLOWERS. With follower-proxy on, a read to a follower is
+       * forwarded to the leader → ~11-15ms vs ~230us straight to the leader,
+       * which is what pinned post-migration throughput below baseline.
+       * CLUSTER SLOTS returns the leader as the range's first node, so
+       * refreshSlotOwner() resolves+pins the leader (and sets slotOwner[slot]).
+       * Done once per slot at collapse; steady-state reads then hit the leader
+       * directly. Fall back to the -MOVED target if CLUSTER SLOTS is unreachable. */
+      HostAndPort leader = refreshSlotOwner(slot);
+      HostAndPort target = (leader != null) ? leader : r.peer;
+      if (slotOwner != null) slotOwner[slot] = target;
+      getOrOpen(target);
+      se.state = SLOT_STABLE;
+      se.peer = null;
+      return;
+    }
     se.state = r.state;
     se.peer = r.peer;
     if (r.peer != null) {
@@ -505,9 +578,21 @@ public class RedisClient extends DB {
           }
           return op.run(j);
         } catch (redis.clients.jedis.exceptions.JedisMovedDataException mv) {
+          /* Retry THIS write against the -MOVED target: it completes in both the
+           * migration window (donor redirects to sg4 via WRITE_FLIP) and
+           * post-NARROW (target is an sg4 node, which owns the slot or
+           * follower-proxies it). Do NOT resolve via CLUSTER SLOTS for the retry
+           * — during the window it still returns the donor, which -MOVEDs back,
+           * producing a donor<->sg4 ping-pong that exhausts the retry budget.
+           *
+           * AqRaft fix: do NOT pin slotOwner[] to the round-robin -MOVED target.
+           * It is often a FOLLOWER, and reads share slotOwner[], so pinning a
+           * follower here makes every subsequent READ of the slot pay
+           * follower-proxy (~11-15ms vs ~230us at the leader). Leave slotOwner[]
+           * to the read-collapse path, which resolves the LEADER via CLUSTER
+           * SLOTS once the migration has finalized. */
           hp = new HostAndPort(mv.getTargetNode().getHost(),
                                mv.getTargetNode().getPort());
-          if (slotOwner != null) slotOwner[slot] = hp;
           ask = false;
         } catch (redis.clients.jedis.exceptions.JedisAskDataException ax) {
           hp = new HostAndPort(ax.getTargetNode().getHost(),
@@ -534,7 +619,15 @@ public class RedisClient extends DB {
            * so retrying is safe here. */
           String msg = de.getMessage();
           if (msg != null && (msg.contains("TIMEOUT") || msg.contains("TRYAGAIN")
-              || msg.contains("CLUSTERDOWN") || msg.contains("LOADING"))) {
+              || msg.contains("CLUSTERDOWN") || msg.contains("LOADING")
+              || msg.contains("NOTLEADER") || msg.contains("Failed to proxy")
+              || msg.contains("LEADERSHIP"))) {
+            /* NOTLEADER / "Failed to proxy command": redisraft follower-proxy
+             * couldn't reach the leader, typically a brief window during the
+             * NARROW ownership hand-off or a leader re-election. Re-resolve
+             * the slot owner and retry rather than killing the worker. */
+            HostAndPort reResolved = refreshSlotOwner(slot);
+            if (reResolved != null) hp = reResolved;
             try { Thread.sleep(10); } catch (InterruptedException ie) {
               Thread.currentThread().interrupt();
             }
@@ -596,6 +689,7 @@ public class RedisClient extends DB {
 
     int slot = JedisClusterCRC16.getSlot(key);
     SlotEntry s = slotCache[slot];
+    instrMaybeLog();
 
     HostAndPort ownerHp = slotOwner[slot];
     final Jedis ownerJ = getOrOpenSafe(ownerHp);
@@ -603,7 +697,10 @@ public class RedisClient extends DB {
     // Stable-slot fast path: single donor read. May discover a state flip on
     // the reply; if so, follow up with the freshly-learned peer.
     if (s.state == SLOT_STABLE || s.peer == null) {
+      INSTR_FAST.incrementAndGet();
+      long t0 = System.nanoTime();
       GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;
+      instrRecordLat(ownerHp, System.nanoTime() - t0);
       if (ra != null) updateSlotCache(slot, ra);
       if (ra != null && ra.value != null) {
         result.put(resultField, new StringByteIterator(ra.value));
@@ -623,6 +720,7 @@ public class RedisClient extends DB {
     // Migration path: fan out donor + recipient GETs in parallel. Recipient
     // wins when both have the key — the donor's copy is the older snapshot
     // once ownership has flipped to the recipient.
+    INSTR_TWOSIDED.incrementAndGet();
     final HostAndPort peerHp = s.peer;
     final String keyFinal = key;
     Future<GetReply> peerFuture = peerProbeExec.submit(new Callable<GetReply>() {
@@ -644,6 +742,13 @@ public class RedisClient extends DB {
     // so the donor's peer field is "the other side relative to slotOwner".
     // The recipient's peer field points back at the donor, which would invert
     // the cache.
+    if (ra != null && ra.ok) {
+      if (ra.state == SLOT_MIGRATING) {
+        INSTR_DONOR_META_MIGRATING.incrementAndGet();
+      } else if (ra.state == SLOT_MIGRATED) {
+        INSTR_DONOR_META_MIGRATED.incrementAndGet();
+      }
+    }
     if (ra != null) updateSlotCache(slot, ra);
 
     if (rb != null && rb.value != null) {

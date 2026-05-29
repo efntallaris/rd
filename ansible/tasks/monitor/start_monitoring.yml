@@ -17,3 +17,24 @@
 
     - name: Start ifstat
       shell: "nohup ifstat -t 1 >> {{ local_log_dir }}/{{ inventory_hostname }}{{ if_stat }} 2>&1 &"
+
+    - name: Start pidstat (per-process redis-server CPU — settles single-threaded saturation question)
+      shell: "nohup pidstat -u -h -C 'redis-server' 1 >> {{ local_log_dir }}/{{ inventory_hostname }}_pidstat.txt 2>&1 &"
+
+# Client-side CPU: redis is single-threaded, but the bottleneck may be the YCSB
+# client. Capture ycsb node CPU (aggregate) + the java client's per-process CPU.
+- name: "Start monitoring (YCSB client)"
+  hosts: ycsb_nodes
+  become: yes
+  tasks:
+    - name: Create monitoring log directory
+      file:
+        path: "{{ local_log_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Start mpstat on client
+      shell: "nohup mpstat 1 >> {{ local_log_dir }}/{{ inventory_hostname }}{{ mp_stat }} 2>&1 &"
+
+    - name: Start pidstat on client (java)
+      shell: "nohup pidstat -u -h -C 'java' 1 >> {{ local_log_dir }}/{{ inventory_hostname }}_pidstat.txt 2>&1 &"

@@ -2016,6 +2016,22 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
      * client writes (post-FLIP) will allocate a fresh block. */
     r_allocator_reset_freelist_for_slot(slot);
 
+    /* AqRaft diagnostic: distinguish the two ways a slot can stage zero keys.
+     * We reached here with n_blocks > 0 (donor blocks WERE registered for this
+     * slot), so installed==0 means the segment walker rejected every used
+     * segment as a non-kvobj — i.e. the recipient's r_allocator/registration
+     * state was not clean for this migration (the suspected cause of the
+     * applied=0 we see on the 2nd/3rd successive migration into one node).
+     * Logs n_blocks + skipped so we can tell "saw segments, rejected all"
+     * (skipped>0) from "walker found no used segments at all" (skipped==0). */
+    if (n_blocks > 0 && ctx.installed == 0) {
+        serverLog(LL_WARNING,
+            "RDMA shadow-fill: slot=%d n_blocks=%d staged=0 skipped_invalid=%d "
+            "— donor blocks present but NO valid kvobjs staged "
+            "(allocator/registration state not reset for this migration?)",
+            slot, n_blocks, ctx.skipped_invalid);
+    }
+
     zfree(block_buffers);
     if (out_total)   *out_total = ctx.installed;
     if (out_skipped) *out_skipped = ctx.skipped_invalid;
@@ -2334,25 +2350,40 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
             /* dbDictType is no_value=1 so the entry IS the kvobj; pull the
              * lookup sds via kvobjGetKey (used everywhere else: evict.c,
              * cluster.c, keymeta.c). */
-            kvobj *kv = (kvobj *) dictGetKV(de);
-            sds    k  = kvobjGetKey(kv);
+            kvobj *src = (kvobj *) dictGetKV(de);
+            sds    k   = kvobjGetKey(src);
+            /* applySlotCb repointed src->ptr to the value sds embedded in the
+             * donor landing pool, so this is the value to copy. */
+            sds    v   = (sds) src->ptr;
 
-            dictEntry *existing = NULL;
-            dictEntry *added = kvstoreDictAddRaw(w->db->keys, w->slot, kv, &existing);
-            if (added) {
-                /* Moved into live; detach from shadow so dictRelease won't
-                 * also free the kvobj. dictUnlink removes the bucket entry
-                 * without invoking the destructor. */
-                dictUnlink(w->shadow, k);
-                w->moved++;
-            } else {
-                /* DON'T-CLOBBER RULE: live dict already has this key, which
-                 * means a client write arrived during the migration window
-                 * (a post-FLIP write). Leave the kvobj in the shadow;
-                 * dictRelease at end will free it via the dbDictType
-                 * destructor. Counted for observability so we can tell
-                 * whether the rule is firing in production. */
+            /* AqRaft pool-free: copy the migrated kvobj into the recipient's
+             * OWN compact r_allocator block (same path a normal SET takes in
+             * db.c), instead of installing the pool-resident kvobj. The live
+             * keyspace then never references the donor landing pool, which lets
+             * us reclaim that pool's physical pages (~11 GB on the recipient) —
+             * removing the cache/memory-pressure overhead that made sg4 burn
+             * ~40% more CPU per op and become the post-migration bottleneck.
+             * The pool-resident src kvobj stays in the shadow (NOT unlinked) and
+             * is freed by the dbDictType destructor at dictRelease. Runs on the
+             * main thread, throttled by MERGE_KEYS_PER_TICK. */
+            if (kvstoreDictFind(w->db->keys, w->slot, k) != NULL) {
+                /* DON'T-CLOBBER: a post-FLIP client write already populated this
+                 * key. Skip WITHOUT building a copy — checking existence first
+                 * avoids creating a managed kvobj we'd then have to free (the
+                 * direct free path crashed on the recipient). Single-threaded
+                 * merge, so find-then-insert is race-free. */
                 w->skipped_existing++;
+            } else {
+                int nb = 0;
+                kvobj *kvc = r_allocator_insert_kvobj(w->slot, k, v, &nb);
+                if (kvc != NULL) {
+                    dictEntry *ex = NULL;
+                    kvstoreDictAddRaw(w->db->keys, w->slot, kvc, &ex);
+                    w->moved++;
+                } else {
+                    /* insert refused (defensive sds-length check) — drop key. */
+                    w->skipped_existing++;
+                }
             }
             budget--;
         }
@@ -2371,6 +2402,15 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
          * to do, then drop the work item. If this was the last slot of
          * the batch, transition to BACKPATCH_DONE and dispose. */
         backpatchBatch *b = w->batch;
+        /* AqRaft Patch 29: recipient FOLLOWERS enqueue merge work with
+         * batch == NULL (rdmaFollowerEnqueueSlotMerge). They reuse this same
+         * main-thread shadow->live drain, but must NOT run the leader-only
+         * batch accounting / BACKPATCH_DONE transition / chainForwardWorker
+         * spawn below — the follower forwards downstream via the separate
+         * g_chain_worker (CHAIN-FORWARDED) path, not via chainForwardWorker.
+         * The dequeue + zfree(w) + timer logic after this block stays
+         * unconditional so the follower's work item is still freed. */
+        if (b != NULL) {
         atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
         atomic_fetch_add_explicit(&b->applied, w->moved, memory_order_relaxed);
         atomic_fetch_add_explicit(&b->clobber_skipped,
@@ -2428,6 +2468,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
                 pthread_detach(tid);
             }
         }
+        } /* end if (b != NULL) */
 
         pthread_mutex_lock(&backpatch_merge_mu);
         listDelNode(backpatch_merge_queue, ln);
@@ -2525,7 +2566,12 @@ static void *backpatchPoolWorkerMain(void *arg) {
         }
         UNUSED(worker_idx);
 
-        backpatchMergeWork *mw = zmalloc(sizeof(*mw));
+        /* zcalloc, not zmalloc: skipped_existing is left unset by the field
+         * assignments below but read+accumulated into batch->clobber_skipped
+         * in mergeBackpatchTick. zmalloc leaked uninitialized stack garbage
+         * into that counter (the 7e10 / negative clobber_skipped values in
+         * the recipient DONE logs). The follower path already uses zcalloc. */
+        backpatchMergeWork *mw = zcalloc(sizeof(*mw));
         mw->batch  = w->batch;
         mw->db     = w->db;
         mw->slot   = w->slot;
@@ -2548,6 +2594,60 @@ static void *backpatchPoolWorkerMain(void *arg) {
         zfree(w);
     }
     return NULL;
+}
+
+/* AqRaft Patch 29: recipient-FOLLOWER per-slot merge enqueue.
+ *
+ * Converges the follower's chain-apply onto the proven leader design:
+ * build the shadow dict OFF-main from the slot's (now r_allocator-registered)
+ * blocks, then hand it to the SAME main-thread merge queue the leader uses so
+ * the live-keyspace insert happens on the event-loop thread — serialized with
+ * raft-apply of client writes by construction (no per-slot lock needed; those
+ * locks are no-ops under redisraft anyway).
+ *
+ * Unlike the leader's backpatchPoolWorkerMain enqueue, the work item carries
+ * batch == NULL: the follower has no backpatchBatch and must not trigger the
+ * leader-only BACKPATCH_DONE / chainForwardWorker transition in
+ * mergeBackpatchTick (guarded there by `if (b != NULL)`). zcalloc zero-inits
+ * skipped_existing/moved/iter.
+ *
+ * Precondition: the slot's landing-pool slice(s) have already been registered
+ * via r_allocator_register_existing_block (done in chainApplyWorker), so
+ * rdmaBackpatchSlotFillShadow can find them through
+ * r_allocator_get_block_buffers_for_slot. Returns the number of staged keys,
+ * or 0 if the slot had no blocks. Safe to call from a worker thread OR the
+ * main thread (it only appends + writes the wake pipe). */
+int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot) {
+    int total = 0, skipped = 0;
+    dict *shadow = rdmaBackpatchSlotFillShadow(db, slot, &total, &skipped);
+    if (skipped > 0) {
+        serverLog(LL_WARNING,
+            "RDMA follower-merge: slot=%d skipped %d staged entries "
+            "(donor block misclassification)", slot, skipped);
+    }
+    if (shadow == NULL) return 0;
+
+    backpatchMergeWork *mw = zcalloc(sizeof(*mw));
+    mw->batch  = NULL;             /* follower: no batch accounting / no chain-forward */
+    mw->db     = db;
+    mw->slot   = slot;
+    mw->shadow = shadow;
+    mw->iter   = NULL;
+    mw->total  = total;
+    mw->moved  = 0;
+
+    pthread_mutex_lock(&backpatch_merge_mu);
+    if (backpatch_merge_queue == NULL) {
+        backpatch_merge_queue = listCreate();
+    }
+    listAddNodeTail(backpatch_merge_queue, mw);
+    pthread_mutex_unlock(&backpatch_merge_mu);
+
+    /* Wake the main thread; backpatchDisposePipeHandler arms mergeBackpatchTick. */
+    char tick = 1;
+    ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+    (void) wr;
+    return total;
 }
 
 /* Drain the SPSC ring; called by recipientBackpatchThreadMain after sem_wait.

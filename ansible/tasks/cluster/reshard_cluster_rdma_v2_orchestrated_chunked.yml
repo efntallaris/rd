@@ -1,0 +1,283 @@
+---
+# Chunked variant of reshard_cluster_rdma_v2_orchestrated.yml: runs the
+# server-side orchestrated migration in TWO rounds so the aggregate shows two
+# distinct migration events instead of one (mirrors
+# reshard_cluster_rdma_v2_chunked.yml, but for the redisraft topology with
+# WRITE_FLIP + NARROW).
+#
+# Per ROUND the donor leaders get WRITE_FLIP for that round's slot subset, the
+# orchestrator runs RDMA MIGRATE-ALL for `round_slots` slots/source, then each
+# donor is NARROWed so sg4 owns the cumulative migrated range. Because
+# MIGRATE-ALL takes a COUNT and the server migrates the donor's current first-N
+# owned slots, round 2 automatically picks up the chunk after round 1's narrow.
+#
+# Round split: round 1 = first half of reshard_slots_per_source, round 2 = the
+# remainder, so the two-round totals match a single-round reshard of the same
+# reshard_slots.
+#
+# Shared facts (host->IP map, sg4 dbid, sg4 node argv) are computed in the
+# round-1 play and reused in the round-2 play (same host: redis_masters[0]).
+
+# ====================================================================== #
+# ROUND 1                                                                 #
+# ====================================================================== #
+- name: "RDMA orchestrated chunked reshard: ROUND 1"
+  hosts: redis_masters[0]
+  become: yes
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+    round_slots: "{{ ((reshard_slots | int) // (groups['redis_masters'] | length)) // 2 }}"
+    round_offset: 0
+  tasks:
+    - name: "Build peer-endpoint list"
+      set_fact:
+        peer_endpoints: >-
+          {{
+            groups['redis_masters']
+            | difference([inventory_hostname])
+            | map('regex_replace', '^(.+)$', '\1:' + master_port|string)
+            | list
+          }}
+
+    - name: "resolve all shardgroup-member IPs"
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: narrow_host_ip_lookup
+      changed_when: false
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | sum(start=[]) | map(attribute='host') | unique | list }}"
+
+    - name: "build host->IP map"
+      set_fact:
+        narrow_host_ip_map: >-
+          {{
+            dict(
+              narrow_host_ip_lookup.results
+                | map(attribute='item')
+                | zip(narrow_host_ip_lookup.results | map(attribute='stdout'))
+            )
+          }}
+
+    - name: "probe sg4 leader for raft_dbid"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ narrow_host_ip_map[(redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).nodes[0].host] }} \
+          -p {{ (redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).port }} \
+          INFO raft \
+          | awk -F: '/^raft_dbid:/{print $2}' | tr -d ' \r\n'
+      register: sg4_dbid_probe
+      changed_when: false
+
+    - name: "stash sg4 dbid"
+      set_fact:
+        sg4_dbid: "{{ sg4_dbid_probe.stdout }}"
+
+    - name: "build sg4 node-spec fragment"
+      set_fact:
+        sg4_node_argv: >-
+          {{
+            sg4_node_argv | default('') +
+            sg4_dbid + ('%08x' % nd.raft_id) + ' ' +
+            narrow_host_ip_map[nd.host] + ':' +
+            ((redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).port | string) + ' '
+          }}
+      loop: "{{ (redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).nodes }}"
+      loop_control:
+        loop_var: nd
+
+    # Round-1 per-donor spec: migrate [orig_lo, orig_lo+round_slots-1].
+    - name: "ROUND 1: build per-donor spec"
+      set_fact:
+        narrow_specs: >-
+          {{
+            narrow_specs | default([]) +
+            [{
+              'sg_id': sg.id,
+              'leader_host': sg.nodes[0].host,
+              'leader_port': sg.port,
+              'orig_lo': sg.slot_config.split(':')[0] | int,
+              'orig_hi': sg.slot_config.split(':')[1] | int,
+              'migrated_lo': (sg.slot_config.split(':')[0] | int) + (round_offset | int),
+              'migrated_hi': (sg.slot_config.split(':')[0] | int) + (round_offset | int) + (round_slots | int) - 1,
+              'cum_sg4_lo': sg.slot_config.split(':')[0] | int,
+              'cum_sg4_hi': (sg.slot_config.split(':')[0] | int) + (round_offset | int) + (round_slots | int) - 1,
+              'new_local_lo': (sg.slot_config.split(':')[0] | int) + (round_offset | int) + (round_slots | int),
+              'new_local_hi': sg.slot_config.split(':')[1] | int,
+            }]
+          }}
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+
+    - name: "ROUND 1: WRITE_FLIP this round's slots -> sg4"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ narrow_host_ip_map[spec.leader_host] }} \
+          -p {{ spec.leader_port }} \
+          RAFT.SHARDGROUP WRITE_FLIP \
+            {{ spec.migrated_lo }}:{{ spec.migrated_hi }} \
+            {{ sg4_dbid }} 1 3 \
+            {{ spec.migrated_lo }} {{ spec.migrated_hi }} 1 0 \
+            {{ sg4_node_argv }}
+      register: r1_write_flip
+      loop: "{{ narrow_specs }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.sg_id }}: R1 write-redirect {{ spec.migrated_lo }}:{{ spec.migrated_hi }} -> sg4"
+      retries: 5
+      delay: 1
+      until: r1_write_flip.rc == 0 and 'OK' in (r1_write_flip.stdout | default(''))
+
+    - name: "ROUND 1: dispatch RDMA MIGRATE-ALL (count={{ round_slots }})"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL \
+          {{ reshard_target }} {{ master_port }} {{ round_slots }} \
+          {{ peer_endpoints | join(' ') }}
+      register: r1_dispatch
+      changed_when: "'OK' in r1_dispatch.stdout"
+
+    - name: "ROUND 1: parse orchestration_id"
+      set_fact:
+        r1_orch_id: "{{ r1_dispatch.stdout | regex_search('orchestration_id=([0-9]+)', '\\1') | first }}"
+
+    - name: "ROUND 1: poll MIGRATE-ALL-STATUS until DONE/FAILED"
+      shell: |
+        final="TIMEOUT"
+        for i in $(seq 1 240); do
+          out=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS {{ r1_orch_id }} 2>/dev/null)
+          state=$(printf '%s\n' "$out" | head -1 | grep -oE 'DONE|FAILED|RUNNING|INIT|DISPATCHING' | head -1)
+          if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ]; then final="$state"; break; fi
+          sleep 0.5
+        done
+        echo "FINAL_STATE=$final attempts=$i"
+      register: r1_status
+      changed_when: false
+
+    - name: "ROUND 1: status"
+      debug:
+        msg: "ROUND 1 {{ r1_status.stdout | default('<none>') }}"
+
+    - name: "ROUND 1: NARROW each donor (sg4 cumulative range)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ narrow_host_ip_map[spec.leader_host] }} \
+          -p {{ spec.leader_port }} \
+          RAFT.SHARDGROUP NARROW \
+            {{ spec.new_local_lo }}:{{ spec.new_local_hi }} \
+            {{ sg4_dbid }} 1 3 \
+            {{ spec.cum_sg4_lo }} {{ spec.cum_sg4_hi }} 1 0 \
+            {{ sg4_node_argv }}
+      register: r1_narrow
+      loop: "{{ narrow_specs }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.sg_id }}: R1 narrow to {{ spec.new_local_lo }}:{{ spec.new_local_hi }}, sg4 gets {{ spec.cum_sg4_lo }}-{{ spec.cum_sg4_hi }}"
+      when: "'FINAL_STATE=DONE' in (r1_status.stdout | default(''))"
+      retries: 5
+      delay: 1
+      until: r1_narrow.rc == 0 and 'OK' in (r1_narrow.stdout | default(''))
+
+# ====================================================================== #
+# ROUND 2 (reuses facts set on redis_masters[0] in round 1)               #
+# ====================================================================== #
+- name: "RDMA orchestrated chunked reshard: ROUND 2"
+  hosts: redis_masters[0]
+  become: yes
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+    round1_slots: "{{ ((reshard_slots | int) // (groups['redis_masters'] | length)) // 2 }}"
+    round_slots: "{{ ((reshard_slots | int) // (groups['redis_masters'] | length)) - (((reshard_slots | int) // (groups['redis_masters'] | length)) // 2) }}"
+    round_offset: "{{ ((reshard_slots | int) // (groups['redis_masters'] | length)) // 2 }}"
+  tasks:
+    # Round-2 per-donor spec: migrate the next chunk; sg4 cumulative range now
+    # covers the full reshard_slots_per_source from orig_lo.
+    - name: "ROUND 2: build per-donor spec"
+      set_fact:
+        narrow_specs2: >-
+          {{
+            narrow_specs2 | default([]) +
+            [{
+              'sg_id': sg.id,
+              'leader_host': sg.nodes[0].host,
+              'leader_port': sg.port,
+              'orig_lo': sg.slot_config.split(':')[0] | int,
+              'orig_hi': sg.slot_config.split(':')[1] | int,
+              'migrated_lo': (sg.slot_config.split(':')[0] | int) + (round_offset | int),
+              'migrated_hi': (sg.slot_config.split(':')[0] | int) + (round_offset | int) + (round_slots | int) - 1,
+              'cum_sg4_lo': sg.slot_config.split(':')[0] | int,
+              'cum_sg4_hi': (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1,
+              'new_local_lo': (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int),
+              'new_local_hi': sg.slot_config.split(':')[1] | int,
+            }]
+          }}
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+
+    - name: "ROUND 2: WRITE_FLIP this round's slots -> sg4"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ narrow_host_ip_map[spec.leader_host] }} \
+          -p {{ spec.leader_port }} \
+          RAFT.SHARDGROUP WRITE_FLIP \
+            {{ spec.migrated_lo }}:{{ spec.migrated_hi }} \
+            {{ sg4_dbid }} 1 3 \
+            {{ spec.migrated_lo }} {{ spec.migrated_hi }} 1 0 \
+            {{ sg4_node_argv }}
+      register: r2_write_flip
+      loop: "{{ narrow_specs2 }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.sg_id }}: R2 write-redirect {{ spec.migrated_lo }}:{{ spec.migrated_hi }} -> sg4"
+      retries: 5
+      delay: 1
+      until: r2_write_flip.rc == 0 and 'OK' in (r2_write_flip.stdout | default(''))
+
+    - name: "ROUND 2: dispatch RDMA MIGRATE-ALL (count={{ round_slots }})"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL \
+          {{ reshard_target }} {{ master_port }} {{ round_slots }} \
+          {{ peer_endpoints | join(' ') }}
+      register: r2_dispatch
+      changed_when: "'OK' in r2_dispatch.stdout"
+
+    - name: "ROUND 2: parse orchestration_id"
+      set_fact:
+        r2_orch_id: "{{ r2_dispatch.stdout | regex_search('orchestration_id=([0-9]+)', '\\1') | first }}"
+
+    - name: "ROUND 2: poll MIGRATE-ALL-STATUS until DONE/FAILED"
+      shell: |
+        final="TIMEOUT"
+        for i in $(seq 1 240); do
+          out=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS {{ r2_orch_id }} 2>/dev/null)
+          state=$(printf '%s\n' "$out" | head -1 | grep -oE 'DONE|FAILED|RUNNING|INIT|DISPATCHING' | head -1)
+          if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ]; then final="$state"; break; fi
+          sleep 0.5
+        done
+        echo "FINAL_STATE=$final attempts=$i"
+      register: r2_status
+      changed_when: false
+
+    - name: "ROUND 2: status"
+      debug:
+        msg: "ROUND 2 {{ r2_status.stdout | default('<none>') }}"
+
+    - name: "ROUND 2: NARROW each donor (sg4 cumulative range = full per-source)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ narrow_host_ip_map[spec.leader_host] }} \
+          -p {{ spec.leader_port }} \
+          RAFT.SHARDGROUP NARROW \
+            {{ spec.new_local_lo }}:{{ spec.new_local_hi }} \
+            {{ sg4_dbid }} 1 3 \
+            {{ spec.cum_sg4_lo }} {{ spec.cum_sg4_hi }} 1 0 \
+            {{ sg4_node_argv }}
+      register: r2_narrow
+      loop: "{{ narrow_specs2 }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.sg_id }}: R2 narrow to {{ spec.new_local_lo }}:{{ spec.new_local_hi }}, sg4 gets {{ spec.cum_sg4_lo }}-{{ spec.cum_sg4_hi }}"
+      when: "'FINAL_STATE=DONE' in (r2_status.stdout | default(''))"
+      retries: 5
+      delay: 1
+      until: r2_narrow.rc == 0 and 'OK' in (r2_narrow.stdout | default(''))

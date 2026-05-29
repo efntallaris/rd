@@ -75,7 +75,9 @@
           --raft.sharding yes \
           --raft.follower-proxy yes \
           --raft.quorum-reads no \
-          --raft.log-fsync no
+          --raft.log-fsync no{% if rdma_disable_raft_snapshots | default(true) %} \
+          --raft.snapshot-disable yes \
+          --raft.log-max-file-size 0{% endif %}
       loop: "{{ redisraft_shardgroups }}"
       loop_control:
         loop_var: sg

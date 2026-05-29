@@ -1,0 +1,18 @@
+---
+# custom_reshard_v2_orch_raft_chunked: per-workload run.
+#
+# Identical to custom_reshard_v2_orch_raft/workload.yml except the reshard step
+# uses the 2-round chunked orchestrated playbook
+# (reshard_cluster_rdma_v2_orchestrated_chunked.yml) so the run shows two
+# distinct migration events instead of one.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/cluster/pause_pre_reshard.yml
+- import_playbook: ../../tasks/cluster/reshard_cluster_rdma_v2_orchestrated_chunked.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

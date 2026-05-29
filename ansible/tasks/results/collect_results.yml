@@ -35,6 +35,16 @@
         flat: no
       ignore_errors: yes
 
+    - name: Fetch client monitoring logs (mpstat + pidstat)
+      fetch:
+        src: "{{ local_log_dir }}/{{ item }}"
+        dest: "{{ experimental_output_dir }}/{{ experiment_name }}/logs/"
+        flat: no
+        fail_on_missing: no
+      loop:
+        - "{{ inventory_hostname }}{{ mp_stat }}"
+        - "{{ inventory_hostname }}_pidstat.txt"
+
     - name: Clean up YCSB output files
       file:
         path: "{{ item.path }}"
@@ -57,6 +67,7 @@
         - "{{ inventory_hostname }}{{ mp_stat }}"
         - "{{ inventory_hostname }}{{ io_stat }}"
         - "{{ inventory_hostname }}{{ if_stat }}"
+        - "{{ inventory_hostname }}_pidstat.txt"
 
     - name: Find Redis log files
       find:

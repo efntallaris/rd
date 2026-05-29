@@ -945,7 +945,14 @@ static int logImplAppend(void *arg, raft_entry_t *ety)
     RAFTLOG_TRACE("Append(id=%d, term=%lu) -> index %lu",
                   ety->id, ety->term, LogCurrentIdx(&rr->log) + 1);
 
-    LOG_NOTICE("RAFT_LOG append: idx=%ld term=%ld type=%s(%d) size=%llu",
+    /* AqRaft: was LOG_NOTICE — fired on EVERY appended entry (format +
+     * synchronous write() to the logfile on the main thread). Under YCSB
+     * load that is ~tens of thousands of log writes/sec per node (a 180s
+     * smoke produced a 163 MB log, 99.6% of it these two lines), which
+     * measurably drags throughput. Demoted to LOG_DEBUG so it is compiled
+     * past the loglevel gate (DEBUG < NOTICE default) and never formats or
+     * writes in normal runs; raise --raft.loglevel to debug to re-enable. */
+    LOG_DEBUG("RAFT_LOG append: idx=%ld term=%ld type=%s(%d) size=%llu",
                LogCurrentIdx(&rr->log) + 1,
                ety->term,
                raftLogTypeName(ety->type), ety->type,

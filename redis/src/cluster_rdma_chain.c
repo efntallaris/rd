@@ -142,6 +142,11 @@ typedef struct rdmaFollowerChainState {
      * the tail does, classic "tail commit" chain replication). */
     sds  leader_host;
     int  leader_port;
+    /* AqRaft Patch 29: set once the landing-pool slices for this session
+     * have been registered with r_allocator + enqueued for merge. Guards
+     * against a retried CHAIN-FORWARDED double-registering the same slices
+     * (which would leak duplicate alloc_bloc_t nodes). */
+    int  applied;
 } rdmaFollowerChainState;
 
 /* ====================================================================== *
@@ -817,21 +822,35 @@ typedef struct {
 static void *chainApplyWorker(void *arg) {
     chainApplyJob *job = arg;
     size_t length = (size_t) job->n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
-    int total_installed = 0;
+    int total_staged = 0;
     if (job->local_pool != NULL && length <= job->pool_bytes && job->n_slots > 0) {
+        /* AqRaft Patch 29: converge the follower apply onto the proven leader
+         * design. For each slot: (1) register the landing-pool slice as an
+         * r_allocator-owned block (mirrors the leader's REGISTER-BLOCK-SLOTS
+         * path; without this the migrated kvobjs live in unmanaged memory and
+         * the free/coalesce path corrupts them), then (2) build the shadow
+         * off-main + hand it to the main-thread merge queue so the live
+         * keyspace insert is serialized with raft-apply of client writes on
+         * the event loop. Replaces the old off-main direct kvstoreDictAddRaw
+         * (rdmaApplySlotBlock) which raced the main thread (the per-slot
+         * cluster lock is a no-op under redisraft) and installed kvobjs into
+         * an unregistered pool. */
         for (int i = 0; i < job->n_slots; i++) {
             int slot = job->slots[i];
-            const char *block = (const char *) job->local_pool
-                              + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-            clusterSlotLockWriteNoTopology(slot);
-            total_installed += rdmaApplySlotBlock(job->db, slot,
-                                                  block, RDMAMIG_BLOCK_SIZE_BYTES);
-            clusterSlotUnlockNoTopology(slot);
+            void *sub = (char *) job->local_pool
+                      + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
+            if (r_allocator_register_existing_block(slot, sub) == NULL) {
+                serverLog(LL_WARNING,
+                    "CHAIN apply: r_allocator_register_existing_block failed "
+                    "(sess=%lld slot=%d) — skipping slot", job->src_mig_id, slot);
+                continue;
+            }
+            total_staged += rdmaFollowerEnqueueSlotMerge(job->db, slot);
         }
         serverLog(LL_NOTICE,
-            "CHAIN apply: sess=%lld n_slots=%d installed=%d "
-            "consumed=%zu/%zu bytes [off-main, Patch 16(E)]",
-            job->src_mig_id, job->n_slots, total_installed, length, job->pool_bytes);
+            "CHAIN apply: sess=%lld n_slots=%d staged=%d "
+            "consumed=%zu/%zu bytes [register+main-merge, Patch 29]",
+            job->src_mig_id, job->n_slots, total_staged, length, job->pool_bytes);
     }
     zfree(job->slots);
     zfree(job);
@@ -889,6 +908,11 @@ void rdmaChainForwardedCommand(client *c) {
      * session's lifetime. */
     void *local_pool = st->landing_pool;
     size_t pool_bytes = st->landing_pool_bytes;
+    /* AqRaft Patch 29: claim the apply for this session. A retried
+     * CHAIN-FORWARDED must NOT re-register the landing-pool slices (that
+     * would leak duplicate alloc_bloc_t nodes and double-stage the slots). */
+    int already_applied = st->applied;
+    st->applied = 1;
     pthread_mutex_unlock(&g_chain_state_mu);
 
     /* AqRaft Patch 16(E): per-slot apply (1365 slots × walk_used_segments
@@ -898,7 +922,11 @@ void rdmaChainForwardedCommand(client *c) {
      * tail ack), then replies OK. The follower's event loop stays free
      * to send AppendEntries acks to the sg4 leader. */
     int apply_spawned = 0;
-    if (local_pool != NULL && length <= pool_bytes && n_slots > 0) {
+    if (already_applied) {
+        serverLog(LL_NOTICE,
+            "CHAIN-FORWARDED: sess=%lld already applied — skipping re-apply "
+            "(retry); forwarding/ack only", src_mig_id);
+    } else if (local_pool != NULL && length <= pool_bytes && n_slots > 0) {
         chainApplyJob *job = zcalloc(sizeof(*job));
         job->db          = c->db;
         job->src_mig_id  = src_mig_id;
@@ -912,17 +940,25 @@ void rdmaChainForwardedCommand(client *c) {
             serverLog(LL_WARNING,
                 "CHAIN apply: pthread_create(chainApplyWorker) failed for "
                 "sess=%lld — falling back to inline apply", src_mig_id);
-            int total_installed = 0;
+            /* AqRaft Patch 29: same register + main-thread-merge path as
+             * chainApplyWorker, just run inline on the main thread (the
+             * enqueue only appends + wakes the merge timer). */
+            int total_staged = 0;
             for (int i = 0; i < n_slots; i++) {
-                const char *block = (const char *) local_pool
-                                  + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-                total_installed += rdmaApplySlotBlock(c->db, slots[i],
-                                                      block, RDMAMIG_BLOCK_SIZE_BYTES);
+                void *sub = (char *) local_pool
+                          + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
+                if (r_allocator_register_existing_block(slots[i], sub) == NULL) {
+                    serverLog(LL_WARNING,
+                        "CHAIN apply: register_existing_block failed "
+                        "(sess=%lld slot=%d) — skipping", src_mig_id, slots[i]);
+                    continue;
+                }
+                total_staged += rdmaFollowerEnqueueSlotMerge(c->db, slots[i]);
             }
             serverLog(LL_NOTICE,
-                "CHAIN apply: sess=%lld n_slots=%d installed=%d "
-                "consumed=%zu/%zu bytes [INLINE fallback]",
-                src_mig_id, n_slots, total_installed, length, pool_bytes);
+                "CHAIN apply: sess=%lld n_slots=%d staged=%d "
+                "consumed=%zu/%zu bytes [register+main-merge INLINE fallback]",
+                src_mig_id, n_slots, total_staged, length, pool_bytes);
             zfree(job->slots);
             zfree(job);
         } else {
