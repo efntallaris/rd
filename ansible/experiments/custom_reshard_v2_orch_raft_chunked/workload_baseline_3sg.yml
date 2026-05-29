@@ -1,0 +1,14 @@
+---
+# 3-shardgroup BASELINE (no migration). Identical to workload.yml but WITHOUT
+# the pre-reshard pause and the reshard step, so sg1/2/3 own all 16384 slots for
+# the whole run and sg4 stays empty. Gives the clean 3-SG steady-state max to
+# compare against the 4-SG (post-migration) throughput.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

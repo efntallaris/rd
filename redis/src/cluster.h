@@ -164,8 +164,14 @@ typedef struct rdmaCachedConnection {
     struct ibv_mr *memory_regions[CLUSTER_SLOTS];
     /* Aqueduct big-MR PREP: one mmap'd pool + one ibv_reg_mr per PREP call
      * carved into per-slot sub-pointers; replaces N small ibv_reg_mr ioctls
-     * with 1. Pool is never freed (matches the existing per-block leak). */
+     * with 1. */
     struct rdmamig_buffer *aqueduct_pool_buf;
+    /* AqRaft pool-free: the mmap base + byte size of the landing pool above,
+     * captured at registration (plain fields so the backpatch path can reclaim
+     * the pool's physical pages with madvise(MADV_DONTNEED) once the migrated
+     * kvobjs have been copied into the recipient's own managed blocks). */
+    void  *landing_pool_base;
+    size_t landing_pool_bytes;
 } rdmaCachedConnection;
 
 /* Source-side bootstrap cache for the RDMA migration data path. One entry per

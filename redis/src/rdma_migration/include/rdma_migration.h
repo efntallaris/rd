@@ -79,6 +79,11 @@ uint32_t rdmamig_buffer_rkey(rdmamig_buffer *b);
  * the same registered buffer it later RDMA-WRITEs from). */
 char *rdmamig_buffer_data(const rdmamig_buffer *b);
 
+/* AqRaft pool-free: dereg the MR (unpin) + madvise(MADV_DONTNEED) the backing
+ * region to reclaim its resident pages, keeping the VA mapped. Call once the
+ * buffer is done (no more RDMA / local access). Returns bytes released. */
+size_t rdmamig_buffer_release_pages(rdmamig_buffer *b);
+
 /* ------------------------------------------------------------------------- *
  * Client (donor outbound QP)
  * ------------------------------------------------------------------------- */

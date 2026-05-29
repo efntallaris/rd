@@ -1425,6 +1425,13 @@ typedef struct backpatchBatch {
      * n_slots * RDMAMIG_BLOCK_SIZE_BYTES), freed in backpatch dispose. */
     char                *donor_snapshot_pool;
     size_t               donor_snapshot_pool_bytes;
+    /* AqRaft pool-free: the donor's landing pool (mmap base + size) for this
+     * session, copied from the cached connection at batch creation. Reclaimed
+     * via madvise(MADV_DONTNEED) in backpatchFinalize, after the migrated
+     * kvobjs have been copied into the recipient's own managed blocks. */
+    void                *landing_pool_base;
+    size_t               landing_pool_bytes;
+    struct rdmamig_buffer *landing_pool_buf;   /* for dereg+madvise at finalize */
 } backpatchBatch;
 
 #define BACKPATCH_RING_CAPACITY 64u
@@ -1578,6 +1585,14 @@ void rdmaDoneSlotsCommand(client *c) {
     atomic_store(&b->remaining, n_slots);
     b->err = NULL;
     pthread_mutex_init(&b->err_mu, NULL);
+    /* AqRaft pool-free: capture this donor's landing-pool region (set at
+     * REGISTER-BLOCK-SLOTS) so backpatchFinalize can reclaim it. */
+    {
+        rdmaCachedConnection *cc = rdmaGetConnection(c);
+        b->landing_pool_base  = cc ? cc->landing_pool_base  : NULL;
+        b->landing_pool_bytes = cc ? cc->landing_pool_bytes : 0;
+        b->landing_pool_buf   = cc ? cc->aqueduct_pool_buf  : NULL;
+    }
     b->t_started = time(NULL);
     b->t_ended = 0;
     for (int j = 0; j < n_slots; j++) {
@@ -1763,6 +1778,13 @@ void rdmaDoneSlotsInitCommand(client *c) {
     atomic_store(&b->remaining, total_slots);
     b->err = NULL;
     pthread_mutex_init(&b->err_mu, NULL);
+    /* AqRaft pool-free: capture this donor's landing-pool region for reclaim. */
+    {
+        rdmaCachedConnection *cc = rdmaGetConnection(c);
+        b->landing_pool_base  = cc ? cc->landing_pool_base  : NULL;
+        b->landing_pool_bytes = cc ? cc->landing_pool_bytes : 0;
+        b->landing_pool_buf   = cc ? cc->aqueduct_pool_buf  : NULL;
+    }
     b->t_started = time(NULL);
     b->t_ended = 0;
     /* Phase C tracking. */
@@ -1987,10 +2009,24 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
     if (out_total)   *out_total = 0;
     if (out_skipped) *out_skipped = 0;
 
+    /* AqRaft fix (thread-safety): this runs OFF the main thread (chainApplyWorker
+     * on a follower, backpatch pool workers on the leader). It reads and mutates
+     * the slot's r_allocator state — block list (get_block_buffers), segment
+     * headers (walk + sanitize_imported_block), and the freelist (reset) — which
+     * the MAIN thread also mutates via r_allocator_insert_kv when it raft-applies
+     * client SETs to the same migrating slot. Without a shared lock those
+     * concurrent doubly-linked-list / freelist mutations corrupted the heap
+     * (recursive SIGSEGV under heavy write load, reproduced at 400 YCSB threads).
+     * Hold the slot's (recursive) mutex across the whole read-modify-reset so it
+     * is mutually exclusive with insert_kv. reset_freelist_for_slot re-locks the
+     * same mutex internally — safe because it is recursive. */
+    r_allocator_lock_slot(slot);
+
     int n_blocks = 0;
     char **block_buffers = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
     if (block_buffers == NULL || n_blocks == 0) {
         if (block_buffers) zfree(block_buffers);
+        r_allocator_unlock_slot(slot);
         return NULL;
     }
 
@@ -2015,6 +2051,9 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
      * free segment", but the donor's writes occupy that memory now. Future
      * client writes (post-FLIP) will allocate a fresh block. */
     r_allocator_reset_freelist_for_slot(slot);
+    /* End of the slot's allocator critical section; the rest only reads local
+     * state (ctx) and frees our private block_buffers copy. */
+    r_allocator_unlock_slot(slot);
 
     /* AqRaft diagnostic: distinguish the two ways a slot can stage zero keys.
      * We reached here with n_blocks > 0 (donor blocks WERE registered for this
@@ -2055,6 +2094,14 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
  * propagates into Jedis pool exhaustion on YCSB. */
 static void *backpatchPoolFreeWorker(void *arg) {
     zfree(arg);
+    return NULL;
+}
+
+/* AqRaft pool-free: off-main worker to reclaim the landing pool's resident
+ * pages (ibv_dereg_mr unpins + madvise drops the pages). Kept off the event
+ * loop because dereg+madvise on a multi-GB MR can take tens of ms. */
+static void *landingPoolReleaseWorker(void *arg) {
+    rdmamig_buffer_release_pages((struct rdmamig_buffer *) arg);
     return NULL;
 }
 
@@ -2103,6 +2150,30 @@ static void backpatchFinalize(backpatchBatch *b) {
             pthread_detach(tid);
         } else {
             zfree(pool); /* fallback: inline if pthread_create fails */
+        }
+    }
+    /* AqRaft pool-free: reclaim this session's donor landing pool. By now the
+     * migrated kvobjs have been COPIED into the recipient's own managed blocks
+     * (mergeBackpatchTick) and the chain forward used donor_snapshot_pool, so
+     * the landing pool is dead. reset_freelist_for_slot already removed its
+     * blocks from the freelist, so reclaiming its pages is safe. dereg+madvise
+     * runs off-main (multi-GB MR). This is what drops recipient RSS from ~11 GB
+     * back to ~the live working set, removing the memory-pressure overhead that
+     * made the recipient the post-migration bottleneck. */
+    if (b->landing_pool_buf != NULL) {
+        struct rdmamig_buffer *lpb = b->landing_pool_buf;
+        size_t lbytes = b->landing_pool_bytes;
+        b->landing_pool_buf  = NULL;
+        b->landing_pool_base = NULL;
+        b->landing_pool_bytes = 0;
+        pthread_t ltid;
+        if (pthread_create(&ltid, NULL, landingPoolReleaseWorker, lpb) == 0) {
+            pthread_detach(ltid);
+            serverLog(LL_NOTICE,
+                "AqRaft pool-free: reclaiming landing pool (%zu bytes) off-main "
+                "for sess=%lld", lbytes, b->src_mig_id);
+        } else {
+            rdmamig_buffer_release_pages(lpb); /* fallback: inline */
         }
     }
     long long t2 = ustime();
@@ -2892,6 +2963,10 @@ static void *registerWorkerThread(void *arg) {
         goto deliver;
     }
     job->conn->aqueduct_pool_buf = pool_buf;
+    /* AqRaft pool-free: record the landing-pool region so the backpatch path
+     * can madvise(MADV_DONTNEED) it once migrated kvobjs are copied out. */
+    job->conn->landing_pool_base  = pool;
+    job->conn->landing_pool_bytes = pool_bytes;
     const uint32_t shared_rkey = rdmamig_buffer_rkey(pool_buf);
 
     serverLog(LL_NOTICE,

@@ -819,6 +819,15 @@ typedef struct {
     size_t       pool_bytes;
 } chainApplyJob;
 
+/* AqRaft fix: per-slot flag set the first time we register a chain LANDING block
+ * for a slot. Used to skip duplicate cross-round deliveries (round 2 re-ships
+ * round-1 slots with empty data → a 2nd register_existing_block on the same slot
+ * corrupts the allocator). Precise on purpose: only landing-block registration
+ * sets it, so managed blocks (raft-applied client writes / Part-1 copy-outs) do
+ * NOT mask a legitimate round-2 apply of a fresh slot. Reset per process; the
+ * rounds of one migration share these flags. */
+static unsigned char g_chain_landing_registered[CLUSTER_SLOTS];
+
 static void *chainApplyWorker(void *arg) {
     chainApplyJob *job = arg;
     size_t length = (size_t) job->n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
@@ -839,12 +848,31 @@ static void *chainApplyWorker(void *arg) {
             int slot = job->slots[i];
             void *sub = (char *) job->local_pool
                       + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
+            /* AqRaft fix: never register a SECOND landing block for a slot that
+             * already received one this migration. In multi-round migration the
+             * chain forward can re-deliver an earlier round's slots (observed:
+             * round-2 forwarding round-1 slots with empty/garbage data,
+             * staged=0). Linking a 2nd block per slot left a stale block whose
+             * later walk/sanitize/free corrupted the heap → intermittent
+             * recipient-follower SIGSEGV. Skip the duplicate (it carries no
+             * valid kvobjs anyway). The flag is set ONLY by landing-block
+             * registration, so a round-2 slot that merely picked up a managed
+             * block from a raft-applied client write is still applied. */
+            if (slot < 0 || slot >= CLUSTER_SLOTS) continue;
+            if (g_chain_landing_registered[slot]) {
+                serverLog(LL_WARNING,
+                    "CHAIN apply: slot=%d landing block already registered — "
+                    "skipping duplicate cross-round delivery (sess=%lld)",
+                    slot, job->src_mig_id);
+                continue;
+            }
             if (r_allocator_register_existing_block(slot, sub) == NULL) {
                 serverLog(LL_WARNING,
                     "CHAIN apply: r_allocator_register_existing_block failed "
                     "(sess=%lld slot=%d) — skipping slot", job->src_mig_id, slot);
                 continue;
             }
+            g_chain_landing_registered[slot] = 1;
             total_staged += rdmaFollowerEnqueueSlotMerge(job->db, slot);
         }
         serverLog(LL_NOTICE,
@@ -935,32 +963,25 @@ void rdmaChainForwardedCommand(client *c) {
         job->n_slots     = n_slots;
         job->local_pool  = local_pool;
         job->pool_bytes  = pool_bytes;
+        /* AqRaft: run the apply on a BACKGROUND thread (detached chainApplyWorker)
+         * so the follower's event loop stays free to send AppendEntries acks to
+         * the sg4 leader during the migration window (per-entry apply over ~1365
+         * slots would otherwise stall raft heartbeats on the main thread).
+         *
+         * Thread-safety against the main thread's r_allocator_insert_kv (which
+         * raft-applies client SETs to the same migrating slots) is provided by
+         * per-slot locking on the recursive r_allocator.mutexes[slot]: held
+         * inside r_allocator_register_existing_block for the block-list append,
+         * and across the whole block-walk / sanitize / freelist-reset critical
+         * section inside rdmaBackpatchSlotFillShadow. Without it, those concurrent
+         * allocator mutations corrupted the heap (recursive SIGSEGV at 400 YCSB
+         * threads). On spawn failure, run the same worker inline. */
         pthread_t tid;
         if (pthread_create(&tid, NULL, chainApplyWorker, job) != 0) {
             serverLog(LL_WARNING,
                 "CHAIN apply: pthread_create(chainApplyWorker) failed for "
-                "sess=%lld — falling back to inline apply", src_mig_id);
-            /* AqRaft Patch 29: same register + main-thread-merge path as
-             * chainApplyWorker, just run inline on the main thread (the
-             * enqueue only appends + wakes the merge timer). */
-            int total_staged = 0;
-            for (int i = 0; i < n_slots; i++) {
-                void *sub = (char *) local_pool
-                          + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-                if (r_allocator_register_existing_block(slots[i], sub) == NULL) {
-                    serverLog(LL_WARNING,
-                        "CHAIN apply: register_existing_block failed "
-                        "(sess=%lld slot=%d) — skipping", src_mig_id, slots[i]);
-                    continue;
-                }
-                total_staged += rdmaFollowerEnqueueSlotMerge(c->db, slots[i]);
-            }
-            serverLog(LL_NOTICE,
-                "CHAIN apply: sess=%lld n_slots=%d staged=%d "
-                "consumed=%zu/%zu bytes [register+main-merge INLINE fallback]",
-                src_mig_id, n_slots, total_staged, length, pool_bytes);
-            zfree(job->slots);
-            zfree(job);
+                "sess=%lld — running inline on main thread", src_mig_id);
+            chainApplyWorker(job);   /* frees job */
         } else {
             pthread_detach(tid);
             apply_spawned = 1;

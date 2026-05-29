@@ -81,7 +81,14 @@ void * r_allocator_register_existing_block(int slot, void *block_ptr);
  * callers. */
 size_t r_allocator_block_stride_bytes(void);
 
-/* 
+/* AqRaft fix: lock / unlock a slot's allocator mutex (RECURSIVE). Lets an
+ * off-main migration-apply caller hold a slot across a multi-call critical
+ * section (block-walk + sanitize + freelist-reset) so it is mutually exclusive
+ * with the main thread's r_allocator_insert_kv on that slot. Must be balanced. */
+void r_allocator_lock_slot(int slot);
+void r_allocator_unlock_slot(int slot);
+
+/*
 * creates a new segment in a block that has enough space for the segment
 * segment layout: <seg header> <payload> <padding> <seg footer>
 * seg header/footer: 4bytes that contain the size of the segment and a flag (lowest bit) indicating if segment is free/used

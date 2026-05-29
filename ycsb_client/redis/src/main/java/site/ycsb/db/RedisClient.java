@@ -97,6 +97,15 @@ public class RedisClient extends DB {
   // throughput stays halved despite Patch 30. Counts read-path routing so we
   // can see if the Patch 30 collapse ever fires and what the donor returns for
   // a migrated slot. Logged to stderr (lands in ycsb_output) every ~3s. ----
+  /* Shared (cross-thread) recipient-LEADER hint per slot, learned from the
+   * migration-window slot-meta peer (which is the recipient leader). The
+   * recipient leader is a cluster-wide fact, so sharing it lets any thread's
+   * WRITE route to the leader even before that thread has READ the slot — the
+   * per-thread slotCache[].peer would otherwise be null and the write would
+   * fall back to the donor's round-robin -MOVED target (a follower ~2/3 of the
+   * time). Best-effort: a null/stale read just falls back, which stays correct. */
+  private static final HostAndPort[] SHARED_PEER = new HostAndPort[16384];
+
   private static final java.util.concurrent.atomic.AtomicLong INSTR_FAST = new java.util.concurrent.atomic.AtomicLong();
   private static final java.util.concurrent.atomic.AtomicLong INSTR_TWOSIDED = new java.util.concurrent.atomic.AtomicLong();
   private static final java.util.concurrent.atomic.AtomicLong INSTR_COLLAPSE = new java.util.concurrent.atomic.AtomicLong();
@@ -116,22 +125,35 @@ public class RedisClient extends DB {
     e[0].add(nanos);
     e[1].add(1);
   }
+  // Migration-window routing audit: where do the two-sided read legs and the
+  // write redirect actually go? donor-leg should hit the donor leader, peer-leg
+  // and writes should hit the RECIPIENT LEADER (not its followers).
+  private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> INSTR_2S_DONOR = new java.util.concurrent.ConcurrentHashMap<>();
+  private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> INSTR_2S_PEER  = new java.util.concurrent.ConcurrentHashMap<>();
+  private static final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> INSTR_WRITE_HOST = new java.util.concurrent.ConcurrentHashMap<>();
+  private static void instrCount(java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> m, HostAndPort hp) {
+    if (hp == null) return;
+    m.computeIfAbsent(hp.toString(), k -> new java.util.concurrent.atomic.LongAdder()).increment();
+  }
+  private static String instrDump(java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> m) {
+    StringBuilder b = new StringBuilder();
+    for (java.util.Map.Entry<String, java.util.concurrent.atomic.LongAdder> en : m.entrySet()) {
+      b.append(' ').append(en.getKey()).append('=').append(en.getValue().sum());
+    }
+    return b.toString();
+  }
   private static void instrMaybeLog() {
     long now = System.currentTimeMillis();
     long last = INSTR_LAST_LOG_MS.get();
     if (now - last >= 3000 && INSTR_LAST_LOG_MS.compareAndSet(last, now)) {
-      StringBuilder hl = new StringBuilder();
-      for (java.util.Map.Entry<String, java.util.concurrent.atomic.LongAdder[]> en : INSTR_HOST_LAT.entrySet()) {
-        long c = en.getValue()[1].sum();
-        long us = (c > 0) ? (en.getValue()[0].sum() / c / 1000) : 0;
-        hl.append(' ').append(en.getKey()).append("=").append(us).append("us/").append(c);
-      }
       System.err.println("[AQRAFT-INSTR] t=" + now
           + " fast=" + INSTR_FAST.get()
           + " twoSided=" + INSTR_TWOSIDED.get()
           + " collapse=" + INSTR_COLLAPSE.get()
           + " donorMoved=" + INSTR_DONOR_MOVED.get()
-          + " | fastReadLatByHost(cumulative):" + hl);
+          + " || 2sidedDonorLeg:" + instrDump(INSTR_2S_DONOR)
+          + " || 2sidedPeerLeg:" + instrDump(INSTR_2S_PEER)
+          + " || writeRedirect:" + instrDump(INSTR_WRITE_HOST));
     }
   }
 
@@ -497,17 +519,16 @@ public class RedisClient extends DB {
      * post-migration throughput at ~half baseline. */
     if (r.state == SLOT_MIGRATED && r.peer != null) {
       INSTR_COLLAPSE.incrementAndGet();
-      /* AqRaft fix: route to the recipient's LEADER, not the -MOVED target.
-       * The donor's -MOVED round-robins across ALL recipient-shardgroup nodes
-       * (raft.c getSlotShardGroup: sg->nodes[next_redir]), so ~2/3 of targets
-       * are FOLLOWERS. With follower-proxy on, a read to a follower is
-       * forwarded to the leader → ~11-15ms vs ~230us straight to the leader,
-       * which is what pinned post-migration throughput below baseline.
-       * CLUSTER SLOTS returns the leader as the range's first node, so
-       * refreshSlotOwner() resolves+pins the leader (and sets slotOwner[slot]).
-       * Done once per slot at collapse; steady-state reads then hit the leader
-       * directly. Fall back to the -MOVED target if CLUSTER SLOTS is unreachable. */
-      HostAndPort leader = refreshSlotOwner(slot);
+      /* AqRaft fix: route to the recipient's LEADER, not the round-robin -MOVED
+       * target (~2/3 of which are followers → follower-proxy ~11-15ms). Prefer
+       * SHARED_PEER[slot] — the recipient leader already learned from the window
+       * slot-meta — which is FREE. Only fall back to refreshSlotOwner (a CLUSTER
+       * SLOTS round-trip) if we never saw the slot in the window. This matters:
+       * keeping slotOwner on the donor through the window (correct double-read)
+       * means many more post-NARROW collapses, and a CLUSTER SLOTS per collapse
+       * (1.8M of them) was tanking throughput. */
+      HostAndPort leader = SHARED_PEER[slot];
+      if (leader == null) leader = refreshSlotOwner(slot);
       HostAndPort target = (leader != null) ? leader : r.peer;
       if (slotOwner != null) slotOwner[slot] = target;
       getOrOpen(target);
@@ -519,9 +540,13 @@ public class RedisClient extends DB {
     se.peer = r.peer;
     if (r.peer != null) {
       getOrOpen(r.peer);
-      if (r.state != SLOT_STABLE && slotOwner != null) {
-        slotOwner[slot] = r.peer;
-      }
+      /* AqRaft fix: do NOT flip slotOwner to the peer during the migration
+       * window. slotOwner is the DONOR leg of the double read; flipping it to
+       * the recipient here made BOTH legs hit the recipient (the donor's copy
+       * was never read — the "double read" degenerated to reading the recipient
+       * twice). During the window slotOwner must stay the donor leader so reads
+       * are a true donor+recipient double read. slotOwner only moves to the
+       * recipient LEADER at NARROW, in the SLOT_MIGRATED collapse branch above. */
     }
   }
 
@@ -591,8 +616,25 @@ public class RedisClient extends DB {
            * follower-proxy (~11-15ms vs ~230us at the leader). Leave slotOwner[]
            * to the read-collapse path, which resolves the LEADER via CLUSTER
            * SLOTS once the migration has finalized. */
-          hp = new HostAndPort(mv.getTargetNode().getHost(),
-                               mv.getTargetNode().getPort());
+          /* AqRaft fix: route the write to the RECIPIENT LEADER. The donor's
+           * -MOVED round-robins across all recipient-shardgroup nodes, so its
+           * target is a FOLLOWER ~2/3 of the time → follower-proxy. The slot
+           * meta peer (set by reads, slotCache[slot].peer) is the recipient
+           * LEADER, which owns the migrating slot for writes (WRITE_FLIP), so
+           * the write commits there directly. Fall back to the -MOVED target
+           * only if no peer is known yet (e.g. a write before any read of the
+           * slot during the window). */
+          HostAndPort sharedLeader = SHARED_PEER[slot];
+          SlotEntry mse = (slotCache != null) ? slotCache[slot] : null;
+          if (sharedLeader != null) {
+            hp = sharedLeader;                         // cross-thread leader hint
+          } else if (mse != null && mse.peer != null) {
+            hp = mse.peer;                             // this thread's leader hint
+          } else {
+            hp = new HostAndPort(mv.getTargetNode().getHost(),
+                                 mv.getTargetNode().getPort()); // fallback: round-robin
+          }
+          instrCount(INSTR_WRITE_HOST, hp);   // write redirect → should be RECIPIENT LEADER
           ask = false;
         } catch (redis.clients.jedis.exceptions.JedisAskDataException ax) {
           hp = new HostAndPort(ax.getTargetNode().getHost(),
@@ -722,6 +764,9 @@ public class RedisClient extends DB {
     // once ownership has flipped to the recipient.
     INSTR_TWOSIDED.incrementAndGet();
     final HostAndPort peerHp = s.peer;
+    if (peerHp != null) SHARED_PEER[slot] = peerHp;  // window leader → shared so writes route here
+    instrCount(INSTR_2S_DONOR, ownerHp);   // donor leg → should be donor leader
+    instrCount(INSTR_2S_PEER, peerHp);     // peer leg → should be RECIPIENT LEADER
     final String keyFinal = key;
     Future<GetReply> peerFuture = peerProbeExec.submit(new Callable<GetReply>() {
       @Override

@@ -545,15 +545,27 @@ void r_allocator_init()
     // printf("%s:%d %s() START\n", __FILE__, __LINE__, __func__);
     //util_reset_logs();
 
+    /* AqRaft fix: per-slot mutex is RECURSIVE. The migration apply path holds a
+     * slot's mutex across a critical section (r_allocator_lock_slot ... unlock in
+     * rdmaBackpatchSlotFillShadow) that calls sub-functions which lock the same
+     * mutex internally (e.g. r_allocator_reset_freelist_for_slot). A recursive
+     * mutex lets the same thread re-enter without self-deadlocking, while still
+     * giving full mutual exclusion against the main thread's r_allocator_insert_kv
+     * on that slot. Non-recursive callers (insert path) lock/unlock once, so the
+     * recursion attribute is transparent to them. */
+    pthread_mutexattr_t mattr;
+    pthread_mutexattr_init(&mattr);
+    pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE);
     for (int i = 0; i < SLOTS; ++i) {
-        r_allocator.slot_blocks[i] = NULL; 
+        r_allocator.slot_blocks[i] = NULL;
         r_allocator.slot_blocks_tail[i] = NULL;
         r_allocator.slot_blocks_num[i] = 0;
         r_allocator.free_list[i] = NULL;
         // r_allocator.alternative_free_list[i] = NULL;
         r_allocator.slot_locked[i] = 0;
-        pthread_mutex_init(&r_allocator.mutexes[i], NULL);
+        pthread_mutex_init(&r_allocator.mutexes[i], &mattr);
     }
+    pthread_mutexattr_destroy(&mattr);
     // printf("%s:%d %s() spot 2\n", __FILE__, __LINE__, __func__);
     // r_allocator.total_blocks_num     = 0;
     r_allocator.bytes_size    = 0;
@@ -602,13 +614,44 @@ void * r_allocator_register_existing_block(int slot, void *block_ptr)
         return NULL;
     }
     init_bloc_layout(new_block, (char *) block_ptr);
+    /* AqRaft fix (thread-safety): link_block_into_slot mutates the per-slot
+     * block list (slot_blocks / slot_blocks_tail / slot_blocks_num), which the
+     * main event-loop thread also mutates under r_allocator.mutexes[slot] via
+     * r_allocator_insert_kv -> r_allocator_alloc_new_empty_block when applying
+     * raft-replicated client SETs. This function runs OFF the main thread
+     * (chainApplyWorker, and the REGISTER-BLOCK-SLOTS worker) during the
+     * migration window, and previously took no lock — so a concurrent
+     * doubly-linked-list tail append from both threads corrupted next/prev/tail/
+     * count, detonating later as heap corruption (recursive SIGSEGV) under heavy
+     * write load (reproduced at 400 YCSB threads). Take the same per-slot lock
+     * the insert path uses so the two appends are mutually exclusive. Only the
+     * link is locked; the zmalloc + init_bloc_layout above touch only the
+     * thread-local new_block, so they stay outside the critical section. */
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
     link_block_into_slot(slot, new_block);
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
     return block_ptr;
 }
 
 size_t r_allocator_block_stride_bytes(void)
 {
     return (size_t) WSIZE + (size_t) BLOCK_SIZE_BYTES + (size_t) WSIZE;
+}
+
+/* AqRaft fix: expose the per-slot mutex so an off-main migration-apply caller
+ * (chainApplyWorker -> rdmaBackpatchSlotFillShadow) can hold it across a whole
+ * read-modify-reset critical section, giving mutual exclusion against the main
+ * thread's r_allocator_insert_kv on the same slot. The mutex is recursive, so a
+ * sub-call that re-locks it (reset_freelist_for_slot) is safe. Slot is assumed
+ * in [0, SLOTS); callers already validate it. */
+void r_allocator_lock_slot(int slot)
+{
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+}
+
+void r_allocator_unlock_slot(int slot)
+{
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
 }
 
 // public API

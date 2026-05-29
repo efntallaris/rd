@@ -7,11 +7,17 @@
  * other source file pulls this header in for the buffer type.
  */
 
+/* _DEFAULT_SOURCE: expose madvise()/MADV_DONTNEED from <sys/mman.h> under
+ * -std=c11 (used by the rdma_migration sublib). Must precede all includes. */
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE 1
+#endif
 #include "internal.h"
 #include "zmalloc.h"
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <sys/mman.h>
 
 /* ------------------------------------------------------------------------- *
  * Logger plumbing
@@ -87,4 +93,29 @@ rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
         return NULL;
     }
     return b;
+}
+
+/* AqRaft pool-free: reclaim the physical pages backing this buffer once it is
+ * no longer used for RDMA or local access. ibv_reg_mr pins (mlocks) the pages,
+ * so madvise(MADV_DONTNEED) alone would fail (EINVAL) — we ibv_dereg_mr first
+ * to unpin, then madvise to drop the resident pages. We deliberately do NOT
+ * munmap and do NOT free the struct: the VA stays mapped so any stale pointers
+ * into the region read zero-filled pages instead of SIGSEGV-ing. Returns the
+ * number of bytes whose pages were released (0 on no-op). Idempotent (clears
+ * the MR). */
+size_t rdmamig_buffer_release_pages(rdmamig_buffer *b) {
+    if (b == NULL) return 0;
+    if (b->mr != NULL) {
+        ibv_dereg_mr(b->mr);
+        b->mr = NULL;
+    }
+    if (b->buffer != NULL && b->size > 0) {
+        if (madvise(b->buffer, b->size, MADV_DONTNEED) == 0) {
+            return b->size;
+        }
+        RMIG_LOG(RDMAMIG_LOG_WARNING,
+                 "rdmamig_buffer_release_pages: madvise(%zu) failed (errno=%d)",
+                 b->size, errno);
+    }
+    return 0;
 }

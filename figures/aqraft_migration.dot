@@ -1,0 +1,57 @@
+// AqRaft slot-migration data plane (Panel B equivalent).
+// Render:  dot -Tpdf figures/aqraft_migration.dot -o figures/aqraft_migration_dot.pdf
+//          dot -Tpng figures/aqraft_migration.dot -o figures/aqraft_migration_dot.png
+// (requires graphviz:  sudo apt-get install graphviz)
+
+digraph aqraft_migration {
+  rankdir=LR;
+  graph [fontname="Helvetica", labelloc="t", fontsize=16,
+         label="AqRaft slot migration: leader RDMA-backpatch vs follower chain replication"];
+  node  [fontname="Helvetica", shape=box, style="rounded,filled", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9];
+
+  // ---- donor shardgroup ----
+  subgraph cluster_donor {
+    label="DONOR shardgroup"; color="#2f6db0"; fontcolor="#2f6db0";
+    style="rounded,dashed"; bgcolor="#eef4fb";
+    dleader [label="donor LEADER\n(migrationWorker)\nsnapshot of migrating slots",
+             color="#2f6db0", fillcolor="#f4f7fb"];
+    df1 [label="donor\nfollower", color="#2f6db0", fillcolor="white"];
+    df2 [label="donor\nfollower", color="#2f6db0", fillcolor="white"];
+    dleader -> df1 [color="#b0852f", label="RAFT.MGN-LOG\nTXN_START / TXN_DONE", fontcolor="#b0852f"];
+    dleader -> df2 [color="#b0852f"];
+  }
+
+  // ---- recipient shardgroup ----
+  subgraph cluster_recip {
+    label="RECIPIENT shardgroup"; color="#2e8b57"; fontcolor="#2e8b57";
+    style="rounded,dashed"; bgcolor="#edf7f1";
+    rleader [label="recipient LEADER\nlanding pool -> backpatch (shadow->live) -> kvstore\non BACKPATCH_DONE: chainForwardWorker + MGN_INDX_UPD",
+             color="#2e8b57", fillcolor="#f1faf4"];
+    rf1 [label="recipient F1\napply local", color="#2e8b57", fillcolor="white"];
+    tail [label="recipient F2 (TAIL)\napply local", color="#2e8b57", fillcolor="white"];
+
+    rleader -> rf1  [color="#c0392b", penwidth=2.4, label="RDMA chain-forward\n+ CHAIN-FORWARDED (TCP)", fontcolor="#c0392b"];
+    rf1     -> tail [color="#c0392b", penwidth=2.4];
+    tail    -> rleader [color="#555555", style=dashed, label="CHAIN-ACK\n(tail -> leader)", constraint=false];
+    rleader -> rf1  [color="#b0852f", label="MGN_INDX_UPD\n(raft AE)", fontcolor="#b0852f", constraint=false];
+  }
+
+  // ---- cross-group ----
+  dleader -> rleader [color="#c0392b", penwidth=2.6,
+                      label="(1) RDMA-WRITE bulk data  [TRANSFER]", fontcolor="#c0392b"];
+  rleader -> dleader [color="#555555", style=dashed,
+                      label="(2) BACKPATCH-STATUS poll (TCP, donor pulls)",
+                      fontcolor="#555555", constraint=false];
+
+  // ---- legend ----
+  subgraph cluster_legend {
+    label="legend"; color="gray70"; fontsize=10;
+    l1 [shape=plaintext, fillcolor=none, style="",
+        label=<<table border="0" cellborder="0" cellspacing="2">
+          <tr><td><font color="#c0392b">&#9644;&#9644;</font></td><td>RDMA bulk data</td></tr>
+          <tr><td><font color="#555555">- - -</font></td><td>TCP control</td></tr>
+          <tr><td><font color="#b0852f">&#9644;</font></td><td>raft AppendEntries</td></tr>
+        </table>>];
+  }
+}
