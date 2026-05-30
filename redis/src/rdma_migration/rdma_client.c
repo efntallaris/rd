@@ -142,3 +142,27 @@ int rdmamig_client_wait_send(rdmamig_client *c) {
     }
     return n;
 }
+
+int rdmamig_client_poll_send(rdmamig_client *c, struct ibv_wc *wc, int max) {
+    /* Non-blocking: poll up to `max` send completions off the QP's send CQ.
+     * Returns the number polled (0 if none ready yet), or -1 if a completion
+     * reported a failure status. Used to reap pipelined post_write WRs in
+     * batches instead of blocking per-write. post_write signals every WR, so
+     * the number of completions equals the number of writes posted. */
+    if (c == NULL || c->id == NULL || c->id->send_cq == NULL) return -1;
+    int n = ibv_poll_cq(c->id->send_cq, max, wc);
+    if (n < 0) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "ibv_poll_cq(send) failed");
+        return -1;
+    }
+    for (int i = 0; i < n; i++) {
+        if (wc[i].status != IBV_WC_SUCCESS) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING,
+                "send completion error: status=%d (%s) wr_id=%llu",
+                wc[i].status, ibv_wc_status_str(wc[i].status),
+                (unsigned long long) wc[i].wr_id);
+            return -1;
+        }
+    }
+    return n;
+}

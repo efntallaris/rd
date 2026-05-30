@@ -114,6 +114,13 @@ int rdmamig_client_post_write(rdmamig_buffer *b, char *local_addr,
  * completions polled (normally 1) or a negative value on QP error. */
 int rdmamig_client_wait_send(rdmamig_client *c);
 
+/* Non-blocking poll of the send CQ. Polls up to `max` work completions into
+ * `wc`; returns the number polled (0 if none ready yet), or -1 if any
+ * completion reported a failure status. Use to reap pipelined
+ * rdmamig_client_post_write WRs in batches instead of blocking per-WR with
+ * rdmamig_client_wait_send. */
+int rdmamig_client_poll_send(rdmamig_client *c, struct ibv_wc *wc, int max);
+
 /* ------------------------------------------------------------------------- *
  * Server (recipient passive endpoint)
  * ------------------------------------------------------------------------- */

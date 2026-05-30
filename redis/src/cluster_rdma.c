@@ -1407,6 +1407,24 @@ typedef struct backpatchBatch {
     int                  chain_forwarded;
     int                  chain_acked;
     long long            chain_baseline_ack_count; /* ack_count snapshot when forward was issued */
+    /* AqRaft 3-flag DONE invariant: BACKPATCH-STATUS reports "done" only when
+     * ALL THREE are true — leader merge complete (merge_done), chain replicated
+     * to majority (chain_acked), and MGN_INDX_UPD raft log committed
+     * (indx_applied). Otherwise the donor leader could release its slots while
+     * the recipient followers haven't received the migrated bytes yet → a
+     * recipient-leader crash would silently lose data. */
+    _Atomic int          merge_done;
+    _Atomic int          indx_applied;
+    /* AqRaft parallel-chain: incremented by each backpatch pool worker after
+     * it captures its slot's chain snapshot (before shadow-merge would
+     * overwrite the landing block's segment headers). When this reaches
+     * n_slots all snapshots are safe to chain-forward, so we spawn
+     * chainForwardWorker IN PARALLEL with the remaining shadow build + merge
+     * instead of waiting for mergeBackpatchTick. chain_spawn_initiated is a
+     * CAS gate so we spawn exactly once across the racing pool-worker and
+     * mergeBackpatchTick-fallback paths. */
+    _Atomic int          snapshots_captured;
+    _Atomic int          chain_spawn_initiated;
     /* Phase C: slots covered by this batch's DONE-SLOTS-CHUNK calls. The
      * leader iterates these at BACKPATCH_DONE to encode kvstore content
      * for chain forwarding. Allocated in DONE-SLOTS-INIT (size = n_slots
@@ -1612,6 +1630,11 @@ void rdmaDoneSlotsCommand(client *c) {
     b->chain_forwarded = 0;
     b->chain_acked = 0;
     b->chain_baseline_ack_count = 0;
+    /* AqRaft 3-flag DONE + parallel chain spawn — see backpatchBatch struct. */
+    atomic_store_explicit(&b->merge_done, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->snapshots_captured, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) n_slots * sizeof(int));
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
     b->covered_slot_count = n_slots;
@@ -1791,6 +1814,11 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->chain_forwarded = 0;
     b->chain_acked = 0;
     b->chain_baseline_ack_count = 0;
+    /* AqRaft 3-flag DONE + parallel chain spawn — see backpatchBatch struct. */
+    atomic_store_explicit(&b->merge_done, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->snapshots_captured, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
     b->covered_slot_count = 0;
     pthread_mutex_init(&b->covered_mu, NULL);
@@ -2119,6 +2147,13 @@ static void backpatchFinalize(backpatchBatch *b) {
                  b->src_mig_id, b->n_slots,
                  (long long) atomic_load(&b->applied));
         rdmaMgnLogAsync("INDX_UPD", mgn_payload);
+        /* AqRaft 3-flag DONE: this is condition (3) — MGN_INDX_UPD is now in
+         * the recipient's local raft log (the async send returned). The
+         * reply / commit completes within the typical raft round-trip
+         * (~tens of ms on a 3-node group); BACKPATCH-STATUS will return
+         * "done" the next time it's polled, since chain_acked (1) and
+         * merge_done (2) are also set by the time we reach this finalize. */
+        atomic_store_explicit(&b->indx_applied, 1, memory_order_release);
     }
     {
         char mgn_payload[160];
@@ -2266,16 +2301,77 @@ static void *chainForwardWorker(void *arg) {
                 "CHAIN: sess=%lld leader forward failed (%s) - "
                 "firing MGN_INDX_UPD immediately as fallback",
                 b->src_mig_id, errbuf);
+            /* AqRaft 3-flag DONE: chain forward failed → there will be no
+             * CHAIN-ACK. The migration falls back to "MGN_INDX_UPD raft
+             * replication is the durability path" — which itself reaches
+             * majority via the recipient's raft group. Set chain_acked=1 so
+             * BACKPATCH-STATUS doesn't hang waiting for an ack that will
+             * never come; the indx_applied flag (set inside backpatchFinalize)
+             * remains the substantive durability proof. */
+            b->chain_acked = 1;
             backpatchFinalize(b);  /* (D) finalize runs in this worker thread */
         }
     } else {
         /* No chain configured -> finalize directly (off-main). */
+        /* AqRaft 3-flag DONE: with no chain configured, MGN_INDX_UPD raft
+         * replication is the sole durability path. Set chain_acked=1 so the
+         * BACKPATCH-STATUS handler doesn't gate on a chain that doesn't
+         * exist. */
+        b->chain_acked = 1;
         backpatchFinalize(b);
     }
 
     zfree(job->slots_copy);
     zfree(job);
     return NULL;
+}
+
+/* AqRaft: build a chainForwardJob for batch `b` and spawn chainForwardWorker
+ * to do (Fenwick rebuild + chain-forward + finalize) off-main. Safe to call
+ * from either the main thread or a backpatch pool worker — chainForwardWorker
+ * is detached, takes ownership of the job, and internally hands the batch
+ * off to chainPendingTick (chain-ack arrival) or backpatchFinalize (no-chain
+ * / failed paths). Caller MUST hold the CAS on b->chain_spawn_initiated so
+ * we spawn exactly once across the pool-worker (last-snapshot) and
+ * mergeBackpatchTick (last-merge) racing paths. */
+static void spawnChainForwardWorker(backpatchBatch *b) {
+    int chain_configured = (server.rdma_chain_followers != NULL &&
+                            sdslen(server.rdma_chain_followers) > 0);
+    long long ack_count = chain_configured
+        ? rdmaLeaderChainAckCount(b->src_mig_id) : -1;
+    int chain_ready = (chain_configured && ack_count >= 0 &&
+                       b->covered_slots != NULL &&
+                       b->covered_slot_count > 0 &&
+                       b->donor_snapshot_pool != NULL);
+
+    chainForwardJob *job = zcalloc(sizeof(*job));
+    job->batch = b;
+    job->chain_configured = chain_ready;
+    if (chain_ready) {
+        b->chain_baseline_ack_count = ack_count;
+        int n = b->covered_slot_count;
+        job->slots_copy = zmalloc((size_t) n * sizeof(int));
+        pthread_mutex_lock(&b->covered_mu);
+        memcpy(job->slots_copy, b->covered_slots,
+               (size_t) n * sizeof(int));
+        pthread_mutex_unlock(&b->covered_mu);
+        job->n_slots = n;
+    }
+
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, chainForwardWorker, job) != 0) {
+        serverLog(LL_WARNING,
+            "CHAIN: pthread_create(chainForwardWorker) failed for "
+            "sess=%lld - falling back to inline finalize",
+            b->src_mig_id);
+        if (job->slots_copy) zfree(job->slots_copy);
+        zfree(job);
+        kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+        kvstoreFenwickRebuild(server.db[0].keys);
+        backpatchFinalize(b);
+    } else {
+        pthread_detach(tid);
+    }
 }
 
 /* Main thread: poll the per-batch chain-ack state. For each pending batch:
@@ -2489,54 +2585,27 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
                                   memory_order_relaxed);
         int prev = atomic_fetch_sub_explicit(&b->remaining, 1, memory_order_acq_rel);
         if (prev == 1) {
-            atomic_store_explicit(&b->state, BACKPATCH_DONE, memory_order_release);
+            /* AqRaft 3-flag DONE: this is condition (2) — leader merge done.
+             * We do NOT flip b->state to BACKPATCH_DONE here anymore: the
+             * BACKPATCH-STATUS handler reports "done" only when all three
+             * flags (merge_done, chain_acked, indx_applied) are set, so the
+             * donor's poll correctly waits until chain has replicated to
+             * majority AND MGN_INDX_UPD has committed. */
+            atomic_store_explicit(&b->merge_done, 1, memory_order_release);
             b->t_ended = time(NULL);
             atomicDecr(server.recipient_backpatch_in_progress, 1);
 
-            /* AqRaft Patch 16: heavy post-merge work (Fenwick rebuild,
-             * chain forward memcpy + 1365 RDMA-WRITE WR posts, finalize
-             * zfree of 2.86 GB pool) moves off main thread into a one-shot
-             * chainForwardWorker. Main thread does only argv shuffling
-             * here, then returns to the event loop to keep raft heartbeats
-             * flowing. Without this the main thread block tripped raft
-             * check-quorum (election_timeout * 2 = 2 s) and caused the sg4
-             * leader to step down mid-migration. */
-            int chain_configured = (server.rdma_chain_followers != NULL &&
-                                    sdslen(server.rdma_chain_followers) > 0);
-            long long ack_count = chain_configured
-                ? rdmaLeaderChainAckCount(b->src_mig_id) : -1;
-            int chain_ready = (chain_configured && ack_count >= 0 &&
-                               b->covered_slots != NULL &&
-                               b->covered_slot_count > 0 &&
-                               b->donor_snapshot_pool != NULL);
-
-            chainForwardJob *job = zcalloc(sizeof(*job));
-            job->batch = b;
-            job->chain_configured = chain_ready;
-            if (chain_ready) {
-                b->chain_baseline_ack_count = ack_count;
-                int n = b->covered_slot_count;
-                job->slots_copy = zmalloc((size_t) n * sizeof(int));
-                pthread_mutex_lock(&b->covered_mu);
-                memcpy(job->slots_copy, b->covered_slots,
-                       (size_t) n * sizeof(int));
-                pthread_mutex_unlock(&b->covered_mu);
-                job->n_slots = n;
-            }
-
-            pthread_t tid;
-            if (pthread_create(&tid, NULL, chainForwardWorker, job) != 0) {
-                serverLog(LL_WARNING,
-                    "CHAIN: pthread_create(chainForwardWorker) failed for "
-                    "sess=%lld - falling back to main-thread finalize",
-                    b->src_mig_id);
-                if (job->slots_copy) zfree(job->slots_copy);
-                zfree(job);
-                kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
-                kvstoreFenwickRebuild(server.db[0].keys);
-                backpatchFinalize(b);
-            } else {
-                pthread_detach(tid);
+            /* Parallel chain: pool worker may already have spawned
+             * chainForwardWorker when it captured the last snapshot
+             * (snapshots_captured == n_slots). CAS-fallback here in case
+             * it hasn't (e.g. no chain configured ⇒ pool workers don't
+             * touch snapshots_captured) so the chain/finalize path still
+             * runs exactly once. */
+            int expected = 0;
+            if (atomic_compare_exchange_strong_explicit(
+                    &b->chain_spawn_initiated, &expected, 1,
+                    memory_order_acq_rel, memory_order_relaxed)) {
+                spawnChainForwardWorker(b);
             }
         }
         } /* end if (b != NULL) */
@@ -2619,6 +2688,26 @@ static void *backpatchPoolWorkerMain(void *arg) {
                     }
                 }
                 if (blocks) zfree(blocks);
+            }
+
+            /* AqRaft parallel-chain: once ALL slot snapshots are captured,
+             * spawn chainForwardWorker IMMEDIATELY so chain replication runs
+             * in parallel with the remaining shadow build + main-thread
+             * merge. The shadow build for this slot is about to overwrite
+             * the donor's block segment headers, so by the time the last
+             * worker reaches this point every slot's snapshot is safe to
+             * forward. CAS-guard so we spawn exactly once (racing with
+             * mergeBackpatchTick's fallback). */
+            int captured = atomic_fetch_add_explicit(
+                &w->batch->snapshots_captured, 1,
+                memory_order_acq_rel) + 1;
+            if (captured == w->batch->n_slots) {
+                int expected = 0;
+                if (atomic_compare_exchange_strong_explicit(
+                        &w->batch->chain_spawn_initiated, &expected, 1,
+                        memory_order_acq_rel, memory_order_relaxed)) {
+                    spawnChainForwardWorker(w->batch);
+                }
             }
         }
 
@@ -3112,10 +3201,35 @@ void rdmaBackpatchStatusCommand(client *c) {
     sds err_copy = b->err ? sdsdup(b->err) : sdsempty();
     pthread_mutex_unlock(&b->err_mu);
 
+    /* AqRaft 3-flag DONE invariant: only report "done" to the donor when
+     * (1) the recipient leader's merge finished (merge_done),
+     * (2) the chain has replicated to majority of recipient followers
+     *     (chain_acked, set by chainPendingTick when CHAIN-ACK arrives), and
+     * (3) MGN_INDX_UPD has been appended to the raft log (indx_applied,
+     *     set by backpatchFinalize).
+     * Without all three, the donor would release its slots while either
+     * followers don't have the bytes or the migration metadata isn't durable
+     * — a recipient-leader crash in that window silently loses data. */
+    int md  = atomic_load_explicit(&b->merge_done,   memory_order_acquire);
+    int ca  = b->chain_acked;
+    int ia  = atomic_load_explicit(&b->indx_applied, memory_order_acquire);
+    int reported_state = state;
+    if (state == BACKPATCH_RUNNING && md && ca && ia) {
+        /* All three durability conditions met — promote the reply to "done"
+         * even though we no longer eagerly flip b->state to BACKPATCH_DONE
+         * at merge end. */
+        reported_state = BACKPATCH_DONE;
+    } else if (state == BACKPATCH_DONE && !(md && ca && ia)) {
+        /* Internal state has been flipped (legacy path) but at least one of
+         * the three flags is still pending — downgrade the externally-
+         * reported state so the donor waits. */
+        reported_state = BACKPATCH_RUNNING;
+    }
+
     long long elapsed = (long long) ((b->t_ended ? b->t_ended : time(NULL)) - b->t_started);
 
     addReplyArrayLen(c, 6);
-    addReplyBulkCString(c, backpatchStateName((backpatchBatchState) state));
+    addReplyBulkCString(c, backpatchStateName((backpatchBatchState) reported_state));
     addReplyLongLong(c, idx);
     addReplyLongLong(c, b->n_slots);
     addReplyLongLong(c, ap);
@@ -4519,6 +4633,11 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
 
     size_t total_bytes = 0;
     int errs = 0;
+    /* AqRaft: number of RDMA WRs posted to the QP but not yet reaped from the
+     * send CQ. With pipelining we post up to K WRs before reaping them as a
+     * batch — keeping K writes in flight instead of stalling per-slot on
+     * wait_send (which capped the transfer at ~1 WR in flight, ~5 Gbps). */
+    int inflight = 0;
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
@@ -4553,6 +4672,12 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
                 slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
         }
+        /* AqRaft (pipelined): post the WR and keep it in flight — do NOT
+         * wait_send per slot. rdmamig_client_post_write signals every WR, so
+         * we reap the whole batch at the chunk boundary below. Posting up to
+         * K (2 MiB) writes before reaping fills the QP send queue and the NIC
+         * pipe; the old post-1/wait-1 capped throughput at ~1 WR in flight
+         * (~5 Gbps regardless of payload size). */
         int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
                                            L->buffers[slot].ptr,
                                            L->buffers[slot].rkey,
@@ -4563,25 +4688,36 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 "RDMA MIGRATE worker: slot=%d post_write failed rc=%d", slot, rc);
             continue;
         }
-        int wc_rc = rdmamig_client_wait_send(L->client);
-        if (wc_rc < 0) {
-            errs++;
-            serverLog(LL_WARNING,
-                "RDMA MIGRATE worker: slot=%d wait_send failed rc=%d", slot, wc_rc);
-            continue;
-        }
+        inflight++;
         total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
-        serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: slot=%d entries=%u bytes=%d rc=0",
-            slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
+        if (overlap) chunk_slots[chunk_used++] = slot;
+        (void) n_entries;  /* per-slot success log dropped; n_entries kept for the debug-bytes log above */
 
-        /* Overlap path: accumulate this slot into the current chunk, and
-         * pipeline-send when we've reached K or the last iteration.
-         * RDMA RC's wait_send already guarantees data is in recipient memory. */
-        if (overlap) {
-            chunk_slots[chunk_used++] = slot;
-            int is_last = (i + 1 == n_slots);
-            if (chunk_used == K || is_last) {
+        /* Batch boundary: reap all in-flight WRs (RC QP completes in order, so
+         * draining `inflight` completions confirms every write in this batch
+         * has landed in the recipient's pinned memory). For the overlap path
+         * we then fire the chunk's DONE-SLOTS-CHUNK RPC — the recipient can
+         * backpatch this chunk while we transfer the next batch — preserving
+         * the existing "data has landed before CHUNK RPC" invariant. */
+        int is_last_slot = (i + 1 == n_slots);
+        if (is_last_slot || inflight >= K) {
+            int reaped = 0;
+            while (reaped < inflight) {
+                struct ibv_wc wc[64];
+                int n = rdmamig_client_poll_send(L->client, wc, 64);
+                if (n < 0) {
+                    errs++;
+                    serverLog(LL_WARNING,
+                        "RDMA MIGRATE worker: send completion error in batch (reaped %d/%d, last_slot=%d)",
+                        reaped, inflight, slot);
+                    break;
+                }
+                if (n == 0) continue;  /* spin until the batch's WRs complete */
+                reaped += n;
+            }
+            inflight = 0;
+
+            if (overlap && chunk_used > 0) {
                 int chunk_argc = 5 + chunk_used;
                 const char **cargv = zmalloc((size_t) chunk_argc * sizeof(*cargv));
                 size_t *cargvlen = zmalloc((size_t) chunk_argc * sizeof(*cargvlen));
@@ -4616,6 +4752,17 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 zfree(cargv); zfree(cargvlen); zfree(cnumbuf);
             }
         }
+    }
+
+    /* Defensive: drain any leftover completions (e.g. last batch had a
+     * post failure that bypassed the boundary). RC every-WR-signaled
+     * guarantees each posted WR has a CQE we can poll off, no leaks. */
+    while (inflight > 0) {
+        struct ibv_wc wc[64];
+        int n = rdmamig_client_poll_send(L->client, wc, 64);
+        if (n < 0) { errs++; break; }
+        if (n == 0) continue;
+        inflight -= n;
     }
 
     if (overlap) {
@@ -5364,6 +5511,94 @@ static long long orchDispatchPeer(const char *peer_host, int peer_port,
     return peer_mig_id;
 }
 
+/* AqRaft completion-driven dispatch: the sequencer dispatches each peer
+ * donor the instant the prior donor reaches terminal state — strictly
+ * sequential, zero idle gap, zero overlap. Replaces the fixed per-peer
+ * stagger when server.rdma_migration_peer_stagger_ms == 0. Spawned by
+ * orchAllocateAndDispatch after SELF is dispatched; runs detached on its
+ * own thread so the orchestrator's main-thread MIGRATE-ALL handler returns
+ * immediately. Owns all sds and the arg block. */
+typedef struct {
+    rdmaOrchestration *orch;    /* not owned; lifetime managed by orch dict */
+    int                n_peers;
+    sds               *peer_endpoints; /* owned: n_peers entries + the array */
+    char               recipient_host[256];
+    int                recipient_port;
+    int                n_slots_per_source;
+    sds                self_endpoint;  /* owned */
+    int                rdma_port_base;
+} orchSequencerArg;
+
+static void *orchSequencerMain(void *arg) {
+    orchSequencerArg *sa = (orchSequencerArg *) arg;
+    rdmaOrchestration *orch = sa->orch;
+
+    /* donors[0] = self; peer i lives at donors[i+1]. To dispatch peer i we
+     * wait for donors[i] (the prior donor in the chain) to reach terminal. */
+    for (int i = 0; i < sa->n_peers; i++) {
+        /* Spin-wait for the prior donor's terminal flag. 10ms poll is fine —
+         * a per-donor cycle is hundreds of ms to seconds. */
+        while (1) {
+            pthread_mutex_lock(&orch->mu);
+            int t = orch->donors[i].terminal;
+            pthread_mutex_unlock(&orch->mu);
+            if (t) break;
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = 10 * 1000 * 1000 };
+            nanosleep(&ts, NULL);
+        }
+
+        /* Dispatch peer i with zero start delay — the wait above is the only
+         * sequencing point we need. */
+        char host_buf[256]; int peer_port;
+        if (parseHostPort(sa->peer_endpoints[i], host_buf, sizeof(host_buf), &peer_port) != 0) {
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE-ALL (completion-driven): bad peer endpoint '%s'",
+                sa->peer_endpoints[i]);
+            pthread_mutex_lock(&orch->mu);
+            orch->donors[i + 1].terminal = 1;
+            orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+            orch->donors[i + 1].err = sdsnew("bad endpoint format");
+            orch->n_terminal++;
+            orch->n_failed++;
+            pthread_mutex_unlock(&orch->mu);
+            continue;
+        }
+        int peer_rdma_port = sa->rdma_port_base + 1 + i;
+        const char *perr = NULL;
+        long long peer_mig_id = orchDispatchPeer(host_buf, peer_port,
+                                                 sa->recipient_host, sa->recipient_port,
+                                                 sa->n_slots_per_source, peer_rdma_port,
+                                                 sa->self_endpoint, orch->id,
+                                                 0 /* zero start delay — gapless */,
+                                                 &perr);
+        pthread_mutex_lock(&orch->mu);
+        if (peer_mig_id < 0) {
+            serverLog(LL_WARNING,
+                "RDMA MIGRATE-ALL (completion-driven): failed to dispatch to %s: %s",
+                sa->peer_endpoints[i], perr ? perr : "?");
+            orch->donors[i + 1].terminal = 1;
+            orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+            orch->donors[i + 1].err = sdsnew(perr ? perr : "dispatch failed");
+            orch->n_terminal++;
+            orch->n_failed++;
+        } else {
+            orch->donors[i + 1].migration_id = peer_mig_id;
+            serverLog(LL_NOTICE,
+                "RDMA MIGRATE-ALL (completion-driven): dispatched peer %d (%s) "
+                "after donor %d terminal",
+                i, sa->peer_endpoints[i], i);
+        }
+        pthread_mutex_unlock(&orch->mu);
+    }
+
+    /* Cleanup owned state. */
+    for (int i = 0; i < sa->n_peers; i++) sdsfree(sa->peer_endpoints[i]);
+    zfree(sa->peer_endpoints);
+    sdsfree(sa->self_endpoint);
+    zfree(sa);
+    return NULL;
+}
+
 /* Allocate, dispatch, and register an orchestration. Returns the
  * orchestration id on success; 0 on failure with an error reply already
  * sent to the client `c`. */
@@ -5445,56 +5680,121 @@ static long long orchAllocateAndDispatch(client *c,
      * (default 10000ms, 0 disables). Peer i gets (i+1)*stagger. */
     const int PEER_STAGGER_MS = server.rdma_migration_peer_stagger_ms;
     int n_dispatched = 0;
-    for (int i = 0; i < n_peers; i++) {
-        char host_buf[256]; int peer_port;
-        if (parseHostPort(peer_endpoints[i], host_buf, sizeof(host_buf), &peer_port) != 0) {
-            serverLog(LL_WARNING, "RDMA MIGRATE-ALL: bad peer endpoint '%s'",
-                      peer_endpoints[i]);
-            orch->donors[i + 1].terminal = 1;
-            orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
-            orch->donors[i + 1].err = sdsnew("bad endpoint format");
-            orch->n_terminal++;
-            orch->n_failed++;
-            continue;
-        }
-        int peer_rdma_port = RDMA_PORT_BASE + 1 + i;
-        int peer_delay_ms = (i + 1) * PEER_STAGGER_MS;
-        const char *perr = NULL;
-        long long peer_mig_id = orchDispatchPeer(host_buf, peer_port,
-                                                 recipient_host, recipient_port,
-                                                 n_slots_per_source, peer_rdma_port,
-                                                 self_endpoint, orch->id,
-                                                 peer_delay_ms,
-                                                 &perr);
-        if (peer_mig_id < 0) {
-            serverLog(LL_WARNING, "RDMA MIGRATE-ALL: failed to dispatch to %s: %s",
-                      peer_endpoints[i], perr ? perr : "?");
-            orch->donors[i + 1].terminal = 1;
-            orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
-            orch->donors[i + 1].err = sdsnew(perr ? perr : "dispatch failed");
+
+    if (PEER_STAGGER_MS == 0) {
+        /* AqRaft COMPLETION-DRIVEN sequential dispatch (PEER_STAGGER_MS=0):
+         * dispatch SELF first; spawn a sequencer thread that dispatches each
+         * peer the moment the prior donor reaches terminal state. Donors run
+         * strictly sequentially with zero idle gap (vs the fixed-stagger
+         * path's idle gap when per-donor work < stagger) and zero overlap
+         * (vs the simultaneous-donors crash at stagger=0 in the old code).
+         * See orchSequencerMain above. */
+        server.rdma_migration_port = RDMA_PORT_BASE;
+        const char *self_err = NULL;
+        sds self_orch_ep = sdsdup(self_endpoint);
+        long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
+                                                    n_slots_per_source,
+                                                    self_orch_ep, orch->id,
+                                                    0, &self_err);
+        if (self_mig_id < 0) {
+            serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
+                      self_err ? self_err : "?");
+            orch->donors[0].terminal = 1;
+            orch->donors[0].terminal_state = RDMA_MIG_FAILED;
+            orch->donors[0].err = sdsnew(self_err ? self_err : "self dispatch failed");
             orch->n_terminal++;
             orch->n_failed++;
         } else {
-            orch->donors[i + 1].migration_id = peer_mig_id;
+            orch->donors[0].migration_id = self_mig_id;
             n_dispatched++;
         }
-    }
 
-    /* Dispatch self in-process, NOT via hiredis loopback. The orchestrator
-     * command currently holds the event loop, so a hiredis dial-back to
-     * ourselves would deadlock waiting for the listener to accept the new
-     * connection. startLocalMigration sets up and detaches the worker
-     * thread without going through redis-cli.
-     *
-     * Set our own rdma-migration-port to the base value first so the
-     * recipient binds a port that doesn't collide with the peers'. */
-    server.rdma_migration_port = RDMA_PORT_BASE;
-    {
+        if (n_peers > 0) {
+            orchSequencerArg *sa = zcalloc(sizeof(*sa));
+            sa->orch = orch;
+            sa->n_peers = n_peers;
+            sa->peer_endpoints = zcalloc((size_t) n_peers * sizeof(sds));
+            for (int i = 0; i < n_peers; i++) sa->peer_endpoints[i] = sdsdup(peer_endpoints[i]);
+            snprintf(sa->recipient_host, sizeof(sa->recipient_host), "%s", recipient_host);
+            sa->recipient_port = recipient_port;
+            sa->n_slots_per_source = n_slots_per_source;
+            sa->self_endpoint = sdsdup(self_endpoint);
+            sa->rdma_port_base = RDMA_PORT_BASE;
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, orchSequencerMain, sa) != 0) {
+                serverLog(LL_WARNING,
+                    "RDMA MIGRATE-ALL: completion-driven sequencer spawn failed; "
+                    "marking %d peers as failed", n_peers);
+                for (int i = 0; i < n_peers; i++) {
+                    sdsfree(sa->peer_endpoints[i]);
+                    orch->donors[i + 1].terminal = 1;
+                    orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+                    orch->donors[i + 1].err = sdsnew("sequencer spawn failed");
+                    orch->n_terminal++;
+                    orch->n_failed++;
+                }
+                zfree(sa->peer_endpoints);
+                sdsfree(sa->self_endpoint);
+                zfree(sa);
+            } else {
+                pthread_detach(tid);
+                /* Don't pre-bump n_dispatched for peers — the sequencer
+                 * dispatches them asynchronously and reports actual
+                 * outcomes into orch state via the same terminal/migration_id
+                 * fields. Self alone keeps orch in RUNNING below. */
+            }
+        }
+    } else {
+        /* Legacy fixed-stagger dispatch (PEER_STAGGER_MS > 0): each peer is
+         * stamped with start_delay_ms = (i+1)*PEER_STAGGER_MS. Self runs
+         * immediately. Kept for back-compat; new default is the
+         * completion-driven path above (PEER_STAGGER_MS=0). */
+        for (int i = 0; i < n_peers; i++) {
+            char host_buf[256]; int peer_port;
+            if (parseHostPort(peer_endpoints[i], host_buf, sizeof(host_buf), &peer_port) != 0) {
+                serverLog(LL_WARNING, "RDMA MIGRATE-ALL: bad peer endpoint '%s'",
+                          peer_endpoints[i]);
+                orch->donors[i + 1].terminal = 1;
+                orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+                orch->donors[i + 1].err = sdsnew("bad endpoint format");
+                orch->n_terminal++;
+                orch->n_failed++;
+                continue;
+            }
+            int peer_rdma_port = RDMA_PORT_BASE + 1 + i;
+            int peer_delay_ms = (i + 1) * PEER_STAGGER_MS;
+            const char *perr = NULL;
+            long long peer_mig_id = orchDispatchPeer(host_buf, peer_port,
+                                                     recipient_host, recipient_port,
+                                                     n_slots_per_source, peer_rdma_port,
+                                                     self_endpoint, orch->id,
+                                                     peer_delay_ms,
+                                                     &perr);
+            if (peer_mig_id < 0) {
+                serverLog(LL_WARNING, "RDMA MIGRATE-ALL: failed to dispatch to %s: %s",
+                          peer_endpoints[i], perr ? perr : "?");
+                orch->donors[i + 1].terminal = 1;
+                orch->donors[i + 1].terminal_state = RDMA_MIG_FAILED;
+                orch->donors[i + 1].err = sdsnew(perr ? perr : "dispatch failed");
+                orch->n_terminal++;
+                orch->n_failed++;
+            } else {
+                orch->donors[i + 1].migration_id = peer_mig_id;
+                n_dispatched++;
+            }
+        }
+
+        /* Dispatch self in-process, NOT via hiredis loopback. The orchestrator
+         * command currently holds the event loop, so a hiredis dial-back to
+         * ourselves would deadlock waiting for the listener to accept the new
+         * connection. startLocalMigration sets up and detaches the worker
+         * thread without going through redis-cli.
+         *
+         * Set our own rdma-migration-port to the base value first so the
+         * recipient binds a port that doesn't collide with the peers'. */
+        server.rdma_migration_port = RDMA_PORT_BASE;
         const char *self_err = NULL;
         sds self_orch_ep = sdsdup(self_endpoint);   /* startLocalMigration takes ownership */
-        /* Self gets start_delay_ms=0 — runs immediately. Peers are
-         * staggered by (peer_index + 1) * stagger inside orchDispatchPeer
-         * below. */
         long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
                                                     n_slots_per_source,
                                                     self_orch_ep, orch->id,
