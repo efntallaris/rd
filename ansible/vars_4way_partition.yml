@@ -1,0 +1,49 @@
+---
+# 4-way EVEN partition baseline (no migration). Four 3-node RedisRaft
+# shardgroups, each owning 1/4 of the slot space, fully meshed via LINK.
+# Named sg1/sg2/sg3/sg5 so none hits the literal 'sg4' LINK-exclusion in
+# init_redisraft_shardgroups.yml (sg4 is reserved as the migration recipient
+# with an overlapping 0:16383 range; here every range is disjoint so LINK is
+# accepted). Leaders spread one-per-host across redis0..redis3; 3 procs/host
+# on distinct ports.
+redisraft_shardgroups:
+  - id: sg1
+    port: 8000
+    slot_config: "0:4095"
+    nodes:
+      - host: redis0
+        raft_id: 1
+      - host: redis1
+        raft_id: 2
+      - host: redis2
+        raft_id: 3
+  - id: sg2
+    port: 8001
+    slot_config: "4096:8191"
+    nodes:
+      - host: redis1
+        raft_id: 1
+      - host: redis2
+        raft_id: 2
+      - host: redis3
+        raft_id: 3
+  - id: sg3
+    port: 8002
+    slot_config: "8192:12287"
+    nodes:
+      - host: redis2
+        raft_id: 1
+      - host: redis3
+        raft_id: 2
+      - host: redis0
+        raft_id: 3
+  - id: sg5
+    port: 8003
+    slot_config: "12288:16383"
+    nodes:
+      - host: redis3
+        raft_id: 1
+      - host: redis0
+        raft_id: 2
+      - host: redis1
+        raft_id: 3

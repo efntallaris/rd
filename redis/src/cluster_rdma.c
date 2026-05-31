@@ -1450,6 +1450,16 @@ typedef struct backpatchBatch {
     void                *landing_pool_base;
     size_t               landing_pool_bytes;
     struct rdmamig_buffer *landing_pool_buf;   /* for dereg+madvise at finalize */
+    /* AqRaft lever #4 fix: the landing pool must NOT be reclaimed until the
+     * main-thread merge has fully drained — mergeBackpatchTick reads each
+     * migrated value (v = src->ptr) directly out of the landing pool, so a
+     * dereg+madvise(DONTNEED) while merges are still queued drops the pages
+     * under the main thread → SIGSEGV in r_allocator_insert_kvobj. The
+     * snapshot-capture-triggered chain spawn can reach backpatchFinalize
+     * BEFORE merge_done, so the release is now driven by whichever of
+     * {mergeBackpatchTick @ merge_done, backpatchFinalize} runs last. This CAS
+     * guard ensures exactly one of them performs the release. */
+    _Atomic int          landing_pool_released;
 } backpatchBatch;
 
 #define BACKPATCH_RING_CAPACITY 64u
@@ -1635,6 +1645,7 @@ void rdmaDoneSlotsCommand(client *c) {
     atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
     atomic_store_explicit(&b->snapshots_captured, 0, memory_order_relaxed);
     atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) n_slots * sizeof(int));
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
     b->covered_slot_count = n_slots;
@@ -1819,6 +1830,7 @@ void rdmaDoneSlotsInitCommand(client *c) {
     atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
     atomic_store_explicit(&b->snapshots_captured, 0, memory_order_relaxed);
     atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
     b->covered_slot_count = 0;
     pthread_mutex_init(&b->covered_mu, NULL);
@@ -2133,6 +2145,35 @@ static void *landingPoolReleaseWorker(void *arg) {
     return NULL;
 }
 
+/* AqRaft lever #4 fix: reclaim the batch's donor landing pool exactly once,
+ * off-main, and ONLY after the main-thread merge has fully drained. Both
+ * mergeBackpatchTick (when it sets merge_done) and backpatchFinalize (when it
+ * observes merge_done already set) call this; the CAS on landing_pool_released
+ * makes the dereg+madvise happen exactly once. Callers MUST have established
+ * that merge_done==1 (no more mergeBackpatchTick reads of v=src->ptr into the
+ * pool) before calling — otherwise the pages could be dropped under an
+ * in-flight insert. */
+static void backpatchReleaseLandingPool(backpatchBatch *b) {
+    if (b->landing_pool_buf == NULL) return;
+    int expected = 0;
+    if (!atomic_compare_exchange_strong_explicit(
+            &b->landing_pool_released, &expected, 1,
+            memory_order_acq_rel, memory_order_relaxed)) {
+        return; /* another thread already claimed the release */
+    }
+    struct rdmamig_buffer *lpb = b->landing_pool_buf;
+    size_t lbytes = b->landing_pool_bytes;
+    pthread_t ltid;
+    if (pthread_create(&ltid, NULL, landingPoolReleaseWorker, lpb) == 0) {
+        pthread_detach(ltid);
+        serverLog(LL_NOTICE,
+            "AqRaft pool-free: reclaiming landing pool (%zu bytes) off-main "
+            "for sess=%lld (post merge-drain)", lbytes, b->src_mig_id);
+    } else {
+        rdmamig_buffer_release_pages(lpb); /* fallback: inline */
+    }
+}
+
 static void backpatchFinalize(backpatchBatch *b) {
     /* AqRaft Patch 24: timing probe. backpatchFinalize is called from
      * chainPendingTick on the MAIN thread when chain-ack arrives. The 2.86
@@ -2187,29 +2228,19 @@ static void backpatchFinalize(backpatchBatch *b) {
             zfree(pool); /* fallback: inline if pthread_create fails */
         }
     }
-    /* AqRaft pool-free: reclaim this session's donor landing pool. By now the
-     * migrated kvobjs have been COPIED into the recipient's own managed blocks
-     * (mergeBackpatchTick) and the chain forward used donor_snapshot_pool, so
-     * the landing pool is dead. reset_freelist_for_slot already removed its
-     * blocks from the freelist, so reclaiming its pages is safe. dereg+madvise
-     * runs off-main (multi-GB MR). This is what drops recipient RSS from ~11 GB
-     * back to ~the live working set, removing the memory-pressure overhead that
-     * made the recipient the post-migration bottleneck. */
-    if (b->landing_pool_buf != NULL) {
-        struct rdmamig_buffer *lpb = b->landing_pool_buf;
-        size_t lbytes = b->landing_pool_bytes;
-        b->landing_pool_buf  = NULL;
-        b->landing_pool_base = NULL;
-        b->landing_pool_bytes = 0;
-        pthread_t ltid;
-        if (pthread_create(&ltid, NULL, landingPoolReleaseWorker, lpb) == 0) {
-            pthread_detach(ltid);
-            serverLog(LL_NOTICE,
-                "AqRaft pool-free: reclaiming landing pool (%zu bytes) off-main "
-                "for sess=%lld", lbytes, b->src_mig_id);
-        } else {
-            rdmamig_buffer_release_pages(lpb); /* fallback: inline */
-        }
+    /* AqRaft pool-free (lever #4 fix): reclaim this session's donor landing
+     * pool — but ONLY if the main-thread merge has already drained
+     * (merge_done==1). mergeBackpatchTick reads each migrated value straight
+     * out of the landing pool (v = src->ptr), so freeing it while merges are
+     * still queued drops the pages under the main thread → SIGSEGV in
+     * r_allocator_insert_kvobj. backpatchFinalize can be reached BEFORE the
+     * merge finishes (the chain forward is spawned on last-snapshot-captured,
+     * not last-merge), so here we release only when merge_done is observed; if
+     * it isn't set yet, the mergeBackpatchTick path that sets merge_done will
+     * perform the release instead. The CAS in backpatchReleaseLandingPool makes
+     * this exactly-once regardless of which side wins. */
+    if (atomic_load_explicit(&b->merge_done, memory_order_acquire)) {
+        backpatchReleaseLandingPool(b);
     }
     long long t2 = ustime();
     pthread_mutex_lock(&backpatch_dispose_mu);
@@ -2594,6 +2625,15 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
             b->t_ended = time(NULL);
             atomicDecr(server.recipient_backpatch_in_progress, 1);
+
+            /* AqRaft lever #4 fix: the merge has now fully drained — no more
+             * mergeBackpatchTick reads of v=src->ptr into the landing pool. It
+             * is finally safe to reclaim the landing pool. Do it here (rather
+             * than only in backpatchFinalize) because the chain-forward spawn
+             * fires on last-snapshot-captured and can run backpatchFinalize
+             * BEFORE this point; in that case finalize saw merge_done==0 and
+             * skipped the release, leaving it to us. CAS-guarded → exactly once. */
+            backpatchReleaseLandingPool(b);
 
             /* Parallel chain: pool worker may already have spawned
              * chainForwardWorker when it captured the last snapshot
@@ -3228,13 +3268,23 @@ void rdmaBackpatchStatusCommand(client *c) {
 
     long long elapsed = (long long) ((b->t_ended ? b->t_ended : time(NULL)) - b->t_started);
 
-    addReplyArrayLen(c, 6);
+    /* AqRaft Round 2: element[6] is the chain-durable flag (merge_done &&
+     * chain_acked). When set, the recipient leader has merged this donor's
+     * data into its keyspace AND the chain has replicated to a majority of
+     * followers; only the metadata-only MGN_INDX_UPD raft append (indx_applied)
+     * is still outstanding. The donor's poll loop forwards this to the
+     * orchestrator as an early CHAIN_DURABLE signal so the next donor can be
+     * dispatched while this donor's INDX_UPD commits. */
+    int chain_durable = (md && ca) ? 1 : 0;
+
+    addReplyArrayLen(c, 7);
     addReplyBulkCString(c, backpatchStateName((backpatchBatchState) reported_state));
     addReplyLongLong(c, idx);
     addReplyLongLong(c, b->n_slots);
     addReplyLongLong(c, ap);
     addReplyLongLong(c, elapsed);
     addReplyBulkSds(c, err_copy);
+    addReplyLongLong(c, chain_durable);
 }
 
 
@@ -5066,6 +5116,7 @@ static void *migrationWorker(void *arg) {
         const int max_polls = 6000;  /* ~60 s at 10 ms each */
         int polls = 0;
         int done = 0;
+        int chain_durable_sent = 0;  /* AqRaft Round 2: early dispatch signal */
         sds backpatch_err = NULL;
         while (polls < max_polls && !done) {
             pthread_mutex_lock(&mig->L->mu);
@@ -5085,8 +5136,23 @@ static void *migrationWorker(void *arg) {
                 polls++;
                 continue;
             }
-            if (r->type == REDIS_REPLY_ARRAY && r->elements == 6) {
+            if (r->type == REDIS_REPLY_ARRAY && r->elements >= 6) {
                 const char *state_str = r->element[0]->str;
+                /* AqRaft Round 2: element[6] (when present) is the chain-durable
+                 * flag - merge_done && chain_acked, with only the metadata-only
+                 * MGN_INDX_UPD raft append still pending. Signal the orchestrator
+                 * NOW (once) so it can dispatch the next donor while our INDX_UPD
+                 * commits, overlapping the raft round-trip with the next donor's
+                 * PREP+TRANSFER. We keep polling here until full "done" so the
+                 * donor still holds its slots until all three durability flags
+                 * are set (the 3-flag DONE invariant is unchanged). */
+                if (!chain_durable_sent && r->elements >= 7 &&
+                    r->element[6]->type == REDIS_REPLY_INTEGER &&
+                    r->element[6]->integer == 1) {
+                    chain_durable_sent = 1;
+                    migNotifyOrchestratorIfAny(mig, "CHAIN_DURABLE",
+                                               (long long) mig->n_slots);
+                }
                 if (state_str && strcmp(state_str, "done") == 0) {
                     done = 1;
                     /* Protocol log: donor sees recipient acked done. All
@@ -5538,11 +5604,18 @@ static void *orchSequencerMain(void *arg) {
     for (int i = 0; i < sa->n_peers; i++) {
         /* Spin-wait for the prior donor's terminal flag. 10ms poll is fine —
          * a per-donor cycle is hundreds of ms to seconds. */
+        /* AqRaft Round 2: gate on chain_durable OR terminal, not terminal
+         * alone. chain_durable means the prior donor's data is merged on the
+         * recipient and chain-replicated to a majority; only its metadata-only
+         * MGN_INDX_UPD raft append is still in flight. Dispatching the next
+         * donor now overlaps that raft round-trip with the next donor's
+         * PREP+TRANSFER. terminal is still honored so a FAILED prior donor
+         * (which may never go chain_durable) doesn't stall the chain. */
         while (1) {
             pthread_mutex_lock(&orch->mu);
-            int t = orch->donors[i].terminal;
+            int ready = orch->donors[i].chain_durable || orch->donors[i].terminal;
             pthread_mutex_unlock(&orch->mu);
-            if (t) break;
+            if (ready) break;
             struct timespec ts = { .tv_sec = 0, .tv_nsec = 10 * 1000 * 1000 };
             nanosleep(&ts, NULL);
         }
@@ -5936,11 +6009,18 @@ void rdmaMigrateCompleteCommand(client *c) {
     const char *st_str   = c->argv[4]->ptr;
     if (getLongLongFromObject(c->argv[5], &applied) != C_OK) applied = 0;
 
-    rdmaMigrationState st;
-    if (strcasecmp(st_str, "DONE") == 0)       st = RDMA_MIG_DONE;
-    else if (strcasecmp(st_str, "FAILED") == 0) st = RDMA_MIG_FAILED;
+    /* AqRaft Round 2: CHAIN_DURABLE is a non-terminal early signal - the donor
+     * reports that the recipient has merged its data and the chain replicated
+     * to a majority, with only MGN_INDX_UPD (metadata) still outstanding. It
+     * lets the sequencer dispatch the next donor before this donor reaches the
+     * full 3-flag DONE. */
+    int is_chain_durable = 0;
+    rdmaMigrationState st = RDMA_MIG_DONE;
+    if (strcasecmp(st_str, "CHAIN_DURABLE") == 0) is_chain_durable = 1;
+    else if (strcasecmp(st_str, "DONE") == 0)       st = RDMA_MIG_DONE;
+    else if (strcasecmp(st_str, "FAILED") == 0)     st = RDMA_MIG_FAILED;
     else {
-        addReplyError(c, "state must be DONE or FAILED");
+        addReplyError(c, "state must be DONE, FAILED or CHAIN_DURABLE");
         return;
     }
 
@@ -5980,10 +6060,26 @@ void rdmaMigrateCompleteCommand(client *c) {
         addReplyError(c, "no donor slot matched");
         return;
     }
+    if (is_chain_durable) {
+        /* Non-terminal: just arm the early-dispatch flag the sequencer waits
+         * on. Do NOT touch terminal/n_terminal - the full DONE callback (with
+         * all 3 durability flags) still arrives later and completes the donor. */
+        orch->donors[matched].chain_durable = 1;
+        pthread_mutex_unlock(&orch->mu);
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE-COMPLETE orch_id=%lld donor=%s CHAIN_DURABLE "
+            "(pre-INDX_UPD early-dispatch signal)",
+            want_id, donor_id);
+        addReply(c, shared.ok);
+        return;
+    }
     if (!orch->donors[matched].terminal) {
         orch->donors[matched].terminal = 1;
         orch->donors[matched].terminal_state = st;
         orch->donors[matched].applied = applied;
+        /* A terminal callback also implies chain-durable (DONE) or supersedes
+         * it (FAILED) - keep the sequencer's wait satisfied either way. */
+        orch->donors[matched].chain_durable = 1;
         orch->n_terminal++;
         if (st == RDMA_MIG_FAILED) orch->n_failed++;
     }

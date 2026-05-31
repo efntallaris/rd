@@ -283,6 +283,12 @@ typedef struct rdmaOrchestrationDonor {
     sds  node_id;              /* CLUSTER MYID of this donor; may be NULL until completion */
     long long migration_id;    /* The peer's migration id (returned from the peer's RDMA MIGRATE) */
     int       is_local;        /* 1 if this is the orchestrator node itself */
+    int       chain_durable;   /* AqRaft Round 2: 1 once this donor's data is
+                                * merged on the recipient AND chain-replicated
+                                * to a majority (merge_done && chain_acked),
+                                * with only the metadata-only MGN_INDX_UPD raft
+                                * append still pending. The sequencer dispatches
+                                * the next donor on this (earlier than terminal). */
     int       terminal;        /* 0 until DONE/FAILED reported */
     rdmaMigrationState terminal_state;  /* DONE or FAILED once terminal=1 */
     long long applied;          /* keys reported applied (best-effort) */
