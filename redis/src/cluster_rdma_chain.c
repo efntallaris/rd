@@ -1163,6 +1163,32 @@ static rdmaLeaderChainState *findLeaderState(long long src_mig_id) {
     return NULL;
 }
 
+/* AqRaft Stage 1 (chain transport reuse): find a LIVE leader->follower QP to
+ * (host,port) from any EXISTING leader session other than `exclude_sess`. The
+ * follower's rdmamig_server is a per-process singleton that accepts exactly one
+ * leader connection; a 2nd rdma_connect to it hangs forever (confirmed via
+ * Stage-0 diagnostics: sess=2 blocks in rdmamig_client_connect). So instead of
+ * opening a new QP per migration round, round 2+ reuses round 1's QP. Returns
+ * the rdmamig_client* (peer->client) or NULL if none established yet. Caller
+ * holds g_chain_state_mu. NOTE: the returned client is still OWNED by the
+ * original session; with no teardown today the alias is safe (the QP outlives
+ * all rounds). */
+static void *findLivePeerClient(const char *host, int port, long long exclude_sess) {
+    for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
+        rdmaLeaderChainState *ls = g_leader_chains[i];
+        if (ls == NULL || ls->src_mig_id == exclude_sess) continue;
+        for (int p = 0; p < ls->n_peers; p++) {
+            if (ls->peers[p].client != NULL &&
+                ls->peers[p].host != NULL &&
+                ls->peers[p].port == port &&
+                strcmp(ls->peers[p].host, host) == 0) {
+                return ls->peers[p].client;
+            }
+        }
+    }
+    return NULL;
+}
+
 static int insertLeaderState(rdmaLeaderChainState *st) {
     for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
         if (g_leader_chains[i] == NULL) {
@@ -1391,21 +1417,37 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
         st->peers[i].port = ports[i];
         st->peers[i].chain_position = i + 1;
 
-        if (sendChainInitQp(hosts[i], ports[i], src_mig_id,
-                            &peer_rdma_ports[i],
-                            errbuf, errbuf_len) != C_OK) {
-            return C_ERR;
-        }
-        if (leaderConnectToFollower(hosts[i], peer_rdma_ports[i],
-                                    &st->peers[i],
-                                    errbuf, errbuf_len) != C_OK) {
-            /* Without RDMA hardware leaderConnectToFollower returns C_ERR;
-             * we still want the control-plane PREP/WIRE round-trips to work
-             * so pytest verification can run. Log + continue. */
-            serverLog(LL_WARNING,
-                "CHAIN: leader RDMA-connect to %s:%d failed (%s) — "
-                "control plane will continue; chain transport will be no-op",
-                hosts[i], peer_rdma_ports[i], errbuf);
+        /* AqRaft Stage 1: reuse a prior round's live QP to this follower if
+         * one exists (the follower's singleton rdmamig_server can't accept a
+         * 2nd connect — a fresh leaderConnectToFollower would hang). Only the
+         * INIT-QP + RDMA-connect are skipped; we still send a FRESH CHAIN-PREP
+         * so this session gets its own landing pool (pool reuse is a later
+         * stage that needs copy-out + a drain barrier first). */
+        pthread_mutex_lock(&g_chain_state_mu);
+        void *reused = findLivePeerClient(hosts[i], ports[i], src_mig_id);
+        pthread_mutex_unlock(&g_chain_state_mu);
+        if (reused != NULL) {
+            st->peers[i].client = reused;
+            serverLog(LL_NOTICE,
+                "CHAIN: sess=%lld peer%d %s:%d reusing existing chain QP "
+                "(skip INIT-QP/connect)", src_mig_id, i, hosts[i], ports[i]);
+        } else {
+            if (sendChainInitQp(hosts[i], ports[i], src_mig_id,
+                                &peer_rdma_ports[i],
+                                errbuf, errbuf_len) != C_OK) {
+                return C_ERR;
+            }
+            if (leaderConnectToFollower(hosts[i], peer_rdma_ports[i],
+                                        &st->peers[i],
+                                        errbuf, errbuf_len) != C_OK) {
+                /* Without RDMA hardware leaderConnectToFollower returns C_ERR;
+                 * we still want the control-plane PREP/WIRE round-trips to work
+                 * so pytest verification can run. Log + continue. */
+                serverLog(LL_WARNING,
+                    "CHAIN: leader RDMA-connect to %s:%d failed (%s) — "
+                    "control plane will continue; chain transport will be no-op",
+                    hosts[i], peer_rdma_ports[i], errbuf);
+            }
         }
         if (sendChainPrep(hosts[i], ports[i], src_mig_id, pool_bytes,
                           &st->peers[i], errbuf, errbuf_len) != C_OK) {
