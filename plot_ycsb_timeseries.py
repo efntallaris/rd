@@ -88,7 +88,7 @@ _FS_SUMMARY    = 13   # "Total migration: 34.7s (3 sources, serial)"
 # Crop the x-axis so the YCSB ramp-up (no ops in seconds 0-8) is hidden,
 # and bound the upper end so all three workloads share the same window.
 PLOT_X_MIN = 0
-PLOT_X_MAX = 80
+PLOT_X_MAX = 320
 
 # Grayscale palette — differentiate by line style + marker shape, not color.
 THROUGHPUT_COLOR = "#1A1A1A"     # near-black throughput line
@@ -395,8 +395,9 @@ def plot(expdir: Path, output: Path) -> None:
     ax_tp.yaxis.set_major_formatter(
         mticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}"))
     # Fixed ticks at 300/350/400/450 Kops/s so the throughput series sits mid-axis.
-    ax_tp.set_ylim(260_000, 450_000)
-    ax_tp.yaxis.set_major_locator(mticker.FixedLocator([300_000, 350_000, 400_000, 450_000]))
+    if tp:
+        ax_tp.set_ylim(0, max(tp) * 1.15)
+    ax_tp.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
 
     # ---- Panel (b): Avg latency -------------------------------------------------
     ax_lat.plot(t_rel, rd_lat, label="READ", zorder=3, **LATENCY_READ_STYLE)
@@ -408,8 +409,10 @@ def plot(expdir: Path, output: Path) -> None:
     # Fixed ticks at 100/150/200 μs; ylim matches the throughput panel's
     # visual proportions (ticks span ~25%→87% of the panel height) so the
     # latency series sits in the same band of the axis.
-    ax_lat.set_ylim(60, 220)
-    ax_lat.yaxis.set_major_locator(mticker.FixedLocator([100, 150, 200]))
+    _lats=[v for v in (rd_lat+up_lat) if v is not None]
+    if _lats:
+        ax_lat.set_ylim(0, max(_lats) * 1.15)
+    ax_lat.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
     if t_rel:
         ax_tp.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
         ax_lat.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
