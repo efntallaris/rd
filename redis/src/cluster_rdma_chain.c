@@ -185,6 +185,29 @@ static int insertFollowerState(rdmaFollowerChainState *st) {
     return C_ERR;
 }
 
+/* AqRaft Stage 2: find a live outgoing successor QP to (host, port) opened by
+ * a DIFFERENT chain session. The successor's per-process rdmamig_server is a
+ * singleton that already accepted our sess=1 connect; a 2nd rdma_connect for
+ * sess=2 would hang. Reuse the existing QP instead — this is the follower-side
+ * mirror of the leader's findLivePeerClient (which fixed the leader→F1 hop in
+ * Stage 1; this fixes the F1→tail hop). `port` is the successor's redis TCP
+ * port (succ_rdma_port is 0 on the reuse path, so we key off the TCP port that
+ * CHAIN-WIRE always carries). Caller holds g_chain_state_mu. */
+static void *findLiveSuccessorClient(const char *host, int port,
+                                     long long exclude_sess) {
+    for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
+        rdmaFollowerChainState *fs = g_follower_chains[i];
+        if (fs && fs->src_mig_id != exclude_sess &&
+            fs->successor_client != NULL &&
+            fs->successor_host != NULL &&
+            fs->successor_port == port &&
+            strcmp(fs->successor_host, host) == 0) {
+            return fs->successor_client;
+        }
+    }
+    return NULL;
+}
+
 /* ====================================================================== *
  *  Per-process chain worker thread                                       *
  * ====================================================================== *
@@ -218,6 +241,12 @@ typedef struct chainWorkItem {
      * drains it. NULL when not applicable. */
     int *slots;
     int n_slots;
+    /* AqRaft Stage 2: when non-NULL, OPEN_SUCC_QP reuses this existing QP to
+     * the successor instead of create+connect (the successor's rdmamig_server
+     * singleton can't accept a 2nd connect). The worker still registers this
+     * session's fresh landing pool against the reused QP's cm_id. Borrowed
+     * pointer (owned by the session that created it); not freed here. */
+    void *reuse_client;
     struct chainWorkItem *next;
 } chainWorkItem;
 
@@ -258,19 +287,31 @@ static void chainWorkerHandleOpenSuccQp(chainWorkItem *item) {
     char rdma_port_str[16];
     snprintf(rdma_port_str, sizeof(rdma_port_str), "%d", item->port);
 
-    struct rdmamig_client *cl =
-        rdmamig_client_create((const char *) item->host, rdma_port_str);
-    if (cl == NULL) {
-        serverLog(LL_WARNING,
-            "CHAIN worker: rdmamig_client_create(%s:%s) returned NULL",
-            item->host, rdma_port_str);
-        return;
-    }
-    if (rdmamig_client_connect(cl) != 0) {
-        serverLog(LL_WARNING,
-            "CHAIN worker: rdmamig_client_connect(%s:%s) failed",
-            item->host, rdma_port_str);
-        return;
+    struct rdmamig_client *cl;
+    if (item->reuse_client != NULL) {
+        /* AqRaft Stage 2: reuse a prior session's QP to this same successor.
+         * The successor's singleton rdmamig_server cannot accept a 2nd
+         * rdma_connect (it would hang — the F1→tail analog of the leader→F1
+         * constraint Stage 1 fixed). We still register THIS session's fresh
+         * landing pool against the reused QP's cm_id below (new forward_src_buf). */
+        cl = (struct rdmamig_client *) item->reuse_client;
+        serverLog(LL_NOTICE,
+            "CHAIN worker: sess=%lld reusing existing QP to successor %s "
+            "(skip create/connect)", item->src_mig_id, item->host);
+    } else {
+        cl = rdmamig_client_create((const char *) item->host, rdma_port_str);
+        if (cl == NULL) {
+            serverLog(LL_WARNING,
+                "CHAIN worker: rdmamig_client_create(%s:%s) returned NULL",
+                item->host, rdma_port_str);
+            return;
+        }
+        if (rdmamig_client_connect(cl) != 0) {
+            serverLog(LL_WARNING,
+                "CHAIN worker: rdmamig_client_connect(%s:%s) failed",
+                item->host, rdma_port_str);
+            return;
+        }
     }
 
     pthread_mutex_lock(&g_chain_state_mu);
@@ -748,18 +789,30 @@ void rdmaChainWireCommand(client *c) {
      * item; the worker pops it FIFO and stores successor_client into the
      * state when the connect completes. */
     int enqueued_qp_work = 0;
-    if (!st->is_tail && succ_rdma_port > 0 && st->successor_client == NULL) {
-        ensureChainWorker();
-        /* zcalloc so the new ->slots / ->n_slots fields default to NULL/0;
-         * the worker frees ->slots only when non-NULL. */
-        chainWorkItem *item = zcalloc(sizeof(*item));
-        item->kind = CHAIN_WORK_OPEN_SUCC_QP;
-        item->src_mig_id = src_mig_id;
-        item->host = sdsdup(succ_host);
-        item->port = (int) succ_rdma_port;
-        item->next = NULL;
-        chainWorkPush(item);
-        enqueued_qp_work = 1;
+    if (!st->is_tail && st->successor_client == NULL) {
+        /* AqRaft Stage 2: prefer reusing a prior session's QP to this
+         * successor — its rdmamig_server singleton can't accept a 2nd connect,
+         * and succ_rdma_port is 0 on the reuse path (the leader skipped
+         * CHAIN-INIT-QP for sess>=2), so it can't gate the open. Match the
+         * reuse by the successor's redis TCP port, which CHAIN-WIRE always
+         * carries. Fall back to a fresh create+connect only when no prior QP
+         * exists AND we actually have an rdma_port. */
+        void *reuse = findLiveSuccessorClient(succ_host, (int) succ_port,
+                                              src_mig_id);
+        if (reuse != NULL || succ_rdma_port > 0) {
+            ensureChainWorker();
+            /* zcalloc so the new ->slots / ->n_slots / ->reuse_client fields
+             * default to NULL/0; the worker frees ->slots only when non-NULL. */
+            chainWorkItem *item = zcalloc(sizeof(*item));
+            item->kind = CHAIN_WORK_OPEN_SUCC_QP;
+            item->src_mig_id = src_mig_id;
+            item->host = sdsdup(succ_host);
+            item->port = (int) succ_rdma_port;
+            item->reuse_client = reuse;
+            item->next = NULL;
+            chainWorkPush(item);
+            enqueued_qp_work = 1;
+        }
     }
     int is_tail = st->is_tail;
     int qp_up = (st->successor_client != NULL);

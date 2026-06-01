@@ -151,6 +151,15 @@ struct allocated_block {
     struct  allocated_block *prev;
     size_t  segments_used;     //TODO: DEBUG remove in production
     size_t  segments_free;     //TODO: DEBUG remove in production
+    /* AqRaft Stage 2: set for blocks linked via r_allocator_register_existing_block
+     * (raw RDMA landing-pool slices in donor wire format, NOT init_bloc_layout
+     * segment layout). r_allocator_free_kv must NOT coalesce a segment that lands
+     * inside such a block: coalesce() would read a bogus seg-header size out of
+     * donor payload bytes and SIGSEGV (observed coalesce+0x204 on chain followers
+     * under load when a client SET overwrites a migrated key). Treated like the
+     * Patch 25 foreign-segment case: orphan the segment, never coalesce/zfree.
+     * Blocks are zmalloc'd (not zeroed), so init_bloc_layout sets the default 0. */
+    int     is_registered_existing;
 };
 
 struct r_allocator {
@@ -354,6 +363,11 @@ static void init_bloc_layout(alloc_bloc_t *new_block, char *block_start)
 
     new_block->next = NULL;
     new_block->prev = NULL;
+
+    /* AqRaft Stage 2: default to a normal allocator-owned block. The struct is
+     * zmalloc'd (not zeroed); r_allocator_register_existing_block flips this to 1
+     * after calling us for raw foreign landing-pool slices. */
+    new_block->is_registered_existing = 0;
 
     //DEBUG
     new_block->segments_free = 0;
@@ -614,6 +628,9 @@ void * r_allocator_register_existing_block(int slot, void *block_ptr)
         return NULL;
     }
     init_bloc_layout(new_block, (char *) block_ptr);
+    /* AqRaft Stage 2: mark this as a registered (foreign) landing-pool block so
+     * r_allocator_free_kv orphans rather than coalesces segments inside it. */
+    new_block->is_registered_existing = 1;
     /* AqRaft fix (thread-safety): link_block_into_slot mutates the per-slot
      * block list (slot_blocks / slot_blocks_tail / slot_blocks_num), which the
      * main event-loop thread also mutates under r_allocator.mutexes[slot] via
@@ -1065,7 +1082,19 @@ void r_allocator_free_kv(int slot, void *key_meta_ptr)
      * Guard: if the segment isn't inside any block this allocator owns for
      * the slot, just orphan it. The landing pool's lifetime is owned by the
      * chain session, not by r_allocator, so there is nothing to free here. */
-    if (get_block_from_ptr(slot, segment) == NULL) {
+    alloc_bloc_t *owning_blk = get_block_from_ptr(slot, segment);
+    if (owning_blk == NULL) {
+        pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+        return;
+    }
+    /* AqRaft Stage 2: the segment lands inside a registered foreign landing-pool
+     * block (raw RDMA donor wire format, no seg_header_t). coalesce() would read
+     * a garbage segment size out of the donor payload and walk off into unmapped
+     * memory (SIGSEGV at coalesce+0x204, seen on chain followers redis4/ycsb1
+     * under YCSB load when a client SET overwrites a migrated key). The landing
+     * pool's lifetime is owned by the chain session, not r_allocator — orphan
+     * the segment instead of coalescing/freeing it. */
+    if (owning_blk->is_registered_existing) {
         pthread_mutex_unlock(&r_allocator.mutexes[slot]);
         return;
     }
