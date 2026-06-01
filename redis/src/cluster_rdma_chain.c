@@ -164,6 +164,29 @@ static rdmaLeaderChainState   *g_leader_chains[RDMA_CHAIN_MAX_SESSIONS]   = {0};
 static rdmaFollowerChainState *g_follower_chains[RDMA_CHAIN_MAX_SESSIONS] = {0};
 static pthread_mutex_t g_chain_state_mu = PTHREAD_MUTEX_INITIALIZER;
 
+/* AqRaft Stage 3: process-global leader src-pool MR cache, reused across chain
+ * sessions (= reshard rounds). Each round previously mmap'd + ibv_reg_mr'd a
+ * fresh ~1.43 GB src pool in rdmaLeaderChainEnsureSrcPool (~400 ms). Because
+ * Stage 1 makes round N>=2 REUSE round 1's peers[0].client (same cm_id / PD),
+ * an MR registered for round 1 stays valid for later rounds' RDMA-WRITEs, so we
+ * register once (with headroom) and hand the same (pool, buffer) to every
+ * session. Safe to share a single scratch pool because leader chain forwards
+ * are serialized (one backpatchFinalize/chainForwardWorker batch completes its
+ * memcpy+WRITE before the next session's forward begins — same invariant the
+ * old per-session src_pool already relied on across the 3 donor sub-batches).
+ * Guarded by g_chain_state_mu. The cache is keyed on the cm_id it was
+ * registered against; if a later session presents a different cm_id (QP not
+ * reused, e.g. Stage 1 fell back to a fresh connect) we re-register. */
+static void   *g_src_pool_cache      = NULL;   /* mmap'd scratch buffer        */
+static size_t  g_src_pool_cache_bytes = 0;     /* mmap'd capacity (>= request) */
+static void   *g_src_buf_cache       = NULL;   /* struct rdmamig_buffer *      */
+static struct rdma_cm_id *g_src_pool_cache_cm = NULL; /* cm_id MR is bound to  */
+
+/* Round the src-pool registration up to a 64 MiB boundary so successive rounds
+ * whose size differs by a few 2 MiB blocks (e.g. 682 vs 683 slots) reuse the
+ * same MR instead of re-registering. */
+#define RDMA_SRC_POOL_GRAIN ((size_t) 64 * 1024 * 1024)
+
 /* Forward decl — definition is further down in the leader-side section. */
 static rdmaLeaderChainState *findLeaderState(long long src_mig_id);
 
@@ -1646,26 +1669,48 @@ int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
     }
     if (st->src_pool != NULL) {
         pthread_mutex_unlock(&g_chain_state_mu);
-        return C_OK;   /* already registered */
+        return C_OK;   /* already wired for this session */
     }
 
     size_t bytes = st->peers[0].peer_pool_bytes;
     /* Capture cm_id under the lock; rdmamig_buffer_create may take a while
      * (it's the ibv_reg_mr that we're trying to keep off the main thread). */
     struct rdma_cm_id *cm = rdmamig_client_cm_id(st->peers[0].client);
+
+    /* AqRaft Stage 3: reuse the process-global src-pool MR if it was registered
+     * against THIS cm_id (Stage 1 shares peers[0].client across rounds) and is
+     * large enough for this session. This skips the ~400 ms mmap + ibv_reg_mr
+     * that round 2 otherwise pays (and which it used to race, falling back to a
+     * redundant lazy register on the forward path). */
+    if (g_src_pool_cache != NULL && g_src_buf_cache != NULL &&
+        g_src_pool_cache_cm == cm && g_src_pool_cache_bytes >= bytes) {
+        st->src_pool = g_src_pool_cache;
+        st->src_pool_bytes = g_src_pool_cache_bytes;
+        st->src_buf = g_src_buf_cache;
+        pthread_mutex_unlock(&g_chain_state_mu);
+        serverLog(LL_NOTICE,
+            "CHAIN: sess=%lld leader src pool REUSED from cache @ %p "
+            "(cap=%zu B, need=%zu B) [AqRaft Stage 3 — skip mmap+ibv_reg_mr]",
+            src_mig_id, g_src_pool_cache, g_src_pool_cache_bytes, bytes);
+        return C_OK;
+    }
     pthread_mutex_unlock(&g_chain_state_mu);
 
-    void *pool = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+    /* Cache miss: register a fresh pool, rounded up to RDMA_SRC_POOL_GRAIN so a
+     * later round that needs a few more 2 MiB blocks still reuses this MR. */
+    size_t cap = (bytes + RDMA_SRC_POOL_GRAIN - 1)
+                 & ~(RDMA_SRC_POOL_GRAIN - 1);
+    void *pool = mmap(NULL, cap, PROT_READ | PROT_WRITE,
                       MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     if (pool == MAP_FAILED) {
         snprintf(errbuf, errbuf_len,
-                 "mmap(%zu) failed: %s", bytes, strerror(errno));
+                 "mmap(%zu) failed: %s", cap, strerror(errno));
         return C_ERR;
     }
     struct rdmamig_buffer *buf =
-        rdmamig_buffer_create(cm, (char *) pool, bytes, 0);
+        rdmamig_buffer_create(cm, (char *) pool, cap, 0);
     if (buf == NULL) {
-        munmap(pool, bytes);
+        munmap(pool, cap);
         snprintf(errbuf, errbuf_len,
                  "rdmamig_buffer_create on leader src failed");
         return C_ERR;
@@ -1681,20 +1726,28 @@ int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
         snprintf(errbuf, errbuf_len, "chain state torn down during register");
         return C_ERR;
     }
-    if (st->src_pool != NULL) {
-        /* Lost the race with another caller — leak our buffer (same as above). */
-        pthread_mutex_unlock(&g_chain_state_mu);
-        return C_OK;
+    /* Publish into the process-global cache (unless another caller beat us to a
+     * compatible one while we registered — then drop ours; the leak matches the
+     * pre-existing no-destroy-helper behavior). */
+    if (g_src_pool_cache == NULL || g_src_pool_cache_cm != cm ||
+        g_src_pool_cache_bytes < cap) {
+        g_src_pool_cache = pool;
+        g_src_pool_cache_bytes = cap;
+        g_src_buf_cache = buf;
+        g_src_pool_cache_cm = cm;
     }
-    st->src_pool = pool;
-    st->src_pool_bytes = bytes;
-    st->src_buf = buf;
+    /* Wire this session to whatever the cache now holds (ours or the winner's). */
+    st->src_pool = g_src_pool_cache;
+    st->src_pool_bytes = g_src_pool_cache_bytes;
+    st->src_buf = g_src_buf_cache;
+    void *wired_pool = st->src_pool;
+    size_t wired_bytes = st->src_pool_bytes;
     pthread_mutex_unlock(&g_chain_state_mu);
 
     serverLog(LL_NOTICE,
-        "CHAIN: sess=%lld leader src pool registered @ %p (%zu B) "
-        "[off-main-thread, AqRaft Patch 15]",
-        src_mig_id, pool, bytes);
+        "CHAIN: sess=%lld leader src pool registered @ %p (cap=%zu B, "
+        "need=%zu B) [off-main-thread, cached for reuse — AqRaft Stage 3]",
+        src_mig_id, wired_pool, wired_bytes, bytes);
     return C_OK;
 }
 
