@@ -1698,6 +1698,30 @@ struct COMMAND_ARG RDMA_MIGRATE_STATUS_Args[] = {
 {MAKE_ARG("migration-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_OPTIONAL,0,NULL)},
 };
 
+/********** RDMA MIGRATE_WARM ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+/* RDMA MIGRATE_WARM history */
+#define RDMA_MIGRATE_WARM_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+/* RDMA MIGRATE_WARM tips */
+#define RDMA_MIGRATE_WARM_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+/* RDMA MIGRATE_WARM key specs */
+#define RDMA_MIGRATE_WARM_Keyspecs NULL
+#endif
+
+/* RDMA MIGRATE_WARM argument table */
+struct COMMAND_ARG RDMA_MIGRATE_WARM_Args[] = {
+{MAKE_ARG("recipient-host",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("recipient-port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slots-per-source",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA REGISTER_BLOCK_SLOTS ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1894,6 +1918,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("migrate-complete","Internal callback: a peer donor's migrationWorker invokes this on the orchestrator node when it enters DONE/FAILED. Records the per-donor terminal state in the orchestration; when all donors are terminal, transitions the orchestration itself to DONE/FAILED.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_COMPLETE_History,0,RDMA_MIGRATE_COMPLETE_Tips,0,rdmaMigrateCompleteCommand,6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_COMPLETE_Keyspecs,0,NULL,4),.args=RDMA_MIGRATE_COMPLETE_Args},
 {MAKE_CMD("migrate-prep","Source side: open (or reuse) an RDMA control link to the recipient and pre-register one landing block per listed slot.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_PREP_History,0,RDMA_MIGRATE_PREP_Tips,0,rdmaMigratePrepCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_PREP_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_PREP_Args},
 {MAKE_CMD("migrate-status","Source side: report the state of an in-flight or recently-finished RDMA MIGRATE. With no argument returns the latest migration's state. Reply is an 8-element array: state (string), registered, n_slots, slot_first, slot_last, elapsed_seconds, ended_flag, err.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_STATUS_History,0,RDMA_MIGRATE_STATUS_Tips,0,rdmaMigrateStatusCommand,-2,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_STATUS_Keyspecs,0,NULL,1),.args=RDMA_MIGRATE_STATUS_Args},
+{MAKE_CMD("migrate-warm","Source side (AqRaft Stage 6 pre-establish): open/reuse the outbound RDMA link to the recipient and pre-register this donor's source staging buffers for its first-N owned slots, WITHOUT moving data or changing any slot state. Run during the pre-reshard pause so a later RDMA MIGRATE-ALL pays only the data-movement window. Idempotent.","O(N) in slots-per-source (one big-MR registration + N per-slot views).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MIGRATE_WARM_History,0,RDMA_MIGRATE_WARM_Tips,0,rdmaMigrateWarmCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MIGRATE_WARM_Keyspecs,0,NULL,3),.args=RDMA_MIGRATE_WARM_Args},
 {MAKE_CMD("register-block-slots","Recipient side: pre-allocate per-slot landing buffers, RDMA-register them, and reply with their (VA, rkey) pairs.","O(N) where N is the total number of blocks requested.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_BLOCK_SLOTS_History,0,RDMA_REGISTER_BLOCK_SLOTS_Tips,0,rdmaRegisterBlockSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_BLOCK_SLOTS_Keyspecs,0,NULL,2),.args=RDMA_REGISTER_BLOCK_SLOTS_Args},
 {MAKE_CMD("register-result","Source side (Phase 4d callback-RPC): receive the (VA, rkey) tuple payload from the recipient after a deferred REGISTER-BLOCK-SLOTS completes. Looks up the pending registration by register_id and signals the waiting PREP worker. Internal RPC; not intended for operator use.","O(N) in payload size.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_REGISTER_RESULT_History,0,RDMA_REGISTER_RESULT_Tips,0,rdmaRegisterResultCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_REGISTER_RESULT_Keyspecs,0,NULL,3),.args=RDMA_REGISTER_RESULT_Args},
 {MAKE_CMD("reshard","Source side: Phase 1 of bulk RDMA reshard. Picks N owned slots and registers one 1 MiB staging buffer per slot with the local RNIC (ibv_reg_mr).","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_History,0,RDMA_RESHARD_Tips,0,rdmaReshardCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_Args},

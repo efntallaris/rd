@@ -4429,6 +4429,7 @@ void rdmaMigrateCommand(client *c);
 void rdmaMigrateStatusCommand(client *c);
 void rdmaBackpatchStatusCommand(client *c);
 void rdmaMigrateAllCommand(client *c);
+void rdmaMigrateWarmCommand(client *c);
 void rdmaMigrateAllStatusCommand(client *c);
 void rdmaMigrateCompleteCommand(client *c);
 void rdmaRegisterResultCommand(client *c);

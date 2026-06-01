@@ -108,6 +108,19 @@
       loop_control:
         loop_var: sg
 
+    # AqRaft Stage 6 (pre-establish) — MIGRATE-WARM wiring REVERTED 2026-06-01.
+    # A `RDMA MIGRATE-WARM` task here (before WRITE_FLIP) DETERMINISTICALLY broke
+    # sg1's round-1 WRITE_FLIP: redis0 (sg1 leader = the orchestrator) returned
+    # "MOVED 0 10.10.1.3:8000" — slot 0 appeared already owned by sg4 before any
+    # migration. Reproduced in stage6_warm AND stage6_warm2; sg2/sg3 flips were
+    # fine; the no-warm control (stage5_wla) flipped sg1 cleanly. The MIGRATE-WARM
+    # command itself is verified state-free at the RDMA layer (no RECV-FLIP /
+    # REGISTER / slot-state on donor or recipient in the logs), so the mechanism
+    # is an unresolved interaction between warming on the orchestrator node and
+    # its own slot/topology view at flip time. Reverted to keep the pipeline
+    # known-good; the MIGRATE-WARM redis command remains in the binary (unused).
+    # See memory aqraft-stage2-r2-chain-control-gap.md "Stage 6".
+
     - name: "ROUND 1: WRITE_FLIP this round's slots -> sg4"
       shell: |
         {{ redis_bin_dir }}/redis-cli \

@@ -6003,6 +6003,108 @@ void rdmaMigrateAllCommand(client *c) {
                          orch_id, 1 + n_peers, recipient_host, recipient_port, n_slots);
 }
 
+/* RDMA MIGRATE-WARM <recipient-host> <recipient-port> <slots-per-source>
+ *
+ * AqRaft Stage 6 (pre-establish): warm up the migration path for THIS donor
+ * WITHOUT moving any data or touching any slot state, so a later RDMA MIGRATE-ALL
+ * pays only the data-movement window (FLIP → TRANSFER → merge → chain-ack).
+ *
+ * Warm-up does exactly two state-free things:
+ *   1. Open (or reuse) the outbound RDMA link to the recipient — TCP ctrl +
+ *      INIT-SERVER + RDMA client QP (rdmaOutboundLinkOpen; cached in
+ *      server.rdma_outbound_links across rounds).
+ *   2. Pre-register THIS donor's source staging buffers for the first-N owned
+ *      slots (rdmaReshardRegisterHelper → Stage-5 one-mmap+one-ibv_reg_mr big-MR
+ *      pool + per-slot views). This is the ~16s-pre-Stage-5 / ~0.9s-now donor
+ *      ibv_reg_mr work, hoisted out of the timed window.
+ *
+ * CRITICAL INVARIANT: warm-up performs NO slot-state change. It does NOT send
+ * the recipient RDMA REGISTER-BLOCK-SLOTS (which flips the recipient to
+ * MIGRATING) and does NOT call slotMigStateSet. ALL MIGRATING/FLIP transitions
+ * stay in the in-window migrationWorker (recipient flip in
+ * rdmaRegisterBlockSlotsCommand; donor flip + RESHARD-FLIP in the worker). The
+ * recipient landing-pool MR is intentionally NOT warmed — it must be a fresh
+ * pool per round for r_allocator same-slot safety (see Stage 6 notes).
+ *
+ * Idempotent: the link is cached and source_buffers[slot] registration skips
+ * already-registered slots, so calling WARM repeatedly (or before each round)
+ * is cheap. Run it on each donor leader during the pre-reshard pause. */
+void rdmaMigrateWarmCommand(client *c) {
+    if (c->argc != 5) {
+        addReplyError(c, "syntax: RDMA MIGRATE-WARM recipient-host recipient-port slots-per-source");
+        return;
+    }
+    const char *recipient_host = c->argv[2]->ptr;
+    long long port_ll, n_slots_ll;
+    if (getLongLongFromObject(c->argv[3], &port_ll) != C_OK ||
+        port_ll <= 0 || port_ll > 65535) {
+        addReplyError(c, "recipient port out of range");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &n_slots_ll) != C_OK ||
+        n_slots_ll <= 0 || n_slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "slots-per-source out of range");
+        return;
+    }
+    int recipient_port = (int) port_ll;
+    int n_slots = (int) n_slots_ll;
+
+    /* Pick this donor's first-N owned slots — same selection the in-window
+     * worker (startLocalMigration) uses, so we warm exactly the buffers it
+     * will reuse. */
+    int *chosen = zmalloc((size_t) n_slots * sizeof(int));
+    int picked = 0;
+    clusterTopoLockRead();
+    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+        if (rdmaMigrationOwnsSlot(i)) chosen[picked++] = i;
+    }
+    clusterTopoUnlock();
+    if (picked < n_slots) {
+        zfree(chosen);
+        addReplyErrorFormat(c, "self owns only %d slots, asked to warm %d", picked, n_slots);
+        return;
+    }
+
+    /* 1. Open / reuse the outbound link (state-free transport setup). */
+    sds key = sdscatfmt(sdsempty(), "%s:%i", recipient_host, recipient_port);
+    rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    int newly = 0;
+    if (L == NULL) {
+        L = rdmaOutboundLinkOpen(recipient_host, recipient_port);
+        if (L == NULL) {
+            sdsfree(key);
+            zfree(chosen);
+            addReplyError(c, "MIGRATE-WARM: could not establish outbound RDMA link");
+            return;
+        }
+        dictAdd(server.rdma_outbound_links, key, L);   /* dict owns key */
+        newly = 1;
+    } else {
+        sdsfree(key);
+    }
+
+    /* 2. Pre-register this donor's source buffers (state-free; no recipient RPC,
+     *    no slot-state change). */
+    sds err = NULL;
+    int registered = 0;
+    if (rdmaReshardRegisterHelper(L, chosen, n_slots, &registered, &err) != 0) {
+        zfree(chosen);
+        addReplyErrorFormat(c, "MIGRATE-WARM: source register failed: %s",
+                            err ? err : "?");
+        if (err) sdsfree(err);
+        return;
+    }
+    zfree(chosen);
+
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE-WARM: target=%s:%d n_slots=%d registered=%d (%s link) "
+        "[AqRaft Stage 6 — connection + source-buffer MR pre-staged, no slot-state]",
+        recipient_host, recipient_port, n_slots, registered, newly ? "new" : "cached");
+    addReplyStatusFormat(c, "OK warmed target=%s:%d n_slots=%d registered=%d link=%s",
+                         recipient_host, recipient_port, n_slots, registered,
+                         newly ? "new" : "cached");
+}
+
 /* RDMA MIGRATE-ALL-STATUS <orchestration_id> */
 void rdmaMigrateAllStatusCommand(client *c) {
     if (c->argc != 3) {

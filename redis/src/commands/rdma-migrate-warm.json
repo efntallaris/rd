@@ -1,0 +1,21 @@
+{
+    "MIGRATE-WARM": {
+        "summary": "Source side (AqRaft Stage 6 pre-establish): open/reuse the outbound RDMA link to the recipient and pre-register this donor's source staging buffers for its first-N owned slots, WITHOUT moving data or changing any slot state. Run during the pre-reshard pause so a later RDMA MIGRATE-ALL pays only the data-movement window. Idempotent.",
+        "complexity": "O(N) in slots-per-source (one big-MR registration + N per-slot views).",
+        "group": "cluster",
+        "since": "8.6.2",
+        "arity": 5,
+        "container": "RDMA",
+        "function": "rdmaMigrateWarmCommand",
+        "command_flags": [
+            "ADMIN",
+            "NO_ASYNC_LOADING",
+            "STALE"
+        ],
+        "arguments": [
+            { "name": "recipient-host", "type": "string" },
+            { "name": "recipient-port", "type": "integer" },
+            { "name": "slots-per-source", "type": "integer" }
+        ]
+    }
+}
