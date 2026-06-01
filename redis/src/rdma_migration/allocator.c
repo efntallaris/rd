@@ -1101,6 +1101,39 @@ void r_allocator_free_kv(int slot, void *key_meta_ptr)
 
     size_t size = GET_SIZE(HDRP(segment));
 
+    /* AqRaft Stage 2 — bad-segment-size guard (the real fix for the chain-
+     * follower coalesce+0x204 SIGSEGV). A valid allocator segment can never be
+     * larger than the block that contains it, nor zero. If GET_SIZE(HDRP(segment))
+     * reads 0 or > BLOCK_SIZE_BYTES, HDRP(segment) is NOT a real segment header:
+     * it's a chain-migrated kvobj installed out of the RDMA landing pool (donor
+     * wire format, no seg_header_t) whose owning block was not flagged
+     * is_registered_existing (e.g. round 2 re-delivered the slot and the kvobj
+     * landed in a block carved differently than the registration bookkeeping
+     * assumes — confirmed in stage2d_diag: slot=11912, is_registered_existing=0,
+     * bad_size=0, segment at block_start+8). Coalescing it makes coalesce()
+     * treat a neighbor as free and write through a garbage freelist pointer
+     * (faulting insn `mov %rcx,(%r9)` at coalesce+0x204) -> SIGSEGV on the bio
+     * lazyfree / eviction thread under load. The landing pool is owned by the
+     * chain session, not r_allocator, so there is nothing to free — orphan the
+     * segment. Rate-limited log (every 4096th) so a regression stays visible
+     * without flooding. */
+    if (size == 0 || size > (size_t) BLOCK_SIZE_BYTES) {
+        static unsigned long bad_seg_count = 0;
+        if ((bad_seg_count++ & 0xFFF) == 0) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING,
+                "r_allocator_free_kv: slot=%d segment=%p owning_blk=%p "
+                "block_start=%p is_registered_existing=%d bad_size=%zu "
+                "(0 or > BLOCK_SIZE_BYTES=%d) — orphaning foreign/landing-pool "
+                "segment instead of coalesce (count=%lu) [AqRaft Stage 2 guard]",
+                slot, segment, (void *) owning_blk,
+                (void *) owning_blk->block_start,
+                owning_blk->is_registered_existing, size,
+                (int) BLOCK_SIZE_BYTES, bad_seg_count);
+        }
+        pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+        return;
+    }
+
     PUT_WTAG(HDRP(segment), PACK(size, 0));
     PUT_WTAG(FTRP(segment), PACK(size, 0));
 
