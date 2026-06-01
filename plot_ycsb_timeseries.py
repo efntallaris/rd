@@ -317,7 +317,7 @@ def _annotate_vline(ax, x: Optional[float], color: str, label: str) -> None:
     )
 
 
-def plot(expdir: Path, output: Path) -> None:
+def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
     ycsb_path = expdir / "ycsb" / "ycsb0" / "tmp" / "ycsb_output_ycsb0"
     if not ycsb_path.exists():
         cands = list(expdir.rglob("ycsb_output_*"))
@@ -430,13 +430,21 @@ def plot(expdir: Path, output: Path) -> None:
         columnspacing=1.8,
     )
 
-    # Per-source migration bands. Shade each PREP->DONE window with a soft
-    # olive fill and a thin olive border on the left/right edges so the band
-    # reads as a panel guide rather than a blob.
-    for src, s_rel, e_rel in migration_bands:
+    # Migration shading. Two modes:
+    #   - default: one soft band per source (PREP->DONE).
+    #   - span_only (--span-only): ONE band from the first round's start to the
+    #     last round's end, with NO per-source M1/M2/M3 labels.
+    if span_only and migration_bands:
+        span_start = migration_bands[0][1]
+        span_end   = migration_bands[-1][2]
         for ax in (ax_tp, ax_lat):
-            ax.axvspan(s_rel, e_rel, alpha=0.20,
+            ax.axvspan(span_start, span_end, alpha=0.20,
                        color=PHASE_COLORS["BAND_FILL"], zorder=1)
+    else:
+        for src, s_rel, e_rel in migration_bands:
+            for ax in (ax_tp, ax_lat):
+                ax.axvspan(s_rel, e_rel, alpha=0.20,
+                           color=PHASE_COLORS["BAND_FILL"], zorder=1)
 
     # Recompute y-limits before annotating so labels sit at correct height.
     ax_lat.relim(); ax_lat.autoscale_view()
@@ -452,17 +460,33 @@ def plot(expdir: Path, output: Path) -> None:
             facecolor="white", edgecolor=PHASE_COLORS["BAND_EDGE"],
             linewidth=1.0, alpha=0.95,
         )
-        for i, (src, s_rel, e_rel) in enumerate(migration_bands, start=1):
-            dur = e_rel - s_rel
-            mid = (s_rel + e_rel) / 2.0
-            # Place the label just above the panel top edge, centered over the
-            # band, with text on a single line ("M1 7.4s"). Side-by-side
-            # layout: label both panels so the latency panel doesn't look
-            # orphaned.
+        # Per-source M1/M2/M3 labels — skipped in span_only mode.
+        if not span_only:
+            for i, (src, s_rel, e_rel) in enumerate(migration_bands, start=1):
+                dur = e_rel - s_rel
+                mid = (s_rel + e_rel) / 2.0
+                # Place the label just above the panel top edge, centered over the
+                # band, with text on a single line ("M1 7.4s"). Side-by-side
+                # layout: label both panels so the latency panel doesn't look
+                # orphaned.
+                for ax in (ax_tp, ax_lat):
+                    ax.annotate(
+                        f"M{i} {dur:.1f}s",
+                        xy=(mid, 1.0), xycoords=("data", "axes fraction"),
+                        xytext=(0, 4), textcoords="offset points",
+                        ha="center", va="bottom",
+                        color=PHASE_COLORS["BAND_EDGE"],
+                        fontsize=_FS_BAND_LABEL,
+                    )
+        else:
+            # span_only: one label over the whole window with the total duration
+            # (first round start -> last round end, i.e. both rounds).
+            span_mid = (migration_bands[0][1] + migration_bands[-1][2]) / 2.0
+            span_total = migration_bands[-1][2] - migration_bands[0][1]
             for ax in (ax_tp, ax_lat):
                 ax.annotate(
-                    f"M{i} {dur:.1f}s",
-                    xy=(mid, 1.0), xycoords=("data", "axes fraction"),
+                    f"M: {span_total:.1f}s",
+                    xy=(span_mid, 1.0), xycoords=("data", "axes fraction"),
                     xytext=(0, 4), textcoords="offset points",
                     ha="center", va="bottom",
                     color=PHASE_COLORS["BAND_EDGE"],
@@ -473,9 +497,12 @@ def plot(expdir: Path, output: Path) -> None:
         total_start = migration_bands[0][1]
         total_end   = migration_bands[-1][2]
         total       = total_end - total_start
+        summary = (f"Migration window: {total:.1f}s "
+                   f"(first round start → last round end)") if span_only else \
+                  f"Total migration: {total:.1f}s ({len(migration_bands)} sources)"
         fig.text(
             0.5, -0.12,
-            f"Total migration: {total:.1f}s ({len(migration_bands)} sources)",
+            summary,
             ha="center", va="top",
             color=PHASE_COLORS["BAND_EDGE"],
             fontsize=_FS_SUMMARY,
@@ -956,13 +983,16 @@ def main() -> None:
                    help="also emit per-host CPU/network/disk plots from systat logs")
     p.add_argument("--hosts", nargs="+", default=["redis0", "redis3"],
                    help="hosts to plot resources for (default: redis0 redis3)")
+    p.add_argument("--span-only", action="store_true",
+                   help="shade ONE migration window (first round start -> last round end) "
+                        "instead of per-source bands, and omit the M1/M2/M3 labels")
     args = p.parse_args()
 
     expdir = args.expdir.resolve()
     if not expdir.is_dir():
         sys.exit(f"Not a directory: {expdir}")
     output = args.output or (expdir / "ycsb_timeseries.png")
-    plot(expdir, output)
+    plot(expdir, output, span_only=args.span_only)
 
     if args.with_resources:
         ext = output.suffix or ".png"
