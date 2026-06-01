@@ -83,6 +83,7 @@ rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
     b->buffer        = buffer;
     b->size          = size;
     b->buffer_access = translate_access_flags(access);
+    b->is_view       = 0;
     b->mr            = ibv_reg_mr(id->pd, buffer, size, b->buffer_access);
 
     if (b->mr == NULL) {
@@ -92,6 +93,43 @@ rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
         zfree(b);
         return NULL;
     }
+    return b;
+}
+
+/* AqRaft Stage 5 (donor big-MR): create a lightweight VIEW over an existing
+ * registered buffer. The view shares `parent`'s MR (same lkey/rkey, same cm_id)
+ * but exposes only the sub-range [sub_ptr, sub_ptr+sub_size). `sub_ptr` MUST lie
+ * inside parent's registered range — RDMA lkeys/rkeys are valid for any VA in
+ * the registered region, so post_write/data over the view use the parent's MR
+ * with the view's own local address. This lets the donor replace N per-slot
+ * ibv_reg_mr (N ioctls, ~23ms each = ~16s for 683 slots) with ONE big-MR
+ * registration + N cheap views. The view does NOT own the MR: release_pages
+ * skips ibv_dereg_mr for views (the parent owns teardown). Returns NULL only on
+ * alloc failure or if sub_ptr is outside the parent range. */
+rdmamig_buffer *rdmamig_buffer_create_view(rdmamig_buffer *parent,
+                                           char *sub_ptr, size_t sub_size)
+{
+    if (parent == NULL || parent->mr == NULL || sub_ptr == NULL) return NULL;
+    /* Bounds-check: the sub-range must lie fully inside the parent buffer. */
+    if (sub_ptr < parent->buffer ||
+        sub_ptr + sub_size > parent->buffer + parent->size) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING,
+                 "rdmamig_buffer_create_view: sub-range [%p,+%zu) outside parent "
+                 "[%p,+%zu)", (void *) sub_ptr, sub_size,
+                 (void *) parent->buffer, parent->size);
+        return NULL;
+    }
+    rdmamig_buffer *b = zmalloc(sizeof(*b));
+    if (b == NULL) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "rdmamig_buffer_create_view: zmalloc failed");
+        return NULL;
+    }
+    b->id            = parent->id;
+    b->buffer        = sub_ptr;
+    b->size          = sub_size;
+    b->mr            = parent->mr;   /* SHARED — not owned by this view */
+    b->buffer_access = parent->buffer_access;
+    b->is_view       = 1;
     return b;
 }
 
@@ -105,6 +143,10 @@ rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
  * the MR). */
 size_t rdmamig_buffer_release_pages(rdmamig_buffer *b) {
     if (b == NULL) return 0;
+    /* AqRaft Stage 5: a view shares the parent's MR and did not register it —
+     * never dereg here (the parent owns teardown) and never madvise its
+     * sub-range out from under the still-live parent MR. */
+    if (b->is_view) return 0;
     if (b->mr != NULL) {
         ibv_dereg_mr(b->mr);
         b->mr = NULL;

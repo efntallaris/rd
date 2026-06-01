@@ -60,6 +60,11 @@ struct rdmamig_buffer {
     size_t             size;
     struct ibv_mr     *mr;             /* registered memory region */
     int                buffer_access;  /* IBV_ACCESS_* bitmask */
+    /* AqRaft Stage 5 (donor big-MR): when 1, this buffer is a lightweight VIEW
+     * over another buffer's MR (shares ->mr / ->id, owns only its sub-range
+     * ->buffer/->size). It did NOT call ibv_reg_mr, so release_pages must NOT
+     * ibv_dereg_mr the shared MR. */
+    int                is_view;
 };
 
 struct rdmamig_client {

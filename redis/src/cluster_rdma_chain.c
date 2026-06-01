@@ -160,6 +160,11 @@ typedef struct rdmaFollowerChainState {
 
 #define RDMA_CHAIN_MAX_SESSIONS 8
 
+/* AqRaft Stage 4 (line-rate forward): max RDMA-WRITE WRs kept in flight before
+ * reaping completions. Well under MAX_SEND_WR / CQ_CAPACITY (4096). Keeps the
+ * wire full instead of the old post-one/wait-one loop (~15 Gbit/s). */
+#define RDMA_FWD_INFLIGHT 512
+
 static rdmaLeaderChainState   *g_leader_chains[RDMA_CHAIN_MAX_SESSIONS]   = {0};
 static rdmaFollowerChainState *g_follower_chains[RDMA_CHAIN_MAX_SESSIONS] = {0};
 static pthread_mutex_t g_chain_state_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -1831,26 +1836,45 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
     (void) slots;  /* slot list only used for the CHAIN-FORWARDED RPC below */
     memcpy(src_pool, snapshot_pool, length);
 
-    /* RDMA-WRITE per-slot: post each 2 MiB chunk individually.
-     * A single 2.67 GiB write may exceed IB HCA's max_msg_sz (typically 2 GiB).
-     * Pipelined posts back-to-back with a single drain at the end keeps
-     * throughput high while staying within per-WR size limits. */
-    for (int i = 0; i < n_slots; i++) {
-        char *local = (char *) src_pool + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-        uint64_t remote = remote_addr + (uint64_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-        if (rdmamig_client_post_write(src_buf, local,
-                                      remote, remote_rkey,
-                                      RDMAMIG_BLOCK_SIZE_BYTES) != 0) {
-            sdsfree(f1_host);
-            snprintf(errbuf, errbuf_len, "post_write to F1 failed at slot_idx=%d", i);
-            return C_ERR;
-        }
-        /* Drain after every WR (simple back-pressure; with a deep send queue
-         * we could batch waits, but 1365 posts at ~10 µs each is fine). */
-        if (rdmamig_client_wait_send(cli) < 0) {
-            sdsfree(f1_host);
-            snprintf(errbuf, errbuf_len, "wait_send for F1 failed at slot_idx=%d", i);
-            return C_ERR;
+    /* RDMA-WRITE per-slot: each 2 MiB chunk is its own WR (a single ~1.43 GiB
+     * write would exceed IB HCA max_msg_sz, typically 2 GiB).
+     *
+     * AqRaft Stage 4 (line-rate): keep up to RDMA_FWD_INFLIGHT WRs in flight
+     * and reap completions in bulk, instead of the old post-one / wait-one loop
+     * which left only ONE WR on the wire at a time (round-trip-bound → measured
+     * ~15 Gbit/s). All n_slots WRs (<= 682) fit comfortably under MAX_SEND_WR
+     * (4096) / CQ_CAPACITY (4096); the window cap is just a safety bound so this
+     * stays correct if a future batch ever exceeds the queue depth. post_write
+     * signals every WR, so #completions == #posts. */
+    {
+        const int INFLIGHT = RDMA_FWD_INFLIGHT;
+        struct ibv_wc wc[64];
+        int posted = 0, reaped = 0;
+        while (reaped < n_slots) {
+            /* Post until the in-flight window is full (or all WRs are out). */
+            while (posted < n_slots && (posted - reaped) < INFLIGHT) {
+                char *local = (char *) src_pool + (size_t) posted * RDMAMIG_BLOCK_SIZE_BYTES;
+                uint64_t remote = remote_addr + (uint64_t) posted * RDMAMIG_BLOCK_SIZE_BYTES;
+                if (rdmamig_client_post_write(src_buf, local, remote, remote_rkey,
+                                              RDMAMIG_BLOCK_SIZE_BYTES) != 0) {
+                    sdsfree(f1_host);
+                    snprintf(errbuf, errbuf_len,
+                             "post_write to F1 failed at slot_idx=%d", posted);
+                    return C_ERR;
+                }
+                posted++;
+            }
+            /* Reap whatever completions are ready (non-blocking); spin if none
+             * yet but WRs are outstanding. */
+            int n = rdmamig_client_poll_send(cli, wc,
+                        (int) (sizeof(wc) / sizeof(wc[0])));
+            if (n < 0) {
+                sdsfree(f1_host);
+                snprintf(errbuf, errbuf_len,
+                         "poll_send for F1 failed after %d/%d reaped", reaped, n_slots);
+                return C_ERR;
+            }
+            reaped += n;
         }
     }
     serverLog(LL_NOTICE,

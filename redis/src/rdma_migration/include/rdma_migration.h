@@ -70,6 +70,16 @@ typedef struct rdmamig_buffer rdmamig_buffer;
 rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
                                       size_t size, int access);
 
+/* AqRaft Stage 5 (donor big-MR): create a lightweight VIEW over an existing
+ * registered buffer, exposing the sub-range [sub_ptr, sub_ptr+sub_size) which
+ * must lie inside `parent`'s registered region. The view shares parent's MR
+ * (same lkey/rkey, same cm_id) — no ibv_reg_mr is done. Lets a caller register
+ * one big pool once and carve N per-slot views instead of N separate ibv_reg_mr.
+ * The view does NOT own the MR (release_pages is a no-op on it). NULL on alloc
+ * failure or out-of-range sub_ptr. */
+rdmamig_buffer *rdmamig_buffer_create_view(rdmamig_buffer *parent,
+                                           char *sub_ptr, size_t sub_size);
+
 /* Remote key the peer needs to address this buffer in RDMA writes. */
 uint32_t rdmamig_buffer_rkey(rdmamig_buffer *b);
 

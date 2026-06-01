@@ -4455,38 +4455,103 @@ static int rdmaReshardRegisterHelper(rdmaOutboundLink *L,
                                       const int *chosen, int n_slots,
                                       int *progress, sds *err_out) {
     pthread_mutex_lock(&L->mu);
+
+    /* AqRaft Stage 5 (donor big-MR): the old path did one zmalloc(2MiB) + one
+     * ibv_reg_mr PER SLOT — ~23ms/slot, ~16s for 683 slots, which the
+     * critical-path trace identified as THE dominant migration cost. Instead,
+     * register ONE contiguous pool with a SINGLE ibv_reg_mr the first time this
+     * link needs source buffers, and hand each slot a lightweight VIEW into it
+     * (shares the one MR's lkey; RDMA permits any VA inside the registered
+     * range). The pool persists on the link and is reused across rounds, so
+     * round 2+ pay zero registration. Mirrors the recipient's big-MR PREP
+     * ("replaces N ibv_reg_mr ioctls with 1"). */
+    if (L->src_mr_pool == NULL) {
+        size_t stride   = (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+        /* Size the pool for the whole keyspace band this link can migrate so it
+         * never needs re-registration across rounds. n_slots for the first
+         * round is the migrating band; round up to CLUSTER_SLOTS would be huge,
+         * so size to the first call's n_slots with modest headroom (x2, capped
+         * at CLUSTER_SLOTS). */
+        int cap_blocks  = n_slots * 2;
+        if (cap_blocks > CLUSTER_SLOTS) cap_blocks = CLUSTER_SLOTS;
+        if (cap_blocks < n_slots)       cap_blocks = n_slots;
+        size_t pool_bytes = (size_t) cap_blocks * stride;
+        void *pool = mmap(NULL, pool_bytes, PROT_READ | PROT_WRITE,
+                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        if (pool == MAP_FAILED) {
+            pthread_mutex_unlock(&L->mu);
+            if (err_out) *err_out = sdscatprintf(sdsempty(),
+                "mmap(%zu) for donor big-MR pool failed: %s",
+                pool_bytes, strerror(errno));
+            return -1;
+        }
+        struct rdmamig_buffer *parent = rdmamig_buffer_create(
+            rdmamig_client_cm_id(L->client), (char *) pool, pool_bytes, 0);
+        if (parent == NULL) {
+            munmap(pool, pool_bytes);
+            pthread_mutex_unlock(&L->mu);
+            if (err_out) *err_out = sdsnew("ibv_reg_mr for donor big-MR pool failed");
+            return -1;
+        }
+        L->src_mr_pool       = pool;
+        L->src_mr_pool_bytes = pool_bytes;
+        L->src_mr_parent     = parent;
+        L->src_mr_used_blocks = 0;
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD: donor big-MR pool base=%p bytes=%zu blocks=%d "
+            "rkey=0x%x (1 ibv_reg_mr replaces per-slot registration) "
+            "[AqRaft Stage 5]",
+            pool, pool_bytes, cap_blocks, rdmamig_buffer_rkey(parent));
+    }
+
+    int registered = 0;
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         if (L->source_buffers[slot] != NULL) {
-            /* already registered — count as progress and skip */
+            /* already registered (e.g. a prior round) — count as progress. */
             if (progress) (*progress)++;
             continue;
         }
-        void *staging = zmalloc(RDMAMIG_BLOCK_SIZE_BYTES);
-        if (staging == NULL) {
-            pthread_mutex_unlock(&L->mu);
-            if (err_out) *err_out = sdsnew("zmalloc failed for staging buffer");
-            return -1;
+        struct rdmamig_buffer *rb;
+        int pool_blocks = (int) (L->src_mr_pool_bytes / (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
+        if (L->src_mr_used_blocks < pool_blocks) {
+            /* Carve the next pool block as a view (no ibv_reg_mr). */
+            char *sub = (char *) L->src_mr_pool
+                      + (size_t) L->src_mr_used_blocks * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+            memset(sub, 0, RDMAMIG_BLOCK_SIZE_BYTES);
+            rb = rdmamig_buffer_create_view(L->src_mr_parent, sub,
+                                            RDMAMIG_BLOCK_SIZE_BYTES);
+            if (rb != NULL) L->src_mr_used_blocks++;
+        } else {
+            /* Pool exhausted (more slots than headroom) — fall back to a
+             * standalone per-slot registration. Rare; keeps correctness. */
+            void *staging = zmalloc(RDMAMIG_BLOCK_SIZE_BYTES);
+            if (staging == NULL) {
+                pthread_mutex_unlock(&L->mu);
+                if (err_out) *err_out = sdsnew("zmalloc failed for staging buffer");
+                return -1;
+            }
+            memset(staging, 0, RDMAMIG_BLOCK_SIZE_BYTES);
+            rb = rdmamig_buffer_create(rdmamig_client_cm_id(L->client),
+                                       staging, RDMAMIG_BLOCK_SIZE_BYTES, 0);
+            if (rb == NULL) zfree(staging);
         }
-        memset(staging, 0, RDMAMIG_BLOCK_SIZE_BYTES);
-        struct rdmamig_buffer *rb = rdmamig_buffer_create(
-            rdmamig_client_cm_id(L->client),
-            staging, RDMAMIG_BLOCK_SIZE_BYTES, 0);
         if (rb == NULL) {
-            zfree(staging);
             pthread_mutex_unlock(&L->mu);
-            if (err_out) *err_out = sdsnew("rdmamig_buffer_create failed");
+            if (err_out) *err_out = sdsnew("source buffer registration failed");
             return -1;
         }
         L->source_buffers[slot] = rb;
+        registered++;
         if (progress) (*progress)++;
-        /* Same per-slot log line as the legacy handler so existing log
-         * scrapers and the throughput-vs-registration cross-reference
-         * still work. */
-        serverLog(LL_NOTICE,
-                  "RDMA RESHARD: registered slot=%d buf=%p rkey=0x%x size=%d",
-                  slot, staging, rdmamig_buffer_rkey(rb), RDMAMIG_BLOCK_SIZE_BYTES);
     }
+    /* One summary line instead of 683 per-slot lines (which themselves added
+     * serverLog overhead to the hot loop). */
+    serverLog(LL_NOTICE,
+        "RDMA RESHARD: registered %d new source slots as big-MR views "
+        "(pool used=%d/%zu blocks) [AqRaft Stage 5]",
+        registered, L->src_mr_used_blocks,
+        L->src_mr_pool_bytes / (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
     pthread_mutex_unlock(&L->mu);
     return 0;
 }

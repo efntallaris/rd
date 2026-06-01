@@ -190,6 +190,15 @@ typedef struct rdmaOutboundLink {
     struct redisContext *ctrl;                      /* hiredis TCP control channel */
     rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];    /* recipient (VA, rkey) per slot */
     struct rdmamig_buffer *source_buffers[CLUSTER_SLOTS]; /* sender-side registered MR per slot (Phase 1) */
+    /* AqRaft Stage 5 (donor big-MR): one contiguous mmap pool + ONE ibv_reg_mr
+     * covering all this link's source slots, registered once and reused across
+     * rounds. Each source_buffers[slot] is a lightweight VIEW into this pool
+     * (rdmamig_buffer_create_view), replacing the per-slot ibv_reg_mr that cost
+     * ~23ms/slot (~16s for 683 slots — the dominant migration cost). */
+    void *src_mr_pool;                              /* mmap base (NULL until first register) */
+    size_t src_mr_pool_bytes;                       /* mmap capacity */
+    struct rdmamig_buffer *src_mr_parent;           /* the single big-MR buffer over the pool */
+    int src_mr_used_blocks;                         /* next-free 2MiB block index in the pool */
     pthread_mutex_t mu;                             /* per-link guard for REGISTER round-trips */
 } rdmaOutboundLink;
 
