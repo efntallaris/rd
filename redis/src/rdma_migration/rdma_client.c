@@ -90,7 +90,22 @@ rdmamig_client *rdmamig_client_create(const char *ip, const char *port) {
 int rdmamig_client_connect(rdmamig_client *c) {
     if (resolve_and_create_endpoint(c) != 0) return -1;
 
-    if (rdma_connect(c->id, NULL) != 0) {
+    /* AqRaft: pass an explicit rdma_conn_param with a LOWER retry budget instead
+     * of rdma_connect(id, NULL) (which uses librdmacm defaults: retry_count=7,
+     * rnr_retry=7, QP timeout up to the max -> ~30-60s before IBV_WC_RETRY_EXC_ERR).
+     * The chain forward (leader->F1) over a reused QP can briefly find the peer
+     * unresponsive (observed reproducibly on read-only workload C round 2, where
+     * no client-write / raft traffic keeps the QP warm). With the defaults the
+     * NIC retried ~30-60s before the send CQ errored and the forward fell back to
+     * raft replication, stalling the migration round. retry_count=3 / rnr_retry=3
+     * bound that to a few seconds; the fallback path (MGN_INDX_UPD raft replication)
+     * is unchanged and still delivers the data, so a lower retry only makes the
+     * fallback trigger sooner — it does not risk data loss. */
+    struct rdma_conn_param cp;
+    memset(&cp, 0, sizeof(cp));
+    cp.retry_count = 3;   /* default 7 */
+    cp.rnr_retry_count = 3;   /* default 7 */
+    if (rdma_connect(c->id, &cp) != 0) {
         RMIG_LOG(RDMAMIG_LOG_WARNING,
                  "rdma_connect to %s:%s failed: %s",
                  c->ip_address, c->port, strerror(errno));
