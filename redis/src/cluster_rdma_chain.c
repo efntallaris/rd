@@ -1009,9 +1009,15 @@ void rdmaChainForwardedCommand(client *c) {
         return;
     }
     int is_tail = st->is_tail;
-    sds leader_host_dup = (is_tail && st->leader_host)
-        ? sdsdup(st->leader_host) : NULL;
-    int leader_port_snap = is_tail ? st->leader_port : 0;
+    /* AqRaft majority-commit: EVERY follower acks the leader once it has the
+     * batch in its landing pool (not just the tail). The leader's chainPendingTick
+     * proceeds on the FIRST ack that crosses the batch baseline (count > base),
+     * so with leader + F1 acking = majority of a 3-node sg4, the leader unblocks
+     * as soon as F1 has the data — without waiting for the F1->tail hop. Non-tail
+     * followers ALSO still forward down the chain so the tail eventually gets it.
+     * leader_host/leader_port are set for all followers in CHAIN-WIRE. */
+    sds leader_host_dup = st->leader_host ? sdsdup(st->leader_host) : NULL;
+    int leader_port_snap = st->leader_port;
     /* Snapshot landing pool ptr so we can apply locally after dropping the
      * state mutex. The pool is mmap'd at PREP time and stable for the
      * session's lifetime. */
@@ -1084,6 +1090,28 @@ void rdmaChainForwardedCommand(client *c) {
         "(forward enqueued=%d)",
         src_mig_id, length, n_slots, is_tail, !is_tail);
 
+    /* AqRaft majority-commit: this follower has the batch in its landing pool,
+     * so ack the leader NOW — regardless of tail position. The leader counts
+     * acks and proceeds at the first one past the baseline (= majority for a
+     * 3-node sg4: leader + this follower). */
+    if (leader_host_dup != NULL && leader_port_snap > 0) {
+        ensureChainWorker();
+        chainWorkItem *ack = zcalloc(sizeof(*ack));
+        ack->kind = CHAIN_WORK_ACK_LEADER;
+        ack->src_mig_id = src_mig_id;
+        ack->host = leader_host_dup;   /* worker frees */
+        ack->port = leader_port_snap;
+        ack->length = (size_t) length;
+        chainWorkPush(ack);
+        leader_host_dup = NULL;
+        ack_enqueued = 1;
+    } else if (leader_host_dup != NULL) {
+        sdsfree(leader_host_dup);
+    }
+
+    /* Non-tail followers ALSO forward down the chain so the tail eventually
+     * receives the data (full durability still converges to all followers;
+     * the majority ack above just unblocks the leader earlier). */
     if (!is_tail) {
         ensureChainWorker();
         chainWorkItem *item = zcalloc(sizeof(*item));
@@ -1094,22 +1122,6 @@ void rdmaChainForwardedCommand(client *c) {
         item->n_slots = n_slots;
         slots = NULL;
         chainWorkPush(item);
-    } else if (leader_host_dup != NULL && leader_port_snap > 0) {
-        /* Classic chain-replication "tail commit": once the tail has the
-         * bytes in its landing pool, ack the leader directly so the leader
-         * can finalize the chain step (e.g., fire MGN_INDX_UPD). */
-        ensureChainWorker();
-        chainWorkItem *item = zcalloc(sizeof(*item));
-        item->kind = CHAIN_WORK_ACK_LEADER;
-        item->src_mig_id = src_mig_id;
-        item->host = leader_host_dup;   /* worker frees */
-        item->port = leader_port_snap;
-        item->length = (size_t) length;
-        chainWorkPush(item);
-        leader_host_dup = NULL;
-        ack_enqueued = 1;
-    } else if (leader_host_dup != NULL) {
-        sdsfree(leader_host_dup);
     }
     if (is_tail) {
         serverLog(LL_NOTICE,
