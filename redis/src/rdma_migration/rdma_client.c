@@ -92,15 +92,27 @@ int rdmamig_client_connect(rdmamig_client *c) {
 
     /* AqRaft: pass an explicit rdma_conn_param with a LOWER retry budget instead
      * of rdma_connect(id, NULL) (which uses librdmacm defaults: retry_count=7,
-     * rnr_retry=7, QP timeout up to the max -> ~30-60s before IBV_WC_RETRY_EXC_ERR).
-     * The chain forward (leader->F1) over a reused QP can briefly find the peer
-     * unresponsive (observed reproducibly on read-only workload C round 2, where
-     * no client-write / raft traffic keeps the QP warm). With the defaults the
-     * NIC retried ~30-60s before the send CQ errored and the forward fell back to
-     * raft replication, stalling the migration round. retry_count=3 / rnr_retry=3
-     * bound that to a few seconds; the fallback path (MGN_INDX_UPD raft replication)
-     * is unchanged and still delivers the data, so a lower retry only makes the
-     * fallback trigger sooner — it does not risk data loss. */
+     * rnr_retry=7 -> the send CQ takes ~30-60s to surface IBV_WC_RETRY_EXC_ERR).
+     *
+     * Symptom this bounds (reproduced 5x): the chain forward (leader redis3 ->
+     * F1 redis4) over a reused sess QP succeeds for round-2's first donor, then
+     * ~2s later goes unresponsive for the next donor's batch — the leader's
+     * WRITEs get no ACK and the WR eventually errors with RETRY_EXC, after which
+     * the forward falls back to MGN_INDX_UPD raft replication (no data loss).
+     *
+     * Counter evidence (mlx5_3 hw_counters sampled across a stall window; see the
+     * aqraft-stage2-r2-chain-control-gap memory) pins the mechanism and rules out
+     * the network: on the leader, local_ack_timeout_err ticks +1 every ~4.3s (the
+     * RC ack timer expiring), while ecn_marked / cnp_sent / rx+tx pause /
+     * packet_seq_err / out_of_sequence / out_of_buffer stay ZERO on BOTH ends and
+     * F1 shows no activity at all. So this is NOT link congestion and NOT the read
+     * throughput saturating the wire — it is the remote (F1) QP silently failing
+     * to respond; the leader just times out waiting for ACKs.
+     *
+     * The stall length is therefore retry_count x (~4.3s ack timeout): 7 -> ~30s,
+     * 3 -> ~16s. This only shrinks the symptom; the real fix is to make the F1
+     * chain QP responsive for every round-2 donor (re-establish / verify RTS per
+     * donor before forwarding). Lowering rnr_retry too is harmless here. */
     struct rdma_conn_param cp;
     memset(&cp, 0, sizeof(cp));
     cp.retry_count = 3;   /* default 7 */

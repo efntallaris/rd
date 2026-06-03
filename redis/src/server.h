@@ -2216,7 +2216,8 @@ struct redisServer {
                                        TRANSFER so recipient backpatch overlaps with the
                                        remaining donor RDMA-WRITEs. Off = legacy single
                                        end-of-TRANSFER DONE-SLOTS RPC (byte-identical to
-                                       pre-overlap behavior). */
+                                       pre-overlap behavior). Default ON (the Ansible
+                                       conf template also defaults it to yes). */
     int rdma_transfer_chunk_slots;  /* Aqueduct: K = slots per DONE-SLOTS-CHUNK RPC.
                                        Only consulted when rdma_transfer_overlap=1. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */

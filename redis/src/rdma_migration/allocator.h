@@ -75,6 +75,19 @@ void * r_allocator_alloc_new_empty_block(int slot);
  * Returns block_ptr on success, NULL on internal bookkeeping failure. */
 void * r_allocator_register_existing_block(int slot, void *block_ptr);
 
+/* AqRaft pool-reuse: unlink all foreign landing-pool blocks
+ * (is_registered_existing) from a slot's list and free only their bookkeeping
+ * (NOT block_start). Call after the slot's keys are copied out so the slot band
+ * can be re-registered next round/donor with a reused pool. Returns count
+ * removed. See allocator.c for the full contract. */
+int r_allocator_unregister_existing_blocks(int slot);
+
+/* AqRaft pool-reuse: block_start of this slot's foreign landing block
+ * (is_registered_existing), or NULL. Used by the chain-forward snapshot so it
+ * captures the donor's raw block rather than slot_blocks head (which may be a
+ * copied-out managed block once the landing block is unlinked). */
+void *r_allocator_get_landing_block_for_slot(int slot);
+
 /* Total bytes the caller must allocate per block for use with
  * r_allocator_register_existing_block (prologue word + BLOCK_SIZE_BYTES +
  * epilogue word). Use this to size the pool — do not hardcode WSIZE in

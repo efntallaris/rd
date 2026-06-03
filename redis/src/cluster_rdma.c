@@ -2145,6 +2145,23 @@ static void *landingPoolReleaseWorker(void *arg) {
     return NULL;
 }
 
+/* AqRaft pool-reuse: ONE persistent recipient landing pool, registered once and
+ * reused for every donor and round (mirrors the leader src-pool cache,
+ * g_src_pool_cache in cluster_rdma_chain.c). Keyed on the recipient
+ * rdmamig_server cm_id. registerWorkerThread reuses it (skipping mmap +
+ * ibv_reg_mr — the ~0.4s/donor in-window registration) when a cached pool of
+ * sufficient size on the same cm_id exists; otherwise it creates one (padded so
+ * the +1 slot of round 2 still fits) and publishes it here. The merge copies all
+ * keys OUT into managed blocks (r_allocator_insert_kvobj), so the pool is purely
+ * transient staging and safe to reuse; the per-slot landing blocks are unlinked
+ * after each slot's merge via r_allocator_unregister_existing_blocks. Donors are
+ * serial (orchestrator gates donor N+1 on N's chain_durable), so the pool is
+ * free by the time the next donor RDMA-writes into it. */
+static void                  *g_landing_pool_cache       = NULL;
+static size_t                 g_landing_pool_cache_bytes = 0;
+static struct rdmamig_buffer *g_landing_buf_cache        = NULL;
+static void                  *g_landing_pool_cache_pd    = NULL; /* PD the MR is bound to */
+
 /* AqRaft lever #4 fix: reclaim the batch's donor landing pool exactly once,
  * off-main, and ONLY after the main-thread merge has fully drained. Both
  * mergeBackpatchTick (when it sets merge_done) and backpatchFinalize (when it
@@ -2155,6 +2172,13 @@ static void *landingPoolReleaseWorker(void *arg) {
  * in-flight insert. */
 static void backpatchReleaseLandingPool(backpatchBatch *b) {
     if (b->landing_pool_buf == NULL) return;
+    /* AqRaft pool-reuse: never dereg/madvise the persistent cached pool — it is
+     * reused by the next donor/round. Mark released (CAS-once semantics) but keep
+     * the MR + pages resident. */
+    if (b->landing_pool_buf == g_landing_buf_cache) {
+        atomic_store_explicit(&b->landing_pool_released, 1, memory_order_release);
+        return;
+    }
     int expected = 0;
     if (!atomic_compare_exchange_strong_explicit(
             &b->landing_pool_released, &expected, 1,
@@ -2609,6 +2633,13 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
          * The dequeue + zfree(w) + timer logic after this block stays
          * unconditional so the follower's work item is still freed. */
         if (b != NULL) {
+        /* AqRaft pool-reuse: this slot's keys are now copied out into the
+         * recipient's own managed blocks; unlink the transient landing block so
+         * the slot band is clean for the next donor/round to re-register the
+         * reused pool (prevents a stale 2nd block in slot_blocks[]). Leader-
+         * recipient path only (batch != NULL); the chain-follower path keeps its
+         * g_chain_landing_registered guard unchanged. */
+        r_allocator_unregister_existing_blocks(w->slot);
         atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
         atomic_fetch_add_explicit(&b->applied, w->moved, memory_order_relaxed);
         atomic_fetch_add_explicit(&b->clobber_skipped,
@@ -2717,17 +2748,22 @@ static void *backpatchPoolWorkerMain(void *arg) {
             }
             pthread_mutex_unlock(&w->batch->covered_mu);
             if (found_idx >= 0) {
-                int nb = 0;
-                char **blocks = r_allocator_get_block_buffers_for_slot(w->slot, &nb);
-                if (blocks != NULL && nb > 0 && blocks[0] != NULL) {
+                /* AqRaft pool-reuse: snapshot the actual donor LANDING block
+                 * (is_registered_existing), NOT slot_blocks head. With the
+                 * recipient pool-reuse the head can be a copied-out managed block
+                 * (the landing block is unlinked after merge), so capturing
+                 * block[0] would forward empty/garbage to followers → follower
+                 * crash. The landing block is still present at snapshot time
+                 * (captured before this batch's merge/unregister). */
+                char *landing = (char *) r_allocator_get_landing_block_for_slot(w->slot);
+                if (landing != NULL) {
                     char *dst = w->batch->donor_snapshot_pool
                               + (size_t) found_idx * RDMAMIG_BLOCK_SIZE_BYTES;
                     if (dst + RDMAMIG_BLOCK_SIZE_BYTES
                         <= w->batch->donor_snapshot_pool + w->batch->donor_snapshot_pool_bytes) {
-                        memcpy(dst, blocks[0], RDMAMIG_BLOCK_SIZE_BYTES);
+                        memcpy(dst, landing, RDMAMIG_BLOCK_SIZE_BYTES);
                     }
                 }
-                if (blocks) zfree(blocks);
             }
 
             /* AqRaft parallel-chain: once ALL slot snapshots are captured,
@@ -3070,38 +3106,63 @@ static void *registerWorkerThread(void *arg) {
     const size_t stride = r_allocator_block_stride_bytes();
     const size_t pool_bytes = total_blocks * stride;
 
-    void *pool = mmap(NULL, pool_bytes, PROT_READ | PROT_WRITE,
-                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    if (pool == MAP_FAILED) {
-        job->has_error = 1;
-        snprintf(job->err_msg, sizeof(job->err_msg),
-            "mmap(%zu bytes) failed: %s (check vm.overcommit / available RAM)",
-            pool_bytes, strerror(errno));
-        goto deliver;
-    }
-
-    struct rdmamig_buffer *pool_buf = rdmamig_buffer_create(
-        rdmamig_server_cm_id(job->conn->s),
-        (char *) pool, pool_bytes, 0);
-    if (pool_buf == NULL) {
-        job->has_error = 1;
-        snprintf(job->err_msg, sizeof(job->err_msg),
-            "ibv_reg_mr(%zu bytes) failed: check ulimit -l (RLIMIT_MEMLOCK)",
-            pool_bytes);
-        munmap(pool, pool_bytes);
-        goto deliver;
+    /* AqRaft pool-reuse: reuse the ONE persistent cached landing pool if it is on
+     * the same recipient cm_id and large enough — skipping the mmap + ibv_reg_mr
+     * (the ~0.4s/donor in-window registration). Only the first donor of the run
+     * pays it; every later donor/round reuses. Safe because the merge copies all
+     * keys OUT (r_allocator_insert_kvobj) and the per-slot landing blocks are
+     * unlinked after merge (r_allocator_unregister_existing_blocks), and donors
+     * are serial so the pool is idle by the time the next donor writes. */
+    struct rdma_cm_id *cm = rdmamig_server_cm_id(job->conn->s);
+    void *pd = rdmamig_cm_pd(cm);   /* key on the PD, not the per-donor cm_id */
+    void *pool = NULL;
+    struct rdmamig_buffer *pool_buf = NULL;
+    int reused = 0;
+    if (g_landing_pool_cache != NULL && pd != NULL && g_landing_pool_cache_pd == pd &&
+        g_landing_pool_cache_bytes >= pool_bytes) {
+        pool     = g_landing_pool_cache;
+        pool_buf = g_landing_buf_cache;
+        reused   = 1;
+    } else {
+        /* Pad the fresh allocation so round 2's +1 slot (683 vs 682) still fits
+         * the cached pool — register exactly once for the whole run. */
+        const size_t alloc_bytes = pool_bytes + (size_t) 32 * stride;
+        pool = mmap(NULL, alloc_bytes, PROT_READ | PROT_WRITE,
+                    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        if (pool == MAP_FAILED) {
+            job->has_error = 1;
+            snprintf(job->err_msg, sizeof(job->err_msg),
+                "mmap(%zu bytes) failed: %s (check vm.overcommit / available RAM)",
+                alloc_bytes, strerror(errno));
+            goto deliver;
+        }
+        pool_buf = rdmamig_buffer_create(cm, (char *) pool, alloc_bytes, 0);
+        if (pool_buf == NULL) {
+            job->has_error = 1;
+            snprintf(job->err_msg, sizeof(job->err_msg),
+                "ibv_reg_mr(%zu bytes) failed: check ulimit -l (RLIMIT_MEMLOCK)",
+                alloc_bytes);
+            munmap(pool, alloc_bytes);
+            goto deliver;
+        }
+        g_landing_pool_cache       = pool;
+        g_landing_pool_cache_bytes = alloc_bytes;
+        g_landing_buf_cache        = pool_buf;
+        g_landing_pool_cache_pd    = pd;
     }
     job->conn->aqueduct_pool_buf = pool_buf;
-    /* AqRaft pool-free: record the landing-pool region so the backpatch path
-     * can madvise(MADV_DONTNEED) it once migrated kvobjs are copied out. */
+    /* AqRaft pool-free: record the landing-pool region. With reuse the pool is
+     * NOT madvise'd/dereg'd (backpatchReleaseLandingPool skips the cached buf). */
     job->conn->landing_pool_base  = pool;
-    job->conn->landing_pool_bytes = pool_bytes;
+    job->conn->landing_pool_bytes = g_landing_pool_cache_bytes;
     const uint32_t shared_rkey = rdmamig_buffer_rkey(pool_buf);
 
     serverLog(LL_NOTICE,
         "RDMA REGISTER-BLOCK-SLOTS: aqueduct big-MR pool base=%p bytes=%zu "
-        "stride=%zu total_blocks=%zu rkey=0x%x (replaces %zu ibv_reg_mr ioctls with 1)",
-        pool, pool_bytes, stride, total_blocks, shared_rkey, total_blocks);
+        "stride=%zu total_blocks=%zu rkey=0x%x %s",
+        pool, pool_bytes, stride, total_blocks, shared_rkey,
+        reused ? "(REUSED cached pool — skipped mmap+ibv_reg_mr)"
+               : "(registered ONE big-MR + cached for reuse)");
 
     size_t cursor = 0;
     for (int i = 0; i < job->n_pairs; i++) {
@@ -4714,6 +4775,12 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                   ? server.rdma_transfer_chunk_slots : 32;
     int chunk_seq = 0;
     int pending_replies = 0;   /* hiredis pipelined replies we still need to drain (overlap path) */
+    int chunk_errs = 0;        /* CHUNK RPC write/reply failures (overlap path). Distinct from
+                                  `errs` (RDMA-WRITE post/completion failures) so a control-plane
+                                  failure is reported separately from a NIC failure. A failed CHUNK
+                                  means those slots never enqueued on the recipient → its `remaining`
+                                  never reaches 0 → without this the donor would burn the full
+                                  ~60s BACKPATCH-STATUS timeout on a permanently-stuck batch. */
 
     /* Overlap: send DONE-SLOTS-INIT synchronously so the recipient's
      * backpatchBatch exists before any CHUNK RPC arrives. TCP ordering on
@@ -4753,6 +4820,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
      * batch — keeping K writes in flight instead of stalling per-slot on
      * wait_send (which capped the transfer at ~1 WR in flight, ~5 Gbps). */
     int inflight = 0;
+    long long transfer_t0 = ustime();   /* per-donor TRANSFER wall-clock (overlap A/B) */
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
         char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
@@ -4853,15 +4921,21 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                  * keep RDMA-writing the next K slots. */
                 redisAppendCommandArgv(L->ctrl, chunk_argc, cargv, cargvlen);
                 int wdone = 0;
+                int write_failed = 0;
                 while (!wdone) {
                     if (redisBufferWrite(L->ctrl, &wdone) == REDIS_ERR) {
                         serverLog(LL_WARNING,
-                            "RDMA MIGRATE worker: DONE-SLOTS-CHUNK seq=%d buffer write failed",
-                            chunk_seq);
+                            "RDMA MIGRATE worker: DONE-SLOTS-CHUNK seq=%d buffer write failed: %s",
+                            chunk_seq, L->ctrl->errstr);
+                        chunk_errs++;
+                        write_failed = 1;
                         break;
                     }
                 }
-                pending_replies++;
+                /* Only expect a reply if the command actually went out — a failed
+                 * (possibly partial) write queued no reply, so pending_replies++ here
+                 * would later block redisGetReply forever on a reply that never comes. */
+                if (!write_failed) pending_replies++;
                 chunk_seq++;
                 chunk_used = 0;
                 zfree(cargv); zfree(cargvlen); zfree(cnumbuf);
@@ -4882,23 +4956,39 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
 
     if (overlap) {
         zfree(chunk_slots);
-        /* Drain all pipelined CHUNK replies before returning. We don't error
-         * on individual chunk failures here — BACKPATCH-STATUS polling on the
-         * donor will surface a stuck batch. */
+        /* Drain all pipelined CHUNK replies before returning. Any failure mode
+         * (broken connection, NULL reply, or a per-chunk REDIS_REPLY_ERROR such as
+         * "no such backpatch batch") is counted in chunk_errs so the function fails
+         * fast below instead of letting the worker waste the ~60s BACKPATCH-STATUS
+         * timeout on a batch whose `remaining` can never reach 0. */
         for (int i = 0; i < pending_replies; i++) {
             redisReply *cr = NULL;
-            if (redisGetReply(L->ctrl, (void **) &cr) == REDIS_OK) {
-                if (cr && cr->type == REDIS_REPLY_ERROR) {
-                    serverLog(LL_WARNING,
-                        "RDMA MIGRATE worker: DONE-SLOTS-CHUNK reply error: %s",
-                        cr->str ? cr->str : "(no body)");
-                }
+            int rc = redisGetReply(L->ctrl, (void **) &cr);
+            if (rc != REDIS_OK) {
+                serverLog(LL_WARNING,
+                    "RDMA MIGRATE worker: DONE-SLOTS-CHUNK getReply failed (drained %d/%d): %s",
+                    i, pending_replies, L->ctrl->errstr);
+                chunk_errs++;
                 if (cr) freeReplyObject(cr);
+                break;   /* connection is broken; remaining replies will also fail */
             }
+            if (cr == NULL) {
+                serverLog(LL_WARNING,
+                    "RDMA MIGRATE worker: DONE-SLOTS-CHUNK NULL reply (drained %d/%d)",
+                    i, pending_replies);
+                chunk_errs++;
+            } else if (cr->type == REDIS_REPLY_ERROR) {
+                serverLog(LL_WARNING,
+                    "RDMA MIGRATE worker: DONE-SLOTS-CHUNK reply error: %s",
+                    cr->str ? cr->str : "(no body)");
+                chunk_errs++;
+            }
+            if (cr) freeReplyObject(cr);
         }
         serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunks=%d",
-            n_slots, total_bytes, errs, chunk_seq);
+            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunk_errs=%d chunks=%d transfer_ms=%lld",
+            n_slots, total_bytes, errs, chunk_errs, chunk_seq,
+            (ustime() - transfer_t0) / 1000);
     } else {
         /* Legacy path: single end-of-TRANSFER DONE-SLOTS RPC. The recipient
          * also accepts the legacy 2-arg form for back-compat (no tracking). */
@@ -4926,14 +5016,16 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
         if (r) freeReplyObject(r);
 
         serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d",
-            n_slots, total_bytes, errs);
+            "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d transfer_ms=%lld",
+            n_slots, total_bytes, errs, (ustime() - transfer_t0) / 1000);
     }
 
     pthread_mutex_unlock(&L->mu);
 
-    if (errs > 0 && err_out) {
-        *err_out = sdscatfmt(sdsempty(), "TRANSFER: %i slot writes failed", errs);
+    if (errs > 0 || chunk_errs > 0) {
+        if (err_out)
+            *err_out = sdscatfmt(sdsempty(),
+                "TRANSFER: %i slot writes failed, %i chunk RPCs failed", errs, chunk_errs);
         return -1;
     }
     return 0;

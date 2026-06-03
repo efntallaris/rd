@@ -650,6 +650,58 @@ void * r_allocator_register_existing_block(int slot, void *block_ptr)
     return block_ptr;
 }
 
+/* AqRaft pool-reuse: unlink every foreign landing-pool block
+ * (is_registered_existing==1) from a slot's block list and free ONLY its
+ * bookkeeping struct — NOT block_start (the landing pool is owned by the caller
+ * and is reused for the next donor/round). Call this AFTER the slot's migrated
+ * keys have been copied out into the recipient's own managed blocks
+ * (mergeBackpatchTick -> r_allocator_insert_kvobj): at that point nothing live
+ * references the landing block, so unlinking it is safe and leaves the slot's
+ * list clean so the SAME slot band can be re-registered next round/donor without
+ * leaving a stale 2nd block (the heap-corruption hazard the per-slot
+ * g_chain_landing_registered guard worked around). The managed copied-out blocks
+ * (is_registered_existing==0) are kept. Returns the number of blocks removed.
+ * Mirrors link_block_into_slot's locking (per-slot mutex). */
+int r_allocator_unregister_existing_blocks(int slot)
+{
+    int removed = 0;
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    alloc_bloc_t *cur = r_allocator.slot_blocks[slot];
+    while (cur != NULL) {
+        alloc_bloc_t *next = cur->next;
+        if (cur->is_registered_existing) {
+            if (cur->prev != NULL) cur->prev->next = cur->next;
+            else                   r_allocator.slot_blocks[slot] = cur->next;
+            if (cur->next != NULL) cur->next->prev = cur->prev;
+            else                   r_allocator.slot_blocks_tail[slot] = cur->prev;
+            if (r_allocator.slot_blocks_num[slot] > 0)
+                r_allocator.slot_blocks_num[slot]--;
+            zfree(cur);   /* free bookkeeping ONLY — pool memory owned by caller */
+            removed++;
+        }
+        cur = next;
+    }
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+    return removed;
+}
+
+/* AqRaft pool-reuse: return the block_start of this slot's foreign LANDING block
+ * (is_registered_existing) — the donor's raw 2 MiB block in wire format — or NULL
+ * if none. The chain-forward snapshot must capture THIS block, not slot_blocks
+ * head: with pool-reuse the head can be a copied-out managed block (after the
+ * landing block was unlinked), and snapshotting that forwards empty/garbage to
+ * followers. Returns the newest (tail-most) registered block if several exist. */
+void *r_allocator_get_landing_block_for_slot(int slot)
+{
+    void *found = NULL;
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    for (alloc_bloc_t *cur = r_allocator.slot_blocks[slot]; cur != NULL; cur = cur->next) {
+        if (cur->is_registered_existing) found = cur->block_start;
+    }
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+    return found;
+}
+
 size_t r_allocator_block_stride_bytes(void)
 {
     return (size_t) WSIZE + (size_t) BLOCK_SIZE_BYTES + (size_t) WSIZE;

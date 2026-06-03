@@ -43,12 +43,12 @@ plt.rcParams.update({
     "text.latex.preamble": r"\renewcommand{\familydefault}{\sfdefault}",
     # Paper-style hierarchy: body 15 anchors title (~1.5x), axis (~1.2x),
     # legend (1.0x), tick (~0.85x).
-    "font.size":       15,
-    "axes.titlesize":  16,
-    "axes.labelsize":  13,
-    "legend.fontsize": 11,
-    "xtick.labelsize": 15,
-    "ytick.labelsize": 15,
+    "font.size":       18,
+    "axes.titlesize":  21,
+    "axes.labelsize":  18,
+    "legend.fontsize": 15,
+    "xtick.labelsize": 17,
+    "ytick.labelsize": 17,
     # Borderless panels — no spines on any side.
     "axes.linewidth":      0.7,
     "axes.spines.top":     False,
@@ -81,9 +81,9 @@ plt.rcParams.update({
 })
 
 # Inline annotation font sizes (band labels, vertical-line labels, summary).
-_FS_BAND_LABEL = 13   # "M1 7.4s" centered above each migration band
-_FS_VLINE      = 13   # rotated FLIP label next to vertical line
-_FS_SUMMARY    = 13   # "Total migration: 34.7s (3 sources, serial)"
+_FS_BAND_LABEL = 17   # "M1 7.4s" centered above each migration band
+_FS_VLINE      = 17   # rotated FLIP label next to vertical line
+_FS_SUMMARY    = 16   # "Total migration: 34.7s (3 sources, serial)"
 
 # Crop the x-axis so the YCSB ramp-up (no ops in seconds 0-8) is hidden,
 # and bound the upper end so all three workloads share the same window.
@@ -317,7 +317,8 @@ def _annotate_vline(ax, x: Optional[float], color: str, label: str) -> None:
     )
 
 
-def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
+def plot(expdir: Path, output: Path, span_only: bool = False,
+         xmin: float = PLOT_X_MIN, xmax: float = PLOT_X_MAX) -> None:
     ycsb_path = expdir / "ycsb" / "ycsb0" / "tmp" / "ycsb_output_ycsb0"
     if not ycsb_path.exists():
         cands = list(expdir.rglob("ycsb_output_*"))
@@ -340,6 +341,9 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
     transfer_first_rel = to_rel(auto_tz_offset(find_first_marker(expdir, "RDMA RESHARD-TRANSFER: slot="), t0), t0)
     transfer_last_rel  = to_rel(auto_tz_offset(find_last_marker (expdir, "RDMA RESHARD-TRANSFER: slot="), t0), t0)
     done_rel       = to_rel(auto_tz_offset(find_first_marker(expdir, "RDMA DONE-SLOTS: applied"), t0), t0)
+    # First donor FLIP (worker state=FLIP) across all logs — start of the
+    # migration window measured FROM FLIP (registration/Setup excluded).
+    flip_first_rel = to_rel(auto_tz_offset(find_first_marker(expdir, "state=FLIP"), t0), t0)
 
     # Per-source migration windows (PREP -> DONE per source). One band per
     # migration, plus the overall span.
@@ -356,6 +360,12 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
             continue
         migration_bands.append((src, s_rel, e_rel))
 
+    # span_only window: FROM FLIP (Setup/registration excluded) -> last DONE.
+    # Falls back to the first PREP if no FLIP marker was found.
+    win_start = (flip_first_rel if (span_only and flip_first_rel is not None)
+                 else (migration_bands[0][1] if migration_bands else None))
+    win_end = migration_bands[-1][2] if migration_bands else None
+
     # Workload nickname: strip the experiment prefix for the panel titles.
     workload = expdir.name
     for prefix in ("custom_reshard_v2_", "custom_reshard_"):
@@ -363,12 +373,12 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
             workload = workload[len(prefix):]
             break
 
-    # 2 panels side-by-side, each ≈ φ:1 (width:height).
+    # 2 panels side-by-side. Very-wide, short banner layout.
     PHI = 1.618
-    panel_h = 4.0
-    panel_w = panel_h * PHI  # ≈ 6.47
-    fig_w   = 2 * panel_w + 1 * 0.35 * panel_w + 0.8
-    fig_h   = panel_h + 1.5  # room for band labels, x-label, footer legend
+    panel_h = 2.7
+    panel_w = panel_h * PHI * 2.0   # very wide panels
+    fig_w   = 2 * panel_w + 1 * 0.35 * panel_w + 0.8  # much wider
+    fig_h   = panel_h + 3.0  # short, but with a roomy title band on top
     fig, (ax_tp, ax_lat) = plt.subplots(
         1, 2, figsize=(fig_w, fig_h), sharex=True,
         gridspec_kw={"width_ratios": [1, 1], "wspace": 0.35},
@@ -389,20 +399,34 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
 
     # ---- Panel (a): Throughput --------------------------------------------------
     ax_tp.plot(t_rel, tp, label="Aqueduct", zorder=3, **AQUEDUCT_STYLE)
-    ax_tp.set_title("Throughput", pad=22)
+    ax_tp.set_title("Throughput", pad=72)
     ax_tp.set_ylabel("Th/put (Kops/s)")
     # Y-axis in Kops/s with exactly 3 ticks framing the data range (no 0 tick).
     ax_tp.yaxis.set_major_formatter(
         mticker.FuncFormatter(lambda v, _: f"{v/1000:.0f}"))
-    # Fixed ticks at 300/350/400/450 Kops/s so the throughput series sits mid-axis.
+    # Throughput y-axis: auto-fit to THIS workload's data (values are raw ops/s;
+    # the FuncFormatter above divides by 1000 for Kops/s display). Bracket the
+    # observed range with a little headroom and place ticks on a round 50 Kops/s
+    # grid so each workload (A ~150, B/C ~250-340) shows its full curve.
     if tp:
-        ax_tp.set_ylim(0, max(tp) * 1.15)
-    ax_tp.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
+        lo = min(tp); hi = max(tp)
+        y_lo = max(0, (int(lo / 1000) // 50) * 50 * 1000 - 20_000)   # round down to 50K grid, -20K pad
+        y_hi = ((int(hi / 1000) // 50) + 1) * 50 * 1000               # round up to next 50K
+        ax_tp.set_ylim(y_lo, y_hi)
+        ticks = list(range(int(y_lo) if y_lo % 50000 == 0 else (int(y_lo)//50000+1)*50000,
+                            int(y_hi) + 1, 50_000))
+        ax_tp.set_yticks(ticks)
 
     # ---- Panel (b): Avg latency -------------------------------------------------
     ax_lat.plot(t_rel, rd_lat, label="READ", zorder=3, **LATENCY_READ_STYLE)
-    ax_lat.plot(t_rel, up_lat, label="UPDATE", zorder=3, **LATENCY_UPDATE_STYLE)
-    ax_lat.set_title("Average Latency", pad=22)
+    # Only plot the UPDATE series if the workload actually produced UPDATE
+    # samples. Read-only workloads (e.g. workload C) report no UPDATE latency,
+    # so up_lat is all-NaN; matplotlib renders the sparse NaN gaps as a
+    # misleading dashed dip/spike. Suppress it entirely in that case.
+    _has_upd = any(v is not None and v == v for v in up_lat)  # v==v: not NaN
+    if _has_upd:
+        ax_lat.plot(t_rel, up_lat, label="UPDATE", zorder=3, **LATENCY_UPDATE_STYLE)
+    ax_lat.set_title("Average Latency", pad=72)
     ax_lat.set_xlabel("Time since YCSB start (seconds)")
     ax_tp.set_xlabel("Time since YCSB start (seconds)")
     ax_lat.set_ylabel(r"Latency ($\mu$s)")
@@ -414,8 +438,19 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
         ax_lat.set_ylim(0, max(_lats) * 1.15)
     ax_lat.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
     if t_rel:
-        ax_tp.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
-        ax_lat.set_xlim(PLOT_X_MIN, PLOT_X_MAX)
+        ax_tp.set_xlim(xmin, xmax)
+        ax_lat.set_xlim(xmin, xmax)
+        # When a custom (zoomed) range is set, force ticks that include both
+        # endpoints (e.g. 50 and 150) — the default auto-ticker often stops
+        # short of xmax. Pick a ~25s step for ranges <= 150s wide, else 50s.
+        if (xmin, xmax) != (PLOT_X_MIN, PLOT_X_MAX):
+            step = 25.0 if (xmax - xmin) <= 150 else 50.0
+            n = int((xmax - xmin) / step)
+            ticks = [xmin + i * step for i in range(n + 1)]
+            if ticks and ticks[-1] < xmax:
+                ticks.append(xmax)
+            ax_tp.set_xticks(ticks)
+            ax_lat.set_xticks(ticks)
     # Legend moved to the figure footer (below both panels and below the
     # x-axis title) so it never overlaps data or labels.
     handles, labels = ax_lat.get_legend_handles_labels()
@@ -435,8 +470,8 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
     #   - span_only (--span-only): ONE band from the first round's start to the
     #     last round's end, with NO per-source M1/M2/M3 labels.
     if span_only and migration_bands:
-        span_start = migration_bands[0][1]
-        span_end   = migration_bands[-1][2]
+        span_start = win_start
+        span_end   = win_end
         for ax in (ax_tp, ax_lat):
             ax.axvspan(span_start, span_end, alpha=0.20,
                        color=PHASE_COLORS["BAND_FILL"], zorder=1)
@@ -481,8 +516,8 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
         else:
             # span_only: one label over the whole window with the total duration
             # (first round start -> last round end, i.e. both rounds).
-            span_mid = (migration_bands[0][1] + migration_bands[-1][2]) / 2.0
-            span_total = migration_bands[-1][2] - migration_bands[0][1]
+            span_mid = (win_start + win_end) / 2.0
+            span_total = win_end - win_start
             for ax in (ax_tp, ax_lat):
                 ax.annotate(
                     f"M: {span_total:.1f}s",
@@ -494,11 +529,11 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
                 )
         # Overall span summary as a footer line below the legend, so it never
         # covers data or the migration bands.
-        total_start = migration_bands[0][1]
-        total_end   = migration_bands[-1][2]
+        total_start = win_start if span_only else migration_bands[0][1]
+        total_end   = win_end
         total       = total_end - total_start
         summary = (f"Migration window: {total:.1f}s "
-                   f"(first round start → last round end)") if span_only else \
+                   f"(first FLIP → last round end, Setup excluded)") if span_only else \
                   f"Total migration: {total:.1f}s ({len(migration_bands)} sources)"
         fig.text(
             0.5, -0.12,
@@ -512,8 +547,9 @@ def plot(expdir: Path, output: Path, span_only: bool = False) -> None:
     # FLIP vline intentionally not drawn — the M1 band's left edge already
     # marks the first FLIP. Keep _annotate_vline available for future use.
 
-    plt.subplots_adjust(left=0.08, right=0.97, top=0.92, bottom=0.18)
+    plt.subplots_adjust(left=0.08, right=0.97, top=0.78, bottom=0.18)
     fig.align_ylabels([ax_tp, ax_lat])
+    fig.align_titles([ax_tp, ax_lat])
     for ax in (ax_tp, ax_lat):
         _bold_tick_labels(ax)
     plt.savefig(output, dpi=300, bbox_inches="tight")
@@ -986,13 +1022,17 @@ def main() -> None:
     p.add_argument("--span-only", action="store_true",
                    help="shade ONE migration window (first round start -> last round end) "
                         "instead of per-source bands, and omit the M1/M2/M3 labels")
+    p.add_argument("--xmin", type=float, default=PLOT_X_MIN,
+                   help=f"x-axis min seconds (default {PLOT_X_MIN})")
+    p.add_argument("--xmax", type=float, default=PLOT_X_MAX,
+                   help=f"x-axis max seconds (default {PLOT_X_MAX})")
     args = p.parse_args()
 
     expdir = args.expdir.resolve()
     if not expdir.is_dir():
         sys.exit(f"Not a directory: {expdir}")
     output = args.output or (expdir / "ycsb_timeseries.png")
-    plot(expdir, output, span_only=args.span_only)
+    plot(expdir, output, span_only=args.span_only, xmin=args.xmin, xmax=args.xmax)
 
     if args.with_resources:
         ext = output.suffix or ".png"

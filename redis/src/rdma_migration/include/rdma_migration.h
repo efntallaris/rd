@@ -145,6 +145,11 @@ rdmamig_server *rdmamig_server_create(const char *port);
  * (the accept thread sets it from rdma_get_request). */
 struct rdma_cm_id *rdmamig_server_cm_id(rdmamig_server *s);
 
+/* AqRaft pool-reuse: opaque protection-domain pointer for a cm_id (void* so
+ * callers need not include verbs.h). All cm_ids accepted by one recipient
+ * listener share a PD, so this is a stable cache key for a reusable MR. */
+void *rdmamig_cm_pd(struct rdma_cm_id *id);
+
 /* ------------------------------------------------------------------------- *
  * Slot-keyed RDMA-pinned allocator
  * ------------------------------------------------------------------------- *

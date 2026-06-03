@@ -179,3 +179,12 @@ rdmamig_server *rdmamig_server_create(const char *port) {
 struct rdma_cm_id *rdmamig_server_cm_id(rdmamig_server *s) {
     return s->id;
 }
+
+/* AqRaft pool-reuse: the protection domain a cm_id's MRs are bound to. The
+ * recipient's listener is created with rdma_create_ep(..., pd=NULL, ...), so all
+ * accepted donor cm_ids share ONE PD — an MR registered on one is valid for RDMA
+ * from any of them. Returned as void* so callers (cluster_rdma.c) need not pull
+ * in <infiniband/verbs.h>; used only as an opaque cache key. */
+void *rdmamig_cm_pd(struct rdma_cm_id *id) {
+    return id ? (void *) id->pd : NULL;
+}
