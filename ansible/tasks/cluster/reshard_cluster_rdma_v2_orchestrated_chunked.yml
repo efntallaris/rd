@@ -209,25 +209,28 @@
       debug:
         msg: "ROUND 1 {{ r1_status.stdout | default('<none>') }}"
 
-    - name: "ROUND 1: NARROW each donor (sg4 cumulative range)"
+    # PARALLEL: fire all 3 donor-leader NARROWs concurrently (independent raft
+    # groups) instead of a serial loop, so the inter-round gap pays one raft
+    # commit (~0.2s) instead of three (~0.7s).
+    - name: "ROUND 1: NARROW each donor (parallel — sg4 cumulative range)"
       shell: |
-        {{ redis_bin_dir }}/redis-cli \
-          -h {{ narrow_host_ip_map[spec.leader_host] }} \
-          -p {{ spec.leader_port }} \
-          RAFT.SHARDGROUP NARROW \
-            {{ spec.new_local_lo }}:{{ spec.new_local_hi }} \
-            {{ sg4_dbid }} 1 3 \
-            {{ spec.cum_sg4_lo }} {{ spec.cum_sg4_hi }} 1 0 \
-            {{ sg4_node_argv }}
+        set -u
+        rm -f /tmp/r1_narrow_*.out
+        {% for spec in narrow_specs %}
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          RAFT.SHARDGROUP NARROW {{ spec.new_local_lo }}:{{ spec.new_local_hi }} {{ sg4_dbid }} 1 3 \
+          {{ spec.cum_sg4_lo }} {{ spec.cum_sg4_hi }} 1 0 {{ sg4_node_argv }} \
+          > /tmp/r1_narrow_{{ spec.sg_id }}.out 2>&1 &
+        {% endfor %}
+        wait
+        ok=$(grep -l OK /tmp/r1_narrow_*.out | wc -l)
+        echo "R1 NARROW OK count=$ok/{{ narrow_specs | length }}"; cat /tmp/r1_narrow_*.out
+        test "$ok" -eq {{ narrow_specs | length }}
       register: r1_narrow
-      loop: "{{ narrow_specs }}"
-      loop_control:
-        loop_var: spec
-        label: "{{ spec.sg_id }}: R1 narrow to {{ spec.new_local_lo }}:{{ spec.new_local_hi }}, sg4 gets {{ spec.cum_sg4_lo }}-{{ spec.cum_sg4_hi }}"
       when: "'FINAL_STATE=DONE' in (r1_status.stdout | default(''))"
       retries: 5
       delay: 1
-      until: r1_narrow.rc == 0 and 'OK' in (r1_narrow.stdout | default(''))
+      until: r1_narrow.rc == 0
 
 # ====================================================================== #
 # ROUND 2 (reuses facts set on redis_masters[0] in round 1)               #
@@ -268,24 +271,26 @@
       loop_control:
         loop_var: sg
 
-    - name: "ROUND 2: WRITE_FLIP this round's slots -> sg4"
+    # PARALLEL: fire all 3 donor-leader WRITE_FLIPs concurrently (see ROUND 1
+    # NARROW note) to keep the inter-round gap to a single raft-commit latency.
+    - name: "ROUND 2: WRITE_FLIP this round's slots -> sg4 (parallel)"
       shell: |
-        {{ redis_bin_dir }}/redis-cli \
-          -h {{ narrow_host_ip_map[spec.leader_host] }} \
-          -p {{ spec.leader_port }} \
-          RAFT.SHARDGROUP WRITE_FLIP \
-            {{ spec.migrated_lo }}:{{ spec.migrated_hi }} \
-            {{ sg4_dbid }} 1 3 \
-            {{ spec.migrated_lo }} {{ spec.migrated_hi }} 1 0 \
-            {{ sg4_node_argv }}
+        set -u
+        rm -f /tmp/r2_flip_*.out
+        {% for spec in narrow_specs2 %}
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          RAFT.SHARDGROUP WRITE_FLIP {{ spec.migrated_lo }}:{{ spec.migrated_hi }} {{ sg4_dbid }} 1 3 \
+          {{ spec.migrated_lo }} {{ spec.migrated_hi }} 1 0 {{ sg4_node_argv }} \
+          > /tmp/r2_flip_{{ spec.sg_id }}.out 2>&1 &
+        {% endfor %}
+        wait
+        ok=$(grep -l OK /tmp/r2_flip_*.out | wc -l)
+        echo "R2 WRITE_FLIP OK count=$ok/{{ narrow_specs2 | length }}"; cat /tmp/r2_flip_*.out
+        test "$ok" -eq {{ narrow_specs2 | length }}
       register: r2_write_flip
-      loop: "{{ narrow_specs2 }}"
-      loop_control:
-        loop_var: spec
-        label: "{{ spec.sg_id }}: R2 write-redirect {{ spec.migrated_lo }}:{{ spec.migrated_hi }} -> sg4"
       retries: 5
       delay: 1
-      until: r2_write_flip.rc == 0 and 'OK' in (r2_write_flip.stdout | default(''))
+      until: r2_write_flip.rc == 0
 
     - name: "ROUND 2: dispatch RDMA MIGRATE-ALL (count={{ round_slots }})"
       shell: |
