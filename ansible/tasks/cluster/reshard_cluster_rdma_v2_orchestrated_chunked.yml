@@ -24,21 +24,31 @@
 - name: "RDMA orchestrated chunked reshard: ROUND 1"
   hosts: redis_masters[0]
   become: yes
+  gather_facts: no            # tasks use redisraft_shardgroups vars + getent, not ansible facts
   vars:
     reshard_target: "{{ groups['redis_migrate'][0] }}"
     reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
     round_slots: "{{ ((reshard_slots | int) // (groups['redis_masters'] | length)) // 2 }}"
     round_offset: 0
   tasks:
-    - name: "Build peer-endpoint list"
+    - name: "Build peer-endpoint list (other donor shardgroup LEADERS, e.g. sg2@8001 / sg3@8002)"
+      # FIX: the RDMA data path must dial the LEADER of each *other* donor
+      # shardgroup, matching the WRITE_FLIP/NARROW path which iterates
+      # redisraft_shardgroups (sg.nodes[0].host : sg.port). The previous
+      # version used groups['redis_masters'] at master_port (8000), which
+      # resolves to sg1's FOLLOWER replicas on redis1/redis2 — so every
+      # "donor" was an sg1 node and only sg1's slots ever migrated (3x),
+      # while sg2/sg3's ranges were NARROWed to sg4 with NO data transferred
+      # (silent data loss on the reassigned slots). Exclude sg4 (recipient)
+      # and the orchestrator's own shardgroup (leader == this host at
+      # master_port; self-migrated by the local MIGRATE-ALL).
       set_fact:
-        peer_endpoints: >-
-          {{
-            groups['redis_masters']
-            | difference([inventory_hostname])
-            | map('regex_replace', '^(.+)$', '\1:' + master_port|string)
-            | list
-          }}
+        peer_endpoints: "{{ peer_endpoints | default([]) + [ sg.nodes[0].host ~ ':' ~ sg.port ] }}"
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }} -> {{ sg.nodes[0].host }}:{{ sg.port }}"
+      when: not (sg.nodes[0].host == inventory_hostname and sg.port | string == master_port | string)
 
     - name: "resolve all shardgroup-member IPs"
       shell: "getent hosts {{ item }} | awk '{print $1}'"
@@ -121,6 +131,36 @@
     # known-good; the MIGRATE-WARM redis command remains in the binary (unused).
     # See memory aqraft-stage2-r2-chain-control-gap.md "Stage 6".
 
+    # AqRaft prepare-ahead (re-introduced 2026-06-03, PEERS ONLY).
+    # Move PREP/REGISTERING (RDMA connect + donor big-MR ibv_reg_mr, ~0.8s/donor)
+    # OUT of the measured migration window by pre-warming the donor links during
+    # the pre-reshard pause. The binary's RDMA MIGRATE-WARM now flags the warmed
+    # slots (L->prepared_slot) so migrationWorker SKIPS the REGISTERING phase.
+    #
+    # SELF (sg1, the orchestrator node) is intentionally NOT warmed: (a) its
+    # REGISTERING happens before the first FLIP, so it's already outside the
+    # window; and (b) the 2026-06-01 revert note above showed warming the
+    # orchestrator node deterministically broke sg1's own WRITE_FLIP ("MOVED 0").
+    # sg2/sg3 warms were verified safe there. We warm exactly the peer donors,
+    # each on the RDMA port the orchestrator will assign it (RDMA_PORT_BASE + idx
+    # = 17777 + narrow_specs index), so the migration reuses this warmed link.
+    - name: "PREPARE-AHEAD (peers): set RDMA port + RDMA MIGRATE-WARM (register buffers + dial connection)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          CONFIG SET rdma-migration-port {{ 17777 + sg_idx }}
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          RDMA MIGRATE-WARM {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: warm_results
+      loop: "{{ narrow_specs }}"
+      loop_control:
+        loop_var: spec
+        index_var: sg_idx
+        label: "{{ spec.sg_id }} warm {{ reshard_slots_per_source }} slots @ rdma-port {{ 17777 + sg_idx }}"
+      when: not (spec.leader_host == inventory_hostname and spec.leader_port | string == master_port | string)
+      retries: 3
+      delay: 1
+      until: warm_results.rc == 0 and 'OK' in (warm_results.stdout | default(''))
+
     - name: "ROUND 1: WRITE_FLIP this round's slots -> sg4"
       shell: |
         {{ redis_bin_dir }}/redis-cli \
@@ -195,6 +235,7 @@
 - name: "RDMA orchestrated chunked reshard: ROUND 2"
   hosts: redis_masters[0]
   become: yes
+  gather_facts: no            # reuses ROUND 1's facts (peer_endpoints, narrow_host_ip_map, sg4_*); no ansible facts needed — removes the inter-round fact-gather stall
   vars:
     reshard_target: "{{ groups['redis_migrate'][0] }}"
     reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"

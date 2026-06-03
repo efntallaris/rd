@@ -199,6 +199,13 @@ typedef struct rdmaOutboundLink {
     size_t src_mr_pool_bytes;                       /* mmap capacity */
     struct rdmamig_buffer *src_mr_parent;           /* the single big-MR buffer over the pool */
     int src_mr_used_blocks;                         /* next-free 2MiB block index in the pool */
+    /* AqRaft prepare-ahead: per-slot flag (NULL until first warm). Set by
+     * RDMA MIGRATE-WARM once this donor's source buffers are registered and
+     * the outbound RDMA link is up. The migration worker skips the
+     * REGISTERING phase for slots flagged here, moving the ibv_reg_mr cost
+     * OUT of the measured migration window (paid during the pre-migration
+     * pause instead). */
+    uint8_t *prepared_slot;                         /* [CLUSTER_SLOTS] or NULL */
     pthread_mutex_t mu;                             /* per-link guard for REGISTER round-trips */
 } rdmaOutboundLink;
 

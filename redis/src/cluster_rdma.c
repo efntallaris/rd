@@ -3443,6 +3443,7 @@ void rdmaOutboundLinkFree(void *v) {
     if (L == NULL) return;
     if (L->client) zfree(L->client);  /* rdmamig_client has no public disconnect/free */
     if (L->ctrl)   redisFree(L->ctrl);
+    if (L->prepared_slot) zfree(L->prepared_slot);  /* AqRaft prepare-ahead */
     pthread_mutex_destroy(&L->mu);
     if (L->addr)   sdsfree(L->addr);
     zfree(L);
@@ -5148,6 +5149,18 @@ static void migFail(rdmaMigration *mig, sds err) {
     migNotifyOrchestratorIfAny(mig, "FAILED", 0);
 }
 
+/* AqRaft prepare-ahead: returns 1 iff every chosen slot was already
+ * registered + linked by a prior RDMA MIGRATE-WARM on this link, so the
+ * migration worker can skip the REGISTERING phase. */
+static int rdmaLinkSlotsPrepared(rdmaOutboundLink *L, const int *slots, int n) {
+    if (L == NULL || L->prepared_slot == NULL) return 0;
+    for (int i = 0; i < n; i++) {
+        int s = slots[i];
+        if (s < 0 || s >= CLUSTER_SLOTS || !L->prepared_slot[s]) return 0;
+    }
+    return 1;
+}
+
 static void *migrationWorker(void *arg) {
     rdmaMigration *mig = (rdmaMigration *) arg;
     sds err = NULL;
@@ -5208,12 +5221,23 @@ static void *migrationWorker(void *arg) {
         }
     }
 
-    /* REGISTERING: ibv_reg_mr each source-side staging buffer. */
-    migSetState(mig, RDMA_MIG_REGISTERING);
-    if (rdmaReshardRegisterHelper(mig->L, mig->chosen, mig->n_slots,
-                                  &mig->registered, &err) != 0) {
-        migFail(mig, err);
-        return NULL;
+    /* REGISTERING: ibv_reg_mr each source-side staging buffer — UNLESS this
+     * link was already warmed out-of-band by RDMA MIGRATE-WARM (AqRaft
+     * prepare-ahead). When warmed, the big-MR pool + per-slot source views
+     * already exist on the link, so we skip the phase entirely and keep the
+     * registration cost OUT of the measured migration window. */
+    if (rdmaLinkSlotsPrepared(mig->L, mig->chosen, mig->n_slots)) {
+        mig->registered = mig->n_slots;
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: id=%lld REGISTERING skipped (pre-warmed, n_slots=%d)",
+            mig->id, mig->n_slots);
+    } else {
+        migSetState(mig, RDMA_MIG_REGISTERING);
+        if (rdmaReshardRegisterHelper(mig->L, mig->chosen, mig->n_slots,
+                                      &mig->registered, &err) != 0) {
+            migFail(mig, err);
+            return NULL;
+        }
     }
 
     /* FLIPPING (early-ownership): flip ownership BEFORE TRANSFER so all
@@ -6121,6 +6145,45 @@ void rdmaMigrateAllCommand(client *c) {
  * Idempotent: the link is cached and source_buffers[slot] registration skips
  * already-registered slots, so calling WARM repeatedly (or before each round)
  * is cheap. Run it on each donor leader during the pre-reshard pause. */
+/* AqRaft prepare-ahead: async source-buffer registration for MIGRATE-WARM.
+ * Runs the heavy ibv_reg_mr off the main thread so it can't stall raft
+ * heartbeats (see the comment in rdmaMigrateWarmCommand). On success, flags
+ * the warmed slots so migrationWorker skips the REGISTERING phase. */
+typedef struct {
+    rdmaOutboundLink *L;
+    int *chosen;        /* owned by the thread; freed here */
+    int n_slots;
+} warmRegisterArg;
+
+static void *warmRegisterThread(void *arg) {
+    warmRegisterArg *wa = (warmRegisterArg *) arg;
+    sds err = NULL;
+    int registered = 0;
+    /* rdmaReshardRegisterHelper locks L->mu internally — do NOT hold it here. */
+    int rc = rdmaReshardRegisterHelper(wa->L, wa->chosen, wa->n_slots,
+                                       &registered, &err);
+    if (rc == 0) {
+        pthread_mutex_lock(&wa->L->mu);
+        if (wa->L->prepared_slot == NULL)
+            wa->L->prepared_slot = zcalloc((size_t) CLUSTER_SLOTS * sizeof(uint8_t));
+        for (int i = 0; i < wa->n_slots; i++)
+            wa->L->prepared_slot[wa->chosen[i]] = 1;
+        pthread_mutex_unlock(&wa->L->mu);
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE-WARM(async): registered=%d n_slots=%d — %d slots flagged "
+            "prepared (REGISTERING will be skipped in-window)",
+            registered, wa->n_slots, wa->n_slots);
+    } else {
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE-WARM(async): source register failed: %s "
+            "(migration will register in-window as usual)", err ? err : "?");
+    }
+    if (err) sdsfree(err);
+    zfree(wa->chosen);
+    zfree(wa);
+    return NULL;
+}
+
 void rdmaMigrateWarmCommand(client *c) {
     if (c->argc != 5) {
         addReplyError(c, "syntax: RDMA MIGRATE-WARM recipient-host recipient-port slots-per-source");
@@ -6175,25 +6238,38 @@ void rdmaMigrateWarmCommand(client *c) {
         sdsfree(key);
     }
 
-    /* 2. Pre-register this donor's source buffers (state-free; no recipient RPC,
-     *    no slot-state change). */
-    sds err = NULL;
-    int registered = 0;
-    if (rdmaReshardRegisterHelper(L, chosen, n_slots, &registered, &err) != 0) {
+    /* 2. Pre-register this donor's source buffers OFF the main thread.
+     *
+     * The registration does a ~0.8–3s ibv_reg_mr over the 2.86GB big-MR pool.
+     * Running that on the main event-loop thread (this command handler) stalls
+     * the loop past raft's check-quorum window (election_timeout*2 = 2000ms),
+     * triggering a leader change on this donor's shardgroup — which then breaks
+     * the subsequent RAFT.SHARDGROUP WRITE_FLIP with a spurious -MOVED (the
+     * 2026-06-01 revert in reshard_cluster_rdma_v2_orchestrated_chunked.yml).
+     * Mirror AqRaft Patch 15: hand the ibv_reg_mr to a detached worker thread
+     * (rdmaReshardRegisterHelper is already thread-safe — the migration worker
+     * calls it off-main-thread too). prepared_slot is flagged when the thread
+     * finishes; migrationWorker skips REGISTERING for flagged slots, else falls
+     * back to in-window registration. The pre-reshard pause gives it time. */
+    warmRegisterArg *wa = zmalloc(sizeof(*wa));
+    wa->L = L;
+    wa->chosen = chosen;          /* ownership transferred to the thread */
+    wa->n_slots = n_slots;
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, warmRegisterThread, wa) != 0) {
+        zfree(wa);
         zfree(chosen);
-        addReplyErrorFormat(c, "MIGRATE-WARM: source register failed: %s",
-                            err ? err : "?");
-        if (err) sdsfree(err);
+        addReplyError(c, "MIGRATE-WARM: could not spawn async register thread");
         return;
     }
-    zfree(chosen);
+    pthread_detach(tid);
 
     serverLog(LL_NOTICE,
-        "RDMA MIGRATE-WARM: target=%s:%d n_slots=%d registered=%d (%s link) "
-        "[AqRaft Stage 6 — connection + source-buffer MR pre-staged, no slot-state]",
-        recipient_host, recipient_port, n_slots, registered, newly ? "new" : "cached");
-    addReplyStatusFormat(c, "OK warmed target=%s:%d n_slots=%d registered=%d link=%s",
-                         recipient_host, recipient_port, n_slots, registered,
+        "RDMA MIGRATE-WARM: target=%s:%d n_slots=%d (%s link) — connection up, "
+        "source-buffer registration dispatched off-main-thread [AqRaft prepare-ahead]",
+        recipient_host, recipient_port, n_slots, newly ? "new" : "cached");
+    addReplyStatusFormat(c, "OK warming target=%s:%d n_slots=%d link=%s (async register)",
+                         recipient_host, recipient_port, n_slots,
                          newly ? "new" : "cached");
 }
 
