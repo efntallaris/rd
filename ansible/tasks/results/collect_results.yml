@@ -93,3 +93,22 @@
       file:
         path: "{{ redis_log_dir }}"
         state: absent
+
+# Report the cold-excluded migration window (sg1 FLIPPING -> last donor DONE),
+# which excludes sg1/self's one-time RDMA registration. Runs on the control node
+# against the just-collected logs and writes migration_window.txt into the
+# result dir.
+- name: "Report cold-excluded migration window"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  tasks:
+    - name: Compute migration window
+      command: python3 /users/entall/rd/migration_window.py /tmp/experiments/{{ experiment_name }}
+      register: migwin
+      changed_when: false
+      failed_when: false
+
+    - name: Print migration window
+      debug:
+        msg: "{{ migwin.stdout_lines | default([migwin.stderr | default('migration_window: n/a')]) }}"

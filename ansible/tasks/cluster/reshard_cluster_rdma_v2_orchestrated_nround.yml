@@ -1,0 +1,194 @@
+---
+# N-round chunked orchestrated reshard (generalizes
+# reshard_cluster_rdma_v2_orchestrated_chunked.yml from a hardcoded 2 rounds to
+# `n_rounds` rounds). Smaller chunks per round => each flip touches fewer slots
+# => fewer slots two-sided at once => shallower (but more) throughput dips.
+#
+# Single play: compute shared facts ONCE (peer endpoints, host->IP map, sg4
+# dbid/node-argv), pre-warm the peer donors, then loop reshard_one_round.yml
+# n_rounds times. Set n_rounds via -e n_rounds=N (default 2).
+- name: "RDMA orchestrated chunked reshard: {{ n_rounds | default(2) }} rounds"
+  hosts: redis_masters[0]
+  become: yes
+  gather_facts: no
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+    n_rounds: "{{ n_rounds | default(2) }}"
+  tasks:
+    - name: "Build peer-endpoint list (other donor shardgroup LEADERS)"
+      set_fact:
+        peer_endpoints: "{{ peer_endpoints | default([]) + [ sg.nodes[0].host ~ ':' ~ sg.port ] }}"
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }} -> {{ sg.nodes[0].host }}:{{ sg.port }}"
+      when: not (sg.nodes[0].host == inventory_hostname and sg.port | string == master_port | string)
+
+    - name: "Build donor-leader list (for the warm step)"
+      set_fact:
+        donor_specs: "{{ donor_specs | default([]) + [{'sg_id': sg.id, 'leader_host': sg.nodes[0].host, 'leader_port': sg.port}] }}"
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+
+    - name: "resolve all shardgroup-member IPs"
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: narrow_host_ip_lookup
+      changed_when: false
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | sum(start=[]) | map(attribute='host') | unique | list }}"
+
+    - name: "build host->IP map"
+      set_fact:
+        narrow_host_ip_map: >-
+          {{
+            dict(
+              narrow_host_ip_lookup.results
+                | map(attribute='item')
+                | zip(narrow_host_ip_lookup.results | map(attribute='stdout'))
+            )
+          }}
+
+    - name: "probe sg4 leader for raft_dbid"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli \
+          -h {{ narrow_host_ip_map[(redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).nodes[0].host] }} \
+          -p {{ (redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).port }} \
+          INFO raft \
+          | awk -F: '/^raft_dbid:/{print $2}' | tr -d ' \r\n'
+      register: sg4_dbid_probe
+      changed_when: false
+
+    - name: "stash sg4 dbid"
+      set_fact:
+        sg4_dbid: "{{ sg4_dbid_probe.stdout }}"
+
+    - name: "build sg4 node-spec fragment"
+      set_fact:
+        sg4_node_argv: >-
+          {{
+            sg4_node_argv | default('') +
+            sg4_dbid + ('%08x' % nd.raft_id) + ' ' +
+            narrow_host_ip_map[nd.host] + ':' +
+            ((redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).port | string) + ' '
+          }}
+      loop: "{{ (redisraft_shardgroups | selectattr('id', 'equalto', 'sg4') | first).nodes }}"
+      loop_control:
+        loop_var: nd
+
+    # Per-donor JIT WRITE_FLIP: hand each donor leader the sg4 external-shardgroup
+    # spec (dbid + node argv) via config, so its migration worker issues
+    # RAFT.SHARDGROUP WRITE_FLIP for its OWN slot range right after MGN_TXN_START
+    # (instead of ansible flipping all donors up-front each round). The worker
+    # supplies the slot range; this spec is the constant tail, same every round.
+    - name: "Set per-donor JIT WRITE_FLIP spec on each donor leader"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          CONFIG SET rdma-writeflip-spec "{{ sg4_dbid }} {{ sg4_node_argv | trim }}"
+      loop: "{{ donor_specs }}"
+      loop_control:
+        loop_var: spec
+        label: "{{ spec.sg_id }}"
+      changed_when: false
+
+    # PREPARE-AHEAD (peers only): pre-register donor buffers + dial the RDMA link
+    # off the critical path. Warms the FULL per-source range so every round
+    # reuses it. NOT the orchestrator's own shardgroup (warming self breaks its
+    # WRITE_FLIP — see the chunked task's notes).
+    - name: "PREPARE-AHEAD (peers): set RDMA port + RDMA MIGRATE-WARM"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          CONFIG SET rdma-migration-port {{ 17777 + sg_idx }}
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          RDMA MIGRATE-WARM {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: warm_results
+      loop: "{{ donor_specs }}"
+      loop_control:
+        loop_var: spec
+        index_var: sg_idx
+        label: "{{ spec.sg_id }} warm @ rdma-port {{ 17777 + sg_idx }}"
+      when: not (spec.leader_host == inventory_hostname and spec.leader_port | string == master_port | string)
+      retries: 3
+      delay: 1
+      until: warm_results.rc == 0 and 'OK' in (warm_results.stdout | default(''))
+
+    # Reset the per-donor reshard offset so round 0 starts at the donor's first
+    # owned slot. Each donor then self-advances server.rdma_reshard_migrated as it
+    # migrates each chunk, so successive rounds pick successive chunks WITHOUT an
+    # inter-round NARROW. Set on every donor leader (self + peers).
+    - name: "Reset reshard offset (rdma-reshard-migrated=0) on each donor"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+          CONFIG SET rdma-reshard-migrated 0
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }}"
+      changed_when: false
+
+    # Run ALL rounds inside ONE shell task — the round loop is in bash, so there
+    # is NO ansible per-iteration overhead between rounds. Each round just
+    # dispatches its chunk (donor self-offsets) and polls to DONE; the next round
+    # dispatches the instant the prior completes => inter-round gap ~0.1s.
+    - name: "Run {{ n_rounds }} chunked migration rounds (single shell, bash loop)"
+      shell: |
+        set -u
+        PS={{ reshard_slots_per_source | int }}; NR={{ n_rounds | int }}
+        CHUNK=$((PS / NR))
+        for RI in $(seq 0 $((NR - 1))); do
+          if [ "$RI" -lt $((NR - 1)) ]; then CNT=$CHUNK; else CNT=$((PS - CHUNK * (NR - 1))); fi
+          out=$({{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL \
+                  {{ reshard_target }} {{ master_port }} $CNT {{ peer_endpoints | join(' ') }})
+          oid=$(printf '%s' "$out" | grep -oE 'orchestration_id=[0-9]+' | grep -oE '[0-9]+' | head -1)
+          if [ -z "$oid" ]; then echo "round $RI DISPATCH FAILED: $out"; exit 1; fi
+          final=TIMEOUT
+          for i in $(seq 1 1200); do
+            st=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>/dev/null \
+                   | head -1 | grep -oE 'DONE|FAILED' | head -1)
+            if [ "$st" = "DONE" ] || [ "$st" = "FAILED" ]; then final=$st; break; fi
+            sleep 0.05
+          done
+          echo "round $RI count=$CNT orch=$oid FINAL=$final"
+          [ "$final" = "DONE" ] || exit 1
+        done
+      register: all_rounds
+      changed_when: true
+
+    # NARROW, batched ONCE after all rounds (out of the inter-round path): hand
+    # sg4 the full migrated per-source range and shrink each donor. Per-round
+    # NARROW is no longer needed because the donor self-offsets chunk selection.
+    - name: "NARROW each donor -> sg4 (full per-source range, batched)"
+      shell: |
+        set -u
+        rm -f /tmp/fin_narrow_*.out
+        {% for sg in redisraft_shardgroups if sg.id != 'sg4' %}
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+          RAFT.SHARDGROUP NARROW \
+            {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) }}:{{ sg.slot_config.split(':')[1] | int }} \
+            {{ sg4_dbid }} 1 3 \
+            {{ sg.slot_config.split(':')[0] | int }} {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }} 1 0 \
+            {{ sg4_node_argv }} > /tmp/fin_narrow_{{ sg.id }}.out 2>&1 &
+        {% endfor %}
+        wait
+        ok=$(grep -l OK /tmp/fin_narrow_*.out | wc -l); cat /tmp/fin_narrow_*.out
+        test "$ok" -eq {{ (redisraft_shardgroups | rejectattr('id','equalto','sg4') | list) | length }}
+      register: fin_narrow
+      retries: 5
+      delay: 1
+      until: fin_narrow.rc == 0
+
+    # Donor offload, batched ONCE after all rounds (out of the inter-round path):
+    # drop each donor's now-foreign migrated keys (full per-source range) so it
+    # stops serving them and is actually offloaded — turning the migration from a
+    # copy into a move. sg4 already owns + serves the data, so this is safe.
+    - name: "EVICT migrated slots on each donor (offload — batched, copy -> move)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+          RDMA EVICT-SLOTS {{ sg.slot_config.split(':')[0] | int }} \
+          {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}
+      register: evict_results
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }}: evict {{ sg.slot_config.split(':')[0] }}:{{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}"
+      changed_when: false

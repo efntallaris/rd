@@ -1,0 +1,31 @@
+---
+# Per-round task — ONE shell task (dispatch + poll inline) to minimise the
+# inter-round gap. The donor self-advances its slot offset
+# (server.rdma_reshard_migrated), the per-donor WRITE_FLIP is server-side, and
+# NARROW + EVICT are batched after all rounds — so a round is just: dispatch the
+# chunk, poll to DONE. Collapsing it to a single ansible task (no per-round
+# set_facts / separate parse / debug) keeps the inter-round gap ~0.2s.
+#
+# Expects: round_idx, n_rounds, reshard_slots_per_source, peer_endpoints,
+#          reshard_target, master_port, redis_bin_dir.
+- name: "Round {{ round_idx }}: dispatch RDMA MIGRATE-ALL + poll to DONE (single task)"
+  shell: |
+    set -u
+    PS={{ reshard_slots_per_source | int }}; NR={{ n_rounds | int }}; RI={{ round_idx | int }}
+    CHUNK=$((PS / NR))
+    if [ "$RI" -lt $((NR - 1)) ]; then CNT=$CHUNK; else CNT=$((PS - CHUNK * (NR - 1))); fi
+    out=$({{ redis_bin_dir }}/redis-cli -p {{ master_port }} RDMA MIGRATE-ALL \
+            {{ reshard_target }} {{ master_port }} $CNT {{ peer_endpoints | join(' ') }})
+    oid=$(printf '%s' "$out" | grep -oE 'orchestration_id=[0-9]+' | grep -oE '[0-9]+' | head -1)
+    if [ -z "$oid" ]; then echo "DISPATCH FAILED: $out"; exit 1; fi
+    final=TIMEOUT
+    for i in $(seq 1 1200); do
+      st=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>/dev/null \
+             | head -1 | grep -oE 'DONE|FAILED' | head -1)
+      if [ "$st" = "DONE" ] || [ "$st" = "FAILED" ]; then final=$st; break; fi
+      sleep 0.05
+    done
+    echo "Round $RI count=$CNT orch=$oid FINAL=$final attempts=$i"
+    [ "$final" = "DONE" ]
+  register: rn_round
+  changed_when: true

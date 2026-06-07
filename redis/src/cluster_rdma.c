@@ -225,6 +225,59 @@ static void rdmaMgnLogSync(const char *type, const char *payload) {
     redisFree(ctx);
 }
 
+/* AqRaft per-donor JIT WRITE_FLIP. Issued by the migration worker right after
+ * MGN_TXN_START so THIS donor's slots enter write-redirect-to-sg4 exactly when
+ * its migration begins (instead of ansible flipping all donors up-front). The
+ * sg4 external-shardgroup spec (dbid + node argv) is supplied out-of-band via
+ *   CONFIG SET rdma-writeflip-spec "<sg4_dbid> <sg4_node_argv>"
+ * and the worker supplies its own contiguous slot range [lo,hi]. Builds the
+ * same command ansible used:
+ *   RAFT.SHARDGROUP WRITE_FLIP <lo>:<hi> <dbid> 1 3 <lo> <hi> 1 0 <node_argv>
+ * Loopback to self (same pattern + thread-safety caveat as rdmaMgnLogSync:
+ * worker thread only, never the main thread). Returns 0 on OK / disabled,
+ * -1 on hard failure. Synchronous: blocks until the raft commit replies, so
+ * the redirect is in place before TRANSFER. */
+static int rdmaWriteFlipSync(int lo, int hi) {
+    sds spec = server.rdma_writeflip_spec;
+    if (spec == NULL || sdslen(spec) == 0) return 0;   /* disabled => ansible flips */
+    const char *sp = strchr(spec, ' ');
+    if (sp == NULL) {
+        serverLog(LL_WARNING, "WRITE_FLIP(jit): malformed rdma-writeflip-spec (need '<dbid> <node_argv>')");
+        return -1;
+    }
+    int dbid_len = (int) (sp - spec);
+    const char *node_argv = sp + 1;
+    sds cmd = sdscatprintf(sdsempty(),
+        "RAFT.SHARDGROUP WRITE_FLIP %d:%d %.*s 1 3 %d %d 1 0 %s",
+        lo, hi, dbid_len, spec, lo, hi, node_argv);
+
+    redisContext *ctx = redisConnect("127.0.0.1", server.port);
+    if (ctx == NULL || ctx->err) {
+        serverLog(LL_WARNING, "WRITE_FLIP(jit): redisConnect(127.0.0.1:%d) failed: %s",
+                  server.port, ctx ? ctx->errstr : "(null ctx)");
+        if (ctx) redisFree(ctx);
+        sdsfree(cmd);
+        return -1;
+    }
+    /* cmd is whitespace-delimited and contains no '%' (dbid=hex, addrs=digits/
+     * dots/colons), so it is safe to pass as the hiredis format string — that
+     * makes hiredis split it into args, which is what we want. */
+    redisReply *r = redisCommand(ctx, cmd);
+    int rc = -1;
+    if (r == NULL) {
+        serverLog(LL_WARNING, "WRITE_FLIP(jit) %d:%d: command failed: %s", lo, hi, ctx->errstr);
+    } else if (r->type == REDIS_REPLY_ERROR) {
+        serverLog(LL_WARNING, "WRITE_FLIP(jit) %d:%d: error reply: %s", lo, hi, r->str);
+    } else {
+        serverLog(LL_NOTICE, "WRITE_FLIP(jit) applied %d:%d -> sg4 (right after MGN_TXN_START)", lo, hi);
+        rc = 0;
+    }
+    if (r) freeReplyObject(r);
+    redisFree(ctx);
+    sdsfree(cmd);
+    return rc;
+}
+
 /* ---- AqRaft helpers (cluster_enabled bypass for RedisRaft donors) ------- *
  *
  * RedisRaft refuses to load with cluster_enabled=yes, but the migration
@@ -2205,13 +2258,29 @@ static void backpatchFinalize(backpatchBatch *b) {
      * connection pool. Measure to confirm. */
     long long t0 = ustime();
 
+    /* AqRaft fix (2026-06-05): the MGN_INDX_UPD / MGN_RECP_TXN_DONE emit below
+     * MUST be thread-safe here. backpatchFinalize runs OFF the main thread in
+     * the normal path (chainForwardWorker / backpatchFinalizeWorker), but
+     * rdmaMgnLogAsync drives ONE shared event-loop async context that is
+     * main-thread-only. Concurrent worker-thread sends raced and corrupted that
+     * context, so only the first ~2 of N sessions' INDX_UPD/RECP_TXN_DONE ever
+     * committed — leaving most migrated sessions UNINDEXED on the sg4 followers
+     * (reads -MOVED to a follower then miss => mass read failures + post-
+     * migration throughput collapse on read-heavy workloads). Fix: emit via the
+     * thread-safe SYNC loopback (rdmaMgnLogSync, what migrationWorker uses) when
+     * off-main; keep the async path only for the rare main-thread inline
+     * fallback (chainPendingTick worker-spawn failure), where SYNC would
+     * deadlock the event loop on its own RAFT.MGN-LOG. */
+    int off_main = !pthread_equal(pthread_self(), server.main_thread_id);
+
     {
         char mgn_payload[160];
         snprintf(mgn_payload, sizeof(mgn_payload),
                  "sess=%lld n_slots=%d applied=%lld",
                  b->src_mig_id, b->n_slots,
                  (long long) atomic_load(&b->applied));
-        rdmaMgnLogAsync("INDX_UPD", mgn_payload);
+        if (off_main) rdmaMgnLogSync("INDX_UPD", mgn_payload);
+        else          rdmaMgnLogAsync("INDX_UPD", mgn_payload);
         /* AqRaft 3-flag DONE: this is condition (3) — MGN_INDX_UPD is now in
          * the recipient's local raft log (the async send returned). The
          * reply / commit completes within the typical raft round-trip
@@ -2227,7 +2296,8 @@ static void backpatchFinalize(backpatchBatch *b) {
                  b->src_mig_id,
                  (long long) atomic_load(&b->applied),
                  (long long) atomic_load(&b->clobber_skipped));
-        rdmaMgnLogAsync("RECP_TXN_DONE", mgn_payload);
+        if (off_main) rdmaMgnLogSync("RECP_TXN_DONE", mgn_payload);
+        else          rdmaMgnLogAsync("RECP_TXN_DONE", mgn_payload);
     }
     long long t1 = ustime();
     size_t pool_size = b->donor_snapshot_pool_bytes;
@@ -5196,6 +5266,16 @@ static void *migrationWorker(void *arg) {
         rdmaMgnLogSync("TXN_START", mgn_payload);
     }
 
+    /* AqRaft per-donor JIT WRITE_FLIP: flip THIS donor's slots to write-redirect
+     * NOW (right after MGN_TXN_START), so each donor enters the redirect/two-
+     * sided state exactly when its migration starts — not all donors up-front.
+     * No-op when rdma-writeflip-spec is unset (ansible up-front path). */
+    if (mig->n_slots > 0 &&
+        rdmaWriteFlipSync(mig->chosen[0], mig->chosen[mig->n_slots - 1]) < 0) {
+        migFail(mig, sdsnew("per-donor WRITE_FLIP (post-TXN_START) failed"));
+        return NULL;
+    }
+
     /* PREP: register recipient landing buffers for the chosen slots. */
     migSetState(mig, RDMA_MIG_PREP);
     if (rdmaMigratePrepHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
@@ -5444,11 +5524,22 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
         return -1;
     }
 
+    /* AqRaft multi-round (server-side offset): skip the first
+     * server.rdma_reshard_migrated owned slots — the ones prior rounds of THIS
+     * reshard already migrated — and take the next n_slots. This lets ansible
+     * fire each round back-to-back (no inter-round NARROW needed for chunk
+     * selection; NARROW + EVICT are batched once at the end), collapsing the
+     * inter-round gap to a dispatch+poll (~0.2s). The donor self-advances the
+     * counter so successive RDMA MIGRATE-ALLs pick successive chunks. Reset to 0
+     * (CONFIG SET rdma-reshard-migrated 0) before round 0. */
+    int reshard_skip = server.rdma_reshard_migrated;
     int *chosen = zmalloc((size_t) n_slots * sizeof(int));
     int picked = 0;
+    int seen_owned = 0;
     clusterTopoLockRead();
     for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
         if (rdmaMigrationOwnsSlot(i)) {
+            if (seen_owned++ < reshard_skip) continue;   /* already migrated by a prior round */
             chosen[picked++] = i;
         }
     }
@@ -5456,9 +5547,10 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
     if (picked < n_slots) {
         zfree(chosen);
         if (orch_endpoint) sdsfree(orch_endpoint);
-        *err_out = "self owns fewer slots than requested";
+        *err_out = "self owns fewer slots than requested (after reshard offset)";
         return -1;
     }
+    server.rdma_reshard_migrated += n_slots;   /* advance offset for the next round */
 
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
@@ -6182,6 +6274,40 @@ static void *warmRegisterThread(void *arg) {
     zfree(wa->chosen);
     zfree(wa);
     return NULL;
+}
+
+/* RDMA EVICT-SLOTS <lo> <hi>
+ *
+ * Drop every key this node still holds in the slot range [lo,hi]. Issued on a
+ * DONOR right after its RAFT.SHARDGROUP NARROW handed those slots to the
+ * recipient (sg4), so the donor stops serving the now-foreign slots and its
+ * memory + CPU are actually freed.
+ *
+ * Why this is needed: the RDMA migration COPIES a slot's keys to the recipient
+ * but never deletes the donor's originals (the donor keeps its snapshot "for
+ * readers"). Without an eviction the migration is a copy, not a move — the
+ * donor keeps all migrated keys and keeps serving them (client double-reads
+ * donor+recipient), so the donor is never offloaded and aggregate throughput
+ * never scales after the migration. Deleting the donor's copy turns the slot
+ * empty: reads to it now -MOVED to sg4 (single hop), and the donor's load drops.
+ *
+ * Local delete on the leader only (by_command=1); the recipient already owns
+ * and serves the slot, so the donor's residual replicas are irrelevant. */
+void rdmaEvictSlotsCommand(client *c) {
+    long long lo, hi;
+    if (getLongLongFromObject(c->argv[2], &lo) != C_OK ||
+        getLongLongFromObject(c->argv[3], &hi) != C_OK ||
+        lo < 0 || hi >= CLUSTER_SLOTS || lo > hi) {
+        addReplyError(c, "syntax: RDMA EVICT-SLOTS lo hi  (0 <= lo <= hi < 16384)");
+        return;
+    }
+    unsigned long long removed = 0;
+    for (int s = (int) lo; s <= (int) hi; s++)
+        removed += clusterDelKeysInSlot((unsigned int) s, 1);
+    serverLog(LL_NOTICE,
+        "RDMA EVICT-SLOTS %lld:%lld — dropped %llu donor keys (offload post-NARROW)",
+        lo, hi, removed);
+    addReplyStatusFormat(c, "OK evicted slots=%lld:%lld keys=%llu", lo, hi, removed);
 }
 
 void rdmaMigrateWarmCommand(client *c) {

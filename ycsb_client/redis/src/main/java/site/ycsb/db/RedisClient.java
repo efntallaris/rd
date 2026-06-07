@@ -106,6 +106,89 @@ public class RedisClient extends DB {
    * time). Best-effort: a null/stale read just falls back, which stays correct. */
   private static final HostAndPort[] SHARED_PEER = new HostAndPort[16384];
 
+  /* AqRaft proactive collapse (option #2): a SINGLE shared background daemon
+   * polls CLUSTER SLOTS and, the moment a slot's owner changes from its
+   * bootstrap (donor) owner to the recipient (i.e. NARROW landed), flips
+   * SHARED_COLLAPSED[slot]=true and records the new owner in SHARED_PEER[slot].
+   * The read/write paths then route straight to the recipient WITHOUT each
+   * thread having to discover the flip via a per-slot donor -MOVED round-trip
+   * — which is the MOVED storm behind the deep mid-migration throughput dip.
+   * Correctness is unchanged: the flag only flips AFTER CLUSTER SLOTS shows the
+   * recipient as the authoritative owner (post-NARROW), exactly the condition
+   * under which the lazy donor-MOVED collapse already routes to the recipient. */
+  private static final HostAndPort[] SHARED_BOOT_OWNER = new HostAndPort[16384];
+  private static final boolean[] SHARED_COLLAPSED = new boolean[16384];
+  private static final java.util.concurrent.atomic.AtomicBoolean SLOT_POLLER_STARTED =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
+  /* All master endpoints the client knows (populated at bootstrap). The poller
+   * polls EVERY one of them and UNIONs the migrated ranges, because after a
+   * cross-shardgroup migration NO single node has the correct full slot map:
+   * each donor only learns about ITS OWN migration to sg4 (e.g. redis0 knows
+   * the slots it gave up, but still reports the other donors as owning their
+   * already-migrated slots). Polling one seed therefore mis-routes ~2/3 of the
+   * migrated slots to the wrong (donor) node forever -> -MOVED bounce, read
+   * failures, donors never offloaded, no scaling. */
+  private static final java.util.Set<HostAndPort> POLL_TARGETS =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /** Start the shared CLUSTER SLOTS poller once. pollMs<=0 disables it (baseline). */
+  @SuppressWarnings("unchecked")
+  private static void startSlotPollerOnce(final HostAndPort seed, final Integer timeoutMs,
+                                          final int pollMs) {
+    if (pollMs <= 0) return;
+    if (!SLOT_POLLER_STARTED.compareAndSet(false, true)) return;
+    POLL_TARGETS.add(seed);
+    Thread t = new Thread(() -> {
+      while (true) {
+        try {
+          Thread.sleep(pollMs);
+          /* Poll every known master and UNION sg4-owned ranges. We only ever
+           * SET collapsed (never unset): a node's stale view of another donor's
+           * slots reports the BOOT owner (== SHARED_BOOT_OWNER) and is a no-op,
+           * while the donor's own view reports sg4 (!= boot) and flips it. */
+          for (HostAndPort target : POLL_TARGETS) {
+            Jedis j = (timeoutMs != null)
+                ? new Jedis(target.getHost(), target.getPort(), timeoutMs)
+                : new Jedis(target.getHost(), target.getPort());
+            try {
+              j.connect();
+              j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
+              Object reply = j.getClient().getOne();
+              if (!(reply instanceof List)) { continue; }
+              for (Object rangeObj : (List<Object>) reply) {
+                List<Object> range = (List<Object>) rangeObj;
+                int startSlot = (int) (long) (Long) range.get(0);
+                int endSlot   = (int) (long) (Long) range.get(1);
+                List<Object> masterInfo = (List<Object>) range.get(2);
+                String mh = SafeEncoder.encode((byte[]) masterInfo.get(0));
+                long   mp = (Long) masterInfo.get(1);
+                HostAndPort owner = new HostAndPort(mh, (int) mp);
+                for (int s = startSlot; s <= endSlot && s < 16384; s++) {
+                  HostAndPort boot = SHARED_BOOT_OWNER[s];
+                  if (boot != null && !owner.equals(boot)) {
+                    SHARED_PEER[s] = owner;        // sg4 LEADER (CLUSTER SLOTS master)
+                    SHARED_COLLAPSED[s] = true;    // pre-empt the per-slot donor -MOVED
+                  }
+                }
+              }
+            } catch (Exception inner) {
+              /* skip this target this tick (leader moving mid-NARROW etc.) */
+            } finally {
+              try { j.close(); } catch (Exception ignore) { /* drain */ }
+            }
+          }
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          return;
+        } catch (Exception e) {
+          /* transient — retry next tick */
+        }
+      }
+    }, "redis-slot-poller");
+    t.setDaemon(true);
+    t.start();
+  }
+
   private static final java.util.concurrent.atomic.AtomicLong INSTR_FAST = new java.util.concurrent.atomic.AtomicLong();
   private static final java.util.concurrent.atomic.AtomicLong INSTR_TWOSIDED = new java.util.concurrent.atomic.AtomicLong();
   private static final java.util.concurrent.atomic.AtomicLong INSTR_COLLAPSE = new java.util.concurrent.atomic.AtomicLong();
@@ -264,8 +347,10 @@ public class RedisClient extends DB {
         HostAndPort hp = new HostAndPort(masterHost, (int) masterPort);
         for (int s = (int) startSlot; s <= (int) endSlot; s++) {
           slotOwner[s] = hp;
+          if (SHARED_BOOT_OWNER[s] == null) SHARED_BOOT_OWNER[s] = hp;  // donor snapshot for the poller
         }
         getOrOpen(hp);
+        POLL_TARGETS.add(hp);   // poller must query EVERY master (no node has the full post-migration map)
       }
     } catch (Exception e) {
       throw new DBException("CLUSTER SLOTS bootstrap failed: " + e.getMessage());
@@ -295,6 +380,15 @@ public class RedisClient extends DB {
     }
 
     seed.close();
+
+    /* Start the shared proactive-collapse poller (option #2). Interval from
+     * redis.slotpoll.ms (default 100ms; set 0 to disable for an A/B baseline). */
+    int pollMs = 100;
+    try {
+      String p = getProperties().getProperty("redis.slotpoll.ms");
+      if (p != null) pollMs = Integer.parseInt(p.trim());
+    } catch (Exception ignore) { /* keep default */ }
+    startSlotPollerOnce(seedHostPort, timeoutMs, pollMs);
   }
 
   private synchronized Jedis getOrOpen(HostAndPort hp) {
@@ -560,6 +654,11 @@ public class RedisClient extends DB {
 
   private Object execForSlot(String key, JedisOp op) {
     int slot = JedisClusterCRC16.getSlot(key);
+    // AqRaft proactive collapse: poller saw this slot narrow → write straight
+    // to the recipient, skipping the donor -MOVED rediscovery.
+    if (slotOwner != null && SHARED_COLLAPSED[slot] && SHARED_PEER[slot] != null) {
+      slotOwner[slot] = SHARED_PEER[slot];
+    }
     HostAndPort hp = (slotOwner != null) ? slotOwner[slot] : seedHostPort;
     boolean ask = false;
     /* The peer-probe thread (parallel-read path) may be using these same
@@ -730,6 +829,38 @@ public class RedisClient extends DB {
     }
 
     int slot = JedisClusterCRC16.getSlot(key);
+    // AqRaft proactive collapse (readiness-safe): if the background poller has
+    // seen this slot narrow to the recipient, read the recipient FIRST —
+    // skipping the per-slot donor -MOVED rediscovery (the MOVED storm). But the
+    // poller flags on OWNERSHIP (CLUSTER SLOTS), which can lead readiness: if
+    // the recipient misses (collapse was premature, or the recipient hasn't
+    // finalized the slot yet), FALL BACK to the donor snapshot before failing —
+    // so proactive collapse can never fail a read the donor could still serve.
+    if (SHARED_COLLAPSED[slot] && SHARED_PEER[slot] != null) {
+      slotOwner[slot] = SHARED_PEER[slot];
+      SlotEntry pc = slotCache[slot];
+      pc.state = SLOT_STABLE;
+      pc.peer = null;
+      Jedis rj = getOrOpenSafe(SHARED_PEER[slot]);
+      long tp = System.nanoTime();
+      GetReply rr = (rj != null) ? sendGet(rj, key) : null;
+      instrRecordLat(SHARED_PEER[slot], System.nanoTime() - tp);
+      if (rr != null && rr.value != null) {
+        INSTR_COLLAPSE.incrementAndGet();
+        result.put(resultField, new StringByteIterator(rr.value));
+        return Status.OK;
+      }
+      HostAndPort donor = SHARED_BOOT_OWNER[slot];
+      if (donor != null && !donor.equals(SHARED_PEER[slot])) {
+        Jedis dj = getOrOpenSafe(donor);
+        GetReply dr = (dj != null) ? sendGet(dj, key) : null;
+        if (dr != null && dr.value != null) {
+          result.put(resultField, new StringByteIterator(dr.value));
+          return Status.OK;
+        }
+      }
+      return Status.ERROR;
+    }
     SlotEntry s = slotCache[slot];
     instrMaybeLog();
 

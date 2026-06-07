@@ -317,8 +317,32 @@ def _annotate_vline(ax, x: Optional[float], color: str, label: str) -> None:
     )
 
 
+def rolling_median(ys, win: int):
+    """Centered rolling median over `win` samples, NaN-aware. Suppresses the
+    single-sample latency spike at migration start (a transient flip-window
+    outlier) without shifting the trend the way a mean would. win<=1 → no-op.
+    NaNs are ignored within each window; an all-NaN window stays NaN."""
+    if win <= 1:
+        return list(ys)
+    n = len(ys)
+    half = win // 2
+    out = []
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        w = [v for v in ys[lo:hi] if v is not None and v == v]  # v==v: not NaN
+        if not w:
+            out.append(float("nan"))
+        else:
+            w.sort()
+            m = len(w)
+            out.append(w[m // 2] if m % 2 else 0.5 * (w[m // 2 - 1] + w[m // 2]))
+    return out
+
+
 def plot(expdir: Path, output: Path, span_only: bool = False,
-         xmin: float = PLOT_X_MIN, xmax: float = PLOT_X_MAX) -> None:
+         xmin: float = PLOT_X_MIN, xmax: float = PLOT_X_MAX,
+         smooth: int = 1) -> None:
     ycsb_path = expdir / "ycsb" / "ycsb0" / "tmp" / "ycsb_output_ycsb0"
     if not ycsb_path.exists():
         cands = list(expdir.rglob("ycsb_output_*"))
@@ -333,8 +357,8 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
     t0 = samples[0].t
     t_rel = [(s.t - t0).total_seconds() for s in samples]
     tp = [s.tp for s in samples]
-    rd_lat = [s.read_lat for s in samples]
-    up_lat = [s.upd_lat for s in samples]
+    rd_lat = rolling_median([s.read_lat for s in samples], smooth)
+    up_lat = rolling_median([s.upd_lat for s in samples], smooth)
 
     flip_rel       = to_rel(auto_tz_offset(find_first_marker(expdir,
                             "RDMA RESHARD-FLIP: slot=", "ownership flipped to"), t0), t0)
@@ -360,11 +384,15 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
             continue
         migration_bands.append((src, s_rel, e_rel))
 
-    # span_only window: FROM FLIP (Setup/registration excluded) -> last DONE.
-    # Falls back to the first PREP if no FLIP marker was found.
-    win_start = (flip_first_rel if (span_only and flip_first_rel is not None)
+    # Migration window = COLD-EXCLUDED: first donor FLIPPING (registration /
+    # Setup excluded) -> last donor DONE. Computed directly from the FLIP and
+    # DONE markers (NOT from per-source PREP, which prepare-ahead suppresses for
+    # warmed donors). Matches migration_window.py.
+    done_last_rel = to_rel(auto_tz_offset(find_last_marker(expdir, "DONE n_slots"), t0), t0)
+    win_start = (flip_first_rel if flip_first_rel is not None
                  else (migration_bands[0][1] if migration_bands else None))
-    win_end = migration_bands[-1][2] if migration_bands else None
+    win_end = (done_last_rel if done_last_rel is not None
+               else (migration_bands[-1][2] if migration_bands else None))
 
     # Workload nickname: strip the experiment prefix for the panel titles.
     workload = expdir.name
@@ -465,84 +493,32 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
         columnspacing=1.8,
     )
 
-    # Migration shading. Two modes:
-    #   - default: one soft band per source (PREP->DONE).
-    #   - span_only (--span-only): ONE band from the first round's start to the
-    #     last round's end, with NO per-source M1/M2/M3 labels.
-    if span_only and migration_bands:
-        span_start = win_start
-        span_end   = win_end
+    # Migration shading: ONE band over the cold-excluded window (first donor
+    # FLIPPING -> last donor DONE). No per-source M1/M2/M3 bands/labels.
+    if win_start is not None and win_end is not None and win_end > win_start:
         for ax in (ax_tp, ax_lat):
-            ax.axvspan(span_start, span_end, alpha=0.20,
+            ax.axvspan(win_start, win_end, alpha=0.20,
                        color=PHASE_COLORS["BAND_FILL"], zorder=1)
-    else:
-        for src, s_rel, e_rel in migration_bands:
-            for ax in (ax_tp, ax_lat):
-                ax.axvspan(s_rel, e_rel, alpha=0.20,
-                           color=PHASE_COLORS["BAND_FILL"], zorder=1)
 
     # Recompute y-limits before annotating so labels sit at correct height.
     ax_lat.relim(); ax_lat.autoscale_view()
     # ax_tp y-limits were set just-above to bracket the actual data range
     # (no 0 tick); do not relim/autoscale here — that would re-include 0.
 
-    # Duration labels in white rounded boxes with olive border, centered above
-    # each migration band so they pop out of the band fill.
-    if migration_bands:
-        _, ymax_tp = ax_tp.get_ylim()
-        label_bbox = dict(
-            boxstyle="round,pad=0.30,rounding_size=0.20",
-            facecolor="white", edgecolor=PHASE_COLORS["BAND_EDGE"],
-            linewidth=1.0, alpha=0.95,
-        )
-        # Per-source M1/M2/M3 labels — skipped in span_only mode.
-        if not span_only:
-            for i, (src, s_rel, e_rel) in enumerate(migration_bands, start=1):
-                dur = e_rel - s_rel
-                mid = (s_rel + e_rel) / 2.0
-                # Place the label just above the panel top edge, centered over the
-                # band, with text on a single line ("M1 7.4s"). Side-by-side
-                # layout: label both panels so the latency panel doesn't look
-                # orphaned.
-                for ax in (ax_tp, ax_lat):
-                    ax.annotate(
-                        f"M{i} {dur:.1f}s",
-                        xy=(mid, 1.0), xycoords=("data", "axes fraction"),
-                        xytext=(0, 4), textcoords="offset points",
-                        ha="center", va="bottom",
-                        color=PHASE_COLORS["BAND_EDGE"],
-                        fontsize=_FS_BAND_LABEL,
-                    )
-        else:
-            # span_only: one label over the whole window with the total duration
-            # (first round start -> last round end, i.e. both rounds).
-            span_mid = (win_start + win_end) / 2.0
-            span_total = win_end - win_start
-            for ax in (ax_tp, ax_lat):
-                ax.annotate(
-                    f"M: {span_total:.1f}s",
-                    xy=(span_mid, 1.0), xycoords=("data", "axes fraction"),
-                    xytext=(0, 4), textcoords="offset points",
-                    ha="center", va="bottom",
-                    color=PHASE_COLORS["BAND_EDGE"],
-                    fontsize=_FS_BAND_LABEL,
-                )
-        # Overall span summary as a footer line below the legend, so it never
-        # covers data or the migration bands.
-        total_start = win_start if span_only else migration_bands[0][1]
-        total_end   = win_end
-        total       = total_end - total_start
-        summary = (f"Migration window: {total:.1f}s "
-                   f"(first FLIP → last round end, Setup excluded)") if span_only else \
-                  f"Total migration: {total:.1f}s ({len(migration_bands)} sources)"
-        fig.text(
-            0.5, -0.12,
-            summary,
-            ha="center", va="top",
-            color=PHASE_COLORS["BAND_EDGE"],
-            fontsize=_FS_SUMMARY,
-            transform=fig.transFigure,
-        )
+    # ONE duration label over the cold-excluded window (no M1/M2/M3).
+    if win_start is not None and win_end is not None and win_end > win_start:
+        span_mid = (win_start + win_end) / 2.0
+        span_total = win_end - win_start
+        for ax in (ax_tp, ax_lat):
+            ax.annotate(
+                f"{span_total:.1f}s",
+                xy=(span_mid, 1.0), xycoords=("data", "axes fraction"),
+                xytext=(0, 4), textcoords="offset points",
+                ha="center", va="bottom",
+                color=PHASE_COLORS["BAND_EDGE"],
+                fontsize=_FS_BAND_LABEL,
+            )
+        # Footer "Migration window: …" line intentionally omitted.
 
     # FLIP vline intentionally not drawn — the M1 band's left edge already
     # marks the first FLIP. Keep _annotate_vline available for future use.
@@ -1026,13 +1002,18 @@ def main() -> None:
                    help=f"x-axis min seconds (default {PLOT_X_MIN})")
     p.add_argument("--xmax", type=float, default=PLOT_X_MAX,
                    help=f"x-axis max seconds (default {PLOT_X_MAX})")
+    p.add_argument("--smooth", type=int, default=1, metavar="N",
+                   help="centered rolling-median window (samples) for the latency "
+                        "panel; smooths the transient migration-start spike. "
+                        "Default 1 (no smoothing); try 5.")
     args = p.parse_args()
 
     expdir = args.expdir.resolve()
     if not expdir.is_dir():
         sys.exit(f"Not a directory: {expdir}")
     output = args.output or (expdir / "ycsb_timeseries.png")
-    plot(expdir, output, span_only=args.span_only, xmin=args.xmin, xmax=args.xmax)
+    plot(expdir, output, span_only=args.span_only, xmin=args.xmin, xmax=args.xmax,
+         smooth=args.smooth)
 
     if args.with_resources:
         ext = output.suffix or ".png"

@@ -2013,6 +2013,8 @@ struct redisServer {
     dict *rdma_outbound_links;         /* Source side: per-recipient RDMA bootstrap cache, keyed "host:port" */
     int rdma_migration_port;           /* Port the recipient binds for RDMA when asked via INIT-SERVER */
     int rdma_migration_peer_stagger_ms; /* AqRaft Patch 22: orchestrator stamps peer i with start_delay_ms = (i+1) * this value. 0 = no stagger (all peers start together). */
+    sds rdma_writeflip_spec;           /* AqRaft per-donor JIT WRITE_FLIP: "<sg4_dbid> <sg4_node_argv>". When set, migrationWorker issues RAFT.SHARDGROUP WRITE_FLIP for its own slot range right after MGN_TXN_START (each donor flips just-in-time, not all up-front). NULL => ansible flips up-front. */
+    int rdma_reshard_migrated;         /* AqRaft multi-round offset: # of this donor's owned slots already migrated by prior rounds of the current reshard. startLocalMigration skips this many then advances it, so successive MIGRATE-ALLs pick successive chunks without an inter-round NARROW. Reset to 0 before round 0. */
     sds rdma_chain_followers;          /* Space-separated "host:port host:port" — recipient followers to chain-replicate migration data to. Empty disables chain. */
     int rdma_chain_pool_bytes;         /* Per-session landing pool size for chain (Phase B.5: placeholder size since the chain pool is separate from the migration's per-slot MRs). */
     /* AqRaft layer: when on, treat this node as participating in RDMA
@@ -4431,6 +4433,7 @@ void rdmaMigrateStatusCommand(client *c);
 void rdmaBackpatchStatusCommand(client *c);
 void rdmaMigrateAllCommand(client *c);
 void rdmaMigrateWarmCommand(client *c);
+void rdmaEvictSlotsCommand(client *c);
 void rdmaMigrateAllStatusCommand(client *c);
 void rdmaMigrateCompleteCommand(client *c);
 void rdmaRegisterResultCommand(client *c);
