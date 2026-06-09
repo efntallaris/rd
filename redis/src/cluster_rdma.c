@@ -3674,16 +3674,28 @@ void rdmaBackpatchStatusCommand(client *c) {
     int md  = atomic_load_explicit(&b->merge_done,   memory_order_acquire);
     int ca  = b->chain_acked;
     int ia  = atomic_load_explicit(&b->indx_applied, memory_order_acquire);
+    /* AqRaft async-apply (rdma-async-apply): separate Raft COMMIT from APPLY.
+     * The migration is durable + ordered once it is COMMITTED — chain replicated
+     * to the sg4 majority (chain_acked) and MGN_INDX_UPD in the raft log
+     * (indx_applied). The keyspace MERGE (merge_done) is the APPLY step; it is
+     * deterministic, recoverable from the committed entry + the followers'
+     * chained raw blocks, and can drain in the background. So under the flag we
+     * drop merge_done from the donor-facing "done" gate — the donor releases on
+     * COMMIT, not on apply, and the merge tail leaves the migration window.
+     * Read-correctness during the apply gap is preserved by the n-round playbook:
+     * the donor keeps serving (AqRaft donors don't flip slot state; NARROW is
+     * batched to the end) and the final NARROW is barriered on
+     * recipient_backpatch_in_progress==0 so no slot is handed off un-merged.
+     * Off → byte-identical 3-flag DONE (merge_done && chain_acked && indx_applied). */
+    int done_gate = server.rdma_async_apply ? (ca && ia) : (md && ca && ia);
     int reported_state = state;
-    if (state == BACKPATCH_RUNNING && md && ca && ia) {
-        /* All three durability conditions met — promote the reply to "done"
-         * even though we no longer eagerly flip b->state to BACKPATCH_DONE
-         * at merge end. */
+    if (state == BACKPATCH_RUNNING && done_gate) {
+        /* Durability conditions met — promote the reply to "done" even though we
+         * no longer eagerly flip b->state to BACKPATCH_DONE at merge end. */
         reported_state = BACKPATCH_DONE;
-    } else if (state == BACKPATCH_DONE && !(md && ca && ia)) {
-        /* Internal state has been flipped (legacy path) but at least one of
-         * the three flags is still pending — downgrade the externally-
-         * reported state so the donor waits. */
+    } else if (state == BACKPATCH_DONE && !done_gate) {
+        /* Internal state has been flipped (legacy path) but the gate is not yet
+         * satisfied — downgrade the externally-reported state so the donor waits. */
         reported_state = BACKPATCH_RUNNING;
     }
 

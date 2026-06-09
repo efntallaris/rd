@@ -2228,6 +2228,19 @@ struct redisServer {
                                        conf template also defaults it to yes). */
     int rdma_transfer_chunk_slots;  /* Aqueduct: K = slots per DONE-SLOTS-CHUNK RPC.
                                        Only consulted when rdma_transfer_overlap=1. */
+    int rdma_async_apply;           /* Aqueduct: separate Raft COMMIT from APPLY. When on,
+                                       the recipient reports BACKPATCH-STATUS "done" to the
+                                       donor as soon as the migration is COMMITTED (chain
+                                       replicated to the sg4 majority + MGN_INDX_UPD logged:
+                                       chain_acked && indx_applied), WITHOUT waiting for the
+                                       keyspace MERGE to execute. The merge becomes background
+                                       "apply" work that drains after the window. SAFE ONLY
+                                       with the n-round playbook (NARROW batched to the end)
+                                       PLUS a merge-drain barrier (poll recipient_backpatch_in_
+                                       progress==0) before NARROW — otherwise the donor stops
+                                       serving while keys are still un-merged on the recipient
+                                       (no landing-pool read fallback) → reads MOVED to the
+                                       recipient miss. Off = byte-identical 3-flag DONE. */
     unsigned int max_new_tls_conns_per_cycle; /* The maximum number of tls connections that will be accepted during each invocation of the event loop. */
     unsigned int max_new_conns_per_cycle; /* The maximum number of tcp connections that will be accepted during each invocation of the event loop. */
     int cluster_compatibility_sample_ratio; /* Sampling ratio for cluster mode incompatible commands. */

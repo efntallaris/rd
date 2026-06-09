@@ -6925,8 +6925,15 @@ sds genRedisInfoString(dict *section_dict, int all_sections, int everything) {
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info,
         "# Cluster\r\n"
-        "cluster_enabled:%d\r\n",
-        server.cluster_enabled);
+        "cluster_enabled:%d\r\n"
+        /* AqRaft async-apply: number of recipient migrations whose keyspace MERGE
+         * (apply) is still in flight. Returns to 0 once every committed migration
+         * has fully drained into db[0]. The n-round playbook polls this == 0 as a
+         * barrier before the batched NARROW, so no slot is handed off un-merged
+         * when rdma-async-apply commits the donor "done" ahead of the merge. */
+        "rdma_recipient_backpatch_in_progress:%d\r\n",
+        server.cluster_enabled,
+        server.recipient_backpatch_in_progress);
     }
 
     /* Key space */

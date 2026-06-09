@@ -174,6 +174,25 @@
       register: all_rounds
       changed_when: true
 
+    # async-apply MERGE-DRAIN BARRIER: with rdma-async-apply the recipient reports
+    # each donor "done" on COMMIT (chain replicated to majority + MGN_INDX_UPD
+    # logged) WITHOUT waiting for the keyspace merge to execute — so when the
+    # rounds loop above returns, the last round's merges may still be draining
+    # into db[0]. NARROW hands the slots to sg4 and stops the donor serving, so it
+    # MUST NOT fire while keys are still un-merged on the recipient (there is no
+    # landing-pool read fallback — reads MOVED to sg4 would miss). Poll the
+    # recipient until its in-flight merge counter returns to 0. This is OFF the
+    # measured migration window (the window ended at the last donor's commit).
+    - name: "async-apply: wait for recipient merges (apply) to drain before NARROW"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[reshard_target] }} -p {{ master_port }} \
+          INFO cluster | tr -d '\r' | grep -oE 'rdma_recipient_backpatch_in_progress:[0-9]+' | cut -d: -f2
+      register: merge_drain
+      retries: 600
+      delay: 1
+      until: (merge_drain.stdout | default('1') | trim) == '0'
+      when: (rdma_async_apply | default('no')) == 'yes'
+
     # NARROW, batched ONCE after all rounds (out of the inter-round path): hand
     # sg4 the full migrated per-source range and shrink each donor. Per-round
     # NARROW is no longer needed because the donor self-offsets chunk selection.
