@@ -356,7 +356,7 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
 
     t0 = samples[0].t
     t_rel = [(s.t - t0).total_seconds() for s in samples]
-    tp = [s.tp for s in samples]
+    tp = rolling_median([s.tp for s in samples], smooth)
     rd_lat = rolling_median([s.read_lat for s in samples], smooth)
     up_lat = rolling_median([s.upd_lat for s in samples], smooth)
 
