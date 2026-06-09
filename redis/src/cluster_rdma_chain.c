@@ -158,7 +158,7 @@ typedef struct rdmaFollowerChainState {
  * one migration at a time, so a linear array of N is fine for now.
  */
 
-#define RDMA_CHAIN_MAX_SESSIONS 8
+#define RDMA_CHAIN_MAX_SESSIONS 16   /* 6 real sessions (3 donors x 2 rounds) + 1 pre-warm sentinel + headroom */
 
 /* AqRaft Stage 4 (line-rate forward): max RDMA-WRITE WRs kept in flight before
  * reaping completions. Well under MAX_SEND_WR / CQ_CAPACITY (4096). Keeps the
@@ -168,6 +168,13 @@ typedef struct rdmaFollowerChainState {
 static rdmaLeaderChainState   *g_leader_chains[RDMA_CHAIN_MAX_SESSIONS]   = {0};
 static rdmaFollowerChainState *g_follower_chains[RDMA_CHAIN_MAX_SESSIONS] = {0};
 static pthread_mutex_t g_chain_state_mu = PTHREAD_MUTEX_INITIALIZER;
+/* Serializes the leader->F1 RDMA-WRITE forward across sessions. With the
+ * cross-session pipeline (rdma-chain-xsession) donor N+1's TRANSFER overlaps
+ * donor N's CHAIN-REPLICATION, so two sessions' forward threads can be live at
+ * once; they share ONE chain QP + send CQ, so only one may post+reap at a time
+ * (else poll_send reaps the wrong session's completions). Held only around the
+ * post/reap loop; uncontended when sessions run serially (xsession off). */
+static pthread_mutex_t g_chain_forward_mu = PTHREAD_MUTEX_INITIALIZER;
 
 /* AqRaft Stage 3: process-global leader src-pool MR cache, reused across chain
  * sessions (= reshard rounds). Each round previously mmap'd + ibv_reg_mr'd a
@@ -1858,6 +1865,8 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
      * (4096) / CQ_CAPACITY (4096); the window cap is just a safety bound so this
      * stays correct if a future batch ever exceeds the queue depth. post_write
      * signals every WR, so #completions == #posts. */
+    /* Serialize against any other session's forward (shared QP+CQ) — see mutex. */
+    pthread_mutex_lock(&g_chain_forward_mu);
     {
         const int INFLIGHT = RDMA_FWD_INFLIGHT;
         struct ibv_wc wc[64];
@@ -1869,6 +1878,7 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
                 uint64_t remote = remote_addr + (uint64_t) posted * RDMAMIG_BLOCK_SIZE_BYTES;
                 if (rdmamig_client_post_write(src_buf, local, remote, remote_rkey,
                                               RDMAMIG_BLOCK_SIZE_BYTES) != 0) {
+                    pthread_mutex_unlock(&g_chain_forward_mu);
                     sdsfree(f1_host);
                     snprintf(errbuf, errbuf_len,
                              "post_write to F1 failed at slot_idx=%d", posted);
@@ -1881,6 +1891,7 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
             int n = rdmamig_client_poll_send(cli, wc,
                         (int) (sizeof(wc) / sizeof(wc[0])));
             if (n < 0) {
+                pthread_mutex_unlock(&g_chain_forward_mu);
                 sdsfree(f1_host);
                 snprintf(errbuf, errbuf_len,
                          "poll_send for F1 failed after %d/%d reaped", reaped, n_slots);
@@ -1889,6 +1900,7 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
             reaped += n;
         }
     }
+    pthread_mutex_unlock(&g_chain_forward_mu);
     serverLog(LL_NOTICE,
         "CHAIN: sess=%lld wrote %zu bytes (n_slots=%d, %d × 2 MiB WRs) leader → F1 (%s)",
         src_mig_id, length, n_slots, n_slots, f1_host);
@@ -1937,6 +1949,165 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
     zfree(slot_bufs);
     redisFree(ctx);
     sdsfree(f1_host);
+    return rc;
+}
+
+/* AqRaft chain-pipeline: forward the snapshot to F1 incrementally, one 2 MiB
+ * block per slot, RDMA-WRITing each block AS SOON AS the backpatch pool worker
+ * marks it captured in snapshot_ready[]. This overlaps the recipient->F1 write
+ * with the still-ongoing donor->recipient transfer + merge (the recipient NIC
+ * is full-duplex), instead of one bulk forward after the whole merge finishes.
+ * Single-threaded (this is the only forwarder for the session), so it owns the
+ * chain QP with no locking. Sends one CHAIN-FORWARDED at the end (the single
+ * "DONE"). Falls back to spin-waiting for the per-session chain to come up
+ * (the establish thread runs concurrently; with CHAIN-WARM it is near-instant). */
+int rdmaLeaderChainForwardPipelined(long long src_mig_id,
+                                    const int *slots, int n_slots,
+                                    const char *snapshot_pool,
+                                    size_t snapshot_pool_bytes,
+                                    const _Atomic unsigned char *snapshot_ready,
+                                    char *errbuf, size_t errbuf_len) {
+    if (n_slots <= 0) {
+        snprintf(errbuf, errbuf_len, "n_slots must be positive");
+        return C_ERR;
+    }
+    size_t length = (size_t) n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+    if (snapshot_pool == NULL || snapshot_pool_bytes < length || snapshot_ready == NULL) {
+        snprintf(errbuf, errbuf_len, "bad snapshot args (pipelined)");
+        return C_ERR;
+    }
+
+    /* Wait for the per-session chain to be established + src pool registered.
+     * The establish thread (spawned at DONE-SLOTS-INIT) reuses the CHAIN-WARM
+     * QP + src-pool cache, so this resolves in a few ms. Bound at ~10 s. */
+    void *src_buf = NULL, *src_pool = NULL, *cli = NULL;
+    uint64_t remote_addr = 0; uint32_t remote_rkey = 0;
+    sds f1_host = NULL; int f1_port = 0;
+    for (int tries = 0; tries < 10000; tries++) {
+        int need_ensure = 0;
+        pthread_mutex_lock(&g_chain_state_mu);
+        rdmaLeaderChainState *st = findLeaderState(src_mig_id);
+        if (st != NULL && st->n_peers >= 1 && st->peers[0].client != NULL &&
+            st->peers[0].peer_pool_addr != 0 && st->peers[0].peer_pool_rkey != 0) {
+            if (length > st->peers[0].peer_pool_bytes) {
+                size_t pb = st->peers[0].peer_pool_bytes;
+                pthread_mutex_unlock(&g_chain_state_mu);
+                snprintf(errbuf, errbuf_len,
+                         "n_slots * 2 MiB = %zu > F1 pool %zu", length, pb);
+                return C_ERR;
+            }
+            if (st->src_pool != NULL) {
+                src_buf = st->src_buf; src_pool = st->src_pool;
+                cli = st->peers[0].client;
+                remote_addr = st->peers[0].peer_pool_addr;
+                remote_rkey = st->peers[0].peer_pool_rkey;
+                f1_host = sdsdup(st->peers[0].host); f1_port = st->peers[0].port;
+                pthread_mutex_unlock(&g_chain_state_mu);
+                break;
+            }
+            need_ensure = 1;   /* established but src pool not registered yet */
+        }
+        pthread_mutex_unlock(&g_chain_state_mu);
+        if (need_ensure) {
+            char e[256] = {0};
+            rdmaLeaderChainEnsureSrcPool(src_mig_id, e, sizeof(e));
+        }
+        usleep(1000);
+    }
+    if (src_pool == NULL) {
+        snprintf(errbuf, errbuf_len, "chain not ready for pipelined forward sess=%lld",
+                 src_mig_id);
+        return C_ERR;
+    }
+
+    /* Scan-post loop: forward any captured-but-unposted block; reap completions.
+     * Out-of-order capture (4 concurrent pool workers) is fine — each WR targets
+     * remote_addr + idx*BLOCK independently. */
+    /* Serialize this session's forward against any other session's (shared QP+CQ). */
+    pthread_mutex_lock(&g_chain_forward_mu);
+    {
+        const int INFLIGHT = RDMA_FWD_INFLIGHT;
+        struct ibv_wc wc[64];
+        unsigned char *posted = zcalloc((size_t) n_slots);
+        int n_posted = 0, reaped = 0;
+        while (reaped < n_slots) {
+            int progressed = 0;
+            for (int idx = 0; idx < n_slots && (n_posted - reaped) < INFLIGHT; idx++) {
+                if (posted[idx]) continue;
+                if (!atomic_load_explicit(&snapshot_ready[idx], memory_order_acquire))
+                    continue;
+                char *local = (char *) src_pool + (size_t) idx * RDMAMIG_BLOCK_SIZE_BYTES;
+                memcpy(local, snapshot_pool + (size_t) idx * RDMAMIG_BLOCK_SIZE_BYTES,
+                       RDMAMIG_BLOCK_SIZE_BYTES);
+                uint64_t remote = remote_addr + (uint64_t) idx * RDMAMIG_BLOCK_SIZE_BYTES;
+                if (rdmamig_client_post_write(src_buf, local, remote, remote_rkey,
+                                              RDMAMIG_BLOCK_SIZE_BYTES) != 0) {
+                    pthread_mutex_unlock(&g_chain_forward_mu);
+                    zfree(posted); sdsfree(f1_host);
+                    snprintf(errbuf, errbuf_len,
+                             "post_write to F1 failed at idx=%d (pipelined)", idx);
+                    return C_ERR;
+                }
+                posted[idx] = 1; n_posted++; progressed = 1;
+            }
+            int n = rdmamig_client_poll_send(cli, wc,
+                        (int) (sizeof(wc) / sizeof(wc[0])));
+            if (n < 0) {
+                pthread_mutex_unlock(&g_chain_forward_mu);
+                zfree(posted); sdsfree(f1_host);
+                snprintf(errbuf, errbuf_len,
+                         "poll_send for F1 failed after %d/%d reaped (pipelined)",
+                         reaped, n_slots);
+                return C_ERR;
+            }
+            reaped += n;
+            /* No completion and nothing newly postable → waiting on the merge to
+             * capture more snapshots. Brief sleep to avoid a hot spin. */
+            if (n == 0 && !progressed && n_posted < n_slots) usleep(200);
+        }
+        zfree(posted);
+    }
+    pthread_mutex_unlock(&g_chain_forward_mu);
+    serverLog(LL_NOTICE,
+        "CHAIN: sess=%lld wrote %zu bytes (n_slots=%d, pipelined per-slot) leader → F1 (%s)",
+        src_mig_id, length, n_slots, f1_host);
+
+    /* Single CHAIN-FORWARDED to F1 (the "one DONE") — F1 cascades to F2. */
+    redisContext *ctx = redisConnect(f1_host, f1_port);
+    if (ctx == NULL || ctx->err) {
+        snprintf(errbuf, errbuf_len, "connect(%s:%d) failed: %s",
+                 f1_host, f1_port, ctx ? ctx->errstr : "(null)");
+        if (ctx) redisFree(ctx);
+        sdsfree(f1_host);
+        return C_ERR;
+    }
+    int argc = 4 + n_slots;
+    const char **argv = zmalloc((size_t) argc * sizeof(*argv));
+    size_t *argvlen = zmalloc((size_t) argc * sizeof(*argvlen));
+    char sess_arg[32], nslots_arg[16];
+    int sess_arg_len = snprintf(sess_arg, sizeof(sess_arg), "%lld", src_mig_id);
+    int nslots_arg_len = snprintf(nslots_arg, sizeof(nslots_arg), "%d", n_slots);
+    char (*slot_bufs)[16] = zmalloc((size_t) n_slots * sizeof(*slot_bufs));
+    argv[0] = "RDMA";            argvlen[0] = 4;
+    argv[1] = "CHAIN-FORWARDED"; argvlen[1] = 15;
+    argv[2] = sess_arg;          argvlen[2] = (size_t) sess_arg_len;
+    argv[3] = nslots_arg;        argvlen[3] = (size_t) nslots_arg_len;
+    for (int i = 0; i < n_slots; i++) {
+        argvlen[4 + i] = (size_t) snprintf(slot_bufs[i], 16, "%d", slots[i]);
+        argv[4 + i]    = slot_bufs[i];
+    }
+    redisReply *r = redisCommandArgv(ctx, argc, argv, argvlen);
+    int rc = C_OK;
+    if (r == NULL) {
+        snprintf(errbuf, errbuf_len, "CHAIN-FORWARDED to F1 failed: %s", ctx->errstr);
+        rc = C_ERR;
+    } else if (r->type == REDIS_REPLY_ERROR) {
+        snprintf(errbuf, errbuf_len, "F1 errored: %s", r->str);
+        rc = C_ERR;
+    }
+    if (r) freeReplyObject(r);
+    zfree(argv); zfree(argvlen); zfree(slot_bufs);
+    redisFree(ctx); sdsfree(f1_host);
     return rc;
 }
 

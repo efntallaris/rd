@@ -1478,6 +1478,15 @@ typedef struct backpatchBatch {
      * mergeBackpatchTick-fallback paths. */
     _Atomic int          snapshots_captured;
     _Atomic int          chain_spawn_initiated;
+    /* AqRaft chain-pipeline (rdma-chain-pipeline): per-slot "snapshot captured"
+     * flags, indexed by covered_slots position. A pool worker sets
+     * snapshot_ready[i]=1 right after it memcpys covered_slots[i]'s raw block
+     * into donor_snapshot_pool[i]; the pipelined forward thread scans this and
+     * RDMA-forwards each block to F1 as soon as it's ready, overlapping the
+     * forward with the ongoing transfer + merge. pipeline_spawn_initiated is a
+     * CAS gate so the pipelined forward thread is spawned exactly once. */
+    _Atomic uint8_t     *snapshot_ready;
+    _Atomic int          pipeline_spawn_initiated;
     /* Phase C: slots covered by this batch's DONE-SLOTS-CHUNK calls. The
      * leader iterates these at BACKPATCH_DONE to encode kvstore content
      * for chain forwarding. Allocated in DONE-SLOTS-INIT (size = n_slots
@@ -1514,6 +1523,10 @@ typedef struct backpatchBatch {
      * guard ensures exactly one of them performs the release. */
     _Atomic int          landing_pool_released;
 } backpatchBatch;
+
+/* chain-pipeline: spawn the pipelined forwarder for a batch (defined far below,
+ * after the chain-forward machinery; called from rdmaDoneSlotsInitCommand). */
+static void rdmaSpawnPipelineForward(backpatchBatch *b);
 
 #define BACKPATCH_RING_CAPACITY 64u
 
@@ -1558,6 +1571,21 @@ typedef struct backpatchSlotWork {
 static list            *backpatch_work_queue = NULL;          /* list of backpatchSlotWork* */
 static pthread_mutex_t  backpatch_work_mu    = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t   backpatch_work_cv    = PTHREAD_COND_INITIALIZER;
+
+/* AqRaft xsession merge-serialization gate. With N landing pools the donors'
+ * TRANSFERs overlap, but the recipient SHADOW-BUILD+MERGE must stay serial across
+ * sessions (r_allocator/Fenwick are not session-safe). So only ONE session's
+ * per-slot work items may be in backpatch_work_queue at a time: g_active_merge_batch
+ * is that session (NULL = idle); other sessions' DONE-SLOTS-CHUNK items are buffered
+ * in a pendingSession.held_items list and promoted (spliced onto the work queue) at
+ * the active session's merge_done, in arrival (= dispatch = merge) order. All under
+ * backpatch_work_mu. Only used when server.rdma_chain_xsession is on. */
+typedef struct pendingSession {
+    backpatchBatch *batch;
+    list           *held_items;   /* backpatchSlotWork* buffered until this session is promoted */
+} pendingSession;
+static backpatchBatch  *g_active_merge_batch = NULL;
+static list            *g_pending_sessions   = NULL;   /* FIFO of pendingSession* */
 
 static pthread_t        backpatch_pool_tids[BACKPATCH_POOL_MAX];
 static int              backpatch_pool_size  = 0;     /* Snapshot of config at start. */
@@ -1698,6 +1726,8 @@ void rdmaDoneSlotsCommand(client *c) {
     atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
     atomic_store_explicit(&b->snapshots_captured, 0, memory_order_relaxed);
     atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_relaxed);
+    b->snapshot_ready = NULL;   /* legacy bulk DONE-SLOTS: no streaming → no pipeline */
     atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) n_slots * sizeof(int));
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
@@ -1883,6 +1913,8 @@ void rdmaDoneSlotsInitCommand(client *c) {
     atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
     atomic_store_explicit(&b->snapshots_captured, 0, memory_order_relaxed);
     atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_relaxed);
+    b->snapshot_ready = NULL;
     atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
     b->covered_slot_count = 0;
@@ -1899,6 +1931,9 @@ void rdmaDoneSlotsInitCommand(client *c) {
                 b->donor_snapshot_pool_bytes);
             b->donor_snapshot_pool_bytes = 0;
         }
+        /* chain-pipeline: per-slot ready flags (zero-init = not captured). */
+        if (server.rdma_chain_pipeline && b->donor_snapshot_pool != NULL)
+            b->snapshot_ready = zcalloc((size_t) total_slots * sizeof(_Atomic uint8_t));
         /* AqRaft Patch 16: see DONE-SLOTS path above — skip the 2.86 GB
          * memset to avoid blocking the main thread on ~700K page faults
          * (triggers raft check-quorum step-down). F1 reads only covered
@@ -1921,6 +1956,24 @@ void rdmaDoneSlotsInitCommand(client *c) {
         return;
     }
 
+    /* xsession merge-serialization gate: DONE-SLOTS-INIT arrives in dispatch order
+     * (sg1, sg2, sg3) = merge order. The first session in becomes the ACTIVE merge
+     * session (its CHUNK items flow straight to the work queue); later sessions are
+     * queued PENDING so their CHUNK items are buffered until the prior session's
+     * merge_done promotes them. Off → no-op (items always flow to the queue). */
+    if (server.rdma_chain_xsession) {
+        pthread_mutex_lock(&backpatch_work_mu);
+        if (g_active_merge_batch == NULL) {
+            g_active_merge_batch = b;
+        } else {
+            pendingSession *ps = zmalloc(sizeof(*ps));
+            ps->batch = b;
+            ps->held_items = listCreate();
+            listAddNodeTail(g_pending_sessions, ps);
+        }
+        pthread_mutex_unlock(&backpatch_work_mu);
+    }
+
     serverLog(LL_NOTICE,
         "RDMA DONE-SLOTS-INIT: batch from %.*s mig_id=%lld total_slots=%d "
         "(TRANSFER/BACKPATCH overlap)",
@@ -1938,6 +1991,10 @@ void rdmaDoneSlotsInitCommand(client *c) {
         long long pool_bytes = (long long) total_slots * RDMAMIG_BLOCK_SIZE_BYTES;
         rdmaChainSpawnEstablish(src_mig_id, pool_bytes,
                                 server.rdma_chain_followers);
+        /* chain-pipeline: spawn the dedicated forwarder NOW (not at merge-done)
+         * so it RDMA-forwards each block to F1 as the backpatch workers capture
+         * it, overlapping the forward with the transfer + merge. */
+        rdmaSpawnPipelineForward(b);
     }
     addReply(c, shared.ok);
 }
@@ -2015,9 +2072,35 @@ void rdmaDoneSlotsChunkCommand(client *c) {
         pthread_mutex_unlock(&b->covered_mu);
     }
 
+    /* xsession merge-serialization gate: only the ACTIVE merge session's items may
+     * enter the work queue (where pool workers shadow-build+merge them). A PENDING
+     * session's items are buffered in its held_items list — no broadcast — until the
+     * prior session's merge_done promotes it. covered_slots above stays ungated so
+     * the snapshot lookup still finds the slot once items are promoted. */
     pthread_mutex_lock(&backpatch_work_mu);
-    for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
-    pthread_cond_broadcast(&backpatch_work_cv);
+    int held = 0;
+    if (server.rdma_chain_xsession && b != g_active_merge_batch) {
+        pendingSession *ps = NULL;
+        listIter li; listNode *ln; listRewind(g_pending_sessions, &li);
+        while ((ln = listNext(&li)) != NULL) {
+            pendingSession *p = listNodeValue(ln);
+            if (p->batch == b) { ps = p; break; }
+        }
+        if (ps != NULL) {
+            for (int j = 0; j < n_slots; j++) listAddNodeTail(ps->held_items, items[j]);
+            held = 1;
+        } else {
+            /* Neither active nor pending — should not happen (INIT registers every
+             * session). Fall back to the queue (safe) and warn. */
+            serverLog(LL_WARNING,
+                "xsession gate: CHUNK for batch mig_id=%lld neither active nor pending "
+                "— enqueueing directly", b->src_mig_id);
+        }
+    }
+    if (!held) {
+        for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
+        pthread_cond_broadcast(&backpatch_work_cv);
+    }
     pthread_mutex_unlock(&backpatch_work_mu);
     zfree(items);
 
@@ -2210,10 +2293,30 @@ static void *landingPoolReleaseWorker(void *arg) {
  * after each slot's merge via r_allocator_unregister_existing_blocks. Donors are
  * serial (orchestrator gates donor N+1 on N's chain_durable), so the pool is
  * free by the time the next donor RDMA-writes into it. */
-static void                  *g_landing_pool_cache       = NULL;
-static size_t                 g_landing_pool_cache_bytes = 0;
-static struct rdmamig_buffer *g_landing_buf_cache        = NULL;
-static void                  *g_landing_pool_cache_pd    = NULL; /* PD the MR is bound to */
+/* AqRaft landing-pool ring. Without xsession: ONE persistent pool (g_lp[0]),
+ * reused serially (the original cached-pool optimization — register once, skip
+ * the ~0.4s ibv_reg_mr per donor). With xsession (transfer-done dispatch) TWO
+ * donors are in flight at once — donor N merging pool[g], donor N+1 RDMA-writing
+ * pool[g^1] — so we keep N_LANDING_POOLS=2 and PING-PONG: registerWorkerThread
+ * claims a free pool (round-robin), the merge worker frees it at merge_done. Both
+ * pools are created on the FIRST register (in sg1's REGISTERING, which is BEFORE
+ * the measured window), so sessions 2..6 alternate with zero merge-wait. A pool
+ * is "free" once the prior occupant's keyspace merge has drained it. */
+#define N_LANDING_POOLS 3   /* one per donor in a round: sg1/sg2/sg3 transfers overlap */
+static void                  *g_lp_pool[N_LANDING_POOLS]  = {0};
+static size_t                 g_lp_bytes[N_LANDING_POOLS] = {0};
+static struct rdmamig_buffer *g_lp_buf[N_LANDING_POOLS]   = {0};
+static void                  *g_lp_pd[N_LANDING_POOLS]    = {0};
+static int                    g_lp_free[N_LANDING_POOLS]  = {1, 1, 1};
+static int                    g_lp_next = 0;     /* round-robin cursor (xsession) */
+static pthread_mutex_t        g_lp_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t         g_lp_cv = PTHREAD_COND_INITIALIZER;
+
+/* True if buf is one of our cached landing pools (used to skip madvise/dereg). */
+static int rdmaIsCachedLandingBuf(struct rdmamig_buffer *buf) {
+    for (int i = 0; i < N_LANDING_POOLS; i++) if (g_lp_buf[i] == buf) return 1;
+    return 0;
+}
 
 /* AqRaft lever #4 fix: reclaim the batch's donor landing pool exactly once,
  * off-main, and ONLY after the main-thread merge has fully drained. Both
@@ -2228,7 +2331,7 @@ static void backpatchReleaseLandingPool(backpatchBatch *b) {
     /* AqRaft pool-reuse: never dereg/madvise the persistent cached pool — it is
      * reused by the next donor/round. Mark released (CAS-once semantics) but keep
      * the MR + pages resident. */
-    if (b->landing_pool_buf == g_landing_buf_cache) {
+    if (rdmaIsCachedLandingBuf(b->landing_pool_buf)) {
         atomic_store_explicit(&b->landing_pool_released, 1, memory_order_release);
         return;
     }
@@ -2322,6 +2425,14 @@ static void backpatchFinalize(backpatchBatch *b) {
             zfree(pool); /* fallback: inline if pthread_create fails */
         }
     }
+    /* chain-pipeline: the pipelined forwarder is done (CHAIN-FORWARDED was sent
+     * before the ack that triggers this finalize), so its snapshot_ready bitmap
+     * can be freed now. */
+    if (b->snapshot_ready != NULL) {
+        void *sr = b->snapshot_ready;
+        b->snapshot_ready = NULL;
+        zfree(sr);
+    }
     /* AqRaft pool-free (lever #4 fix): reclaim this session's donor landing
      * pool — but ONLY if the main-thread merge has already drained
      * (merge_done==1). mergeBackpatchTick reads each migrated value straight
@@ -2394,6 +2505,17 @@ static void *chainForwardWorker(void *arg) {
         (long long) atomic_load(&b->applied),
         (long long) atomic_load(&b->clobber_skipped));
 
+    if (job->chain_configured &&
+        server.rdma_chain_pipeline && b->snapshot_ready != NULL) {
+        /* chain-pipeline: the dedicated pipeline forwarder (spawned at
+         * DONE-SLOTS-INIT) owns the forward + BACKPATCH_DONE handoff and runs
+         * concurrently with this merge. We only did the Fenwick rebuild + log
+         * above; do NOT forward again here. */
+        zfree(job->slots_copy);
+        zfree(job);
+        return NULL;
+    }
+
     if (job->chain_configured) {
         /* (B) Chain forward off-main. rdmaLeaderChainForwardPerSlot is the
          * 2.86 GB memcpy + RDMA-WRITE WR posts that used to block main. */
@@ -2449,6 +2571,68 @@ static void *chainForwardWorker(void *arg) {
     zfree(job->slots_copy);
     zfree(job);
     return NULL;
+}
+
+/* AqRaft chain-pipeline: dedicated forwarder thread, spawned at DONE-SLOTS-INIT
+ * (NOT at merge-done). It RDMA-forwards each slot's snapshot to F1 as soon as
+ * the backpatch worker captures it (snapshot_ready[]), overlapping the forward
+ * with the ongoing transfer + merge. On success it does the same BACKPATCH_DONE
+ * handoff as chainForwardWorker's success path (chain_forwarded=1 → pending list
+ * → poke dispose pipe so chainPendingTick finalizes on CHAIN-ACK). The
+ * merge-done chainForwardWorker still runs for the Fenwick rebuild but SKIPS the
+ * forward (this thread owns it). covered_slots is allocated at INIT and only
+ * grows in count, so the pointer is stable; the forward reads slots[] only after
+ * every block is posted, by which time covered_slots is fully populated. */
+typedef struct { backpatchBatch *batch; } chainPipelineJob;
+static void *chainPipelineForwardWorker(void *arg) {
+    chainPipelineJob *job = arg;
+    backpatchBatch *b = job->batch;
+    char errbuf[256] = {0};
+    int frc = rdmaLeaderChainForwardPipelined(
+                  b->src_mig_id, b->covered_slots, b->n_slots,
+                  b->donor_snapshot_pool, b->donor_snapshot_pool_bytes,
+                  b->snapshot_ready, errbuf, sizeof(errbuf));
+    if (frc == C_OK) {
+        b->chain_forwarded = 1;
+        pthread_mutex_lock(&backpatch_chain_pending_mu);
+        if (backpatch_chain_pending == NULL) backpatch_chain_pending = listCreate();
+        listAddNodeTail(backpatch_chain_pending, b);
+        pthread_mutex_unlock(&backpatch_chain_pending_mu);
+        char tick = 1; ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1); (void) wr;
+        serverLog(LL_NOTICE,
+            "CHAIN: sess=%lld pipelined forward complete -> BACKPATCH_DONE "
+            "(MGN_INDX_UPD deferred)", b->src_mig_id);
+    } else {
+        serverLog(LL_WARNING,
+            "CHAIN: sess=%lld pipelined forward failed (%s) - "
+            "firing MGN_INDX_UPD immediately as fallback", b->src_mig_id, errbuf);
+        b->chain_acked = 1;
+        backpatchFinalize(b);
+    }
+    zfree(job);
+    return NULL;
+}
+
+/* Spawn the pipelined forwarder exactly once for batch `b` (CAS guard). Called
+ * from DONE-SLOTS-INIT when rdma-chain-pipeline is on and a chain is configured. */
+static void rdmaSpawnPipelineForward(backpatchBatch *b) {
+    if (!server.rdma_chain_pipeline || b->snapshot_ready == NULL ||
+        b->donor_snapshot_pool == NULL) return;
+    int expected = 0;
+    if (!atomic_compare_exchange_strong_explicit(
+            &b->pipeline_spawn_initiated, &expected, 1,
+            memory_order_acq_rel, memory_order_relaxed)) return;
+    chainPipelineJob *job = zmalloc(sizeof(*job));
+    job->batch = b;
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, chainPipelineForwardWorker, job) != 0) {
+        serverLog(LL_WARNING, "CHAIN: pthread_create(chainPipelineForwardWorker) failed");
+        zfree(job);
+        atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_release);
+        return;
+    }
+    pthread_detach(tid);
+    serverLog(LL_NOTICE, "CHAIN: sess=%lld spawned pipelined forwarder", b->src_mig_id);
 }
 
 /* AqRaft: build a chainForwardJob for batch `b` and spawn chainForwardWorker
@@ -2724,6 +2908,46 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
              * donor's poll correctly waits until chain has replicated to
              * majority AND MGN_INDX_UPD has committed. */
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
+            /* xsession: RELEASE this session's landing pool — the merge has copied
+             * its keys out + captured the chain snapshot, so the pool is safe for
+             * the next donor to RDMA-write. Free the SPECIFIC ring slot this batch
+             * used (matched by landing_pool_buf) and wake a waiting claim. */
+            if (server.rdma_chain_xsession && b->landing_pool_buf != NULL) {
+                pthread_mutex_lock(&g_lp_mu);
+                for (int i = 0; i < N_LANDING_POOLS; i++) {
+                    if (g_lp_buf[i] == b->landing_pool_buf) { g_lp_free[i] = 1; break; }
+                }
+                pthread_cond_broadcast(&g_lp_cv);
+                pthread_mutex_unlock(&g_lp_mu);
+            }
+            /* xsession merge-serialization gate: this active session is done
+             * merging — hand the merge token to the next PENDING session (in
+             * arrival order) and release its buffered work items onto the queue,
+             * so exactly one session is ever in the shadow/merge pipeline. Done
+             * under backpatch_work_mu, SEQUENTIAL to (not nested with) g_lp_mu. */
+            if (server.rdma_chain_xsession) {
+                pthread_mutex_lock(&backpatch_work_mu);
+                if (g_active_merge_batch == b) g_active_merge_batch = NULL;
+                if (g_pending_sessions != NULL && listLength(g_pending_sessions) > 0) {
+                    listNode *head = listFirst(g_pending_sessions);
+                    pendingSession *ps = listNodeValue(head);
+                    listDelNode(g_pending_sessions, head);
+                    g_active_merge_batch = ps->batch;
+                    int n = 0;
+                    listIter li; listNode *ln; listRewind(ps->held_items, &li);
+                    while ((ln = listNext(&li)) != NULL) {
+                        listAddNodeTail(backpatch_work_queue, listNodeValue(ln));
+                        n++;
+                    }
+                    if (n > 0) pthread_cond_broadcast(&backpatch_work_cv);
+                    serverLog(LL_NOTICE,
+                        "xsession: promote merge session mig_id=%lld (%d held items released)",
+                        ps->batch->src_mig_id, n);
+                    listRelease(ps->held_items);   /* frees nodes only; items now owned by work queue */
+                    zfree(ps);
+                }
+                pthread_mutex_unlock(&backpatch_work_mu);
+            }
             b->t_ended = time(NULL);
             atomicDecr(server.recipient_backpatch_in_progress, 1);
 
@@ -2834,6 +3058,14 @@ static void *backpatchPoolWorkerMain(void *arg) {
                         memcpy(dst, landing, RDMAMIG_BLOCK_SIZE_BYTES);
                     }
                 }
+                /* chain-pipeline: this slot's snapshot is now in
+                 * donor_snapshot_pool[found_idx] (captured BEFORE the merge below
+                 * corrupts the landing block). Publish it so the pipelined
+                 * forward thread can RDMA-WRITE it to F1 immediately. release so
+                 * the memcpy is visible before the flag. */
+                if (w->batch->snapshot_ready != NULL)
+                    atomic_store_explicit(&w->batch->snapshot_ready[found_idx], 1,
+                                          memory_order_release);
             }
 
             /* AqRaft parallel-chain: once ALL slot snapshots are captured,
@@ -3058,6 +3290,7 @@ void recipientBackpatchThreadStart(void) {
      * value (we don't auto-free it — the dispose path owns the lifetime). */
     backpatch_batches_by_key = dictCreate(&sdsHashDictType);
     backpatch_work_queue     = listCreate();
+    g_pending_sessions       = listCreate();   /* xsession merge-serialization gate */
 
     /* Register-job pipe + list for deferred REGISTER-BLOCK-SLOTS replies. */
     /* No infra init for the REGISTER-BLOCK-SLOTS path — see comment near the
@@ -3139,6 +3372,21 @@ void recipientBackpatchThreadStop(void) {
             pthread_join(backpatch_pool_tids[i], NULL);
         backpatch_pool_started = 0;
     }
+    /* xsession gate: drain any sessions still pending (held items + node). Workers
+     * are joined, so no concurrent access — cosmetic leak avoidance on shutdown. */
+    if (g_pending_sessions != NULL) {
+        listNode *ln;
+        while ((ln = listFirst(g_pending_sessions)) != NULL) {
+            pendingSession *ps = listNodeValue(ln);
+            listIter li; listNode *in;
+            listRewind(ps->held_items, &li);
+            while ((in = listNext(&li)) != NULL) zfree(listNodeValue(in));
+            listRelease(ps->held_items);
+            zfree(ps);
+            listDelNode(g_pending_sessions, ln);
+        }
+    }
+    g_active_merge_batch = NULL;
     backpatch_thread_started = 0;
 }
 
@@ -3176,55 +3424,97 @@ static void *registerWorkerThread(void *arg) {
     const size_t stride = r_allocator_block_stride_bytes();
     const size_t pool_bytes = total_blocks * stride;
 
-    /* AqRaft pool-reuse: reuse the ONE persistent cached landing pool if it is on
-     * the same recipient cm_id and large enough — skipping the mmap + ibv_reg_mr
-     * (the ~0.4s/donor in-window registration). Only the first donor of the run
-     * pays it; every later donor/round reuses. Safe because the merge copies all
-     * keys OUT (r_allocator_insert_kvobj) and the per-slot landing blocks are
-     * unlinked after merge (r_allocator_unregister_existing_blocks), and donors
-     * are serial so the pool is idle by the time the next donor writes. */
+    /* AqRaft landing-pool ring (see g_lp_* globals). n_pools=1 without xsession
+     * (original serial single-pool reuse); n_pools=2 with xsession so donor N+1
+     * RDMA-writes one pool while donor N's merge drains the other. Pools are
+     * registered ONCE (first register of the run, in sg1's excluded REGISTERING),
+     * padded so round-2's +1 slot still fits, then reused for the whole run. */
     struct rdma_cm_id *cm = rdmamig_server_cm_id(job->conn->s);
     void *pd = rdmamig_cm_pd(cm);   /* key on the PD, not the per-donor cm_id */
-    void *pool = NULL;
-    struct rdmamig_buffer *pool_buf = NULL;
-    int reused = 0;
-    if (g_landing_pool_cache != NULL && pd != NULL && g_landing_pool_cache_pd == pd &&
-        g_landing_pool_cache_bytes >= pool_bytes) {
-        pool     = g_landing_pool_cache;
-        pool_buf = g_landing_buf_cache;
-        reused   = 1;
-    } else {
-        /* Pad the fresh allocation so round 2's +1 slot (683 vs 682) still fits
-         * the cached pool — register exactly once for the whole run. */
-        const size_t alloc_bytes = pool_bytes + (size_t) 32 * stride;
-        pool = mmap(NULL, alloc_bytes, PROT_READ | PROT_WRITE,
-                    MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        if (pool == MAP_FAILED) {
+    const size_t alloc_bytes = pool_bytes + (size_t) 32 * stride;
+    /* xsession: N_LANDING_POOLS pools (one per donor in a round) so sg2/sg3 can
+     * RDMA-WRITE their transfer into a fresh pool while sg1's merge drains its
+     * own pool. The merge PROCESSING is kept serial by the merge-serialization
+     * gate (g_active_merge_batch / g_pending_sessions) so two sessions never
+     * shadow-build+merge at once (that races r_allocator/Fenwick → SIGSEGV — the
+     * reason a naive 2-pool ping-pong without the gate crashed). Off → 1 pool. */
+    const int n_pools = server.rdma_chain_xsession ? N_LANDING_POOLS : 1;
+
+    /* Create any pool not yet allocated (or too small / wrong PD). The mmap +
+     * ibv_reg_mr is done WITHOUT the ring lock (it's slow); publish under lock. */
+    int created[N_LANDING_POOLS] = {0};
+    for (int i = 0; i < n_pools; i++) {
+        pthread_mutex_lock(&g_lp_mu);
+        int need = (g_lp_pool[i] == NULL || g_lp_pd[i] != pd || g_lp_bytes[i] < pool_bytes);
+        pthread_mutex_unlock(&g_lp_mu);
+        if (!need) continue;
+        void *np = mmap(NULL, alloc_bytes, PROT_READ | PROT_WRITE,
+                        MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        if (np == MAP_FAILED) {
             job->has_error = 1;
             snprintf(job->err_msg, sizeof(job->err_msg),
-                "mmap(%zu bytes) failed: %s (check vm.overcommit / available RAM)",
-                alloc_bytes, strerror(errno));
+                "mmap(%zu bytes) for landing pool %d failed: %s", alloc_bytes, i, strerror(errno));
             goto deliver;
         }
-        pool_buf = rdmamig_buffer_create(cm, (char *) pool, alloc_bytes, 0);
-        if (pool_buf == NULL) {
+        struct rdmamig_buffer *nb = rdmamig_buffer_create(cm, (char *) np, alloc_bytes, 0);
+        if (nb == NULL) {
+            munmap(np, alloc_bytes);
             job->has_error = 1;
             snprintf(job->err_msg, sizeof(job->err_msg),
-                "ibv_reg_mr(%zu bytes) failed: check ulimit -l (RLIMIT_MEMLOCK)",
-                alloc_bytes);
-            munmap(pool, alloc_bytes);
+                "ibv_reg_mr(%zu bytes) for landing pool %d failed: check RLIMIT_MEMLOCK",
+                alloc_bytes, i);
             goto deliver;
         }
-        g_landing_pool_cache       = pool;
-        g_landing_pool_cache_bytes = alloc_bytes;
-        g_landing_buf_cache        = pool_buf;
-        g_landing_pool_cache_pd    = pd;
+        pthread_mutex_lock(&g_lp_mu);
+        if (g_lp_pool[i] == NULL || g_lp_pd[i] != pd || g_lp_bytes[i] < pool_bytes) {
+            g_lp_pool[i] = np; g_lp_buf[i] = nb; g_lp_bytes[i] = alloc_bytes;
+            g_lp_pd[i] = pd; g_lp_free[i] = 1; created[i] = 1;
+            pthread_mutex_unlock(&g_lp_mu);
+            serverLog(LL_NOTICE,
+                "RDMA REGISTER-BLOCK-SLOTS: landing pool %d registered (%zu bytes)",
+                i, alloc_bytes);
+        } else {
+            pthread_mutex_unlock(&g_lp_mu);   /* lost a race — leak np/nb (no-destroy contract) */
+        }
     }
+
+    /* Claim a pool. WITHOUT xsession: always pool[0], NO free-gate — the original
+     * serial single-pool reuse (the merge_done release is also xsession-gated, so a
+     * free-gate here would block forever waiting on a release that never fires).
+     * WITH xsession: round-robin claim, waiting if the chosen pool's prior
+     * occupant's merge hasn't drained it (paired with the release at merge_done). */
+    int idx = 0;
+    if (server.rdma_chain_xsession) {
+        pthread_mutex_lock(&g_lp_mu);
+        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 5;
+        for (;;) {
+            int cand = g_lp_next % n_pools;
+            if (!g_lp_free[cand]) {
+                cand = -1;
+                for (int i = 0; i < n_pools; i++) if (g_lp_free[i]) { cand = i; break; }
+            }
+            if (cand >= 0) { idx = cand; break; }
+            if (pthread_cond_timedwait(&g_lp_cv, &g_lp_mu, &ts) == ETIMEDOUT) {
+                idx = g_lp_next % n_pools;
+                serverLog(LL_WARNING,
+                    "xsession: landing-pool free-wait timed out — using pool %d", idx);
+                break;
+            }
+        }
+        g_lp_next = (idx + 1) % n_pools;
+        g_lp_free[idx] = 0;
+        pthread_mutex_unlock(&g_lp_mu);
+    }
+    void *pool = g_lp_pool[idx];
+    struct rdmamig_buffer *pool_buf = g_lp_buf[idx];
+    size_t this_pool_bytes = g_lp_bytes[idx];
+    int reused = !created[idx];
+
     job->conn->aqueduct_pool_buf = pool_buf;
-    /* AqRaft pool-free: record the landing-pool region. With reuse the pool is
-     * NOT madvise'd/dereg'd (backpatchReleaseLandingPool skips the cached buf). */
+    /* AqRaft pool-free: record the landing-pool region. The pool is NOT
+     * madvise'd/dereg'd (backpatchReleaseLandingPool skips cached bufs). */
     job->conn->landing_pool_base  = pool;
-    job->conn->landing_pool_bytes = g_landing_pool_cache_bytes;
+    job->conn->landing_pool_bytes = this_pool_bytes;
     const uint32_t shared_rkey = rdmamig_buffer_rkey(pool_buf);
 
     serverLog(LL_NOTICE,
@@ -3408,7 +3698,13 @@ void rdmaBackpatchStatusCommand(client *c) {
      * dispatched while this donor's INDX_UPD commits. */
     int chain_durable = (md && ca) ? 1 : 0;
 
-    addReplyArrayLen(c, 7);
+    /* element[7] = merge_done alone (landing pool free). The cross-session
+     * pipeline (rdma-chain-xsession) gates donor N+1 dispatch on THIS — earlier
+     * than chain_durable (element[6] = md && ca) — so N+1's TRANSFER overlaps
+     * donor N's CHAIN-REPLICATION. Landing-pool-safe: the recipient frees the
+     * shared landing pool at merge-done; the chain forwards from a separate
+     * snapshot copy. */
+    addReplyArrayLen(c, 8);
     addReplyBulkCString(c, backpatchStateName((backpatchBatchState) reported_state));
     addReplyLongLong(c, idx);
     addReplyLongLong(c, b->n_slots);
@@ -3416,6 +3712,7 @@ void rdmaBackpatchStatusCommand(client *c) {
     addReplyLongLong(c, elapsed);
     addReplyBulkSds(c, err_copy);
     addReplyLongLong(c, chain_durable);
+    addReplyLongLong(c, md);
 }
 
 
@@ -5379,6 +5676,22 @@ static void *migrationWorker(void *arg) {
         int done = 0;
         int chain_durable_sent = 0;  /* AqRaft Round 2: early dispatch signal */
         sds backpatch_err = NULL;
+
+        /* AqRaft xsession transfer-done dispatch: this donor's RDMA-WRITE just
+         * completed, so the recipient's merge frees the SHARED landing pool
+         * within ~tens of ms (the backpatch pool workers keep pace with the
+         * transfer). Signal the orchestrator to dispatch the NEXT donor RIGHT
+         * NOW — instead of polling the recipient's BACKPATCH-STATUS for
+         * merge_done, which under YCSB load lags ~0.24s behind the actual merge
+         * (the recipient main thread is busy serving ops). The recipient guards
+         * landing-pool reuse on the prior session's merge_done (see
+         * registerWorkerThread), so the next donor can't clobber this pool before
+         * our merge drains it — race-free. We still poll below for full 3-flag
+         * DONE so this donor holds its own slots until durable. */
+        if (server.rdma_chain_xsession) {
+            migNotifyOrchestratorIfAny(mig, "CHAIN_DURABLE", (long long) mig->n_slots);
+            chain_durable_sent = 1;
+        }
         while (polls < max_polls && !done) {
             pthread_mutex_lock(&mig->L->mu);
             redisReply *r = redisCommand(mig->L->ctrl,
@@ -5407,9 +5720,18 @@ static void *migrationWorker(void *arg) {
                  * PREP+TRANSFER. We keep polling here until full "done" so the
                  * donor still holds its slots until all three durability flags
                  * are set (the 3-flag DONE invariant is unchanged). */
-                if (!chain_durable_sent && r->elements >= 7 &&
-                    r->element[6]->type == REDIS_REPLY_INTEGER &&
-                    r->element[6]->integer == 1) {
+                /* Early dispatch signal to the orchestrator. Default: gate on
+                 * element[6] = chain_durable (md && ca). With rdma-chain-xsession:
+                 * gate on element[7] = merge_done alone — the landing pool is free
+                 * once the merge is done (the chain forwards from a separate
+                 * snapshot copy), so donor N+1 can start its TRANSFER while donor
+                 * N's CHAIN-REPLICATION is still running. The recipient serializes
+                 * the two chains on the shared F1 QP. */
+                int xsession = server.rdma_chain_xsession;
+                int gate_idx = (xsession && r->elements >= 8) ? 7 : 6;
+                if (!chain_durable_sent && r->elements > gate_idx &&
+                    r->element[gate_idx]->type == REDIS_REPLY_INTEGER &&
+                    r->element[gate_idx]->integer == 1) {
                     chain_durable_sent = 1;
                     migNotifyOrchestratorIfAny(mig, "CHAIN_DURABLE",
                                                (long long) mig->n_slots);
@@ -6308,6 +6630,48 @@ void rdmaEvictSlotsCommand(client *c) {
         "RDMA EVICT-SLOTS %lld:%lld — dropped %llu donor keys (offload post-NARROW)",
         lo, hi, removed);
     addReplyStatusFormat(c, "OK evicted slots=%lld:%lld keys=%llu", lo, hi, removed);
+}
+
+/* Reserved sentinel session id for the recipient chain pre-warm. Real migration
+ * sessions use small positive mig_ids, so this never collides; findLivePeerClient
+ * (QP reuse) and g_src_pool_cache (MR reuse) are keyed across sessions, so warming
+ * under this id lets the first REAL session reuse both. */
+#define RDMA_CHAIN_WARM_SESS  ((long long)900000000000000000LL)
+
+/* RDMA CHAIN-WARM <slots-per-session>
+ *
+ * Recipient / chain-leader side prepare-ahead. Pre-establishes the RDMA chain
+ * QPs to the configured rdma-chain-followers AND pre-registers the leader source
+ * pool (the ibv_reg_mr of ~slots*2MiB), both OFF the main thread, under a
+ * reserved sentinel session. The first real migration session then reuses the
+ * live follower QPs (findLivePeerClient) and the cached src-pool MR
+ * (g_src_pool_cache) instead of paying ~0.22s QP-connect + ~0.44s ibv_reg_mr
+ * INSIDE the migration window. Mirrors the donor-side RDMA MIGRATE-WARM. Run
+ * during the pre-reshard pause. Idempotent (rdmaChainSpawnEstablish no-ops if the
+ * sentinel chain is already up). */
+void rdmaChainWarmCommand(client *c) {
+    if (c->argc != 3) {
+        addReplyError(c, "syntax: RDMA CHAIN-WARM slots-per-session");
+        return;
+    }
+    long long slots_ll;
+    if (getLongLongFromObject(c->argv[2], &slots_ll) != C_OK ||
+        slots_ll <= 0 || slots_ll > CLUSTER_SLOTS) {
+        addReplyError(c, "slots-per-session out of range (1..16384)");
+        return;
+    }
+    if (server.rdma_chain_followers == NULL ||
+        sdslen(server.rdma_chain_followers) == 0) {
+        addReplyError(c, "RDMA CHAIN-WARM: no rdma-chain-followers configured "
+                         "(this node is not a chain leader)");
+        return;
+    }
+    long long pool_bytes = slots_ll * (long long) RDMAMIG_BLOCK_SIZE_BYTES;
+    rdmaChainSpawnEstablish(RDMA_CHAIN_WARM_SESS, pool_bytes,
+                            server.rdma_chain_followers);
+    addReplyStatusFormat(c,
+        "OK chain-warm dispatched slots=%lld pool_bytes=%lld followers=%s",
+        slots_ll, pool_bytes, server.rdma_chain_followers);
 }
 
 void rdmaMigrateWarmCommand(client *c) {

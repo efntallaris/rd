@@ -65,6 +65,17 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
                                   size_t snapshot_pool_bytes,
                                   char *errbuf, size_t errbuf_len);
 
+/* rdmaLeaderChainForwardPipelined: like ForwardPerSlot but RDMA-forwards each
+ * 2 MiB block as soon as snapshot_ready[idx] is set by the backpatch worker,
+ * overlapping the recipient->F1 write with the ongoing transfer + merge
+ * (rdma-chain-pipeline). Single-threaded; sole forwarder for the session. */
+int rdmaLeaderChainForwardPipelined(long long src_mig_id,
+                                    const int *slots, int n_slots,
+                                    const char *snapshot_pool,
+                                    size_t snapshot_pool_bytes,
+                                    const _Atomic unsigned char *snapshot_ready,
+                                    char *errbuf, size_t errbuf_len);
+
 /* rdmaLeaderChainAckCount: number of CHAIN-ACK messages received from the
  * tail for this session. Returns -1 if no chain state for sess. */
 long long rdmaLeaderChainAckCount(long long src_mig_id);

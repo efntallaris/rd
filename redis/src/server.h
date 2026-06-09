@@ -2213,6 +2213,12 @@ struct redisServer {
                                        Read once at initServer time; changing at
                                        runtime has no effect because the pool is
                                        constructed during recipientBackpatchThreadStart. */
+    int rdma_chain_pipeline;        /* Aqueduct: recipient pipelines CHAIN-REPLICATION with
+                                       the backpatch merge (forward each slot's snapshot to
+                                       F1 as captured, vs one bulk forward at merge-done). */
+    int rdma_chain_xsession;        /* Aqueduct: cross-session pipeline — donor reports
+                                       MERGE-done (not chain-durable) to dispatch donor N+1,
+                                       overlapping its TRANSFER+BACKPATCH with donor N's chain. */
     int rdma_transfer_overlap;      /* Aqueduct: when on, donor sends RDMA DONE-SLOTS-INIT
                                        before TRANSFER + per-chunk DONE-SLOTS-CHUNK during
                                        TRANSFER so recipient backpatch overlaps with the
@@ -4433,6 +4439,7 @@ void rdmaMigrateStatusCommand(client *c);
 void rdmaBackpatchStatusCommand(client *c);
 void rdmaMigrateAllCommand(client *c);
 void rdmaMigrateWarmCommand(client *c);
+void rdmaChainWarmCommand(client *c);
 void rdmaEvictSlotsCommand(client *c);
 void rdmaMigrateAllStatusCommand(client *c);
 void rdmaMigrateCompleteCommand(client *c);

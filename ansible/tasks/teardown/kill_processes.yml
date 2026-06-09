@@ -17,6 +17,7 @@
         - mpstat
         - iostat
         - ifstat
+        - pidstat
 
     - name: Kill YCSB
       shell: pkill -9 -f 'ycs[b].sh'; true

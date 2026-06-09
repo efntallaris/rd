@@ -112,6 +112,26 @@
       delay: 1
       until: warm_results.rc == 0 and 'OK' in (warm_results.stdout | default(''))
 
+    # RECIPIENT chain pre-warm: pre-establish the sg4-leader -> followers chain QPs
+    # and pre-register the leader source pool (off the main thread) BEFORE the
+    # first migration, so session 1 reuses both (no cold ibv_reg_mr in-window).
+    # Sized to the largest round chunk so the cached src-pool MR covers every
+    # session. Mirrors the donor MIGRATE-WARM above.
+    - name: "PREPARE-AHEAD (recipient): RDMA CHAIN-WARM (pre-establish chain QPs + register src pool)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[reshard_target] }} -p {{ master_port }} \
+          RDMA CHAIN-WARM {{ (reshard_slots_per_source | int) - ((reshard_slots_per_source | int) // (n_rounds | int)) * ((n_rounds | int) - 1) }}
+      register: chain_warm_result
+      retries: 3
+      delay: 1
+      until: chain_warm_result.rc == 0 and 'OK' in (chain_warm_result.stdout | default(''))
+
+    # Let the async CHAIN-WARM thread finish establishing the follower QPs +
+    # registering the src pool before round 0. Outside the measured window.
+    - name: "PREPARE-AHEAD (recipient): wait for CHAIN-WARM to settle"
+      pause:
+        seconds: 2
+
     # Reset the per-donor reshard offset so round 0 starts at the donor's first
     # owned slot. Each donor then self-advances server.rdma_reshard_migrated as it
     # migrates each chunk, so successive rounds pick successive chunks WITHOUT an
