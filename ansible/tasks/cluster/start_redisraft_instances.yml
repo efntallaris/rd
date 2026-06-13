@@ -66,6 +66,7 @@
           --rdma-chain-pipeline {{ rdma_chain_pipeline | default('no') }} \
           --rdma-chain-xsession {{ rdma_chain_xsession | default('no') }} \
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
+          --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
           --rdma-migration-redisraft-mode yes \
           --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \
           --rdma-migration-peer-stagger-ms {{ rdma_migration_peer_stagger_ms | default(30000) }} \
