@@ -51,20 +51,47 @@ rlog = (expdir / "logs" / "redis3" / "tmp" / "redis_logs" / "redis3_sg4.log").re
 def times(pred):
     return [secs(l) for l in rlog if pred(l)]
 bp_init = times(lambda l: "DONE-SLOTS-INIT: batch" in l and "total_slots" in l)
+# First migrated data actually LANDS when the donor's first RDMA chunk completes
+# (DONE-SLOTS-CHUNK seq=0) — NOT at DONE-SLOTS-INIT, which only arms the pipeline
+# before any bytes exist. BACKPATCH cannot begin merging before this point.
+first_chunk = times(lambda l: "DONE-SLOTS-CHUNK" in l and " seq=0 " in l)
 mg_done = times(lambda l: "backpatch-merge: batch DONE" in l)
 ch_wrote = times(lambda l: "CHAIN: sess=" in l and " wrote " in l and " bytes" in l)
 commit  = times(lambda l: "RECP_TXN_DONE logged" in l)
+# The REAL chain-replication start: when the forwarder posts its first RDMA WRITE
+# to F1 (after F1's pool is ready + a snapshot is captured). This is the accurate
+# anchor — NOT "chain established", which logs only when the establish THREAD
+# finishes (after the slow downstream follower's CHAIN-PREP) and is unrelated to
+# when the leader->F1 forward actually begins. The first-post times already
+# reflect the single-wire serialization (a session waits for g_chain_forward_mu).
+ch_firstpost = times(lambda l: "forward FIRST-POST" in l)
+# Per-round chain wire-up time (fallback only, for logs without FIRST-POST).
+estab = times(lambda l: "chain established: sess=" in l and "sess=9000" not in l)
 # sessions that took the cold ibv_reg_mr fallback (time-ordered)
 cold = times(lambda l: "src pool not pre-registered" in l)
-# Pipelined run? Then the forward starts during the transfer/merge (per-slot),
-# so draw CHAIN from the session start (bp_init) to chain_wrote to show its TRUE
-# overlapping span — not just the [merge_done -> chain_wrote] exposed tail.
+# Pipelined run? Then the forward overlaps transfer/merge (per-slot) instead of
+# running as a serial tail after merge_done.
 PIPELINED = any("pipelined per-slot)" in l for l in rlog)
 
+prev_chain_end = 0.0   # leader->F1 wire is one QP, serialized across sessions
 for i, r in enumerate(rows):
     if i < len(bp_init):
-        r[2]["MERGE"]    = [bp_init[i], mg_done[i]]
-        r[2]["CHAIN"]    = [bp_init[i] if PIPELINED else mg_done[i], ch_wrote[i]]
+        ri = r[1]
+        # BACKPATCH: first chunk landed -> merge done (the real data-movement span).
+        m_start = first_chunk[i] if i < len(first_chunk) else bp_init[i]
+        r[2]["MERGE"]    = [m_start, mg_done[i]]
+        # CHAIN start = the REAL forward first-post (accurate; already reflects the
+        # single-wire serialization). Fall back to the old estab/merge anchors only
+        # for logs that predate the FIRST-POST marker.
+        if i < len(ch_firstpost):
+            c_start = ch_firstpost[i]
+        elif PIPELINED:
+            wire = estab[ri-1] if 0 <= ri-1 < len(estab) else m_start
+            c_start = max(max(wire, m_start), prev_chain_end)
+        else:
+            c_start = max(mg_done[i], prev_chain_end)
+        r[2]["CHAIN"]    = [c_start, ch_wrote[i]]
+        prev_chain_end   = max(prev_chain_end, ch_wrote[i])
         r[2]["COMMIT"]   = [ch_wrote[i], commit[i]]
         r[2]["_cold"]    = any(abs(c - bp_init[i]) < (mg_done[i]-bp_init[i]+1.5) and bp_init[i] <= c <= commit[i] for c in cold)
 
@@ -134,7 +161,7 @@ for sg, ri, s in rows:
             ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri}\n{dlabel}", ha="center", va="center",
                     fontsize=7, color=txtcol, zorder=6, linespacing=1.0, fontweight="bold")
         elif w > 0.05:
-            ax.text((a-t0)+w/2, y+BAR_H/2+0.06, dlabel, ha="center", va="bottom",
+            ax.text((a-t0)+w/2, y+BAR_H/2+0.06, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="bottom",
                     fontsize=6, color="#777", zorder=6, rotation=90)
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)

@@ -1956,6 +1956,7 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
      * Out-of-order capture (4 concurrent pool workers) is fine — each WR targets
      * remote_addr + idx*BLOCK independently. */
     /* Serialize this session's forward against any other session's (shared QP+CQ). */
+    long long t_first_post = 0;   /* REAL forward start (first WR on the wire) */
     pthread_mutex_lock(&g_chain_forward_mu);
     {
         const int INFLIGHT = RDMA_FWD_INFLIGHT;
@@ -1990,6 +1991,13 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                     return C_ERR;
                 }
                 posted[idx] = 1; n_posted++; progressed = 1;
+                if (n_posted == 1) {
+                    t_first_post = mstime();
+                    serverLog(LL_NOTICE,
+                        "CHAIN: sess=%lld forward FIRST-POST — leader → F1 begins "
+                        "(F1 pool ready; this is the real chain-replication start)",
+                        src_mig_id);
+                }
             }
             int n = rdmamig_client_poll_send(cli, wc,
                         (int) (sizeof(wc) / sizeof(wc[0])));
@@ -2009,9 +2017,15 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
         zfree(posted);
     }
     pthread_mutex_unlock(&g_chain_forward_mu);
-    serverLog(LL_NOTICE,
-        "CHAIN: sess=%lld wrote %zu bytes (n_slots=%d, pipelined per-slot) leader → F1 (%s)",
-        src_mig_id, length, n_slots, f1_host);
+    {
+        long long elapsed_ms = t_first_post ? (mstime() - t_first_post) : 0;
+        double gbps = (elapsed_ms > 0)
+            ? ((double) length * 8.0) / ((double) elapsed_ms / 1000.0) / 1e9 : 0.0;
+        serverLog(LL_NOTICE,
+            "CHAIN: sess=%lld wrote %zu bytes (n_slots=%d, pipelined per-slot) "
+            "leader → F1 (%s) — first-post→done %lldms, %.1f Gbps",
+            src_mig_id, length, n_slots, f1_host, elapsed_ms, gbps);
+    }
 
     /* Single CHAIN-FORWARDED to F1 (the "one DONE") — F1 cascades to F2. */
     redisContext *ctx = redisConnect(f1_host, f1_port);
