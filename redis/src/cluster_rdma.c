@@ -1585,6 +1585,15 @@ typedef struct backpatchSlotWork {
     backpatchBatch *batch;   /* parent batch (back-pointer for completion accounting) */
     redisDb        *db;      /* cached from batch->db (avoids load in tight loop) */
     int             slot;
+    /* AqRaft chain∥merge decouple: the pool worker does TWO things per item —
+     * (1) capture the donor landing-block VA for the chain forwarder (read-only,
+     * safe to run for any session) and (2) FillShadow+merge (must stay serialized
+     * across sessions via the merge gate). `captured`=0 means do (1) then gate (2);
+     * a PENDING session's item is then buffered in held_items and re-enqueued at
+     * promotion with `captured`=1, so the second pass skips (1) and does only (2).
+     * This lets a pending session's CHAIN forward start with its transfer instead
+     * of waiting for the prior session's whole merge. */
+    int             captured;
 } backpatchSlotWork;
 
 static list            *backpatch_work_queue = NULL;          /* list of backpatchSlotWork* */
@@ -2066,6 +2075,7 @@ void rdmaDoneSlotsChunkCommand(client *c) {
         w->batch = b;
         w->db    = b->db;
         w->slot  = (int) s;
+        w->captured = 0;
         items[j] = w;
     }
 
@@ -2089,30 +2099,15 @@ void rdmaDoneSlotsChunkCommand(client *c) {
      * session's items are buffered in its held_items list — no broadcast — until the
      * prior session's merge_done promotes it. covered_slots above stays ungated so
      * the snapshot lookup still finds the slot once items are promoted. */
+    /* AqRaft chain∥merge decouple: ALWAYS enqueue chunk items to the work queue
+     * (no per-session held-buffering here anymore). The pool worker captures every
+     * session's landing VAs immediately — so a PENDING session's CHAIN forward
+     * starts with its transfer instead of waiting for the prior session's whole
+     * merge — and gates only FillShadow+merge by the serialization (buffering a
+     * pending item in held_items AFTER capture; see backpatchPoolWorkerMain). */
     pthread_mutex_lock(&backpatch_work_mu);
-    int held = 0;
-    if (server.rdma_chain_xsession && b != g_active_merge_batch) {
-        pendingSession *ps = NULL;
-        listIter li; listNode *ln; listRewind(g_pending_sessions, &li);
-        while ((ln = listNext(&li)) != NULL) {
-            pendingSession *p = listNodeValue(ln);
-            if (p->batch == b) { ps = p; break; }
-        }
-        if (ps != NULL) {
-            for (int j = 0; j < n_slots; j++) listAddNodeTail(ps->held_items, items[j]);
-            held = 1;
-        } else {
-            /* Neither active nor pending — should not happen (INIT registers every
-             * session). Fall back to the queue (safe) and warn. */
-            serverLog(LL_WARNING,
-                "xsession gate: CHUNK for batch mig_id=%lld neither active nor pending "
-                "— enqueueing directly", b->src_mig_id);
-        }
-    }
-    if (!held) {
-        for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
-        pthread_cond_broadcast(&backpatch_work_cv);
-    }
+    for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
+    pthread_cond_broadcast(&backpatch_work_cv);
     pthread_mutex_unlock(&backpatch_work_mu);
     zfree(items);
 
@@ -3141,6 +3136,10 @@ static void *backpatchPoolWorkerMain(void *arg) {
         listDelNode(backpatch_work_queue, ln);
         pthread_mutex_unlock(&backpatch_work_mu);
 
+        /* AqRaft chain∥merge decouple: a re-enqueued (promoted) item already had
+         * its landing VA captured — skip straight to FillShadow+merge. */
+        if (w->captured) goto do_fillshadow;
+
         /* Pass-through chain snapshot: before the shadow-merge corrupts
          * r_allocator's block[0] for this slot (by allocating kvobj
          * segments INTO the same memory the donor RDMA-WROTE), capture
@@ -3197,6 +3196,32 @@ static void *backpatchPoolWorkerMain(void *arg) {
             }
         }
 
+        /* AqRaft chain∥merge decouple: capture is done (the chain forwarder can
+         * read this slot now). Gate FillShadow+merge by the serialization — only
+         * the ACTIVE merge session may proceed; a PENDING session's item is
+         * buffered in held_items (still captured=1) and re-enqueued at promotion,
+         * where the second pass jumps straight to FillShadow. */
+        w->captured = 1;
+        if (server.rdma_chain_xsession) {
+            pthread_mutex_lock(&backpatch_work_mu);
+            if (w->batch != g_active_merge_batch) {
+                pendingSession *ps = NULL;
+                listIter li2; listNode *ln2; listRewind(g_pending_sessions, &li2);
+                while ((ln2 = listNext(&li2)) != NULL) {
+                    pendingSession *p = listNodeValue(ln2);
+                    if (p->batch == w->batch) { ps = p; break; }
+                }
+                if (ps != NULL) {
+                    listAddNodeTail(ps->held_items, w);   /* FillShadow deferred */
+                    pthread_mutex_unlock(&backpatch_work_mu);
+                    continue;                              /* w now owned by held_items */
+                }
+                /* neither active nor pending (shouldn't happen) → FillShadow now */
+            }
+            pthread_mutex_unlock(&backpatch_work_mu);
+        }
+
+    do_fillshadow:;
         /* Double-buffer backpatch (option 3): the worker fills a SHADOW
          * dict for this slot (no live keyspace access, no locks). When the
          * shadow is full, hand it off to the main thread via the merge
