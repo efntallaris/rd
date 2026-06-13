@@ -59,10 +59,16 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
  * per slot via rdmaApplySlotBlock (in cluster_rdma.c).
  *
  * Returns C_OK on success; errbuf populated on C_ERR. */
+/* AqRaft zero-copy chain forward: instead of a snapshot copy, the forwarder
+ * RDMA-WRITEs the donor's bytes straight out of the recipient's landing ring
+ * buffer. `landing_va[i]` is the donor block VA for slots[i] (captured by the
+ * backpatch pool worker while still pristine); `landing_buf` is the ring
+ * rdmamig_buffer* the donor wrote into — the forwarder registers its F1-PD twin
+ * via rdmaLandingFwdBufFor and posts from there. No memcpy, no src_pool. */
 int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
                                   const int *slots, int n_slots,
-                                  const char *snapshot_pool,
-                                  size_t snapshot_pool_bytes,
+                                  void *const *landing_va,
+                                  void *landing_buf,
                                   char *errbuf, size_t errbuf_len);
 
 /* rdmaLeaderChainForwardPipelined: like ForwardPerSlot but RDMA-forwards each
@@ -71,10 +77,17 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
  * (rdma-chain-pipeline). Single-threaded; sole forwarder for the session. */
 int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                                     const int *slots, int n_slots,
-                                    const char *snapshot_pool,
-                                    size_t snapshot_pool_bytes,
+                                    void *const *landing_va,
+                                    void *landing_buf,
                                     const _Atomic unsigned char *snapshot_ready,
                                     char *errbuf, size_t errbuf_len);
+
+/* AqRaft zero-copy chain forward (implemented in cluster_rdma.c): register every
+ * landing-ring buffer's F1-PD twin (off-main), and resolve the twin MR for a
+ * given ring buffer + F1 cm_id. struct rdma_cm_id is opaque here. */
+struct rdma_cm_id;
+void  rdmaEnsureLandingFwdReg(struct rdma_cm_id *f1_cm);
+void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm);
 
 /* rdmaLeaderChainAckCount: number of CHAIN-ACK messages received from the
  * tail for this session. Returns -1 if no chain state for sess. */

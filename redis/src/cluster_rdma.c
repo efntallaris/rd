@@ -499,11 +499,8 @@ int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size) 
      * r_allocator_register_existing_block / init_bloc_layout, so the segment
      * walk respects the same layout the donor emits. */
     r_allocator_walk_used_segments((char *) buf, applySlotCb, &c);
-    /* AqRaft Patch 17: sanitize donor-shipped block. Flips every free
-     * segment's alloc-bit to 1 so future coalesce-on-free never tries to
-     * merge with a "free" neighbor whose freelist pointers refer to the
-     * donor's address space (would SIGSEGV in freelist_remove_segment).
-     * Done AFTER the walker so applySlotCb sees the real alloc bits. */
+    /* AqRaft Patch 17 (RESTORED — DIAGNOSTIC): sanitize the donor block (see
+     * the leader path in rdmaBackpatchSlotFillShadow). */
     r_allocator_sanitize_imported_block((char *) buf);
     /* The freelist for this slot is stale (init_bloc_layout said "whole block
      * is one free segment", but now donor's used segments occupy it). Reset
@@ -1487,6 +1484,28 @@ typedef struct backpatchBatch {
      * CAS gate so the pipelined forward thread is spawned exactly once. */
     _Atomic uint8_t     *snapshot_ready;
     _Atomic int          pipeline_spawn_initiated;
+    /* AqRaft zero-copy chain forward: per-slot pointer (indexed by covered_slots
+     * position) to the donor's landing block in the ring buffer. Captured by the
+     * pool worker when it sets snapshot_ready[i] (the block is still registered +
+     * pristine then), so the forwarder RDMA-WRITEs straight from these pages
+     * instead of from a snapshot copy. Stays valid because (a) the merge copies
+     * kvobjs OUT (never overwrites the landing block) and (b) the per-buffer
+     * refcount (landing_consumers) keeps the pages mapped until the forward is
+     * also done. Allocated alongside snapshot_ready; NULL when no chain. */
+    void               **landing_va;
+    /* Stable record (set once at batch init, never mutated) of whether a chain
+     * FORWARD consumer was counted in landing_consumers — i.e. a chain is
+     * configured AND landing_va allocated. The forward-side decrement gates on
+     * THIS (not on landing_va, which finalize frees), so the refcount can never
+     * underflow on alloc failure or leak after an inline finalize. */
+    int                  landing_fwd_counted;
+    /* AqRaft zero-copy chain forward refcount: number of live consumers of this
+     * session's landing ring buffer — the local merge (+1) and the chain forward
+     * (+1, only when a chain is configured). The ring slot is returned to
+     * g_lp_free ONLY when this hits 0, so the next donor's RDMA-write can't race
+     * either reader. Init in DONE-SLOTS(-INIT); decremented by landingConsumerDone
+     * from the merge_done site and from the forwarder. */
+    _Atomic int          landing_consumers;
     /* Phase C: slots covered by this batch's DONE-SLOTS-CHUNK calls. The
      * leader iterates these at BACKPATCH_DONE to encode kvstore content
      * for chain forwarding. Allocated in DONE-SLOTS-INIT (size = n_slots
@@ -1728,39 +1747,31 @@ void rdmaDoneSlotsCommand(client *c) {
     atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
     atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_relaxed);
     b->snapshot_ready = NULL;   /* legacy bulk DONE-SLOTS: no streaming → no pipeline */
+    b->landing_va = NULL;
     atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) n_slots * sizeof(int));
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
     b->covered_slot_count = n_slots;
     pthread_mutex_init(&b->covered_mu, NULL);
-    /* Pass-through chain snapshot pool: sized to n_slots * 2 MiB. Only
-     * allocated when a chain is configured; otherwise stays NULL and the
-     * shadow-merge snapshot step is a no-op. */
-    if (server.rdma_chain_followers != NULL &&
-        sdslen(server.rdma_chain_followers) > 0) {
-        b->donor_snapshot_pool_bytes = (size_t) n_slots * RDMAMIG_BLOCK_SIZE_BYTES;
-        b->donor_snapshot_pool = zmalloc(b->donor_snapshot_pool_bytes);
-        if (b->donor_snapshot_pool == NULL) {
+    /* AqRaft zero-copy chain forward: no snapshot pool. When a chain is
+     * configured, allocate the per-slot landing-VA array (n_slots pointers); the
+     * pool worker fills it with the donor block VAs and the (non-pipelined)
+     * PerSlot forwarder RDMA-reads them directly. landing_consumers = 2 so the
+     * ring buffer is recycled only after both merge and forward finish. */
+    int chain_cfg = (server.rdma_chain_followers != NULL &&
+                     sdslen(server.rdma_chain_followers) > 0);
+    b->donor_snapshot_pool = NULL;
+    b->donor_snapshot_pool_bytes = 0;
+    if (chain_cfg) {
+        b->landing_va = zcalloc((size_t) n_slots * sizeof(void *));
+        if (b->landing_va == NULL) {
             serverLog(LL_WARNING,
-                "DONE-SLOTS: donor_snapshot_pool zmalloc(%zu) failed — "
-                "chain forwarding will use stale/empty data",
-                b->donor_snapshot_pool_bytes);
-            b->donor_snapshot_pool_bytes = 0;
+                "DONE-SLOTS: landing_va zcalloc(%zu ptrs) failed", (size_t) n_slots);
         }
-        /* AqRaft Patch 16: do NOT memset the 2.86 GB pool here. memset on
-         * a freshly-allocated pool of this size triggers ~700K page faults
-         * (kernel lazy allocation), which blocks the main thread for ~1-2
-         * sec → raft check-quorum trips (election_timeout * 2 = 2 s) and
-         * the leader steps down. The chain-forwarded RPC carries an
-         * explicit slot list (covered_slots), and F1 only walks that list
-         * via rdmaApplySlotBlock — uncovered offsets in the pool are
-         * never read on the follower side. Per-slot memcpys in the
-         * backpatch worker thread (off main thread) populate the covered
-         * offsets as snapshots arrive. */
-    } else {
-        b->donor_snapshot_pool = NULL;
-        b->donor_snapshot_pool_bytes = 0;
     }
+    b->landing_fwd_counted = (chain_cfg && b->landing_va != NULL) ? 1 : 0;
+    atomic_store_explicit(&b->landing_consumers, 1 + b->landing_fwd_counted,
+                          memory_order_relaxed);
 
     /* Index by (src_node_id, src_mig_id) for BACKPATCH-STATUS lookups. The dict
      * stores the batch under the key sds; we drop+re-add if a previous
@@ -1915,33 +1926,34 @@ void rdmaDoneSlotsInitCommand(client *c) {
     atomic_store_explicit(&b->chain_spawn_initiated, 0, memory_order_relaxed);
     atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_relaxed);
     b->snapshot_ready = NULL;
+    b->landing_va = NULL;
     atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
     b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
     b->covered_slot_count = 0;
     pthread_mutex_init(&b->covered_mu, NULL);
-    /* Pass-through chain snapshot pool: sized to total_slots * 2 MiB.
-     * Only allocated when a chain is configured. */
-    if (server.rdma_chain_followers != NULL &&
-        sdslen(server.rdma_chain_followers) > 0) {
-        b->donor_snapshot_pool_bytes = (size_t) total_slots * RDMAMIG_BLOCK_SIZE_BYTES;
-        b->donor_snapshot_pool = zmalloc(b->donor_snapshot_pool_bytes);
-        if (b->donor_snapshot_pool == NULL) {
+    /* AqRaft zero-copy chain forward: no snapshot pool. When a chain is
+     * configured, allocate the per-slot landing-VA array (tiny: total_slots
+     * pointers) and the readiness flags; the pool worker fills landing_va[i] with
+     * the donor block VA and the forwarder RDMA-reads it directly. landing_consumers
+     * = 2 (merge + forward) so the ring buffer is recycled only when BOTH are done;
+     * 1 (merge only) when no chain. */
+    int chain_cfg = (server.rdma_chain_followers != NULL &&
+                     sdslen(server.rdma_chain_followers) > 0);
+    b->donor_snapshot_pool = NULL;          /* removed: forward reads landing buf */
+    b->donor_snapshot_pool_bytes = 0;
+    if (chain_cfg) {
+        b->landing_va = zcalloc((size_t) total_slots * sizeof(void *));
+        if (b->landing_va == NULL) {
             serverLog(LL_WARNING,
-                "DONE-SLOTS-INIT: donor_snapshot_pool zmalloc(%zu) failed",
-                b->donor_snapshot_pool_bytes);
-            b->donor_snapshot_pool_bytes = 0;
+                "DONE-SLOTS-INIT: landing_va zcalloc(%zu ptrs) failed", (size_t) total_slots);
         }
         /* chain-pipeline: per-slot ready flags (zero-init = not captured). */
-        if (server.rdma_chain_pipeline && b->donor_snapshot_pool != NULL)
+        if (server.rdma_chain_pipeline && b->landing_va != NULL)
             b->snapshot_ready = zcalloc((size_t) total_slots * sizeof(_Atomic uint8_t));
-        /* AqRaft Patch 16: see DONE-SLOTS path above — skip the 2.86 GB
-         * memset to avoid blocking the main thread on ~700K page faults
-         * (triggers raft check-quorum step-down). F1 reads only covered
-         * slot offsets; uncovered offsets are never accessed. */
-    } else {
-        b->donor_snapshot_pool = NULL;
-        b->donor_snapshot_pool_bytes = 0;
     }
+    b->landing_fwd_counted = (chain_cfg && b->landing_va != NULL) ? 1 : 0;
+    atomic_store_explicit(&b->landing_consumers, 1 + b->landing_fwd_counted,
+                          memory_order_relaxed);
 
     if (backpatch_batches_by_key != NULL) {
         sds key = backpatchBatchKey(src_node_id, src_mig_id);
@@ -2215,11 +2227,12 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
         if (buf == NULL) continue;
         if (b == 0) rdmaDebugDumpSlotBytes("RCV-SHADOW", slot, buf);
         r_allocator_walk_used_segments(buf, applySlotCb, &ctx);
-        /* AqRaft Patch 17: sanitize donor-shipped block AFTER the walker
-         * has identified kvobj segments. Flips free-segment alloc-bits to 1
-         * so a later coalesce-on-free for a migrated kvobj never tries to
-         * merge with a "free" neighbor whose freelist pointers refer to
-         * donor memory (would SIGSEGV in freelist_remove_segment). */
+        /* AqRaft Patch 17 (RESTORED — DIAGNOSTIC): sanitize the donor block.
+         * Removing this caused a SIGSEGV in r_allocator_insert_kvobj on the
+         * recipient leader (the merge/alloc path is NOT safe against the
+         * donor's stale in-segment freelist pointers without it). The
+         * zero-copy forward must therefore read the block BEFORE this runs —
+         * see the per-block forward-before-sanitize ordering. */
         r_allocator_sanitize_imported_block(buf);
     }
 
@@ -2302,20 +2315,83 @@ static void *landingPoolReleaseWorker(void *arg) {
  * pools are created on the FIRST register (in sg1's REGISTERING, which is BEFORE
  * the measured window), so sessions 2..6 alternate with zero merge-wait. A pool
  * is "free" once the prior occupant's keyspace merge has drained it. */
-#define N_LANDING_POOLS 3   /* one per donor in a round: sg1/sg2/sg3 transfers overlap */
+/* AqRaft zero-copy chain forward: a landing buffer is now held until BOTH the
+ * local merge AND the chain forward (which RDMA-reads it directly) have drained
+ * it — one extra forward-length per buffer — so bump the ring 3 -> 4 to absorb
+ * an in-flight forward without stalling the next donor's transfer. */
+#define N_LANDING_POOLS 4   /* one per donor in a round + 1 in-flight forward */
 static void                  *g_lp_pool[N_LANDING_POOLS]  = {0};
 static size_t                 g_lp_bytes[N_LANDING_POOLS] = {0};
 static struct rdmamig_buffer *g_lp_buf[N_LANDING_POOLS]   = {0};
 static void                  *g_lp_pd[N_LANDING_POOLS]    = {0};
-static int                    g_lp_free[N_LANDING_POOLS]  = {1, 1, 1};
+static int                    g_lp_free[N_LANDING_POOLS]  = {1, 1, 1, 1};
 static int                    g_lp_next = 0;     /* round-robin cursor (xsession) */
 static pthread_mutex_t        g_lp_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t         g_lp_cv = PTHREAD_COND_INITIALIZER;
+
+/* AqRaft zero-copy chain forward: second registration of each landing-ring
+ * buffer against the leader->F1 chain QP's cm_id/PD. The landing pool is
+ * registered (g_lp_buf) on the recipient SERVER PD (donor incoming RDMA-write);
+ * to RDMA-WRITE the SAME pages out to F1 the local source buffer must be on the
+ * F1 client QP's PD. These are MRs over the same pages — no copy. Indexed
+ * parallel to g_lp_buf; g_lp_fwd_cm tracks which cm_id each twin is bound to so
+ * a fresh F1 connect (new cm_id) re-registers. Guarded by g_lp_mu. */
+static struct rdmamig_buffer *g_lp_fwd_buf[N_LANDING_POOLS] = {0};
+static struct rdma_cm_id     *g_lp_fwd_cm[N_LANDING_POOLS]  = {0};
 
 /* True if buf is one of our cached landing pools (used to skip madvise/dereg). */
 static int rdmaIsCachedLandingBuf(struct rdmamig_buffer *buf) {
     for (int i = 0; i < N_LANDING_POOLS; i++) if (g_lp_buf[i] == buf) return 1;
     return 0;
+}
+
+/* Register every existing landing-ring buffer a SECOND time against f1_cm (the
+ * leader->F1 chain QP's cm_id) so the chain forwarder can RDMA-WRITE the donor
+ * bytes straight out of the landing pool — no snapshot, no src_pool. One extra
+ * ibv_reg_mr per ring slot over the same pages. Idempotent; re-registers a slot
+ * only if its twin is missing or was bound to a different cm_id. Skips ring
+ * slots not yet created (registerWorkerThread mmaps them lazily; the forwarder's
+ * rdmaLandingFwdBufFor lazy-ensures any slot created after this runs). Safe to
+ * call off-main (it's an ibv_reg_mr). */
+void rdmaEnsureLandingFwdReg(struct rdma_cm_id *f1_cm) {
+    if (f1_cm == NULL) return;
+    pthread_mutex_lock(&g_lp_mu);
+    for (int i = 0; i < N_LANDING_POOLS; i++) {
+        if (g_lp_buf[i] == NULL) continue;                 /* slot not created yet */
+        if (g_lp_fwd_buf[i] != NULL && g_lp_fwd_cm[i] == f1_cm) continue;
+        struct rdmamig_buffer *fb =
+            rdmamig_buffer_create(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
+        if (fb != NULL) {
+            g_lp_fwd_buf[i] = fb;          /* leak old twin: no destroy helper, same
+                                              no-destroy contract as the src_pool MR */
+            g_lp_fwd_cm[i]  = f1_cm;
+        } else {
+            serverLog(LL_WARNING,
+                "CHAIN: F1-PD reg of landing pool[%d] (%zu B) failed", i, g_lp_bytes[i]);
+        }
+    }
+    pthread_mutex_unlock(&g_lp_mu);
+}
+
+/* Return the F1-PD twin MR of landing buffer `landing_buf` (a g_lp_buf[i]),
+ * lazily registering it against f1_cm if needed. Returns NULL if landing_buf is
+ * not a ring buffer or registration failed. Callable from cluster_rdma_chain.c. */
+void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm) {
+    if (landing_buf == NULL || f1_cm == NULL) return NULL;
+    pthread_mutex_lock(&g_lp_mu);
+    void *out = NULL;
+    for (int i = 0; i < N_LANDING_POOLS; i++) {
+        if (g_lp_buf[i] != (struct rdmamig_buffer *) landing_buf) continue;
+        if (g_lp_fwd_buf[i] == NULL || g_lp_fwd_cm[i] != f1_cm) {
+            struct rdmamig_buffer *fb =
+                rdmamig_buffer_create(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
+            if (fb != NULL) { g_lp_fwd_buf[i] = fb; g_lp_fwd_cm[i] = f1_cm; }
+        }
+        out = g_lp_fwd_buf[i];
+        break;
+    }
+    pthread_mutex_unlock(&g_lp_mu);
+    return out;
 }
 
 /* AqRaft lever #4 fix: reclaim the batch's donor landing pool exactly once,
@@ -2352,6 +2428,28 @@ static void backpatchReleaseLandingPool(backpatchBatch *b) {
     } else {
         rdmamig_buffer_release_pages(lpb); /* fallback: inline */
     }
+}
+
+/* AqRaft zero-copy chain forward: drop one consumer's hold on this batch's
+ * landing ring buffer and, when the LAST consumer releases it, return the ring
+ * slot to g_lp_free so the next donor can RDMA-write it. Consumers are the local
+ * merge (always) and the chain forward (when followers are configured) — see
+ * landing_consumers init. This is what prevents the next donor's RDMA-write from
+ * racing the forwarder's RDMA-read of the same pages: with zero-copy the
+ * forwarder reads the landing buffer directly, so releasing on merge_done alone
+ * (the old behavior) would be a use-after-free. Always-on (not xsession-gated):
+ * the ring claim now also respects g_lp_free unconditionally. */
+static void landingConsumerDone(backpatchBatch *b) {
+    if (b->landing_pool_buf == NULL) return;
+    int prev = atomic_fetch_sub_explicit(&b->landing_consumers, 1,
+                                         memory_order_acq_rel);
+    if (prev != 1) return;   /* other consumers still hold the buffer */
+    pthread_mutex_lock(&g_lp_mu);
+    for (int i = 0; i < N_LANDING_POOLS; i++) {
+        if (g_lp_buf[i] == b->landing_pool_buf) { g_lp_free[i] = 1; break; }
+    }
+    pthread_cond_broadcast(&g_lp_cv);
+    pthread_mutex_unlock(&g_lp_mu);
 }
 
 static void backpatchFinalize(backpatchBatch *b) {
@@ -2432,6 +2530,14 @@ static void backpatchFinalize(backpatchBatch *b) {
         void *sr = b->snapshot_ready;
         b->snapshot_ready = NULL;
         zfree(sr);
+    }
+    /* AqRaft zero-copy chain forward: free the per-slot landing-VA array (small —
+     * just pointers; the pages they referenced belong to the ring buffer and are
+     * recycled by the refcount, not here). The forward consumer has finished. */
+    if (b->landing_va != NULL) {
+        void *lv = b->landing_va;
+        b->landing_va = NULL;
+        zfree(lv);
     }
     /* AqRaft pool-free (lever #4 fix): reclaim this session's donor landing
      * pool — but ONLY if the main-thread merge has already drained
@@ -2522,9 +2628,15 @@ static void *chainForwardWorker(void *arg) {
         char errbuf[256] = {0};
         int frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
                                                 job->slots_copy, job->n_slots,
-                                                b->donor_snapshot_pool,
-                                                b->donor_snapshot_pool_bytes,
+                                                b->landing_va,
+                                                b->landing_pool_buf,
                                                 errbuf, sizeof(errbuf));
+        /* Forwarder is done RDMA-reading the landing buffer — drop the chain
+         * forward consumer's hold BEFORE any (possibly disposing) finalize below,
+         * to avoid a use-after-free of b. Only in NON-pipelined mode is this
+         * worker the forward consumer (pipelined: chainPipelineForwardWorker is). */
+        if (!server.rdma_chain_pipeline && b->landing_fwd_counted)
+            landingConsumerDone(b);
         if (frc == C_OK) {
             b->chain_forwarded = 1;
             pthread_mutex_lock(&backpatch_chain_pending_mu);
@@ -2559,11 +2671,15 @@ static void *chainForwardWorker(void *arg) {
             backpatchFinalize(b);  /* (D) finalize runs in this worker thread */
         }
     } else {
-        /* No chain configured -> finalize directly (off-main). */
+        /* No chain forward ran here (no chain configured, or chain not ready).
+         * In NON-pipelined mode this worker is the forward consumer, so drop its
+         * hold now, BEFORE finalize disposes b. In pipelined mode the dedicated
+         * chainPipelineForwardWorker owns the decrement — don't double-count. */
+        if (!server.rdma_chain_pipeline && b->landing_fwd_counted)
+            landingConsumerDone(b);
         /* AqRaft 3-flag DONE: with no chain configured, MGN_INDX_UPD raft
          * replication is the sole durability path. Set chain_acked=1 so the
-         * BACKPATCH-STATUS handler doesn't gate on a chain that doesn't
-         * exist. */
+         * BACKPATCH-STATUS handler doesn't gate on a chain that doesn't exist. */
         b->chain_acked = 1;
         backpatchFinalize(b);
     }
@@ -2590,8 +2706,12 @@ static void *chainPipelineForwardWorker(void *arg) {
     char errbuf[256] = {0};
     int frc = rdmaLeaderChainForwardPipelined(
                   b->src_mig_id, b->covered_slots, b->n_slots,
-                  b->donor_snapshot_pool, b->donor_snapshot_pool_bytes,
+                  b->landing_va, b->landing_pool_buf,
                   b->snapshot_ready, errbuf, sizeof(errbuf));
+    /* Forwarder is done RDMA-reading the landing buffer (success or failure):
+     * drop the chain-forward consumer's hold so the ring slot is recycled once
+     * the merge consumer is also done. (Gated on the stable counted flag.) */
+    if (b->landing_fwd_counted) landingConsumerDone(b);
     if (frc == C_OK) {
         b->chain_forwarded = 1;
         pthread_mutex_lock(&backpatch_chain_pending_mu);
@@ -2617,7 +2737,7 @@ static void *chainPipelineForwardWorker(void *arg) {
  * from DONE-SLOTS-INIT when rdma-chain-pipeline is on and a chain is configured. */
 static void rdmaSpawnPipelineForward(backpatchBatch *b) {
     if (!server.rdma_chain_pipeline || b->snapshot_ready == NULL ||
-        b->donor_snapshot_pool == NULL) return;
+        b->landing_va == NULL) return;
     int expected = 0;
     if (!atomic_compare_exchange_strong_explicit(
             &b->pipeline_spawn_initiated, &expected, 1,
@@ -2629,6 +2749,9 @@ static void rdmaSpawnPipelineForward(backpatchBatch *b) {
         serverLog(LL_WARNING, "CHAIN: pthread_create(chainPipelineForwardWorker) failed");
         zfree(job);
         atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_release);
+        /* The chain-forward consumer was counted at init but the forwarder won't
+         * run → release its hold so the ring slot isn't pinned forever. */
+        if (b->landing_fwd_counted) landingConsumerDone(b);
         return;
     }
     pthread_detach(tid);
@@ -2651,7 +2774,7 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
     int chain_ready = (chain_configured && ack_count >= 0 &&
                        b->covered_slots != NULL &&
                        b->covered_slot_count > 0 &&
-                       b->donor_snapshot_pool != NULL);
+                       b->landing_va != NULL);
 
     chainForwardJob *job = zcalloc(sizeof(*job));
     job->batch = b;
@@ -2908,18 +3031,12 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
              * donor's poll correctly waits until chain has replicated to
              * majority AND MGN_INDX_UPD has committed. */
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
-            /* xsession: RELEASE this session's landing pool — the merge has copied
-             * its keys out + captured the chain snapshot, so the pool is safe for
-             * the next donor to RDMA-write. Free the SPECIFIC ring slot this batch
-             * used (matched by landing_pool_buf) and wake a waiting claim. */
-            if (server.rdma_chain_xsession && b->landing_pool_buf != NULL) {
-                pthread_mutex_lock(&g_lp_mu);
-                for (int i = 0; i < N_LANDING_POOLS; i++) {
-                    if (g_lp_buf[i] == b->landing_pool_buf) { g_lp_free[i] = 1; break; }
-                }
-                pthread_cond_broadcast(&g_lp_cv);
-                pthread_mutex_unlock(&g_lp_mu);
-            }
+            /* AqRaft zero-copy chain forward: the merge has copied this session's
+             * keys OUT of the landing pool, so the MERGE consumer is done with it.
+             * Drop its refcount; the ring slot is returned to g_lp_free only once
+             * the chain FORWARD consumer (which RDMA-reads the same pages) is also
+             * done — see landingConsumerDone. Always-on (not xsession-gated). */
+            landingConsumerDone(b);
             /* xsession merge-serialization gate: this active session is done
              * merging — hand the merge token to the next PENDING session (in
              * arrival order) and release its buffered work items onto the queue,
@@ -3030,7 +3147,7 @@ static void *backpatchPoolWorkerMain(void *arg) {
          * the raw 2 MiB block into the batch's donor_snapshot_pool. The
          * chain forwarder later RDMA-WRITEs this snapshot to followers
          * verbatim — no dense re-encode. */
-        if (w->batch->donor_snapshot_pool != NULL) {
+        if (w->batch->landing_va != NULL) {
             int n_covered = 0;
             int *covered = NULL;
             pthread_mutex_lock(&w->batch->covered_mu);
@@ -3042,27 +3159,18 @@ static void *backpatchPoolWorkerMain(void *arg) {
             }
             pthread_mutex_unlock(&w->batch->covered_mu);
             if (found_idx >= 0) {
-                /* AqRaft pool-reuse: snapshot the actual donor LANDING block
-                 * (is_registered_existing), NOT slot_blocks head. With the
-                 * recipient pool-reuse the head can be a copied-out managed block
-                 * (the landing block is unlinked after merge), so capturing
-                 * block[0] would forward empty/garbage to followers → follower
-                 * crash. The landing block is still present at snapshot time
-                 * (captured before this batch's merge/unregister). */
+                /* AqRaft zero-copy chain forward: capture the donor LANDING block
+                 * VA (is_registered_existing), NOT slot_blocks head, and NOT a
+                 * copy. The forwarder RDMA-reads these exact pages. Capture now,
+                 * while the block is still registered + pristine — before this
+                 * batch's merge/unregister. The block pages stay valid because
+                 * (a) the refcount keeps the ring buffer mapped until the forward
+                 * is done and (b) the merge copies kvobjs OUT (the only in-place
+                 * write is the benign kv->ptr repoint, which followers recompute). */
                 char *landing = (char *) r_allocator_get_landing_block_for_slot(w->slot);
-                if (landing != NULL) {
-                    char *dst = w->batch->donor_snapshot_pool
-                              + (size_t) found_idx * RDMAMIG_BLOCK_SIZE_BYTES;
-                    if (dst + RDMAMIG_BLOCK_SIZE_BYTES
-                        <= w->batch->donor_snapshot_pool + w->batch->donor_snapshot_pool_bytes) {
-                        memcpy(dst, landing, RDMAMIG_BLOCK_SIZE_BYTES);
-                    }
-                }
-                /* chain-pipeline: this slot's snapshot is now in
-                 * donor_snapshot_pool[found_idx] (captured BEFORE the merge below
-                 * corrupts the landing block). Publish it so the pipelined
-                 * forward thread can RDMA-WRITE it to F1 immediately. release so
-                 * the memcpy is visible before the flag. */
+                w->batch->landing_va[found_idx] = landing;
+                /* Publish: release barrier so the VA store is visible before the
+                 * readiness flag the forwarder gates on. */
                 if (w->batch->snapshot_ready != NULL)
                     atomic_store_explicit(&w->batch->snapshot_ready[found_idx], 1,
                                           memory_order_release);
@@ -3478,15 +3586,30 @@ static void *registerWorkerThread(void *arg) {
         }
     }
 
-    /* Claim a pool. WITHOUT xsession: always pool[0], NO free-gate — the original
-     * serial single-pool reuse (the merge_done release is also xsession-gated, so a
-     * free-gate here would block forever waiting on a release that never fires).
-     * WITH xsession: round-robin claim, waiting if the chosen pool's prior
-     * occupant's merge hasn't drained it (paired with the release at merge_done). */
-    int idx = 0;
-    if (server.rdma_chain_xsession) {
+    /* Claim a pool with the free-gate — ALWAYS-ON now (AqRaft zero-copy chain
+     * forward). The ring slot is returned to g_lp_free by landingConsumerDone
+     * only once BOTH the merge AND the chain forward (which RDMA-reads the same
+     * pages) are done, so the gate prevents the next donor's RDMA-write from
+     * racing an in-flight forwarder's read. Non-xsession keeps n_pools=1, which
+     * naturally serializes merges (the next donor can't get a landing buffer
+     * until the prior session fully releases), so no merge-serialization gate is
+     * needed there.
+     *
+     * Two correctness points the original 5 s xsession-only gate got wrong once
+     * the buffer is held until the FORWARD finishes AND async-apply lets the
+     * merge drain in the background:
+     *   1. The wait must be long enough for the prior session's async merge +
+     *      forward to drain (single-pool xsession-off serializes on this), so use
+     *      a generous 30 s bound (a merge is ~1 s; 30 s only triggers on a real
+     *      stall).
+     *   2. On timeout we must NOT reuse a still-busy pool — with zero-copy that
+     *      RDMA-writes a buffer a forwarder/merge is still reading → corruption +
+     *      SIGSEGV in r_allocator_insert_kvobj. Fail the registration instead;
+     *      the migration aborts cleanly rather than corrupting follower data. */
+    int idx = -1;
+    {
         pthread_mutex_lock(&g_lp_mu);
-        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 5;
+        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 30;
         for (;;) {
             int cand = g_lp_next % n_pools;
             if (!g_lp_free[cand]) {
@@ -3495,15 +3618,20 @@ static void *registerWorkerThread(void *arg) {
             }
             if (cand >= 0) { idx = cand; break; }
             if (pthread_cond_timedwait(&g_lp_cv, &g_lp_mu, &ts) == ETIMEDOUT) {
-                idx = g_lp_next % n_pools;
-                serverLog(LL_WARNING,
-                    "xsession: landing-pool free-wait timed out — using pool %d", idx);
+                idx = -1;   /* all pools still busy — fail safely, do NOT reuse */
                 break;
             }
         }
-        g_lp_next = (idx + 1) % n_pools;
-        g_lp_free[idx] = 0;
+        if (idx >= 0) { g_lp_next = (idx + 1) % n_pools; g_lp_free[idx] = 0; }
         pthread_mutex_unlock(&g_lp_mu);
+    }
+    if (idx < 0) {
+        job->has_error = 1;
+        snprintf(job->err_msg, sizeof(job->err_msg),
+            "landing-pool free-wait timed out after 30s (all %d pools busy) — "
+            "aborting registration to avoid reusing an in-flight buffer", n_pools);
+        serverLog(LL_WARNING, "RDMA REGISTER-BLOCK-SLOTS: %s", job->err_msg);
+        goto deliver;
     }
     void *pool = g_lp_pool[idx];
     struct rdmamig_buffer *pool_buf = g_lp_buf[idx];

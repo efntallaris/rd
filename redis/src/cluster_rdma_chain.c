@@ -100,12 +100,9 @@ typedef struct rdmaLeaderChainState {
     int n_peers;
     rdmaChainPeer *peers;       /* heap array, len = n_peers */
     pthread_mutex_t mu;
-    /* Phase B: source buffer for chain forward. Lazy-allocated on first
-     * RDMA WRITE; registered against peers[0].client's PD so the WRITE
-     * to peers[0]'s pool has matching local + remote PDs. */
-    void *src_pool;             /* mmap'd test/source bytes */
-    size_t src_pool_bytes;
-    void *src_buf;              /* struct rdmamig_buffer * */
+    /* AqRaft zero-copy chain forward: the per-session src_pool is gone — the
+     * forwarder RDMA-reads the donor's landing ring buffer directly (see
+     * rdmaLandingFwdBufFor / rdmaLeaderChainForwardPipelined). */
     /* Phase B.4: tail-commit ack tracking. Updated by rdmaChainAckCommand
      * when the chain tail confirms it has the bytes. */
     size_t last_acked_length;
@@ -176,28 +173,10 @@ static pthread_mutex_t g_chain_state_mu = PTHREAD_MUTEX_INITIALIZER;
  * post/reap loop; uncontended when sessions run serially (xsession off). */
 static pthread_mutex_t g_chain_forward_mu = PTHREAD_MUTEX_INITIALIZER;
 
-/* AqRaft Stage 3: process-global leader src-pool MR cache, reused across chain
- * sessions (= reshard rounds). Each round previously mmap'd + ibv_reg_mr'd a
- * fresh ~1.43 GB src pool in rdmaLeaderChainEnsureSrcPool (~400 ms). Because
- * Stage 1 makes round N>=2 REUSE round 1's peers[0].client (same cm_id / PD),
- * an MR registered for round 1 stays valid for later rounds' RDMA-WRITEs, so we
- * register once (with headroom) and hand the same (pool, buffer) to every
- * session. Safe to share a single scratch pool because leader chain forwards
- * are serialized (one backpatchFinalize/chainForwardWorker batch completes its
- * memcpy+WRITE before the next session's forward begins — same invariant the
- * old per-session src_pool already relied on across the 3 donor sub-batches).
- * Guarded by g_chain_state_mu. The cache is keyed on the cm_id it was
- * registered against; if a later session presents a different cm_id (QP not
- * reused, e.g. Stage 1 fell back to a fresh connect) we re-register. */
-static void   *g_src_pool_cache      = NULL;   /* mmap'd scratch buffer        */
-static size_t  g_src_pool_cache_bytes = 0;     /* mmap'd capacity (>= request) */
-static void   *g_src_buf_cache       = NULL;   /* struct rdmamig_buffer *      */
-static struct rdma_cm_id *g_src_pool_cache_cm = NULL; /* cm_id MR is bound to  */
-
-/* Round the src-pool registration up to a 64 MiB boundary so successive rounds
- * whose size differs by a few 2 MiB blocks (e.g. 682 vs 683 slots) reuse the
- * same MR instead of re-registering. */
-#define RDMA_SRC_POOL_GRAIN ((size_t) 64 * 1024 * 1024)
+/* AqRaft zero-copy chain forward: the process-global leader src-pool MR cache is
+ * gone. The forwarder RDMA-reads the donor's landing ring buffer directly (its
+ * F1-PD twin MR is pre-registered off-main by rdmaEnsureLandingFwdReg), so there
+ * is no separate scratch pool to allocate, register, or cache. */
 
 /* Forward decl — definition is further down in the leader-side section. */
 static rdmaLeaderChainState *findLeaderState(long long src_mig_id);
@@ -636,17 +615,78 @@ void rdmaChainInitQpCommand(client *c) {
     addReplyLongLong(c, server.rdma_migration_port);
 }
 
+/* ====================================================================== *
+ *  AqRaft: pre-registered FOLLOWER landing-pool ring                      *
+ * ---------------------------------------------------------------------- *
+ *  CHAIN-PREP used to mmap + ibv_reg_mr a fresh ~1.43 GB landing pool per *
+ *  session (~340 ms). The leader's forward waits for the CHAIN-PREP reply *
+ *  (the follower's addr/rkey), so across the 2 followers that ~680 ms     *
+ *  GATED the leader->F1 forward — chain replication started ~680 ms AFTER *
+ *  backpatch instead of with it. Fix: register K pools ONCE (pre-warmed   *
+ *  off-thread, triggered on the first CHAIN-PREP which is the CHAIN-WARM   *
+ *  one during the pre-reshard pause) and round-robin them per session. K  *
+ *  is chosen > sessions-per-migration so a pool is NEVER reused within a   *
+ *  migration → the follower's decode + F2-forward of a pool always finish  *
+ *  long before that pool is handed to another session (no refcount needed).*
+ *  Pools persist + are reused across migrations. Registrations are rounded *
+ *  up to a grain so 682- and 683-slot rounds share one pre-warmed pool.    */
+#define N_FOLLOWER_LANDING_POOLS 8   /* > sessions/migration (n_rounds*n_donors) */
+#define FLP_GRAIN ((size_t) 64 * 1024 * 1024)
+static void                  *g_flp_pool[N_FOLLOWER_LANDING_POOLS]  = {0};
+static size_t                 g_flp_bytes[N_FOLLOWER_LANDING_POOLS] = {0};
+static struct rdmamig_buffer *g_flp_buf[N_FOLLOWER_LANDING_POOLS]   = {0};
+static struct rdma_cm_id     *g_flp_cm[N_FOLLOWER_LANDING_POOLS]    = {0};
+static int                    g_flp_next      = 0;
+static int                    g_flp_prewarmed = 0;
+static pthread_mutex_t        g_flp_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* Ensure ring slot idx is registered against cm with capacity >= bytes.
+ * Idempotent (reuses a compatible existing registration). The mmap + ibv_reg_mr
+ * (the slow ~340 ms part) runs OUTSIDE g_flp_mu. Returns 0 on success. */
+static int followerEnsurePool(int idx, struct rdma_cm_id *cm, size_t bytes) {
+    if (cm == NULL) return -1;
+    size_t cap = (bytes + FLP_GRAIN - 1) & ~(FLP_GRAIN - 1);   /* round up to grain */
+    pthread_mutex_lock(&g_flp_mu);
+    int ok = (g_flp_buf[idx] != NULL && g_flp_cm[idx] == cm && g_flp_bytes[idx] >= bytes);
+    pthread_mutex_unlock(&g_flp_mu);
+    if (ok) return 0;
+    void *pool = mmap(NULL, cap, PROT_READ | PROT_WRITE,
+                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (pool == MAP_FAILED) return -1;
+    struct rdmamig_buffer *buf = rdmamig_buffer_create(cm, (char *) pool, cap, 0);
+    if (buf == NULL) { munmap(pool, cap); return -1; }
+    pthread_mutex_lock(&g_flp_mu);
+    /* Publish (leak any prior MR for this slot — no destroy helper; matches the
+     * existing recipient big-MR no-destroy contract). */
+    g_flp_pool[idx] = pool; g_flp_buf[idx] = buf;
+    g_flp_bytes[idx] = cap; g_flp_cm[idx] = cm;
+    pthread_mutex_unlock(&g_flp_mu);
+    return 0;
+}
+
+/* Background pre-warm: register ALL ring slots against cm. Spawned (detached)
+ * from the FIRST CHAIN-PREP (the CHAIN-WARM one) so the K * ~340 ms ibv_reg_mr
+ * cost is paid during the pre-reshard pause, off the main thread; real sessions
+ * then reuse with no in-window registration. */
+typedef struct { struct rdma_cm_id *cm; size_t bytes; } flpPrewarmArg;
+static void *followerPrewarmThread(void *arg) {
+    flpPrewarmArg *a = arg;
+    int done = 0;
+    for (int i = 0; i < N_FOLLOWER_LANDING_POOLS; i++)
+        if (followerEnsurePool(i, a->cm, a->bytes) == 0) done++;
+    serverLog(LL_NOTICE,
+        "CHAIN-PREP: follower pre-warmed %d/%d landing pools (~%zu B each, off-main)",
+        done, N_FOLLOWER_LANDING_POOLS, a->bytes);
+    zfree(a);
+    return NULL;
+}
+
 /*
  * RDMA CHAIN-PREP <src_mig_id> <pool_bytes>
  *
- * Issued by the recipient leader to each follower at session start.
- *
- * Phase A skeleton behavior:
- *   - Parses + validates args.
- *   - Creates a follower-side state entry if one does not yet exist for
- *     this src_mig_id.
- *   - Replies with (addr=0, rkey=0, bytes=requested) — placeholder values
- *     until Phase A.full wires real mmap + rdmamig_buffer_create.
+ * Issued by the recipient leader to each follower at session start. Claims a
+ * pre-registered ring pool (round-robin) and replies with its (addr, rkey,
+ * bytes) so the upstream peer can RDMA-WRITE this session's blocks into it.
  *
  * Reply format (multi-bulk array, 4 elements):
  *   1. status string ("CHAIN-PREP-OK" on success, error otherwise)
@@ -668,69 +708,61 @@ void rdmaChainPrepCommand(client *c) {
     pthread_mutex_lock(&g_chain_state_mu);
     rdmaFollowerChainState *st = findFollowerState(src_mig_id);
     if (st == NULL) {
-        /* Allocate the landing pool. Anonymous mmap so it's page-aligned,
-         * which ibv_reg_mr requires. Phase A.full: also call
-         * rdmamig_buffer_create on this pool to register it with the local
-         * PD and obtain a real rkey. For now we leave rkey = 0; the actual
-         * RDMA-WRITE will only work once Phase A.full lands. */
         size_t bytes = (size_t) pool_bytes;
-        void *pool = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
-                          MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        if (pool == MAP_FAILED) {
-            pthread_mutex_unlock(&g_chain_state_mu);
-            addReplyErrorFormat(c, "CHAIN-PREP: mmap(%lld) failed: %s",
-                                pool_bytes, strerror(errno));
-            return;
-        }
+        /* AqRaft: claim a PRE-REGISTERED ring pool (round-robin) instead of a
+         * fresh mmap+ibv_reg_mr — that ~340 ms registration is exactly what gated
+         * the leader->F1 forward. K > sessions/migration ⇒ no within-migration
+         * reuse, so no refcount is needed. On the first CHAIN-PREP (the CHAIN-WARM
+         * one) we also kick off a background pre-warm of the whole ring so real
+         * sessions reuse with zero in-window registration.
+         *
+         * On hardware-less dev machines server.rdma_server is NULL → leave
+         * rkey=0 (control-plane / pytest still pass; chain RDMA-WRITE won't). */
+        struct rdma_cm_id *cm = (server.rdma_server != NULL)
+                              ? rdmamig_server_cm_id(server.rdma_server) : NULL;
+        int idx, need_prewarm;
+        pthread_mutex_lock(&g_flp_mu);
+        idx = g_flp_next++ % N_FOLLOWER_LANDING_POOLS;
+        need_prewarm = (!g_flp_prewarmed && cm != NULL);
+        if (need_prewarm) g_flp_prewarmed = 1;
+        pthread_mutex_unlock(&g_flp_mu);
 
         st = zcalloc(sizeof(*st));
         st->src_mig_id = src_mig_id;
-        st->landing_pool = pool;
         st->landing_pool_bytes = bytes;
-        st->landing_pool_addr = (uint64_t) (uintptr_t) pool;
-        st->landing_pool_rkey = 0;
-        st->landing_pool_buf = NULL;
 
-        /* Phase A.full: register the landing pool against the local
-         * rdmamig_server's accepted cm_id. Requires that the upstream peer
-         * (leader for F1; F1 for F2; etc.) has already CONNECTed to our
-         * rdmamig_server — that's what makes server_cm_id non-NULL. The
-         * orchestrator sequences CHAIN-INIT-QP → leader-side connect →
-         * CHAIN-PREP so this precondition holds.
-         *
-         * On hardware-less dev machines server.rdma_server is NULL → we
-         * leave landing_pool_buf = NULL and rkey = 0; the chain transport
-         * won't work but the control-plane RPCs and pytest verification
-         * still pass. */
-        if (server.rdma_server != NULL) {
-            struct rdma_cm_id *cm = rdmamig_server_cm_id(server.rdma_server);
-            if (cm != NULL) {
-                struct rdmamig_buffer *buf =
-                    rdmamig_buffer_create(cm, (char *) pool, bytes, 0);
-                if (buf != NULL) {
-                    st->landing_pool_buf = buf;
-                    st->landing_pool_rkey = rdmamig_buffer_rkey(buf);
-                    serverLog(LL_NOTICE,
-                        "CHAIN-PREP: sess=%lld registered pool @ %p (%zu B) rkey=0x%x",
-                        src_mig_id, pool, bytes, st->landing_pool_rkey);
-                } else {
-                    serverLog(LL_WARNING,
-                        "CHAIN-PREP: sess=%lld rdmamig_buffer_create failed "
-                        "(pool=%p bytes=%zu cm=%p)",
-                        src_mig_id, pool, bytes, (void *) cm);
-                }
-            } else {
-                serverLog(LL_VERBOSE,
-                    "CHAIN-PREP: sess=%lld no peer connected yet "
-                    "(server_cm_id NULL) — leaving rkey=0",
-                    src_mig_id);
-            }
+        if (cm != NULL && followerEnsurePool(idx, cm, bytes) == 0) {
+            pthread_mutex_lock(&g_flp_mu);
+            st->landing_pool      = g_flp_pool[idx];
+            st->landing_pool_buf  = g_flp_buf[idx];
+            st->landing_pool_addr = (uint64_t) (uintptr_t) g_flp_pool[idx];
+            st->landing_pool_rkey = rdmamig_buffer_rkey(g_flp_buf[idx]);
+            pthread_mutex_unlock(&g_flp_mu);
+            serverLog(LL_NOTICE,
+                "CHAIN-PREP: sess=%lld using ring pool[%d] @ %p (%zu B) rkey=0x%x",
+                src_mig_id, idx, st->landing_pool, bytes, st->landing_pool_rkey);
+        } else {
+            /* No cm (degraded) or registration failed: rkey=0, chain WRITE no-ops. */
+            st->landing_pool = NULL; st->landing_pool_buf = NULL;
+            st->landing_pool_addr = 0; st->landing_pool_rkey = 0;
+            if (cm != NULL)
+                serverLog(LL_WARNING,
+                    "CHAIN-PREP: sess=%lld ring pool[%d] register failed", src_mig_id, idx);
+        }
+
+        /* Pre-warm the rest of the ring off-thread during the pre-reshard pause. */
+        if (need_prewarm) {
+            flpPrewarmArg *a = zmalloc(sizeof(*a));
+            a->cm = cm; a->bytes = bytes;
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, followerPrewarmThread, a) == 0)
+                pthread_detach(tid);
+            else zfree(a);
         }
 
         if (insertFollowerState(st) != C_OK) {
-            if (st->landing_pool_buf == NULL) munmap(pool, bytes);
             pthread_mutex_unlock(&g_chain_state_mu);
-            zfree(st);
+            zfree(st);   /* do NOT free the ring pool — it's shared + persistent */
             addReplyError(c, "CHAIN-PREP: too many concurrent chain sessions");
             return;
         }
@@ -1382,38 +1414,28 @@ static int sendChainPrep(const char *host, int port,
         if (ctx) redisFree(ctx);
         return C_ERR;
     }
-
     redisReply *r = redisCommand(ctx, "RDMA CHAIN-PREP %lld %lld",
                                  src_mig_id, pool_bytes);
+    int rc = C_OK;
     if (r == NULL) {
-        snprintf(errbuf, errbuf_len, "CHAIN-PREP %s:%d: %s",
-                 host, port, ctx->errstr);
-        redisFree(ctx);
-        return C_ERR;
+        snprintf(errbuf, errbuf_len, "CHAIN-PREP %s:%d: %s", host, port, ctx->errstr);
+        rc = C_ERR;
+    } else if (r->type == REDIS_REPLY_ERROR) {
+        snprintf(errbuf, errbuf_len, "CHAIN-PREP %s:%d: %s", host, port, r->str);
+        rc = C_ERR;
+    } else if (r->type != REDIS_REPLY_ARRAY || r->elements != 4 ||
+               r->element[0]->type != REDIS_REPLY_STRING ||
+               strcmp(r->element[0]->str, "CHAIN-PREP-OK") != 0) {
+        snprintf(errbuf, errbuf_len, "CHAIN-PREP %s:%d: bad reply", host, port);
+        rc = C_ERR;
+    } else {
+        peer->peer_pool_addr  = (uint64_t) r->element[1]->integer;
+        peer->peer_pool_rkey  = (uint32_t) r->element[2]->integer;
+        peer->peer_pool_bytes = (size_t)   r->element[3]->integer;
     }
-    if (r->type == REDIS_REPLY_ERROR) {
-        snprintf(errbuf, errbuf_len, "CHAIN-PREP %s:%d: %s",
-                 host, port, r->str);
-        freeReplyObject(r);
-        redisFree(ctx);
-        return C_ERR;
-    }
-    if (r->type != REDIS_REPLY_ARRAY || r->elements != 4 ||
-        r->element[0]->type != REDIS_REPLY_STRING ||
-        strcmp(r->element[0]->str, "CHAIN-PREP-OK") != 0) {
-        snprintf(errbuf, errbuf_len, "CHAIN-PREP %s:%d: bad reply",
-                 host, port);
-        freeReplyObject(r);
-        redisFree(ctx);
-        return C_ERR;
-    }
-
-    peer->peer_pool_addr  = (uint64_t) r->element[1]->integer;
-    peer->peer_pool_rkey  = (uint32_t) r->element[2]->integer;
-    peer->peer_pool_bytes = (size_t)   r->element[3]->integer;
-    freeReplyObject(r);
+    if (r) freeReplyObject(r);
     redisFree(ctx);
-    return C_OK;
+    return rc;
 }
 
 /* Send "RDMA CHAIN-WIRE ..." with predecessor + successor + leader info.
@@ -1442,17 +1464,14 @@ static int sendChainWire(const char *host, int port, long long src_mig_id,
         leader_host, leader_port);
     int rc = C_OK;
     if (r == NULL) {
-        snprintf(errbuf, errbuf_len, "CHAIN-WIRE %s:%d: %s",
-                 host, port, ctx->errstr);
+        snprintf(errbuf, errbuf_len, "CHAIN-WIRE %s:%d: %s", host, port, ctx->errstr);
         rc = C_ERR;
     } else if (r->type == REDIS_REPLY_ERROR) {
-        snprintf(errbuf, errbuf_len, "CHAIN-WIRE %s:%d: %s",
-                 host, port, r->str);
+        snprintf(errbuf, errbuf_len, "CHAIN-WIRE %s:%d: %s", host, port, r->str);
         rc = C_ERR;
     } else if (r->type != REDIS_REPLY_STATUS ||
                r->len != 2 || memcmp(r->str, "OK", 2) != 0) {
-        snprintf(errbuf, errbuf_len, "CHAIN-WIRE %s:%d: bad reply",
-                 host, port);
+        snprintf(errbuf, errbuf_len, "CHAIN-WIRE %s:%d: bad reply", host, port);
         rc = C_ERR;
     }
     if (r) freeReplyObject(r);
@@ -1691,104 +1710,35 @@ int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
                  "chain not established for sess=%lld", src_mig_id);
         return C_ERR;
     }
-    if (st->src_pool != NULL) {
-        pthread_mutex_unlock(&g_chain_state_mu);
-        return C_OK;   /* already wired for this session */
-    }
-
-    size_t bytes = st->peers[0].peer_pool_bytes;
-    /* Capture cm_id under the lock; rdmamig_buffer_create may take a while
-     * (it's the ibv_reg_mr that we're trying to keep off the main thread). */
+    /* Capture cm_id under the lock; the ibv_reg_mr inside rdmaEnsureLandingFwdReg
+     * may take a while — that's exactly what we keep off the main thread. */
     struct rdma_cm_id *cm = rdmamig_client_cm_id(st->peers[0].client);
-
-    /* AqRaft Stage 3: reuse the process-global src-pool MR if it was registered
-     * against THIS cm_id (Stage 1 shares peers[0].client across rounds) and is
-     * large enough for this session. This skips the ~400 ms mmap + ibv_reg_mr
-     * that round 2 otherwise pays (and which it used to race, falling back to a
-     * redundant lazy register on the forward path). */
-    if (g_src_pool_cache != NULL && g_src_buf_cache != NULL &&
-        g_src_pool_cache_cm == cm && g_src_pool_cache_bytes >= bytes) {
-        st->src_pool = g_src_pool_cache;
-        st->src_pool_bytes = g_src_pool_cache_bytes;
-        st->src_buf = g_src_buf_cache;
-        pthread_mutex_unlock(&g_chain_state_mu);
-        serverLog(LL_NOTICE,
-            "CHAIN: sess=%lld leader src pool REUSED from cache @ %p "
-            "(cap=%zu B, need=%zu B) [AqRaft Stage 3 — skip mmap+ibv_reg_mr]",
-            src_mig_id, g_src_pool_cache, g_src_pool_cache_bytes, bytes);
-        return C_OK;
-    }
     pthread_mutex_unlock(&g_chain_state_mu);
 
-    /* Cache miss: register a fresh pool, rounded up to RDMA_SRC_POOL_GRAIN so a
-     * later round that needs a few more 2 MiB blocks still reuses this MR. */
-    size_t cap = (bytes + RDMA_SRC_POOL_GRAIN - 1)
-                 & ~(RDMA_SRC_POOL_GRAIN - 1);
-    void *pool = mmap(NULL, cap, PROT_READ | PROT_WRITE,
-                      MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    if (pool == MAP_FAILED) {
-        snprintf(errbuf, errbuf_len,
-                 "mmap(%zu) failed: %s", cap, strerror(errno));
-        return C_ERR;
-    }
-    struct rdmamig_buffer *buf =
-        rdmamig_buffer_create(cm, (char *) pool, cap, 0);
-    if (buf == NULL) {
-        munmap(pool, cap);
-        snprintf(errbuf, errbuf_len,
-                 "rdmamig_buffer_create on leader src failed");
-        return C_ERR;
-    }
-
-    pthread_mutex_lock(&g_chain_state_mu);
-    /* Re-find state in case it was torn down while we were registering. */
-    st = findLeaderState(src_mig_id);
-    if (st == NULL) {
-        pthread_mutex_unlock(&g_chain_state_mu);
-        /* Leak the MR + pool (no rdmamig_buffer_destroy helper exists; the
-         * existing recipient pool register has the same leak comment). */
-        snprintf(errbuf, errbuf_len, "chain state torn down during register");
-        return C_ERR;
-    }
-    /* Publish into the process-global cache (unless another caller beat us to a
-     * compatible one while we registered — then drop ours; the leak matches the
-     * pre-existing no-destroy-helper behavior). */
-    if (g_src_pool_cache == NULL || g_src_pool_cache_cm != cm ||
-        g_src_pool_cache_bytes < cap) {
-        g_src_pool_cache = pool;
-        g_src_pool_cache_bytes = cap;
-        g_src_buf_cache = buf;
-        g_src_pool_cache_cm = cm;
-    }
-    /* Wire this session to whatever the cache now holds (ours or the winner's). */
-    st->src_pool = g_src_pool_cache;
-    st->src_pool_bytes = g_src_pool_cache_bytes;
-    st->src_buf = g_src_buf_cache;
-    void *wired_pool = st->src_pool;
-    size_t wired_bytes = st->src_pool_bytes;
-    pthread_mutex_unlock(&g_chain_state_mu);
-
+    /* AqRaft zero-copy chain forward: there is no separate src_pool anymore — the
+     * forwarder RDMA-reads the donor's landing ring buffer directly. Pre-register
+     * the F1-PD twins of all landing ring buffers here (off-main), so the
+     * in-window forward doesn't pay ibv_reg_mr. Reuses the CHAIN-WARM QP's cm_id;
+     * idempotent across rounds (re-registers only on a fresh F1 cm_id). */
+    rdmaEnsureLandingFwdReg(cm);
     serverLog(LL_NOTICE,
-        "CHAIN: sess=%lld leader src pool registered @ %p (cap=%zu B, "
-        "need=%zu B) [off-main-thread, cached for reuse — AqRaft Stage 3]",
-        src_mig_id, wired_pool, wired_bytes, bytes);
+        "CHAIN: sess=%lld leader landing F1-PD twins ensured [off-main, zero-copy]",
+        src_mig_id);
     return C_OK;
 }
 
 int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
                                   const int *slots, int n_slots,
-                                  const char *snapshot_pool,
-                                  size_t snapshot_pool_bytes,
+                                  void *const *landing_va,
+                                  void *landing_buf,
                                   char *errbuf, size_t errbuf_len) {
     if (n_slots <= 0) {
         snprintf(errbuf, errbuf_len, "n_slots must be positive");
         return C_ERR;
     }
     size_t length = (size_t) n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
-    if (snapshot_pool == NULL || snapshot_pool_bytes < length) {
-        snprintf(errbuf, errbuf_len,
-                 "snapshot_pool too small (%zu < %zu)",
-                 snapshot_pool_bytes, length);
+    if (landing_va == NULL || landing_buf == NULL) {
+        snprintf(errbuf, errbuf_len, "bad landing args (perslot)");
         return C_ERR;
     }
 
@@ -1809,37 +1759,7 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
         return C_ERR;
     }
 
-    /* AqRaft Patch 15: src pool is now pre-registered by chainEstablishThread
-     * (via rdmaLeaderChainEnsureSrcPool below) so the heavy ibv_reg_mr happens
-     * off the main thread. If for some reason that didn't run (e.g., the
-     * chain establish thread hasn't completed yet), fall back to lazy-init
-     * here — but log a warning since this means we'll block the main thread. */
-    if (st->src_pool == NULL) {
-        pthread_mutex_unlock(&g_chain_state_mu);
-        serverLog(LL_WARNING,
-            "CHAIN: sess=%lld src pool not pre-registered — falling back to "
-            "main-thread ibv_reg_mr (may stall raft heartbeats)",
-            src_mig_id);
-        char fallback_err[256] = {0};
-        if (rdmaLeaderChainEnsureSrcPool(src_mig_id, fallback_err,
-                                         sizeof(fallback_err)) != C_OK) {
-            snprintf(errbuf, errbuf_len,
-                     "src pool fallback init failed: %s", fallback_err);
-            return C_ERR;
-        }
-        pthread_mutex_lock(&g_chain_state_mu);
-        st = findLeaderState(src_mig_id);
-        if (st == NULL || st->src_pool == NULL) {
-            pthread_mutex_unlock(&g_chain_state_mu);
-            snprintf(errbuf, errbuf_len,
-                     "src pool fallback init: state vanished");
-            return C_ERR;
-        }
-    }
-
     /* Snapshot what we need to do the WRITE outside the lock. */
-    void *src_buf = st->src_buf;
-    void *src_pool = st->src_pool;
     void *cli = st->peers[0].client;
     uint64_t remote_addr = st->peers[0].peer_pool_addr;
     uint32_t remote_rkey = st->peers[0].peer_pool_rkey;
@@ -1847,13 +1767,17 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
     int f1_port = st->peers[0].port;
     pthread_mutex_unlock(&g_chain_state_mu);
 
-    /* Pass-through fill: bulk memcpy the caller's pre-captured snapshot
-     * (donor's raw 2 MiB blocks, sequenced by slot index) into the
-     * RDMA-registered src_pool. The snapshot was taken in
-     * rdmaBackpatchSlotFillShadow BEFORE r_allocator's kvobj insert
-     * corrupted the donor's encoded data. */
+    /* AqRaft zero-copy chain forward: RDMA-WRITE straight from the donor's
+     * landing blocks (landing_va[i]) — no snapshot, no src_pool. Resolve the
+     * F1-PD twin MR of the landing buffer (lazily registers it if needed). */
     (void) slots;  /* slot list only used for the CHAIN-FORWARDED RPC below */
-    memcpy(src_pool, snapshot_pool, length);
+    void *fwd_buf = rdmaLandingFwdBufFor(landing_buf, rdmamig_client_cm_id(cli));
+    if (fwd_buf == NULL) {
+        snprintf(errbuf, errbuf_len,
+                 "no F1-PD twin MR for landing buf (perslot) sess=%lld", src_mig_id);
+        sdsfree(f1_host);
+        return C_ERR;
+    }
 
     /* RDMA-WRITE per-slot: each 2 MiB chunk is its own WR (a single ~1.43 GiB
      * write would exceed IB HCA max_msg_sz, typically 2 GiB).
@@ -1874,9 +1798,16 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
         while (reaped < n_slots) {
             /* Post until the in-flight window is full (or all WRs are out). */
             while (posted < n_slots && (posted - reaped) < INFLIGHT) {
-                char *local = (char *) src_pool + (size_t) posted * RDMAMIG_BLOCK_SIZE_BYTES;
+                char *local = (char *) landing_va[posted];   /* zero-copy source */
+                if (local == NULL) {
+                    pthread_mutex_unlock(&g_chain_forward_mu);
+                    sdsfree(f1_host);
+                    snprintf(errbuf, errbuf_len,
+                             "landing_va[%d] NULL (perslot)", posted);
+                    return C_ERR;
+                }
                 uint64_t remote = remote_addr + (uint64_t) posted * RDMAMIG_BLOCK_SIZE_BYTES;
-                if (rdmamig_client_post_write(src_buf, local, remote, remote_rkey,
+                if (rdmamig_client_post_write(fwd_buf, local, remote, remote_rkey,
                                               RDMAMIG_BLOCK_SIZE_BYTES) != 0) {
                     pthread_mutex_unlock(&g_chain_forward_mu);
                     sdsfree(f1_host);
@@ -1963,8 +1894,8 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
  * (the establish thread runs concurrently; with CHAIN-WARM it is near-instant). */
 int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                                     const int *slots, int n_slots,
-                                    const char *snapshot_pool,
-                                    size_t snapshot_pool_bytes,
+                                    void *const *landing_va,
+                                    void *landing_buf,
                                     const _Atomic unsigned char *snapshot_ready,
                                     char *errbuf, size_t errbuf_len) {
     if (n_slots <= 0) {
@@ -1972,19 +1903,19 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
         return C_ERR;
     }
     size_t length = (size_t) n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
-    if (snapshot_pool == NULL || snapshot_pool_bytes < length || snapshot_ready == NULL) {
-        snprintf(errbuf, errbuf_len, "bad snapshot args (pipelined)");
+    if (landing_va == NULL || landing_buf == NULL || snapshot_ready == NULL) {
+        snprintf(errbuf, errbuf_len, "bad landing args (pipelined)");
         return C_ERR;
     }
 
-    /* Wait for the per-session chain to be established + src pool registered.
-     * The establish thread (spawned at DONE-SLOTS-INIT) reuses the CHAIN-WARM
-     * QP + src-pool cache, so this resolves in a few ms. Bound at ~10 s. */
-    void *src_buf = NULL, *src_pool = NULL, *cli = NULL;
+    /* Wait for the per-session chain to be established (QP up + F1 pool advertised).
+     * The establish thread (spawned at DONE-SLOTS-INIT) reuses the CHAIN-WARM QP,
+     * so this resolves in a few ms. Bound at ~10 s. No src_pool to wait on — the
+     * forward RDMA-reads the landing buffer directly. */
+    void *cli = NULL;
     uint64_t remote_addr = 0; uint32_t remote_rkey = 0;
     sds f1_host = NULL; int f1_port = 0;
     for (int tries = 0; tries < 10000; tries++) {
-        int need_ensure = 0;
         pthread_mutex_lock(&g_chain_state_mu);
         rdmaLeaderChainState *st = findLeaderState(src_mig_id);
         if (st != NULL && st->n_peers >= 1 && st->peers[0].client != NULL &&
@@ -1996,27 +1927,28 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                          "n_slots * 2 MiB = %zu > F1 pool %zu", length, pb);
                 return C_ERR;
             }
-            if (st->src_pool != NULL) {
-                src_buf = st->src_buf; src_pool = st->src_pool;
-                cli = st->peers[0].client;
-                remote_addr = st->peers[0].peer_pool_addr;
-                remote_rkey = st->peers[0].peer_pool_rkey;
-                f1_host = sdsdup(st->peers[0].host); f1_port = st->peers[0].port;
-                pthread_mutex_unlock(&g_chain_state_mu);
-                break;
-            }
-            need_ensure = 1;   /* established but src pool not registered yet */
+            cli = st->peers[0].client;
+            remote_addr = st->peers[0].peer_pool_addr;
+            remote_rkey = st->peers[0].peer_pool_rkey;
+            f1_host = sdsdup(st->peers[0].host); f1_port = st->peers[0].port;
+            pthread_mutex_unlock(&g_chain_state_mu);
+            break;
         }
         pthread_mutex_unlock(&g_chain_state_mu);
-        if (need_ensure) {
-            char e[256] = {0};
-            rdmaLeaderChainEnsureSrcPool(src_mig_id, e, sizeof(e));
-        }
         usleep(1000);
     }
-    if (src_pool == NULL) {
+    if (cli == NULL) {
         snprintf(errbuf, errbuf_len, "chain not ready for pipelined forward sess=%lld",
                  src_mig_id);
+        return C_ERR;
+    }
+    /* Resolve the F1-PD twin MR of the landing buffer (lazily registers it if the
+     * pre-registration at establish/warm time didn't cover this ring slot). */
+    void *fwd_buf = rdmaLandingFwdBufFor(landing_buf, rdmamig_client_cm_id(cli));
+    if (fwd_buf == NULL) {
+        snprintf(errbuf, errbuf_len,
+                 "no F1-PD twin MR for landing buf (pipelined) sess=%lld", src_mig_id);
+        sdsfree(f1_host);
         return C_ERR;
     }
 
@@ -2036,11 +1968,20 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                 if (posted[idx]) continue;
                 if (!atomic_load_explicit(&snapshot_ready[idx], memory_order_acquire))
                     continue;
-                char *local = (char *) src_pool + (size_t) idx * RDMAMIG_BLOCK_SIZE_BYTES;
-                memcpy(local, snapshot_pool + (size_t) idx * RDMAMIG_BLOCK_SIZE_BYTES,
-                       RDMAMIG_BLOCK_SIZE_BYTES);
+                /* Zero-copy: RDMA-WRITE straight from the donor's landing block.
+                 * landing_va[idx] was captured by the pool worker (with the same
+                 * release barrier as snapshot_ready[idx]) and the buffer is held
+                 * by the forward refcount, so these pages are valid + pristine. */
+                char *local = (char *) landing_va[idx];
+                if (local == NULL) {
+                    pthread_mutex_unlock(&g_chain_forward_mu);
+                    zfree(posted); sdsfree(f1_host);
+                    snprintf(errbuf, errbuf_len,
+                             "landing_va[%d] NULL despite ready (pipelined)", idx);
+                    return C_ERR;
+                }
                 uint64_t remote = remote_addr + (uint64_t) idx * RDMAMIG_BLOCK_SIZE_BYTES;
-                if (rdmamig_client_post_write(src_buf, local, remote, remote_rkey,
+                if (rdmamig_client_post_write(fwd_buf, local, remote, remote_rkey,
                                               RDMAMIG_BLOCK_SIZE_BYTES) != 0) {
                     pthread_mutex_unlock(&g_chain_forward_mu);
                     zfree(posted); sdsfree(f1_host);
