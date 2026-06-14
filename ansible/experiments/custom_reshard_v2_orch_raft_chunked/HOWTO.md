@@ -144,20 +144,28 @@ python3 plot_phase_gantt.py \
 The output dir is plain (written by you, not via sudo) so no chown is needed; if you
 reuse a root-owned `plots_*` dir, `sudo chown -R entall:streamstore-PG0 <dir>` first.
 
+**PDF export:** just give the output path a `.pdf` (or `.svg`) extension — the format
+is inferred from the extension:
+```bash
+python3 plot_phase_gantt.py /tmp/experiments/perchunk_4chunk_workloada \
+  ansible/plots_$(date +%Y%m%d)/phase_gantt_workloada.pdf   # → wrote ...pdf
+```
+
 ### 4.1 Per-chunk start markers (requires the 4-chunk run)
 
 When the run used `-e rdma_transfer_chunk_slots=171` (§2), the recipient log carries
-per-chunk timing markers and the Gantt draws them automatically on the
-TRANSFER / BACKPATCH / CHAIN-REPLICATION lanes:
+per-chunk timing markers and the Gantt draws them automatically (a bottom legend
+explains the symbols):
 
-- **▼ green solid (triangle-capped) = transfer START** — when the donor begins
-  streaming that chunk (chunk 0 = session transfer-begin / TRANSFER bar's left edge;
-  chunk N = the instant chunk N−1 landed, since the donor streams continuously, so
-  each later green ▼ sits on the previous chunk's grey landing tick).
-- **grey dotted = chunk landed** — transfer of that chunk complete; this is *also*
-  the instant backpatch + chain-forward start (the grey ticks line up vertically
-  across all three lanes). The green▼→grey gap on the TRANSFER lane is the chunk's
-  ~127 ms wire time (171 × 2 MiB ≈ 342 MiB at ~2.7 GB/s).
+- **▼ green solid (triangle-capped) on the TRANSFER lane = transfer START** — when the
+  donor begins streaming that chunk (chunk 0 = session transfer-begin / TRANSFER bar's
+  left edge; chunk N = the instant chunk N−1 landed, since the donor streams
+  continuously, so each later green ▼ sits where the previous chunk landed).
+- **grey dotted on the INDEX UPDATE / CHAIN-REPLICATION lanes = group transferred** —
+  the chunk has fully landed, which is *also* the instant its index-update and its
+  chain-forward start. The green▼→grey gap is the chunk's ~127 ms wire time
+  (171 × 2 MiB ≈ 342 MiB at ~2.7 GB/s). (On INDEX UPDATE the final chunk's tick is
+  omitted — it coincides with the bar's right edge and would read as an end marker.)
 
 These come from three `serverLog` markers in the recipient (`redis3_sg4.log`):
 `RDMA DONE-SLOTS-CHUNK ... seq=N` (landing), `PERCHUNK BACKPATCH ... seq=N` (backpatch
@@ -191,6 +199,13 @@ python3 plot_ycsb_timeseries.py \
 - top panel = throughput (near-black line), bottom panel = latency; the migration
   rounds are shaded as bands.
 - default output is `<expdir>/ycsb_timeseries.png` if `-o` is omitted.
+- **PDF export:** give `-o` a `.pdf` extension (format inferred from the extension).
+- **smoothed version:** add `--smooth 5` (centered rolling-median, 5 samples) to tame
+  the transient latency spike at migration start:
+  ```bash
+  python3 plot_ycsb_timeseries.py /tmp/experiments/perchunk_4chunk_workloada \
+    --smooth 5 -o ansible/plots_$(date +%Y%m%d)/ycsb_timeline_workloada_smooth.pdf
+  ```
 
 Useful flags:
 | flag | effect |
