@@ -286,5 +286,9 @@ if _leg_handles is not None:
 # Fixed margins (no tight-bbox crop) so the saved image keeps the golden-ratio canvas.
 fig.subplots_adjust(left=0.135, right=0.99, top=0.90, bottom=0.20)
 fig.savefig(out, dpi=140, facecolor="white")
-import PIL.Image as _I; _w,_h = _I.open(out).size
-print(f"wrote {out}  ({_w}x{_h}, ratio={_w/_h:.3f})")
+# raster outputs report pixel dims; vector formats (pdf/svg) just confirm the write.
+if str(out).lower().endswith((".png", ".jpg", ".jpeg")):
+    import PIL.Image as _I; _w,_h = _I.open(out).size
+    print(f"wrote {out}  ({_w}x{_h}, ratio={_w/_h:.3f})")
+else:
+    print(f"wrote {out}")
