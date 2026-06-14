@@ -233,10 +233,15 @@ for sg, ri, s in rows:
         ax.plot([x], [y+BAR_H/2+0.10], marker="v", color=_GRN, markersize=4.5,
                 zorder=9, clip_on=False)
         _nst += 1; seq += 1
+_leg_handles = None
 if _nck:
-    ax.text(xmax, LANE_Y["TRANSFER"]+BAR_H/2+0.16,
-            "▼ green solid = transfer START · grey dotted = chunk landed / index-update+chain start",
-            ha="right", va="bottom", fontsize=5.5, color="#555", alpha=0.9)
+    from matplotlib.lines import Line2D
+    _leg_handles = [
+        Line2D([0], [0], color=_GRN, lw=1.5, marker="v", markersize=7,
+               label="transfer START"),
+        Line2D([0], [0], color="#6a6a6a", lw=1.1, ls=(0, (1, 1.2)),
+               label="chunk landed  =  index-update + chain start"),
+    ]
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)
 _wl = "workloadb" if "workloadb" in str(expdir) else "workloada"
@@ -256,10 +261,14 @@ ax.set_axisbelow(True)
 for sp in ("top","right","left"): ax.spines[sp].set_visible(False)
 ax.spines["bottom"].set_color("#bbb")
 
-# Legend intentionally omitted.
+# Full-width legend across the bottom, below the x-axis label.
+if _leg_handles is not None:
+    fig.legend(handles=_leg_handles, loc="lower center", ncol=2,
+               bbox_to_anchor=(0.5, 0.005), frameon=False, fontsize=8.5,
+               handlelength=2.6, columnspacing=3.0, handletextpad=0.6)
 
 # Fixed margins (no tight-bbox crop) so the saved image keeps the golden-ratio canvas.
-fig.subplots_adjust(left=0.135, right=0.99, top=0.90, bottom=0.13)
+fig.subplots_adjust(left=0.135, right=0.99, top=0.90, bottom=0.20)
 fig.savefig(out, dpi=140, facecolor="white")
 import PIL.Image as _I; _w,_h = _I.open(out).size
 print(f"wrote {out}  ({_w}x{_h}, ratio={_w/_h:.3f})")
