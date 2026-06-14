@@ -1897,6 +1897,7 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                                     void *const *landing_va,
                                     void *landing_buf,
                                     const _Atomic unsigned char *snapshot_ready,
+                                    const int *chunk_slots, _Atomic uint64_t *ch_chunk_logged,
                                     char *errbuf, size_t errbuf_len) {
     if (n_slots <= 0) {
         snprintf(errbuf, errbuf_len, "n_slots must be positive");
@@ -1997,6 +1998,22 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                         "CHAIN: sess=%lld forward FIRST-POST — leader → F1 begins "
                         "(F1 pool ready; this is the real chain-replication start)",
                         src_mig_id);
+                }
+                /* Per-chunk CHAIN-start timestamp: the first slot of each chunk to
+                 * be POSTED logs once (covered position idx → seq = idx/chunk_slots;
+                 * slot0 identifies the donor since the round shares src_mig_id). */
+                int _cs = (chunk_slots != NULL) ? *chunk_slots : 0;
+                if (ch_chunk_logged != NULL && _cs > 0) {
+                    int cseq = idx / _cs;
+                    if (cseq < 64) {
+                        uint64_t cb = 1ULL << (unsigned) cseq;
+                        uint64_t cp = atomic_fetch_or_explicit(ch_chunk_logged, cb,
+                                                              memory_order_relaxed);
+                        if (!(cp & cb))
+                            serverLog(LL_NOTICE,
+                                "PERCHUNK CHAIN sess=%lld slot0=%d seq=%d start",
+                                src_mig_id, slots[0], cseq);
+                    }
                 }
             }
             int n = rdmamig_client_poll_send(cli, wc,

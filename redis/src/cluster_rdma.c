@@ -1514,6 +1514,14 @@ typedef struct backpatchBatch {
     int                 *covered_slots;
     int                  covered_slot_count;
     pthread_mutex_t      covered_mu;
+    /* Per-chunk start-timestamp instrumentation: chunk_slots = the uniform chunk
+     * size (first DONE-SLOTS-CHUNK's n_slots), so a covered_slots position idx
+     * maps to chunk seq = idx / chunk_slots. bp_/ch_chunk_logged are bitmasks
+     * (bit per seq, <64) so the first slot of each chunk logs its BACKPATCH-start
+     * (pool worker) and CHAIN-start (forwarder) exactly once. */
+    int                  chunk_slots;
+    _Atomic uint64_t     bp_chunk_logged;
+    _Atomic uint64_t     ch_chunk_logged;
     /* Pass-through chain snapshot: r_allocator's per-slot blocks get
      * corrupted by rdmaBackpatchSlotFillShadow (kvobj segments are
      * written on top of the donor's encoded data). To preserve the
@@ -1594,6 +1602,8 @@ typedef struct backpatchSlotWork {
      * This lets a pending session's CHAIN forward start with its transfer instead
      * of waiting for the prior session's whole merge. */
     int             captured;
+    int             chunk_seq;   /* DONE-SLOTS-CHUNK seq this slot belongs to (for
+                                  * per-chunk backpatch-start timestamps). */
 } backpatchSlotWork;
 
 static list            *backpatch_work_queue = NULL;          /* list of backpatchSlotWork* */
@@ -1762,6 +1772,9 @@ void rdmaDoneSlotsCommand(client *c) {
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
     b->covered_slot_count = n_slots;
     pthread_mutex_init(&b->covered_mu, NULL);
+    b->chunk_slots = 0;
+    atomic_store_explicit(&b->bp_chunk_logged, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->ch_chunk_logged, 0, memory_order_relaxed);
     /* AqRaft zero-copy chain forward: no snapshot pool. When a chain is
      * configured, allocate the per-slot landing-VA array (n_slots pointers); the
      * pool worker fills it with the donor block VAs and the (non-pipelined)
@@ -1940,6 +1953,9 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
     b->covered_slot_count = 0;
     pthread_mutex_init(&b->covered_mu, NULL);
+    b->chunk_slots = 0;
+    atomic_store_explicit(&b->bp_chunk_logged, 0, memory_order_relaxed);
+    atomic_store_explicit(&b->ch_chunk_logged, 0, memory_order_relaxed);
     /* AqRaft zero-copy chain forward: no snapshot pool. When a chain is
      * configured, allocate the per-slot landing-VA array (tiny: total_slots
      * pointers) and the readiness flags; the pool worker fills landing_va[i] with
@@ -2076,8 +2092,12 @@ void rdmaDoneSlotsChunkCommand(client *c) {
         w->db    = b->db;
         w->slot  = (int) s;
         w->captured = 0;
+        w->chunk_seq = (int) chunk_seq;
         items[j] = w;
     }
+    /* First chunk's slot count = the uniform chunk size, used to map a
+     * covered_slots position to a chunk seq in the forwarder. */
+    if (chunk_seq == 0) b->chunk_slots = n_slots;
 
     /* Phase C: append this chunk's slots to covered_slots BEFORE enqueuing
      * the worker items. The pass-through chain snapshot in the backpatch
@@ -2702,7 +2722,8 @@ static void *chainPipelineForwardWorker(void *arg) {
     int frc = rdmaLeaderChainForwardPipelined(
                   b->src_mig_id, b->covered_slots, b->n_slots,
                   b->landing_va, b->landing_pool_buf,
-                  b->snapshot_ready, errbuf, sizeof(errbuf));
+                  b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
+                  errbuf, sizeof(errbuf));
     /* Forwarder is done RDMA-reading the landing buffer (success or failure):
      * drop the chain-forward consumer's hold so the ring slot is recycled once
      * the merge consumer is also done. (Gated on the stable counted flag.) */
@@ -3139,6 +3160,17 @@ static void *backpatchPoolWorkerMain(void *arg) {
         /* AqRaft chain∥merge decouple: a re-enqueued (promoted) item already had
          * its landing VA captured — skip straight to FillShadow+merge. */
         if (w->captured) goto do_fillshadow;
+
+        /* Per-chunk BACKPATCH-start timestamp: the first slot of each chunk to be
+         * picked up logs once (atomic bitmask, seq < 64). */
+        if (w->chunk_seq >= 0 && w->chunk_seq < 64) {
+            uint64_t cbit = 1ULL << (unsigned) w->chunk_seq;
+            uint64_t cprev = atomic_fetch_or_explicit(&w->batch->bp_chunk_logged, cbit,
+                                                      memory_order_relaxed);
+            if (!(cprev & cbit))
+                serverLog(LL_NOTICE, "PERCHUNK BACKPATCH sess=%lld seq=%d start",
+                          w->batch->src_mig_id, w->chunk_seq);
+        }
 
         /* Pass-through chain snapshot: before the shadow-merge corrupts
          * r_allocator's block[0] for this slot (by allocating kvobj

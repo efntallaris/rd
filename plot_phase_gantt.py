@@ -143,6 +143,38 @@ ax.text((flip0-t0+done_last-t0)/2, _yarr+0.05,
         f"migration time = {done_last-flip0:.2f} s", ha="center", va="bottom",
         fontsize=10, color="#222", zorder=6)
 
+# --- per-chunk start times, PER PHASE: transfer (DONE-SLOTS-CHUNK landing),
+# backpatch (PERCHUNK BACKPATCH), chain (PERCHUNK CHAIN). Keyed (sg, round, seq).
+PORT_SG = {"08000": "sg1", "08001": "sg2", "08002": "sg3"}
+_tr_re = re.compile(r"DONE-SLOTS-CHUNK: from AQRAFT_(\d+)_\S* mig_id=(\d+) seq=(\d+)")
+_bp_re = re.compile(r"PERCHUNK BACKPATCH sess=(\d+) seq=(\d+)")
+_ch_re = re.compile(r"PERCHUNK CHAIN sess=(\d+) slot0=(-?\d+) seq=(\d+)")
+def _slot_sg(s0): return "sg1" if s0 < 5461 else ("sg2" if s0 < 10922 else "sg3")
+tr_ck = {}   # (sg, round, seq) -> transfer landing time
+ch_ck = {}   # (sg, round, seq) -> chain start time
+bp_raw = []  # (round, seq, time) — donor inferred by nearest transfer landing
+for l in rlog:
+    m = _tr_re.search(l)
+    if m:
+        sg = PORT_SG.get(m.group(1))
+        if sg: tr_ck[(sg, int(m.group(2)), int(m.group(3)))] = secs(l)
+        continue
+    m = _ch_re.search(l)
+    if m:
+        ch_ck[(_slot_sg(int(m.group(2))), int(m.group(1)), int(m.group(3)))] = secs(l)
+        continue
+    m = _bp_re.search(l)
+    if m: bp_raw.append((int(m.group(1)), int(m.group(2)), secs(l)))
+# backpatch log lacks the donor → match each to the sg with the nearest transfer landing
+bp_ck = {}
+for (rd, seq, t) in bp_raw:
+    best, bd = None, 1e9
+    for sg in ("sg1", "sg2", "sg3"):
+        tt = tr_ck.get((sg, rd, seq))
+        if tt is not None and abs(t - tt) < bd: bd, best = abs(t - tt), sg
+    if best: bp_ck[(best, rd, seq)] = t
+PHASE_CK = {"TRANSFER": tr_ck, "MERGE": bp_ck, "CHAIN": ch_ck}
+
 # --- bars (sharp) + labels
 for sg, ri, s in rows:
     for ph in PHASES:
@@ -155,6 +187,9 @@ for sg, ri, s in rows:
         draw_w = w if w >= 0.05 else 0.05
         ax.barh(y, draw_w, left=a-t0, height=BAR_H, color=ROUND_COLOR[ri],
                 edgecolor=ec, linewidth=2.4 if is_cold else 0.8, zorder=4)
+        # start-point marker for this phase (dashed vertical tick at the bar's left edge)
+        ax.plot([a-t0, a-t0], [y-BAR_H/2-0.07, y+BAR_H/2+0.07], ls=(0,(2,2)),
+                color="#c0392b", lw=0.8, alpha=0.8, zorder=6)
         dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
         txtcol = "white" if ri == 1 else "#16334f"
         if w > 0.22:
@@ -163,6 +198,26 @@ for sg, ri, s in rows:
         elif w > 0.05:
             ax.text((a-t0)+w/2, y+BAR_H/2+0.06, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="bottom",
                     fontsize=6, color="#777", zorder=6, rotation=90)
+
+# --- per-chunk start ticks, drawn in EACH phase's OWN lane at that phase's
+# per-chunk start time (transfer landing / backpatch start / chain start). They
+# line up vertically across the three lanes because the per-chunk data shows the
+# three coincide within ~1 ms — each chunk is backpatched + forwarded the instant
+# it lands.
+_nck = 0
+for sg, ri, s in rows:
+    for ph in ("TRANSFER", "MERGE", "CHAIN"):
+        if ph not in s or s[ph][1] is None: continue
+        y = LANE_Y[ph]; ckmap = PHASE_CK[ph]; seq = 0
+        while (sg, ri, seq) in ckmap:
+            t = ckmap[(sg, ri, seq)]
+            ax.plot([t-t0, t-t0], [y-BAR_H/2, y+BAR_H/2], ls=(0, (1, 1.2)),
+                    color="#6a6a6a", lw=0.7, alpha=0.95, zorder=6)
+            _nck += 1; seq += 1
+if _nck:
+    ax.text(xmax, LANE_Y["TRANSFER"]+BAR_H/2+0.05,
+            "grey dotted = per-chunk start (each in its own phase lane) · red dashed = phase start",
+            ha="right", va="bottom", fontsize=5.5, color="#555", alpha=0.9)
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)
 _wl = "workloadb" if "workloadb" in str(expdir) else "workloada"

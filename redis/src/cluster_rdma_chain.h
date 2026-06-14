@@ -80,6 +80,7 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                                     void *const *landing_va,
                                     void *landing_buf,
                                     const _Atomic unsigned char *snapshot_ready,
+                                    const int *chunk_slots, _Atomic uint64_t *ch_chunk_logged,
                                     char *errbuf, size_t errbuf_len);
 
 /* AqRaft zero-copy chain forward (implemented in cluster_rdma.c): register every
