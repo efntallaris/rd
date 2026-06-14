@@ -207,17 +207,26 @@ for sg, ri, s in rows:
     # The TRANSFER lane uses the green transfer-START markers instead.
     for ph in ("MERGE", "CHAIN"):
         if ph not in s or s[ph][1] is None: continue
-        y = LANE_Y[ph]; ckmap = PHASE_CK[ph]; seq = 0
-        # taller, higher-contrast ticks on INDEX UPDATE so all 4 per-chunk starts
+        y = LANE_Y[ph]; ckmap = PHASE_CK[ph]
+        seqs = []
+        seq = 0
+        while (sg, ri, seq) in ckmap:
+            seqs.append(seq); seq += 1
+        # On INDEX UPDATE the final chunk's start coincides with the bar's right
+        # edge (the merge finishes ~1 ms after the last chunk lands), so that tick
+        # reads as an end marker, not a start — drop it; keep the interior starts.
+        if ph == "MERGE" and seqs:
+            seqs = seqs[:-1]
+        # taller, higher-contrast ticks on INDEX UPDATE so the per-chunk starts
         # read clearly even over the navy round-1 bars (overhang onto white bg).
         over = 0.06 if ph == "MERGE" else 0.0
         lw   = 1.0  if ph == "MERGE" else 0.7
         col  = "#3a3a3a" if ph == "MERGE" else "#6a6a6a"
-        while (sg, ri, seq) in ckmap:
+        for seq in seqs:
             t = ckmap[(sg, ri, seq)]
             ax.plot([t-t0, t-t0], [y-BAR_H/2-over, y+BAR_H/2+over], ls=(0, (1, 1.2)),
                     color=col, lw=lw, alpha=0.95, zorder=6)
-            _nck += 1; seq += 1
+            _nck += 1
 
 # --- transfer START per chunk (green): the donor streams continuously, so chunk
 # N starts the instant chunk N-1 lands; chunk 0 starts at the session transfer
