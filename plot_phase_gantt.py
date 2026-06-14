@@ -219,18 +219,23 @@ for sg, ri, s in rows:
 # N starts the instant chunk N-1 lands; chunk 0 starts at the session transfer
 # begin (TRANSFER bar's left edge). The gap from a green tick to the next grey
 # tick on the TRANSFER lane is that chunk's ~127 ms wire time.
-y = LANE_Y["TRANSFER"]; _nst = 0
+y = LANE_Y["TRANSFER"]; _nst = 0; _GRN = "#1e8449"
 for sg, ri, s in rows:
     if "TRANSFER" not in s or s["TRANSFER"][1] is None: continue
     seq = 0
     while (sg, ri, seq) in tr_ck:
         start = s["TRANSFER"][0] if seq == 0 else tr_ck[(sg, ri, seq-1)]
-        ax.plot([start-t0, start-t0], [y-BAR_H/2, y+BAR_H/2], ls=(0, (1, 1.2)),
-                color="#1e8449", lw=0.9, alpha=0.95, zorder=7)
+        x = start - t0
+        # solid green line, taller than the bar, with a down-triangle cap on top —
+        # makes each chunk's transfer START pop out from the grey landing ticks.
+        ax.plot([x, x], [y-BAR_H/2, y+BAR_H/2+0.10], ls="-",
+                color=_GRN, lw=1.4, alpha=0.95, zorder=8, solid_capstyle="butt")
+        ax.plot([x], [y+BAR_H/2+0.10], marker="v", color=_GRN, markersize=4.5,
+                zorder=9, clip_on=False)
         _nst += 1; seq += 1
 if _nck:
-    ax.text(xmax, LANE_Y["TRANSFER"]+BAR_H/2+0.05,
-            "green dotted = transfer start · grey dotted = chunk landed / backpatch+chain start",
+    ax.text(xmax, LANE_Y["TRANSFER"]+BAR_H/2+0.16,
+            "▼ green solid = transfer START · grey dotted = chunk landed / backpatch+chain start",
             ha="right", va="bottom", fontsize=5.5, color="#555", alpha=0.9)
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)

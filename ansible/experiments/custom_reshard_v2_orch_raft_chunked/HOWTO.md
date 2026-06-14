@@ -150,12 +150,13 @@ When the run used `-e rdma_transfer_chunk_slots=171` (§2), the recipient log ca
 per-chunk timing markers and the Gantt draws them automatically on the
 TRANSFER / BACKPATCH / CHAIN-REPLICATION lanes:
 
-- **green dotted = transfer start** — when the donor begins streaming that chunk
-  (chunk 0 = session transfer-begin; chunk N = the instant chunk N−1 landed, since
-  the donor streams continuously).
+- **▼ green solid (triangle-capped) = transfer START** — when the donor begins
+  streaming that chunk (chunk 0 = session transfer-begin / TRANSFER bar's left edge;
+  chunk N = the instant chunk N−1 landed, since the donor streams continuously, so
+  each later green ▼ sits on the previous chunk's grey landing tick).
 - **grey dotted = chunk landed** — transfer of that chunk complete; this is *also*
   the instant backpatch + chain-forward start (the grey ticks line up vertically
-  across all three lanes). The green→grey gap on the TRANSFER lane is the chunk's
+  across all three lanes). The green▼→grey gap on the TRANSFER lane is the chunk's
   ~127 ms wire time (171 × 2 MiB ≈ 342 MiB at ~2.7 GB/s).
 
 These come from three `serverLog` markers in the recipient (`redis3_sg4.log`):
