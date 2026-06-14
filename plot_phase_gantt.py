@@ -203,14 +203,13 @@ for sg, ri, s in rows:
 # it lands.
 _nck = 0
 for sg, ri, s in rows:
-    for ph in ("TRANSFER", "MERGE", "CHAIN"):
+    # grey ticks only on the INDEX-UPDATE / CHAIN lanes (per-chunk processing START).
+    # The TRANSFER lane uses the green transfer-START markers instead.
+    for ph in ("MERGE", "CHAIN"):
         if ph not in s or s[ph][1] is None: continue
         y = LANE_Y[ph]; ckmap = PHASE_CK[ph]; seq = 0
         while (sg, ri, seq) in ckmap:
             t = ckmap[(sg, ri, seq)]
-            # grey: on TRANSFER lane this is the chunk LANDING (transfer complete);
-            # on MERGE/CHAIN it is the chunk's processing START — they coincide,
-            # which is the point. Transfer START is drawn separately in green below.
             ax.plot([t-t0, t-t0], [y-BAR_H/2, y+BAR_H/2], ls=(0, (1, 1.2)),
                     color="#6a6a6a", lw=0.7, alpha=0.95, zorder=6)
             _nck += 1; seq += 1
