@@ -104,7 +104,7 @@ LANE_Y = {ph: i for i, ph in enumerate(reversed(PHASES))}
 SG_COLOR = {"sg1":"#1f77b4","sg2":"#ff7f0e","sg3":"#2ca7a5"}
 LABEL = {"PREP":"CONNECT","REGISTERING":"REGISTER",
          "FLIPPING":"CH_OWNSHIP","TRANSFER":"TRANSFER",
-         "MERGE":"BACKPATCH","CHAIN":"CHAIN-REPLICATION",
+         "MERGE":"INDEX UPDATE","CHAIN":"CHAIN-REPLICATION",
          "COMMIT":"DONE COMMIT"}
 
 import matplotlib.patheffects as pe
@@ -235,7 +235,7 @@ for sg, ri, s in rows:
         _nst += 1; seq += 1
 if _nck:
     ax.text(xmax, LANE_Y["TRANSFER"]+BAR_H/2+0.16,
-            "▼ green solid = transfer START · grey dotted = chunk landed / backpatch+chain start",
+            "▼ green solid = transfer START · grey dotted = chunk landed / index-update+chain start",
             ha="right", va="bottom", fontsize=5.5, color="#555", alpha=0.9)
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)
