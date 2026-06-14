@@ -256,7 +256,7 @@ if _nck:
         Line2D([0], [0], color=_GRN, lw=1.5, marker="v", markersize=7,
                label="transfer START"),
         Line2D([0], [0], color="#6a6a6a", lw=1.1, ls=(0, (1, 1.2)),
-               label="chunk landed  =  index-update + chain start"),
+               label="group transferred  (index-update start, chain replication for this group start)"),
     ]
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)
