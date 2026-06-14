@@ -187,6 +187,9 @@ for sg, ri, s in rows:
         draw_w = w if w >= 0.05 else 0.05
         ax.barh(y, draw_w, left=a-t0, height=BAR_H, color=ROUND_COLOR[ri],
                 edgecolor=ec, linewidth=2.4 if is_cold else 0.8, zorder=4)
+        # CONNECT (PREP) / REGISTER (REGISTERING) bars are left unlabelled.
+        if ph in ("PREP", "REGISTERING"):
+            continue
         dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
         txtcol = "white" if ri == 1 else "#16334f"
         if w > 0.22:
