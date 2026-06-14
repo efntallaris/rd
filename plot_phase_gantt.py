@@ -187,9 +187,6 @@ for sg, ri, s in rows:
         draw_w = w if w >= 0.05 else 0.05
         ax.barh(y, draw_w, left=a-t0, height=BAR_H, color=ROUND_COLOR[ri],
                 edgecolor=ec, linewidth=2.4 if is_cold else 0.8, zorder=4)
-        # start-point marker for this phase (dashed vertical tick at the bar's left edge)
-        ax.plot([a-t0, a-t0], [y-BAR_H/2-0.07, y+BAR_H/2+0.07], ls=(0,(2,2)),
-                color="#c0392b", lw=0.8, alpha=0.8, zorder=6)
         dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
         txtcol = "white" if ri == 1 else "#16334f"
         if w > 0.22:
@@ -211,12 +208,29 @@ for sg, ri, s in rows:
         y = LANE_Y[ph]; ckmap = PHASE_CK[ph]; seq = 0
         while (sg, ri, seq) in ckmap:
             t = ckmap[(sg, ri, seq)]
+            # grey: on TRANSFER lane this is the chunk LANDING (transfer complete);
+            # on MERGE/CHAIN it is the chunk's processing START — they coincide,
+            # which is the point. Transfer START is drawn separately in green below.
             ax.plot([t-t0, t-t0], [y-BAR_H/2, y+BAR_H/2], ls=(0, (1, 1.2)),
                     color="#6a6a6a", lw=0.7, alpha=0.95, zorder=6)
             _nck += 1; seq += 1
+
+# --- transfer START per chunk (green): the donor streams continuously, so chunk
+# N starts the instant chunk N-1 lands; chunk 0 starts at the session transfer
+# begin (TRANSFER bar's left edge). The gap from a green tick to the next grey
+# tick on the TRANSFER lane is that chunk's ~127 ms wire time.
+y = LANE_Y["TRANSFER"]; _nst = 0
+for sg, ri, s in rows:
+    if "TRANSFER" not in s or s["TRANSFER"][1] is None: continue
+    seq = 0
+    while (sg, ri, seq) in tr_ck:
+        start = s["TRANSFER"][0] if seq == 0 else tr_ck[(sg, ri, seq-1)]
+        ax.plot([start-t0, start-t0], [y-BAR_H/2, y+BAR_H/2], ls=(0, (1, 1.2)),
+                color="#1e8449", lw=0.9, alpha=0.95, zorder=7)
+        _nst += 1; seq += 1
 if _nck:
     ax.text(xmax, LANE_Y["TRANSFER"]+BAR_H/2+0.05,
-            "grey dotted = per-chunk start (each in its own phase lane) · red dashed = phase start",
+            "green dotted = transfer start · grey dotted = chunk landed / backpatch+chain start",
             ha="right", va="bottom", fontsize=5.5, color="#555", alpha=0.9)
 
 # panel label, top-left (echoes the reference's "0.1 MOp/s" style)
