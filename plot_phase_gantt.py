@@ -69,6 +69,21 @@ ch_firstpost = times(lambda l: "forward FIRST-POST" in l)
 estab = times(lambda l: "chain established: sess=" in l and "sess=9000" not in l)
 # sessions that took the cold ibv_reg_mr fallback (time-ordered)
 cold = times(lambda l: "src pool not pre-registered" in l)
+# CHAIN TAIL = "all nodes have the data". The leader logs one CHAIN-ACK per
+# follower per group; with n_followers replicas in the chain, every
+# n_followers-th ack (count % nf == 0) is the TAIL (F2) confirming the group has
+# reached the LAST replica — the earlier (odd) acks are just F1. DONE COMMIT
+# (raft) fires on the F1 ack, so the tail ack lands ~one hop later. These tail
+# acks, in file order, line up 1:1 with the time-ordered rows.
+_nf = 2
+for _l in rlog:
+    _m = re.search(r"n_followers=(\d+)", _l)
+    if _m: _nf = int(_m.group(1))
+_ackc = re.compile(r"CHAIN-ACK: sess=\d+ .*\(count=(\d+)\)")
+def _acknum(l):
+    m = _ackc.search(l); return int(m.group(1)) if m else None
+tail_ack = [secs(l) for l in rlog
+            if (_c := _acknum(l)) is not None and _nf and _c % _nf == 0]
 # Pipelined run? Then the forward overlaps transfer/merge (per-slot) instead of
 # running as a serial tail after merge_done.
 PIPELINED = any("pipelined per-slot)" in l for l in rlog)
@@ -93,19 +108,27 @@ for i, r in enumerate(rows):
         r[2]["CHAIN"]    = [c_start, ch_wrote[i]]
         prev_chain_end   = max(prev_chain_end, ch_wrote[i])
         r[2]["COMMIT"]   = [ch_wrote[i], commit[i]]
+        # ALL REPLICAS: leader->F1 done -> tail (F2) ack = the remaining hop
+        # until EVERY node holds the group. Bar ends when all replicas have it.
+        if i < len(tail_ack):
+            r[2]["CHAINTAIL"] = [ch_wrote[i], tail_ack[i]]
         r[2]["_cold"]    = any(abs(c - bp_init[i]) < (mg_done[i]-bp_init[i]+1.5) and bp_init[i] <= c <= commit[i] for c in cold)
 
 t0 = min(s["PREP"][0] for _,_,s in rows)
 flip0 = min((s["FLIPPING"][0] for sg,_,s in rows if sg=="sg1"), default=t0)
-done_last = max(s["COMMIT"][1] for _,_,s in rows if "COMMIT" in s)
+done_last = max([s["COMMIT"][1] for _,_,s in rows if "COMMIT" in s]
+                + [s["CHAINTAIL"][1] for _,_,s in rows if "CHAINTAIL" in s])
+# Migration time is measured to the LAST DONE COMMIT (raft commit). The ALL
+# REPLICAS tail bars finish later, so done_last only sizes the x-axis; mig_end
+# is the migration-window end used for the span arrow.
+mig_end = max(s["COMMIT"][1] for _,_,s in rows if "COMMIT" in s)
 
-PHASES = ["PREP","REGISTERING","FLIPPING","TRANSFER","MERGE","CHAIN","COMMIT"]
+PHASES = ["PREP","REGISTERING","FLIPPING","TRANSFER","MERGE","CHAIN","CHAINTAIL","COMMIT"]
 LANE_Y = {ph: i for i, ph in enumerate(reversed(PHASES))}
-SG_COLOR = {"sg1":"#1f77b4","sg2":"#ff7f0e","sg3":"#2ca7a5"}
 LABEL = {"PREP":"CONNECT","REGISTERING":"REGISTER",
          "FLIPPING":"CH_OWNSHIP","TRANSFER":"TRANSFER",
          "MERGE":"INDEX UPDATE","CHAIN":"CHAIN-REPLICATION",
-         "COMMIT":"DONE COMMIT"}
+         "CHAINTAIL":"ALL REPLICAS\n(tail hop F1$\\rightarrow$F2)","COMMIT":"DONE COMMIT"}
 
 import matplotlib.patheffects as pe
 from matplotlib.patches import FancyBboxPatch
@@ -114,15 +137,18 @@ plt.rcParams.update({"font.family": "serif",
                      "mathtext.fontset": "cm", "axes.formatter.use_mathtext": True,
                      "axes.unicode_minus": False, "axes.edgecolor": "#444",
                      "svg.fonttype": "none"})
-# Two-tone academic palette: round 1 = dark navy, round 2 = light blue.
-NAVY = "#1f4e79"; LIGHT = "#b9cfe7"; COLD_EC = "#c0392b"
-ROUND_COLOR = {1: NAVY, 2: LIGHT}
+# Grayscale palette: one shade PER DONOR so each donor's flow (donor lanes ->
+# recipient lanes) carries the same color and is traceable end to end. The round
+# (1/2) is shown in the in-bar "sg.round" label, not in the color.
+SG_GRAY = {"sg1": "#333333", "sg2": "#777777", "sg3": "#bbbbbb"}
+SG_TXT  = {"sg1": "white",   "sg2": "white",   "sg3": "#1a1a1a"}
+COLD_EC = "#000000"
 N = len(PHASES); span = (done_last - t0)
 # Wide-and-short, thin bars, tight rows (reference proportions).
-FIG_W, FIG_H = 14.0, 3.3
+FIG_W, FIG_H = 14.0, 4.4
 fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
 fig.patch.set_facecolor("white"); ax.set_facecolor("white")
-BAR_H = 0.46
+BAR_H = 0.62
 xmax = span + 0.45; xmin = -0.25
 
 # donor / recipient divider + side labels (clean, on white)
@@ -134,13 +160,13 @@ ax.text(xmin+0.16, (LANE_Y["COMMIT"]+LANE_Y["MERGE"])/2, "RECIPIENT", rotation=9
         ha="center", va="center", fontsize=8.5, color="#8a8a8a")
 
 # --- migration window edges + span arrow with the migration time
-for x in (flip0-t0, done_last-t0):
+for x in (flip0-t0, mig_end-t0):
     ax.axvline(x, color="#bbb", ls=(0,(4,3)), lw=1.0, zorder=2)
 _yarr = N - 0.34
-ax.annotate("", xy=(done_last-t0, _yarr), xytext=(flip0-t0, _yarr),
+ax.annotate("", xy=(mig_end-t0, _yarr), xytext=(flip0-t0, _yarr),
             arrowprops=dict(arrowstyle="<->", color="#444", lw=1.2), zorder=6)
-ax.text((flip0-t0+done_last-t0)/2, _yarr+0.05,
-        f"migration time = {done_last-flip0:.2f} s", ha="center", va="bottom",
+ax.text((flip0-t0+mig_end-t0)/2, _yarr+0.05,
+        f"migration time = {mig_end-flip0:.2f} s", ha="center", va="bottom",
         fontsize=10, color="#222", zorder=6)
 
 # --- per-chunk start times, PER PHASE: transfer (DONE-SLOTS-CHUNK landing),
@@ -185,13 +211,13 @@ for sg, ri, s in rows:
         # min rendered width so sub-pixel phases (FLIPPING ~12ms, DONE COMMIT
         # ~4ms) stay visible; the in/over-bar label always shows the TRUE ms.
         draw_w = w if w >= 0.05 else 0.05
-        ax.barh(y, draw_w, left=a-t0, height=BAR_H, color=ROUND_COLOR[ri],
+        ax.barh(y, draw_w, left=a-t0, height=BAR_H, color=SG_GRAY[sg],
                 edgecolor=ec, linewidth=2.4 if is_cold else 0.8, zorder=4)
         # CONNECT (PREP) / REGISTER (REGISTERING) bars are left unlabelled.
         if ph in ("PREP", "REGISTERING"):
             continue
         dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
-        txtcol = "white" if ri == 1 else "#16334f"
+        txtcol = SG_TXT[sg]
         if w > 0.22:
             ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri}\n{dlabel}", ha="center", va="center",
                     fontsize=7, color=txtcol, zorder=6, linespacing=1.0, fontweight="bold")
@@ -215,11 +241,6 @@ for sg, ri, s in rows:
         seq = 0
         while (sg, ri, seq) in ckmap:
             seqs.append(seq); seq += 1
-        # On INDEX UPDATE the final chunk's start coincides with the bar's right
-        # edge (the merge finishes ~1 ms after the last chunk lands), so that tick
-        # reads as an end marker, not a start — drop it; keep the interior starts.
-        if ph == "MERGE" and seqs:
-            seqs = seqs[:-1]
         # taller, higher-contrast ticks on INDEX UPDATE so the per-chunk starts
         # read clearly even over the navy round-1 bars (overhang onto white bg).
         over = 0.06 if ph == "MERGE" else 0.0
@@ -231,18 +252,18 @@ for sg, ri, s in rows:
                     color=col, lw=lw, alpha=0.95, zorder=6)
             _nck += 1
 
-# --- transfer START per chunk (green): the donor streams continuously, so chunk
+# --- transfer START per chunk (dark marker): the donor streams continuously, so chunk
 # N starts the instant chunk N-1 lands; chunk 0 starts at the session transfer
 # begin (TRANSFER bar's left edge). The gap from a green tick to the next grey
 # tick on the TRANSFER lane is that chunk's ~127 ms wire time.
-y = LANE_Y["TRANSFER"]; _nst = 0; _GRN = "#1e8449"
+y = LANE_Y["TRANSFER"]; _nst = 0; _GRN = "#111111"
 for sg, ri, s in rows:
     if "TRANSFER" not in s or s["TRANSFER"][1] is None: continue
     seq = 0
     while (sg, ri, seq) in tr_ck:
         start = s["TRANSFER"][0] if seq == 0 else tr_ck[(sg, ri, seq-1)]
         x = start - t0
-        # solid green line, taller than the bar, with a down-triangle cap on top —
+        # solid dark line, taller than the bar, with a down-triangle cap on top —
         # makes each chunk's transfer START pop out from the grey landing ticks.
         ax.plot([x, x], [y-BAR_H/2, y+BAR_H/2+0.10], ls="-",
                 color=_GRN, lw=1.4, alpha=0.95, zorder=8, solid_capstyle="butt")

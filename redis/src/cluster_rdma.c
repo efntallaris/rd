@@ -33,6 +33,7 @@
  */
 
 #include "server.h"
+#include "crc64.h"   /* full-block integrity CRC for RESHARD-TRANSFER byte dump */
 #include "cluster.h"
 #include "cluster_legacy.h"
 #include "cluster_rdma_chain.h"   /* rdmaLeaderChain* — Phase B.5 wiring */
@@ -416,11 +417,26 @@ typedef struct {
     int skipped_invalid;
     dict *shadow;  /* optional: when non-NULL, install into this dict (shadow path); */
                    /* when NULL, install directly into db->keys (chain follower path). */
+    uint64_t crc;        /* debug (rdma_reshard_debug_bytes): CRC64 of installed segment data */
+    uint32_t crc_nseg;   /* segments walked */
+    size_t   crc_bytes;  /* data bytes checksummed (header-skipped) */
 } applySlotCtx;
 
 static void applySlotCb(void *seg_payload, size_t seg_payload_size, void *user) {
     applySlotCtx *c = (applySlotCtx *) user;
     kvobj *kv = (kvobj *) seg_payload;
+    if (server.rdma_reshard_debug_bytes) {
+        /* CRC the key+value DATA (header skipped) of every segment the walk
+         * yields, so the recipient checksums EXACTLY the bytes the apply path
+         * consumes — no separate read of a recyclable landing-pool buffer that
+         * could race. Byte-for-byte comparable to the donor SRC walk. */
+        size_t _hdr = (size_t)((char *)(kv + 1) - (char *)kv);
+        if (seg_payload_size > _hdr) {
+            c->crc = crc64(c->crc, (const unsigned char *)(kv + 1), seg_payload_size - _hdr);
+            c->crc_bytes += seg_payload_size - _hdr;
+        }
+        c->crc_nseg++;
+    }
     /* Sanity #1: an r_allocator-format segment carries a self-describing
      * kvobj. iskvobj is 1 bit, encoding is 4 bits — together 5 bits of
      * filtering. With thousands of segments scanned, garbage that happens
@@ -1161,19 +1177,39 @@ static size_t rdmaDecodeEntry(const char *buf, size_t remaining, robj **key_out,
  * be cross-checked byte-for-byte. Gated on server.rdma_reshard_debug_bytes
  * (CONFIG SET cluster-rdma-reshard-debug-bytes yes to enable). `tag` is
  * "SRC" on the sender, "RCV" on the recipient. */
+/* CRC accumulator over the USED kvobj segments of an r_allocator block. */
+typedef struct { uint64_t crc; uint32_t nseg; size_t bytes; } rdmaSegCrcCtx;
+static void rdmaSegCrcCb(void *seg_payload, size_t seg_payload_size, void *user) {
+    rdmaSegCrcCtx *c = (rdmaSegCrcCtx *) user;
+    /* CRC only the embedded key+value DATA (everything after the kvobj header).
+     * The header carries type/encoding/refcount/ptr and the LRU access bits,
+     * which Redis ticks on every READ — so including them makes a read-touched
+     * key's CRC differ even though its key+value bytes are identical. Skipping
+     * the header (same fixed size on donor and recipient) makes the CRC depend
+     * ONLY on the migrated data. */
+    kvobj *kv = (kvobj *) seg_payload;
+    size_t hdr = (size_t)((char *)(kv + 1) - (char *)kv);
+    c->nseg++;
+    if (seg_payload_size <= hdr) return;
+    c->crc = crc64(c->crc, (const unsigned char *)(kv + 1), seg_payload_size - hdr);
+    c->bytes += seg_payload_size - hdr;
+}
+
 static void rdmaDebugDumpSlotBytes(const char *tag, int slot, const char *buf) {
     if (!server.rdma_reshard_debug_bytes) return;
-    uint32_t n_entries;
-    memcpy(&n_entries, buf, sizeof(n_entries));
-    char hex0[3*32 + 1], hexN[3*32 + 1];
-    for (int k = 0; k < 32; k++)
-        snprintf(hex0 + 3*k, 4, "%02x ", (unsigned char) buf[k]);
-    for (int k = 0; k < 32; k++)
-        snprintf(hexN + 3*k, 4, "%02x ",
-                 (unsigned char) buf[RDMAMIG_BLOCK_SIZE_BYTES - 32 + k]);
+    /* CRC ONLY the migrated payload: walk the block\'s USED kvobj segments and
+     * checksum each segment\'s bytes. This deliberately excludes (a) the
+     * allocator free space (garbage) and (b) the segment HEADERS, whose
+     * freelist next/prev are absolute VAs that differ donor<->recipient by
+     * design. The used-segment payloads are byte-identical across the wire
+     * (allocator.h: "bytes-identical to what r_allocator_insert_kvobj produced
+     * on the donor, just at a different VA"), so a correct transfer yields
+     * matching SRC/RCV crc64 for every slot. */
+    rdmaSegCrcCtx cc = { 0, 0, 0 };
+    r_allocator_walk_used_segments((char *) buf, rdmaSegCrcCb, &cc);
     serverLog(LL_NOTICE,
-        "RDMA RESHARD-TRANSFER %s: slot=%d n_entries=%u first32=[%s] last32=[%s]",
-        tag, slot, n_entries, hex0, hexN);
+        "RDMA RESHARD-TRANSFER %s: slot=%d used_segments=%u used_bytes=%zu crc64=%016llx",
+        tag, slot, cc.nseg, cc.bytes, (unsigned long long) cc.crc);
 }
 
 /* Iterate the donor-staged blocks for a single slot from the recipient's
@@ -2233,6 +2269,35 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
         return NULL;
     }
 
+    /* LANDING BARRIER (correctness fix). DONE-SLOTS-CHUNK arrives over a SEPARATE
+     * TCP control channel, so a slot\'s RDMA WRITE may still be DMA\'ing into our
+     * pinned memory when backpatch begins — observed as ~1 boundary slot per
+     * migration reading torn (half-landed), then stable a few ms later. The RC
+     * WRITE completion is reaped on the DONOR, but that does not order against
+     * this TCP-triggered read on the recipient. Spin until the block content
+     * stops changing (two reads 50us apart agree) before applying, so we never
+     * install a half-landed block. Bounded (<=10ms) so it can never hang. */
+    if (server.rdma_landing_barrier) {
+        uint64_t prev = 0;
+        int it;
+        for (it = 0; it < 200; it++) {
+            rdmaSegCrcCtx cc = { 0, 0, 0 };
+            for (int b = 0; b < n_blocks; b++)
+                if (block_buffers[b])
+                    r_allocator_walk_used_segments(block_buffers[b], rdmaSegCrcCb, &cc);
+            if (it > 0 && cc.crc == prev) break;
+            prev = cc.crc;
+            usleep(50);
+        }
+        if (it >= 200)
+            serverLog(LL_WARNING,
+                "RDMA backpatch: slot=%d landing did not stabilize within barrier (proceeding)", slot);
+        else if (it > 1 && server.rdma_reshard_debug_bytes)
+            serverLog(LL_NOTICE,
+                "RDMA backpatch: slot=%d landing barrier waited %d iters (~%dus) for RDMA to settle",
+                slot, it, it * 50);
+    }
+
     initMigrationShadowDictType();
     dict *shadow = dictCreate(&migrationShadowDictType);
 
@@ -2240,7 +2305,6 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
     for (int b = 0; b < n_blocks; b++) {
         char *buf = block_buffers[b];
         if (buf == NULL) continue;
-        if (b == 0) rdmaDebugDumpSlotBytes("RCV-SHADOW", slot, buf);
         r_allocator_walk_used_segments(buf, applySlotCb, &ctx);
         /* AqRaft Patch 17 (RESTORED — DIAGNOSTIC): sanitize the donor block.
          * Removing this caused a SIGSEGV in r_allocator_insert_kvobj on the
@@ -2258,6 +2322,11 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
     /* End of the slot's allocator critical section; the rest only reads local
      * state (ctx) and frees our private block_buffers copy. */
     r_allocator_unlock_slot(slot);
+
+    if (server.rdma_reshard_debug_bytes)
+        serverLog(LL_NOTICE,
+            "RDMA RESHARD-TRANSFER RCV-SHADOW: slot=%d used_segments=%u used_bytes=%zu crc64=%016llx",
+            slot, ctx.crc_nseg, ctx.crc_bytes, (unsigned long long) ctx.crc);
 
     /* AqRaft diagnostic: distinguish the two ways a slot can stage zero keys.
      * We reached here with n_blocks > 0 (donor blocks WERE registered for this
@@ -2958,7 +3027,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
         w->iter = dictGetSafeIterator(w->shadow);
     }
 
-    int budget = MERGE_KEYS_PER_TICK;
+    int budget = server.rdma_merge_keys_per_tick > 0 ? server.rdma_merge_keys_per_tick : MERGE_KEYS_PER_TICK;
     if (w->iter != NULL) {
         dictEntry *de;
         while (budget > 0 && (de = dictNext(w->iter)) != NULL) {
@@ -5420,6 +5489,10 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
                 slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
         }
+        /* DECISIVE: re-CRC the staging buffer RIGHT BEFORE the wire post. If
+         * SRC2 != SRC the donor buffer mutated between capture and send; if
+         * SRC2 == SRC but != recipient RCV, then bytes-sent != bytes-received. */
+        rdmaDebugDumpSlotBytes("SRC2", slot, staging);
         /* AqRaft (pipelined): post the WR and keep it in flight — do NOT
          * wait_send per slot. rdmamig_client_post_write signals every WR, so
          * we reap the whole batch at the chunk boundary below. Posting up to

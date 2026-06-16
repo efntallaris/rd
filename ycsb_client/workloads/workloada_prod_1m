@@ -1,0 +1,19 @@
+# AqRaft production-scale workloada variant — 1M records.
+# - 1,000,000 records (2x the 500K _prod dataset)
+# - maxexecutiontime=300 so the run continues well past the migration window.
+# - 30M operations cap (well above what 300s reaches).
+# - 50/50 read/update zipfian, same shape as workloada.
+
+recordcount=1000000
+operationcount=30000000
+maxexecutiontime=300
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

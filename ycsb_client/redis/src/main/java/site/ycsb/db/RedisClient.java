@@ -118,6 +118,11 @@ public class RedisClient extends DB {
    * under which the lazy donor-MOVED collapse already routes to the recipient. */
   private static final HostAndPort[] SHARED_BOOT_OWNER = new HostAndPort[16384];
   private static final boolean[] SHARED_COLLAPSED = new boolean[16384];
+  private static final java.util.concurrent.atomic.AtomicLong AQDBG = new java.util.concurrent.atomic.AtomicLong();
+  /* Hosts of the DONOR cluster (captured at bootstrap). The migration recipient
+   * (sg4) lives on different hosts, so a non-donor SHARED_PEER == the recipient. */
+  private static final java.util.Set<String> DONOR_HOSTS =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
   private static final java.util.concurrent.atomic.AtomicBoolean SLOT_POLLER_STARTED =
       new java.util.concurrent.atomic.AtomicBoolean(false);
   /* All master endpoints the client knows (populated at bootstrap). The poller
@@ -166,8 +171,23 @@ public class RedisClient extends DB {
                 for (int s = startSlot; s <= endSlot && s < 16384; s++) {
                   HostAndPort boot = SHARED_BOOT_OWNER[s];
                   if (boot != null && !owner.equals(boot)) {
-                    SHARED_PEER[s] = owner;        // sg4 LEADER (CLUSTER SLOTS master)
-                    SHARED_COLLAPSED[s] = true;    // pre-empt the per-slot donor -MOVED
+                    /* AqRaft fix: never DOWNGRADE the write target from a recipient
+                     * (sg4) to a donor. Reads learn the true recipient leader from
+                     * the migration-window slot-meta and set SHARED_PEER=sg4, but a
+                     * donor's post-NARROW CLUSTER SLOTS is inconsistent (it still
+                     * reports ITSELF as owner of a migrated slot), and the poller's
+                     * union would overwrite the sg4 value with that donor -> every
+                     * write to the migrated slot routes to the donor and -MOVED
+                     * storms to sg4 (tens of millions of redirects). Only overwrite
+                     * SHARED_PEER when not replacing a recipient with a donor.
+                     * SHARED_COLLAPSED stays set so reads keep fast-collapsing. */
+                    HostAndPort cur = SHARED_PEER[s];
+                    boolean curIsRecipient = (cur != null) && !DONOR_HOSTS.contains(cur.getHost());
+                    boolean ownerIsDonor = DONOR_HOSTS.contains(owner.getHost());
+                    if (!(curIsRecipient && ownerIsDonor)) {
+                      SHARED_PEER[s] = owner;
+                    }
+                    SHARED_COLLAPSED[s] = true;
                   }
                 }
               }
@@ -351,6 +371,7 @@ public class RedisClient extends DB {
         }
         getOrOpen(hp);
         POLL_TARGETS.add(hp);   // poller must query EVERY master (no node has the full post-migration map)
+        DONOR_HOSTS.add(hp.getHost());   // bootstrap owners are all donor-cluster nodes
       }
     } catch (Exception e) {
       throw new DBException("CLUSTER SLOTS bootstrap failed: " + e.getMessage());
@@ -625,6 +646,9 @@ public class RedisClient extends DB {
       if (leader == null) leader = refreshSlotOwner(slot);
       HostAndPort target = (leader != null) ? leader : r.peer;
       if (slotOwner != null) slotOwner[slot] = target;
+      if (AQDBG.incrementAndGet() % 300000 == 0)
+        System.err.println("[AQDBG-RDMIG] slot=" + slot + " set slotOwner=" + target
+          + " sharedPeer=" + SHARED_PEER[slot] + " rpeer=" + r.peer);
       getOrOpen(target);
       se.state = SLOT_STABLE;
       se.peer = null;
@@ -658,6 +682,8 @@ public class RedisClient extends DB {
     // to the recipient, skipping the donor -MOVED rediscovery.
     if (slotOwner != null && SHARED_COLLAPSED[slot] && SHARED_PEER[slot] != null) {
       slotOwner[slot] = SHARED_PEER[slot];
+      if (AQDBG.incrementAndGet() % 300000 == 0)
+        System.err.println("[AQDBG-COLLAPSE] slot=" + slot + " slotOwner<-sharedPeer=" + SHARED_PEER[slot]);
     }
     HostAndPort hp = (slotOwner != null) ? slotOwner[slot] : seedHostPort;
     boolean ask = false;
@@ -671,7 +697,13 @@ public class RedisClient extends DB {
      * up to ~2 s of patience before giving up, enough to ride out a dip
      * without killing the worker thread. MOVED/ASK loops can't run away
      * now that Patch 25 stopped the donor↔recipient redirect ping-pong. */
-    for (int attempt = 0; attempt < 200; attempt++) {
+    /* AqRaft robustness: budget sized to ride out a migrating slot's
+     * unavailability. At 30M (~1831 keys/slot) a slot's flip can keep it
+     * un-writable for ~10s — longer than the old 200-retry (~2s) budget, which
+     * made worker threads throw `exhausted retries` and DIE, collapsing the run
+     * to 0. 1500 covers ~15s at ~10ms/retry so the write rides out the window
+     * and lands. Does not touch routing/collapse — only how long we wait. */
+    for (int attempt = 0; attempt < 1500; attempt++) {
       if (hp == null) hp = seedHostPort;
       boolean connDropped = false;
       HostAndPort badHp = null;
@@ -725,15 +757,32 @@ public class RedisClient extends DB {
            * slot during the window). */
           HostAndPort sharedLeader = SHARED_PEER[slot];
           SlotEntry mse = (slotCache != null) ? slotCache[slot] : null;
+          boolean stableSlot = (mse == null) || mse.state == SLOT_STABLE;
+          if (AQDBG.incrementAndGet() % 300000 == 0)
+            System.err.println("[AQDBG-MOVED] slot=" + slot + " state=" + (mse==null?-1:mse.state)
+              + " collapsed=" + SHARED_COLLAPSED[slot] + " sharedPeer=" + SHARED_PEER[slot]
+              + " slotOwner=" + (slotOwner==null?null:slotOwner[slot])
+              + " movedTarget=" + mv.getTargetNode().getHost()+":"+mv.getTargetNode().getPort());
           if (sharedLeader != null) {
             hp = sharedLeader;                         // cross-thread leader hint
           } else if (mse != null && mse.peer != null) {
             hp = mse.peer;                             // this thread's leader hint
           } else {
             hp = new HostAndPort(mv.getTargetNode().getHost(),
-                                 mv.getTargetNode().getPort()); // fallback: round-robin
+                                 mv.getTargetNode().getPort()); // -MOVED target = leader (steady state)
           }
-          instrCount(INSTR_WRITE_HOST, hp);   // write redirect → should be RECIPIENT LEADER
+          /* AqRaft write-leader-pin: for a STEADY-STATE slot the -MOVED target IS
+           * the shardgroup leader (redisraft redirects a follower write to its
+           * leader). Pin slotOwner[slot] so subsequent writes go straight to the
+           * leader instead of re-bouncing through the follower on EVERY write
+           * the post-migration 30M write-MOVED storm (tens of millions of
+           * redirects). Pinning the leader also helps reads (a valid local read
+           * target). Skipped while the slot is migrating, where the -MOVED target
+           * can round-robin to a follower and reads share slotOwner[]. */
+          if (stableSlot && slotOwner != null) {
+            slotOwner[slot] = hp;
+          }
+          instrCount(INSTR_WRITE_HOST, hp);   // write redirect -> should be LEADER
           ask = false;
         } catch (redis.clients.jedis.exceptions.JedisAskDataException ax) {
           hp = new HostAndPort(ax.getTargetNode().getHost(),
@@ -785,8 +834,14 @@ public class RedisClient extends DB {
         ask = false;
       }
     }
-    throw new redis.clients.jedis.exceptions.JedisException(
-        "execForSlot: exhausted retries for slot=" + slot);
+    /* AqRaft robustness: do NOT throw on exhaustion — that propagates out of
+     * update()/read() and KILLS the YCSB worker thread (run collapses to 0).
+     * Return null so the op is counted as a single ERROR and the thread keeps
+     * serving; the slot becomes writable again the moment its migration
+     * finalizes. */
+    System.err.println("[AQRAFT] execForSlot exhausted retries for slot=" + slot
+        + " (op counted as ERROR, thread continues)");
+    return null;
   }
 
   private String setForSlot(String key, final String value) {

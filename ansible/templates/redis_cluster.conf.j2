@@ -22,6 +22,9 @@ cluster-rdma-allocator-skip-lock {{ "yes" if (rdma_allocator_skip_lock | default
 # starts in parallel with the remaining RDMA-WRITEs.
 cluster-rdma-transfer-overlap {{ "yes" if (rdma_transfer_overlap | default(true) | bool) else "no" }}
 cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }}
+# Integrity check: dump first32/last32 bytes of each slot block on the donor
+# (SRC) and recipient (RCV) so a transfer can be verified byte-for-byte.
+cluster-rdma-reshard-debug-bytes {{ "yes" if (rdma_reshard_debug_bytes | default(false) | bool) else "no" }}
 # Aqueduct slot-state machine: wrap GET / GETEX replies in
 # [state, peer_endpoint, value] so cooperative clients (e.g. the YCSB
 # driver in ycsb_client/) can drive client-side double reads during

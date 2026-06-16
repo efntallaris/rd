@@ -1,0 +1,18 @@
+# 10M zipfian production variant — LONG RUN (10 minutes wall-clock).
+# Same as workloada_prod_10m but maxexecutiontime=600 (10 min) and a high
+# operationcount so the run does NOT exhaust its op budget early (the 30M cap
+# finished in ~266s at ~120k ops/s). Lets the post-migration scaled steady
+# state run for ~9.5 min.
+recordcount=10000000
+operationcount=200000000
+maxexecutiontime=600
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

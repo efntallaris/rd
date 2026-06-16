@@ -67,6 +67,9 @@
           --rdma-chain-xsession {{ rdma_chain_xsession | default('no') }} \
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
+          --cluster-rdma-reshard-debug-bytes {{ rdma_reshard_debug_bytes | default('no') }} \
+          --cluster-rdma-merge-keys-per-tick {{ rdma_merge_keys_per_tick | default(512) }} \
+          --cluster-rdma-landing-barrier {{ rdma_landing_barrier | default('yes') }} \
           --rdma-migration-redisraft-mode yes \
           --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \
           --rdma-migration-peer-stagger-ms {{ rdma_migration_peer_stagger_ms | default(30000) }} \
@@ -78,11 +81,12 @@
           --raft.log-filename {{ raft_log_dir }}/raft_{{ sg.id }}_{{ inventory_hostname }}.db \
           --raft.slot-config "{{ sg.slot_config }}" \
           --raft.sharding yes \
-          --raft.follower-proxy yes \
+          --raft.follower-proxy {{ rdma_follower_proxy | default('yes') }} \
           --raft.quorum-reads no \
-          --raft.log-fsync no{% if rdma_disable_raft_snapshots | default(true) %} \
+          --raft.log-fsync no{% if (rdma_disable_raft_snapshots | default(true)) or sg.id == 'sg4' %} \
           --raft.snapshot-disable yes \
-          --raft.log-max-file-size 0{% endif %}
+          --raft.log-max-file-size 0{% else %} \
+          --raft.log-max-file-size {{ rdma_raft_log_max_file_size | default(1073741824) }}{% endif %}
       loop: "{{ redisraft_shardgroups }}"
       loop_control:
         loop_var: sg

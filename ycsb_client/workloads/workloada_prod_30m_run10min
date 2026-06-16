@@ -1,0 +1,16 @@
+# 30M zipfian production variant — LONG RUN (10 minutes wall-clock).
+# Same shape as workloada_prod_10m_run10min but recordcount=30M (3x load).
+# operationcount high so the 600s run never exhausts its op budget.
+recordcount=30000000
+operationcount=200000000
+maxexecutiontime=600
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

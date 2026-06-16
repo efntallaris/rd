@@ -2185,7 +2185,9 @@ struct redisServer {
     int rdma_allocator_skip_lock;   /* If true, allocator skips per-slot mutex when slot
                                        not under migration. UNSAFE for concurrent
                                        intra-slot writers — smoke-test only. */
-    int rdma_reshard_debug_bytes;   /* If true, RDMA RESHARD-TRANSFER and rdmaBackpatchSlot
+    int rdma_reshard_debug_bytes;
+    int rdma_landing_barrier;   /* recipient landing barrier before backpatch apply (default on) */
+    int rdma_merge_keys_per_tick; /* AqRaft: copy-out keys per mergeBackpatchTick (was #define 512). Higher drains the shadow->managed copy-out faster so every session finishes copying out, at the cost of longer main-thread stalls per tick. */   /* If true, RDMA RESHARD-TRANSFER and rdmaBackpatchSlot
                                        emit per-slot byte dumps (first 32 + last 16)
                                        on both source and recipient, for cross-checking
                                        that RDMA writes landed correctly. Off in

@@ -15,6 +15,7 @@
         -p "redis.port={{ master_port }}"
         -p "redis.cluster=true"
         -P {{ redis_workload_path }}{{ redis_workload }}
+        -p maxexecutiontime=0
         -p status.interval=10 -s
         -threads {{ ycsb_threads_load }}
         > {{ ycsb_log_filename }}_load_{{ inventory_hostname }} 2>&1
