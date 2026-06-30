@@ -94,6 +94,16 @@ char *rdmamig_buffer_data(const rdmamig_buffer *b);
  * buffer is done (no more RDMA / local access). Returns bytes released. */
 size_t rdmamig_buffer_release_pages(rdmamig_buffer *b);
 
+/* Zero-copy multi-block TRANSFER: deregister the MR (ibv_dereg_mr) and free the
+ * wrapper struct, WITHOUT touching the backing pages. Unlike
+ * rdmamig_buffer_release_pages, this does NOT madvise(MADV_DONTNEED) — the
+ * region wrapped here is a LIVE r_allocator block still owned and read by the
+ * allocator, so discarding its pages would lose data. Use for buffers that only
+ * borrowed an existing live region for RDMA (the side-table block MRs). A view
+ * (is_view) does not own the MR: the struct is freed but the MR is left to the
+ * parent. Idempotent on the MR. */
+void rdmamig_buffer_dereg(rdmamig_buffer *b);
+
 /* ------------------------------------------------------------------------- *
  * Client (donor outbound QP)
  * ------------------------------------------------------------------------- */

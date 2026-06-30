@@ -1,0 +1,15 @@
+# 30M zipfian production variant — workloadb (95/5 read/update), LONG RUN (10 min).
+# Same shape/scale as workloada_prod_30m_run10min but read-heavy.
+recordcount=30000000
+operationcount=200000000
+maxexecutiontime=600
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.95
+updateproportion=0.05
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

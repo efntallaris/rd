@@ -702,6 +702,28 @@ void *r_allocator_get_landing_block_for_slot(int slot)
     return found;
 }
 
+/* AqRaft Stage 3 (multi-block chain forward): enumerate ALL of this slot's
+ * foreign LANDING blocks (is_registered_existing), oldest→newest (list head→tail,
+ * which is the order they were registered = donor block order). Fills out[0..n-1]
+ * with their block_start pointers (up to `max`), and returns the TOTAL count of
+ * landing blocks present (which may exceed `max` — caller passes max=0,out=NULL
+ * to just count). The single-block helper above returns only the newest; the
+ * chain forward needs every block so fat slots (>1 block) are fully forwarded to
+ * followers over RDMA instead of falling back to the raft log. */
+int r_allocator_get_landing_blocks_for_slot(int slot, void **out, int max)
+{
+    int n = 0;
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    for (alloc_bloc_t *cur = r_allocator.slot_blocks[slot]; cur != NULL; cur = cur->next) {
+        if (cur->is_registered_existing) {
+            if (out != NULL && n < max) out[n] = cur->block_start;
+            n++;
+        }
+    }
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+    return n;
+}
+
 size_t r_allocator_block_stride_bytes(void)
 {
     return (size_t) WSIZE + (size_t) BLOCK_SIZE_BYTES + (size_t) WSIZE;

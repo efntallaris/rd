@@ -737,6 +737,14 @@ void rdmaChainPrepCommand(client *c) {
             st->landing_pool_buf  = g_flp_buf[idx];
             st->landing_pool_addr = (uint64_t) (uintptr_t) g_flp_pool[idx];
             st->landing_pool_rkey = rdmamig_buffer_rkey(g_flp_buf[idx]);
+            /* AqRaft fix: advertise the ACTUAL pool capacity (FLP_GRAIN rounds the
+             * request up to a 64 MiB boundary, so the real pool is larger than the
+             * request), NOT the requested bytes. The leader gates each forward on
+             * `length <= peer_pool_bytes`; advertising the smaller request made it
+             * reject a session whose total_blocks exceeded the request by even one
+             * block (a multi-block / fat slot → 683 blocks vs a 682-block request),
+             * even though the registered pool had ample room. */
+            st->landing_pool_bytes = g_flp_bytes[idx];
             pthread_mutex_unlock(&g_flp_mu);
             serverLog(LL_NOTICE,
                 "CHAIN-PREP: sess=%lld using ring pool[%d] @ %p (%zu B) rkey=0x%x",
@@ -766,11 +774,15 @@ void rdmaChainPrepCommand(client *c) {
             addReplyError(c, "CHAIN-PREP: too many concurrent chain sessions");
             return;
         }
-    } else if (st->landing_pool_bytes != (size_t) pool_bytes) {
+    } else if (st->landing_pool_bytes < (size_t) pool_bytes) {
+        /* Repeated CHAIN-PREP: only an error if the already-claimed pool is too
+         * SMALL for the new request. st->landing_pool_bytes now holds the actual
+         * (grain-rounded) capacity, which is >= the original request, so a retry
+         * asking for the same-or-smaller size is fine. */
         pthread_mutex_unlock(&g_chain_state_mu);
         addReplyErrorFormat(c,
-            "CHAIN-PREP: repeated call for sess=%lld with mismatched pool_bytes "
-            "(have=%zu, asked=%lld)",
+            "CHAIN-PREP: repeated call for sess=%lld asks for more than the "
+            "claimed pool (have=%zu, asked=%lld)",
             src_mig_id, st->landing_pool_bytes, pool_bytes);
         return;
     }
@@ -964,36 +976,55 @@ static void *chainApplyWorker(void *arg) {
          * (rdmaApplySlotBlock) which raced the main thread (the per-slot
          * cluster lock is a no-op under redisraft) and installed kvobjs into
          * an unregistered pool. */
-        for (int i = 0; i < job->n_slots; i++) {
+        /* AqRaft Stage 3: the position list groups a fat slot's blocks into a
+         * consecutive RUN of equal slot ids (the leader appends them contiguously
+         * in Phase C and forwards covered_slots in order). Register EVERY block in
+         * the run so a multi-block slot is fully reconstructed on this follower
+         * over RDMA — no raft-log fallback.
+         *
+         * The g_chain_landing_registered[slot] guard stays, but now gates the
+         * whole slot, not a single block: never register a slot's landing blocks
+         * a SECOND time across deliveries. In multi-round migration the chain
+         * forward can re-deliver an earlier round's slots (observed: round-2
+         * forwarding round-1 slots with empty/garbage data). Linking duplicate
+         * blocks left stale blocks whose later walk/sanitize/free corrupted the
+         * heap → intermittent recipient-follower SIGSEGV. Skipping the whole run
+         * for an already-registered slot preserves that protection. The flag is
+         * set ONLY by landing-block registration, so a round-2 slot that merely
+         * picked up a managed block from a raft-applied client write is still
+         * applied. */
+        for (int i = 0; i < job->n_slots; ) {
             int slot = job->slots[i];
-            void *sub = (char *) job->local_pool
-                      + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
-            /* AqRaft fix: never register a SECOND landing block for a slot that
-             * already received one this migration. In multi-round migration the
-             * chain forward can re-deliver an earlier round's slots (observed:
-             * round-2 forwarding round-1 slots with empty/garbage data,
-             * staged=0). Linking a 2nd block per slot left a stale block whose
-             * later walk/sanitize/free corrupted the heap → intermittent
-             * recipient-follower SIGSEGV. Skip the duplicate (it carries no
-             * valid kvobjs anyway). The flag is set ONLY by landing-block
-             * registration, so a round-2 slot that merely picked up a managed
-             * block from a raft-applied client write is still applied. */
-            if (slot < 0 || slot >= CLUSTER_SLOTS) continue;
+            int run = 1;
+            while (i + run < job->n_slots && job->slots[i + run] == slot) run++;
+            if (slot < 0 || slot >= CLUSTER_SLOTS) { i += run; continue; }
             if (g_chain_landing_registered[slot]) {
                 serverLog(LL_WARNING,
-                    "CHAIN apply: slot=%d landing block already registered — "
-                    "skipping duplicate cross-round delivery (sess=%lld)",
-                    slot, job->src_mig_id);
-                continue;
+                    "CHAIN apply: slot=%d landing block(s) already registered — "
+                    "skipping duplicate cross-round delivery (sess=%lld, %d blocks)",
+                    slot, job->src_mig_id, run);
+                i += run; continue;
             }
-            if (r_allocator_register_existing_block(slot, sub) == NULL) {
-                serverLog(LL_WARNING,
-                    "CHAIN apply: r_allocator_register_existing_block failed "
-                    "(sess=%lld slot=%d) — skipping slot", job->src_mig_id, slot);
-                continue;
+            int reg = 0;
+            for (int m = 0; m < run; m++) {
+                void *sub = (char *) job->local_pool
+                          + (size_t) (i + m) * RDMAMIG_BLOCK_SIZE_BYTES;
+                if (r_allocator_register_existing_block(slot, sub) == NULL) {
+                    serverLog(LL_WARNING,
+                        "CHAIN apply: r_allocator_register_existing_block failed "
+                        "(sess=%lld slot=%d block=%d/%d) — skipping block",
+                        job->src_mig_id, slot, m, run);
+                    continue;
+                }
+                reg++;
             }
-            g_chain_landing_registered[slot] = 1;
-            total_staged += rdmaFollowerEnqueueSlotMerge(job->db, slot);
+            if (reg > 0) {
+                /* One merge enqueue per slot drains ALL its registered blocks
+                 * (the merge walks the slot's full block list). */
+                g_chain_landing_registered[slot] = 1;
+                total_staged += rdmaFollowerEnqueueSlotMerge(job->db, slot);
+            }
+            i += run;
         }
         serverLog(LL_NOTICE,
             "CHAIN apply: sess=%lld n_slots=%d staged=%d "

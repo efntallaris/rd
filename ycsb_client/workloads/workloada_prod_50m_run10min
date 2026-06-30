@@ -1,0 +1,17 @@
+# 50M zipfian production variant — LONG RUN (10 minutes wall-clock).
+# Same shape as workloada_prod_30m_run10min but recordcount=50M. Probe of the
+# largest dataset that fits the 64GB-disk / 64GB-RAM nodes with snapshots off.
+# operationcount high so the 600s run never exhausts its op budget.
+recordcount=50000000
+operationcount=400000000
+maxexecutiontime=600
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

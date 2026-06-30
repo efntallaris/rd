@@ -1,0 +1,10 @@
+# DEBUG workload for off-main backpatch bring-up. 500k keys, 50/50, short 120s run.
+# Small enough to load in ~30s and to dump/verify the migrated keyspace by hand.
+recordcount=500000
+operationcount=50000000
+maxexecutiontime=120
+workload=site.ycsb.workloads.CoreWorkload
+readallfields=true
+readproportion=0.5
+updateproportion=0.5
+requestdistribution=zipfian

@@ -220,14 +220,18 @@
     # drop each donor's now-foreign migrated keys (full per-source range) so it
     # stops serving them and is actually offloaded — turning the migration from a
     # copy into a move. sg4 already owns + serves the data, so this is safe.
-    - name: "EVICT migrated slots on each donor (offload — batched, copy -> move)"
-      shell: |
-        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
-          RDMA EVICT-SLOTS {{ sg.slot_config.split(':')[0] | int }} \
-          {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}
-      register: evict_results
-      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
-      loop_control:
-        loop_var: sg
-        label: "{{ sg.id }}: evict {{ sg.slot_config.split(':')[0] }}:{{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}"
-      changed_when: false
+    #
+    # DISABLED (per request): the donor-cleanup EVICT is commented out so donors
+    # KEEP their migrated keys after migration (copy, not move). Re-enable by
+    # uncommenting the task below.
+    # - name: "EVICT migrated slots on each donor (offload — batched, copy -> move)"
+    #   shell: |
+    #     {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+    #       RDMA EVICT-SLOTS {{ sg.slot_config.split(':')[0] | int }} \
+    #       {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}
+    #   register: evict_results
+    #   loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+    #   loop_control:
+    #     loop_var: sg
+    #     label: "{{ sg.id }}: evict {{ sg.slot_config.split(':')[0] }}:{{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}"
+    #   changed_when: false

@@ -161,3 +161,17 @@ size_t rdmamig_buffer_release_pages(rdmamig_buffer *b) {
     }
     return 0;
 }
+
+/* Zero-copy multi-block TRANSFER: dereg the MR + free the wrapper, but NEVER
+ * madvise the backing region — it is a live r_allocator block whose pages the
+ * allocator still owns. (rdmamig_buffer_release_pages would discard them →
+ * data loss.) A view shares the parent's MR, so we skip ibv_dereg_mr for it and
+ * just free the wrapper. Frees `b`; the caller must drop its reference. */
+void rdmamig_buffer_dereg(rdmamig_buffer *b) {
+    if (b == NULL) return;
+    if (!b->is_view && b->mr != NULL) {
+        ibv_dereg_mr(b->mr);
+    }
+    b->mr = NULL;
+    zfree(b);
+}

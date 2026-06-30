@@ -1,0 +1,17 @@
+# 60M zipfian production variant — LONG RUN (10 minutes wall-clock).
+# Same shape as workloada_prod_30m_run10min but recordcount=60M (2x dataset) so
+# the migration transfers ~16 GiB instead of ~8 GiB (same ~25% slot fraction).
+# operationcount high so the 600s run never exhausts its op budget.
+recordcount=60000000
+operationcount=400000000
+maxexecutiontime=600
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

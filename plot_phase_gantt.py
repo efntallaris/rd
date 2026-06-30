@@ -88,13 +88,34 @@ tail_ack = [secs(l) for l in rlog
 # running as a serial tail after merge_done.
 PIPELINED = any("pipelined per-slot)" in l for l in rlog)
 
+# ---- totals: how much data we actually move -------------------------------
+# Each session's leader->F1 chain write logs "wrote <N> bytes (... <M> x 2 MiB
+# WRs)". Sum N for total bytes; M is the 2-MiB block count (fall back to
+# ceil(N / 2 MiB) for the pipelined line, which omits the WR count). One such
+# line per session, so this is the whole migration's transferred volume.
+import math
+_BLK = 2 * 1024 * 1024
+_by_re = re.compile(r"wrote (\d+) bytes")
+_wr_re = re.compile(r"(\d+) . 2 MiB WRs")
+total_bytes = total_blocks = 0
+for l in rlog:
+    if "CHAIN: sess=" not in l or " wrote " not in l or " bytes" not in l:
+        continue
+    mb = _by_re.search(l)
+    if not mb: continue
+    nb = int(mb.group(1)); total_bytes += nb
+    mw = _wr_re.search(l)
+    total_blocks += int(mw.group(1)) if mw else math.ceil(nb / _BLK)
+total_gib = total_bytes / (1024.0 ** 3)
+
 prev_chain_end = 0.0   # leader->F1 wire is one QP, serialized across sessions
 for i, r in enumerate(rows):
     if i < len(bp_init):
         ri = r[1]
         # BACKPATCH: first chunk landed -> merge done (the real data-movement span).
         m_start = first_chunk[i] if i < len(first_chunk) else bp_init[i]
-        r[2]["MERGE"]    = [m_start, mg_done[i]]
+        if i < len(mg_done):
+            r[2]["MERGE"] = [m_start, mg_done[i]]
         # CHAIN start = the REAL forward first-post (accurate; already reflects the
         # single-wire serialization). Fall back to the old estab/merge anchors only
         # for logs that predate the FIRST-POST marker.
@@ -104,24 +125,37 @@ for i, r in enumerate(rows):
             wire = estab[ri-1] if 0 <= ri-1 < len(estab) else m_start
             c_start = max(max(wire, m_start), prev_chain_end)
         else:
-            c_start = max(mg_done[i], prev_chain_end)
-        r[2]["CHAIN"]    = [c_start, ch_wrote[i]]
-        prev_chain_end   = max(prev_chain_end, ch_wrote[i])
-        r[2]["COMMIT"]   = [ch_wrote[i], commit[i]]
-        # ALL REPLICAS: leader->F1 done -> tail (F2) ack = the remaining hop
-        # until EVERY node holds the group. Bar ends when all replicas have it.
-        if i < len(tail_ack):
-            r[2]["CHAINTAIL"] = [ch_wrote[i], tail_ack[i]]
-        r[2]["_cold"]    = any(abs(c - bp_init[i]) < (mg_done[i]-bp_init[i]+1.5) and bp_init[i] <= c <= commit[i] for c in cold)
+            c_start = max(mg_done[i], prev_chain_end) if i < len(mg_done) else prev_chain_end
+        # Some sessions may not have a matching chain-"wrote" line (e.g. xsession
+        # coalescing or a missing log line). Render the CHAIN/COMMIT/TAIL bars only
+        # when the data exists, so the timeline still draws instead of crashing.
+        if i < len(ch_wrote):
+            r[2]["CHAIN"]    = [c_start, ch_wrote[i]]
+            prev_chain_end   = max(prev_chain_end, ch_wrote[i])
+            if i < len(commit):
+                r[2]["COMMIT"]   = [ch_wrote[i], commit[i]]
+            if i < len(tail_ack):
+                r[2]["CHAINTAIL"] = [ch_wrote[i], tail_ack[i]]
+        if i < len(mg_done) and i < len(commit):
+            r[2]["_cold"] = any(abs(c - bp_init[i]) < (mg_done[i]-bp_init[i]+1.5) and bp_init[i] <= c <= commit[i] for c in cold)
 
 t0 = min(s["PREP"][0] for _,_,s in rows)
 flip0 = min((s["FLIPPING"][0] for sg,_,s in rows if sg=="sg1"), default=t0)
-done_last = max([s["COMMIT"][1] for _,_,s in rows if "COMMIT" in s]
-                + [s["CHAINTAIL"][1] for _,_,s in rows if "CHAINTAIL" in s])
-# Migration time is measured to the LAST DONE COMMIT (raft commit). The ALL
-# REPLICAS tail bars finish later, so done_last only sizes the x-axis; mig_end
-# is the migration-window end used for the span arrow.
-mig_end = max(s["COMMIT"][1] for _,_,s in rows if "COMMIT" in s)
+# X-axis extent + migration-window end must span EVERY phase bar, not just
+# COMMIT/CHAINTAIL. When the chain forward under-runs (fewer chain-"wrote"/ack
+# lines than sessions, e.g. raft backstops some followers), COMMIT exists for
+# only a few sessions; sizing off it alone collapses the figure and clips the
+# later TRANSFER/MERGE bars. Scan all [start,end] phase entries instead.
+_all_ends = [v[1] for _,_,s in rows for k, v in s.items()
+             if isinstance(v, list) and len(v) == 2]
+done_last = max(_all_ends)
+# Migration window end = last raft COMMIT (RECP_TXN_DONE). `commit` holds ALL of
+# them (one per session), unlike the per-row COMMIT phase which is tied to the
+# sparse chain-"wrote" lines. With async-apply the MERGE/index-update drain
+# continues AFTER commit, so the x-axis (done_last) extends past mig_end — that's
+# expected, and keeps those late bars visible instead of clipped.
+mig_end = max(commit) if commit else \
+          max([s[k][1] for _,_,s in rows for k in ("MERGE","TRANSFER") if k in s])
 
 PHASES = ["PREP","REGISTERING","FLIPPING","TRANSFER","MERGE","CHAIN","CHAINTAIL","COMMIT"]
 LANE_Y = {ph: i for i, ph in enumerate(reversed(PHASES))}
@@ -284,6 +318,10 @@ if _nck:
 _wl = "workloadb" if "workloadb" in str(expdir) else "workloada"
 ax.text(0.0, 1.02, _wl, transform=ax.transAxes, ha="left", va="bottom",
         fontsize=11, fontweight="bold", color="#222")
+ax.text(1.0, 1.02,
+        f"transferred: {total_blocks:,} blocks ({total_gib:.2f} GiB)",
+        transform=ax.transAxes, ha="right", va="bottom",
+        fontsize=10, color="#222")
 
 ax.set_yticks(list(LANE_Y.values()))
 ax.set_yticklabels([LABEL[ph] for ph in reversed(PHASES)], fontsize=9.5)
@@ -313,3 +351,4 @@ if str(out).lower().endswith((".png", ".jpg", ".jpeg")):
     print(f"wrote {out}  ({_w}x{_h}, ratio={_w/_h:.3f})")
 else:
     print(f"wrote {out}")
+print(f"totals: {total_blocks:,} blocks, {total_gib:.2f} GiB ({total_bytes:,} bytes)")

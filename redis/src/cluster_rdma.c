@@ -1550,6 +1550,18 @@ typedef struct backpatchBatch {
     int                 *covered_slots;
     int                  covered_slot_count;
     pthread_mutex_t      covered_mu;
+    /* AqRaft Stage 3 (multi-block chain forward): the chain "position" space is
+     * one entry per BLOCK, not per slot. covered_slots/landing_va/snapshot_ready
+     * are sized to total_blocks and a fat slot occupies n consecutive positions
+     * (its slot id repeated, its blocks oldest→newest). total_blocks == n_slots
+     * when every slot is single-block (the common case → identical to pre-Stage-3
+     * behaviour). slot_pos_base[s] = first position of slot s (-1 if not covered);
+     * slot_pos_nb[s] = how many positions (blocks) slot s occupies. Both are
+     * CLUSTER_SLOTS-sized, allocated at INIT, filled in Phase C, read at capture so
+     * the pool worker can place each of the slot's block VAs at its position. */
+    int                  total_blocks;
+    int                 *slot_pos_base;
+    int                 *slot_pos_nb;
     /* Per-chunk start-timestamp instrumentation: chunk_slots = the uniform chunk
      * size (first DONE-SLOTS-CHUNK's n_slots), so a covered_slots position idx
      * maps to chunk seq = idx / chunk_slots. bp_/ch_chunk_logged are bitmasks
@@ -1807,6 +1819,17 @@ void rdmaDoneSlotsCommand(client *c) {
     b->covered_slots = zmalloc((size_t) n_slots * sizeof(int));
     memcpy(b->covered_slots, b->slots, (size_t) n_slots * sizeof(int));
     b->covered_slot_count = n_slots;
+    /* AqRaft Stage 3: the legacy bulk path is single-block per slot (covered_slots
+     * == b->slots). Make the per-block fields consistent: one position per slot,
+     * slot_pos_base[slot]=its index, nb=1, so capture/forward behave as before. */
+    b->total_blocks = n_slots;
+    b->slot_pos_base = zmalloc((size_t) CLUSTER_SLOTS * sizeof(int));
+    b->slot_pos_nb   = zcalloc((size_t) CLUSTER_SLOTS * sizeof(int));
+    for (int s = 0; s < CLUSTER_SLOTS; s++) b->slot_pos_base[s] = -1;
+    for (int i = 0; i < n_slots; i++) {
+        int s = b->slots[i];
+        if (s >= 0 && s < CLUSTER_SLOTS) { b->slot_pos_base[s] = i; b->slot_pos_nb[s] = 1; }
+    }
     pthread_mutex_init(&b->covered_mu, NULL);
     b->chunk_slots = 0;
     atomic_store_explicit(&b->bp_chunk_logged, 0, memory_order_relaxed);
@@ -1970,6 +1993,10 @@ void rdmaDoneSlotsInitCommand(client *c) {
         b->landing_pool_base  = cc ? cc->landing_pool_base  : NULL;
         b->landing_pool_bytes = cc ? cc->landing_pool_bytes : 0;
         b->landing_pool_buf   = cc ? cc->aqueduct_pool_buf  : NULL;
+        /* AqRaft Stage 3: per-BLOCK chain-forward position count. Falls back to
+         * total_slots (one block/slot) if the connection didn't record it. */
+        size_t tb = cc ? cc->landing_pool_total_blocks : 0;
+        b->total_blocks = (tb >= (size_t) total_slots) ? (int) tb : (int) total_slots;
     }
     b->t_started = time(NULL);
     b->t_ended = 0;
@@ -1986,8 +2013,14 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->snapshot_ready = NULL;
     b->landing_va = NULL;
     atomic_store_explicit(&b->landing_pool_released, 0, memory_order_relaxed);
-    b->covered_slots = zmalloc((size_t) total_slots * sizeof(int));
+    /* AqRaft Stage 3: covered_slots is the per-BLOCK position array (a fat slot
+     * appears at total_blocks >= total_slots positions). slot_pos_base/nb map a
+     * slot id → its position range, filled in Phase C, read at capture. */
+    b->covered_slots = zmalloc((size_t) b->total_blocks * sizeof(int));
     b->covered_slot_count = 0;
+    b->slot_pos_base = zmalloc((size_t) CLUSTER_SLOTS * sizeof(int));
+    b->slot_pos_nb   = zcalloc((size_t) CLUSTER_SLOTS * sizeof(int));
+    for (int s = 0; s < CLUSTER_SLOTS; s++) b->slot_pos_base[s] = -1;
     pthread_mutex_init(&b->covered_mu, NULL);
     b->chunk_slots = 0;
     atomic_store_explicit(&b->bp_chunk_logged, 0, memory_order_relaxed);
@@ -2003,14 +2036,15 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->donor_snapshot_pool = NULL;          /* removed: forward reads landing buf */
     b->donor_snapshot_pool_bytes = 0;
     if (chain_cfg) {
-        b->landing_va = zcalloc((size_t) total_slots * sizeof(void *));
+        /* AqRaft Stage 3: one landing-VA + ready flag per BLOCK position. */
+        b->landing_va = zcalloc((size_t) b->total_blocks * sizeof(void *));
         if (b->landing_va == NULL) {
             serverLog(LL_WARNING,
-                "DONE-SLOTS-INIT: landing_va zcalloc(%zu ptrs) failed", (size_t) total_slots);
+                "DONE-SLOTS-INIT: landing_va zcalloc(%zu ptrs) failed", (size_t) b->total_blocks);
         }
-        /* chain-pipeline: per-slot ready flags (zero-init = not captured). */
+        /* chain-pipeline: per-block ready flags (zero-init = not captured). */
         if (server.rdma_chain_pipeline && b->landing_va != NULL)
-            b->snapshot_ready = zcalloc((size_t) total_slots * sizeof(_Atomic uint8_t));
+            b->snapshot_ready = zcalloc((size_t) b->total_blocks * sizeof(_Atomic uint8_t));
     }
     b->landing_fwd_counted = (chain_cfg && b->landing_va != NULL) ? 1 : 0;
     atomic_store_explicit(&b->landing_consumers, 1 + b->landing_fwd_counted,
@@ -2055,13 +2089,14 @@ void rdmaDoneSlotsInitCommand(client *c) {
     /* Pass-through chain: if rdma-chain-followers is configured, kick off
      * chain establishment to those followers in the background so the chain
      * landing pools + QPs are up by the time the leader's backpatch finishes
-     * and wants to forward. Pool sized to total_slots * 2 MiB to fit all
-     * per-slot blocks the leader will RDMA-WRITE through. Single detached
-     * pthread per session; leaderEstablishChain is internally protected
+     * and wants to forward. Pool sized to total_BLOCKS * 2 MiB (AqRaft Stage 3)
+     * so it fits every block of every slot the leader RDMA-WRITEs through —
+     * total_blocks == total_slots when all slots are single-block. Single
+     * detached pthread per session; leaderEstablishChain is internally protected
      * against duplicate setup for the same src_mig_id. */
     if (server.rdma_chain_followers != NULL &&
         sdslen(server.rdma_chain_followers) > 0) {
-        long long pool_bytes = (long long) total_slots * RDMAMIG_BLOCK_SIZE_BYTES;
+        long long pool_bytes = (long long) b->total_blocks * RDMAMIG_BLOCK_SIZE_BYTES;
         rdmaChainSpawnEstablish(src_mig_id, pool_bytes,
                                 server.rdma_chain_followers);
         /* chain-pipeline: spawn the dedicated forwarder NOW (not at merge-done)
@@ -2140,11 +2175,26 @@ void rdmaDoneSlotsChunkCommand(client *c) {
      * worker looks up the slot's index in covered_slots; if we enqueue
      * first, the worker can race and find the slot missing (snapshot
      * skipped → follower gets zero-filled blocks). */
-    if (b->covered_slots != NULL) {
+    if (b->covered_slots != NULL && b->slot_pos_base != NULL && b->slot_pos_nb != NULL) {
         pthread_mutex_lock(&b->covered_mu);
         for (int j = 0; j < n_slots; j++) {
-            if (b->covered_slot_count < b->n_slots) {
-                b->covered_slots[b->covered_slot_count++] = items[j]->slot;
+            int s = items[j]->slot;
+            if (s < 0 || s >= CLUSTER_SLOTS) continue;
+            /* AqRaft Stage 3: append ONE position per landing BLOCK of this slot,
+             * not one per slot. The donor registered the slot's blocks at REGISTER
+             * time (before transfer), so the count is stable here. A fat slot gets
+             * nb consecutive positions carrying the same slot id; the capture step
+             * places each block's VA at its position. Record the slot's base so
+             * capture can find its positions. slot_pos_base>=0 → already appended
+             * (defensive against a slot arriving in two chunks). */
+            if (b->slot_pos_base[s] >= 0) continue;
+            int nb = r_allocator_get_landing_blocks_for_slot(s, NULL, 0);
+            if (nb < 1) nb = 1;
+            b->slot_pos_base[s] = b->covered_slot_count;
+            b->slot_pos_nb[s]   = 0;
+            for (int m = 0; m < nb && b->covered_slot_count < b->total_blocks; m++) {
+                b->covered_slots[b->covered_slot_count++] = s;
+                b->slot_pos_nb[s]++;
             }
         }
         pthread_mutex_unlock(&b->covered_mu);
@@ -2370,13 +2420,6 @@ static void *backpatchPoolFreeWorker(void *arg) {
     return NULL;
 }
 
-/* AqRaft pool-free: off-main worker to reclaim the landing pool's resident
- * pages (ibv_dereg_mr unpins + madvise drops the pages). Kept off the event
- * loop because dereg+madvise on a multi-GB MR can take tens of ms. */
-static void *landingPoolReleaseWorker(void *arg) {
-    rdmamig_buffer_release_pages((struct rdmamig_buffer *) arg);
-    return NULL;
-}
 
 /* AqRaft pool-reuse: ONE persistent recipient landing pool, registered once and
  * reused for every donor and round (mirrors the leader src-pool cache,
@@ -2384,10 +2427,10 @@ static void *landingPoolReleaseWorker(void *arg) {
  * rdmamig_server cm_id. registerWorkerThread reuses it (skipping mmap +
  * ibv_reg_mr — the ~0.4s/donor in-window registration) when a cached pool of
  * sufficient size on the same cm_id exists; otherwise it creates one (padded so
- * the +1 slot of round 2 still fits) and publishes it here. The merge copies all
- * keys OUT into managed blocks (r_allocator_insert_kvobj), so the pool is purely
- * transient staging and safe to reuse; the per-slot landing blocks are unlinked
- * after each slot's merge via r_allocator_unregister_existing_blocks. Donors are
+ * the +1 slot of round 2 still fits) and publishes it here. The merge indexes the
+ * migrated kvobjs in place, so each pool is RETIRED as live keyspace storage after
+ * its merge (never reused) and the landing ring is sized to cover the whole
+ * migration without reuse. Donors are
  * serial (orchestrator gates donor N+1 on N's chain_durable), so the pool is
  * free by the time the next donor RDMA-writes into it. */
 /* AqRaft landing-pool ring. Without xsession: ONE persistent pool (g_lp[0]),
@@ -2403,12 +2446,18 @@ static void *landingPoolReleaseWorker(void *arg) {
  * local merge AND the chain forward (which RDMA-reads it directly) have drained
  * it — one extra forward-length per buffer — so bump the ring 3 -> 4 to absorb
  * an in-flight forward without stalling the next donor's transfer. */
-#define N_LANDING_POOLS 4   /* one per donor in a round + 1 in-flight forward */
+/* AqRaft: 8 pools so the recipient ring covers a whole migration WITHOUT reuse
+ * (n_rounds * n_donors = 2*3 = 6 < 8), matching N_FOLLOWER_LANDING_POOLS. The old
+ * value 4 ("one per donor in a round + 1 forward") assumed pools are RECYCLED
+ * between rounds; adopt-in-place instead RETIRES each pool as permanent live
+ * storage (no recycle), so round 2 would block on the 30s
+ * free-wait once round 1's pools are retired/held by the chain forward. */
+#define N_LANDING_POOLS 8   /* >= n_rounds * n_donors; no within-migration reuse */
 static void                  *g_lp_pool[N_LANDING_POOLS]  = {0};
 static size_t                 g_lp_bytes[N_LANDING_POOLS] = {0};
 static struct rdmamig_buffer *g_lp_buf[N_LANDING_POOLS]   = {0};
 static void                  *g_lp_pd[N_LANDING_POOLS]    = {0};
-static int                    g_lp_free[N_LANDING_POOLS]  = {1, 1, 1, 1};
+static int                    g_lp_free[N_LANDING_POOLS]  = {1, 1, 1, 1, 1, 1, 1, 1};
 static int                    g_lp_next = 0;     /* round-robin cursor (xsession) */
 static pthread_mutex_t        g_lp_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t         g_lp_cv = PTHREAD_COND_INITIALIZER;
@@ -2423,11 +2472,6 @@ static pthread_cond_t         g_lp_cv = PTHREAD_COND_INITIALIZER;
 static struct rdmamig_buffer *g_lp_fwd_buf[N_LANDING_POOLS] = {0};
 static struct rdma_cm_id     *g_lp_fwd_cm[N_LANDING_POOLS]  = {0};
 
-/* True if buf is one of our cached landing pools (used to skip madvise/dereg). */
-static int rdmaIsCachedLandingBuf(struct rdmamig_buffer *buf) {
-    for (int i = 0; i < N_LANDING_POOLS; i++) if (g_lp_buf[i] == buf) return 1;
-    return 0;
-}
 
 /* Register every existing landing-ring buffer a SECOND time against f1_cm (the
  * leader->F1 chain QP's cm_id) so the chain forwarder can RDMA-WRITE the donor
@@ -2488,30 +2532,11 @@ void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm) {
  * in-flight insert. */
 static void backpatchReleaseLandingPool(backpatchBatch *b) {
     if (b->landing_pool_buf == NULL) return;
-    /* AqRaft pool-reuse: never dereg/madvise the persistent cached pool — it is
-     * reused by the next donor/round. Mark released (CAS-once semantics) but keep
-     * the MR + pages resident. */
-    if (rdmaIsCachedLandingBuf(b->landing_pool_buf)) {
-        atomic_store_explicit(&b->landing_pool_released, 1, memory_order_release);
-        return;
-    }
-    int expected = 0;
-    if (!atomic_compare_exchange_strong_explicit(
-            &b->landing_pool_released, &expected, 1,
-            memory_order_acq_rel, memory_order_relaxed)) {
-        return; /* another thread already claimed the release */
-    }
-    struct rdmamig_buffer *lpb = b->landing_pool_buf;
-    size_t lbytes = b->landing_pool_bytes;
-    pthread_t ltid;
-    if (pthread_create(&ltid, NULL, landingPoolReleaseWorker, lpb) == 0) {
-        pthread_detach(ltid);
-        serverLog(LL_NOTICE,
-            "AqRaft pool-free: reclaiming landing pool (%zu bytes) off-main "
-            "for sess=%lld (post merge-drain)", lbytes, b->src_mig_id);
-    } else {
-        rdmamig_buffer_release_pages(lpb); /* fallback: inline */
-    }
+    /* AqRaft adopt-in-place: the landing pool now backs LIVE keyspace kvobjs
+     * (indexed in-place). NEVER dereg/madvise it — dropping the pages would lose
+     * data. Mark released (so the refcount/finalize bookkeeping is consistent)
+     * and keep everything resident. */
+    atomic_store_explicit(&b->landing_pool_released, 1, memory_order_release);
 }
 
 /* AqRaft zero-copy chain forward: drop one consumer's hold on this batch's
@@ -2530,7 +2555,16 @@ static void landingConsumerDone(backpatchBatch *b) {
     if (prev != 1) return;   /* other consumers still hold the buffer */
     pthread_mutex_lock(&g_lp_mu);
     for (int i = 0; i < N_LANDING_POOLS; i++) {
-        if (g_lp_buf[i] == b->landing_pool_buf) { g_lp_free[i] = 1; break; }
+        if (g_lp_buf[i] == b->landing_pool_buf) {
+            /* AqRaft adopt-in-place: this pool is now live keyspace storage —
+             * RETIRE the ring slot instead of recycling it. NULL the slot so
+             * registerWorkerThread mmaps a FRESH pool next round; the retired
+             * pool's mmap + MR stay resident (the keyspace references them).
+             * g_lp_free=1 lets the slot be re-created on demand. */
+            g_lp_pool[i] = NULL; g_lp_buf[i] = NULL; g_lp_pd[i] = NULL;
+            g_lp_bytes[i] = 0;   g_lp_free[i] = 1;
+            break;
+        }
     }
     pthread_cond_broadcast(&g_lp_cv);
     pthread_mutex_unlock(&g_lp_mu);
@@ -2623,6 +2657,12 @@ static void backpatchFinalize(backpatchBatch *b) {
         b->landing_va = NULL;
         zfree(lv);
     }
+    /* AqRaft Stage 3: slot_pos_base/slot_pos_nb are NOT freed here — they share
+     * covered_slots' lifetime (the batch struct lives past finalize, kept for
+     * BACKPATCH-STATUS / retried DONE-SLOTS-CHUNK). Freeing them at finalize while
+     * covered_slots stays valid let a retried chunk pass the covered_slots!=NULL
+     * guard and then deref a freed slot_pos_base → SIGSEGV. They are reclaimed
+     * with the batch (same as covered_slots). */
     /* AqRaft pool-free (lever #4 fix): reclaim this session's donor landing
      * pool — but ONLY if the main-thread merge has already drained
      * (merge_done==1). mergeBackpatchTick reads each migrated value straight
@@ -2788,8 +2828,11 @@ static void *chainPipelineForwardWorker(void *arg) {
     chainPipelineJob *job = arg;
     backpatchBatch *b = job->batch;
     char errbuf[256] = {0};
+    /* AqRaft Stage 3: iterate over BLOCK positions (total_blocks), not slots, so
+     * every block of a fat slot is forwarded. total_blocks == n_slots in the
+     * common single-block case. */
     int frc = rdmaLeaderChainForwardPipelined(
-                  b->src_mig_id, b->covered_slots, b->n_slots,
+                  b->src_mig_id, b->covered_slots, b->total_blocks,
                   b->landing_va, b->landing_pool_buf,
                   b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
                   errbuf, sizeof(errbuf));
@@ -3036,20 +3079,12 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
              * cluster.c, keymeta.c). */
             kvobj *src = (kvobj *) dictGetKV(de);
             sds    k   = kvobjGetKey(src);
-            /* applySlotCb repointed src->ptr to the value sds embedded in the
-             * donor landing pool, so this is the value to copy. */
-            sds    v   = (sds) src->ptr;
 
-            /* AqRaft pool-free: copy the migrated kvobj into the recipient's
-             * OWN compact r_allocator block (same path a normal SET takes in
-             * db.c), instead of installing the pool-resident kvobj. The live
-             * keyspace then never references the donor landing pool, which lets
-             * us reclaim that pool's physical pages (~11 GB on the recipient) —
-             * removing the cache/memory-pressure overhead that made sg4 burn
-             * ~40% more CPU per op and become the post-migration bottleneck.
-             * The pool-resident src kvobj stays in the shadow (NOT unlinked) and
-             * is freed by the dbDictType destructor at dictRelease. Runs on the
-             * main thread, throttled by MERGE_KEYS_PER_TICK. */
+            /* AqRaft adopt-in-place: index the pool-resident migrated kvobj
+             * DIRECTLY into the live keyspace (no per-key memcpy into a fresh
+             * managed block). The landing pool is kept registered and retired as
+             * permanent live storage, so the keyspace references it directly.
+             * Runs on the main thread, throttled by MERGE_KEYS_PER_TICK. */
             if (kvstoreDictFind(w->db->keys, w->slot, k) != NULL) {
                 /* DON'T-CLOBBER: a post-FLIP client write already populated this
                  * key. Skip WITHOUT building a copy — checking existence first
@@ -3058,16 +3093,18 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
                  * merge, so find-then-insert is race-free. */
                 w->skipped_existing++;
             } else {
-                int nb = 0;
-                kvobj *kvc = r_allocator_insert_kvobj(w->slot, k, v, &nb);
-                if (kvc != NULL) {
-                    dictEntry *ex = NULL;
-                    kvstoreDictAddRaw(w->db->keys, w->slot, kvc, &ex);
-                    w->moved++;
-                } else {
-                    /* insert refused (defensive sds-length check) — drop key. */
-                    w->skipped_existing++;
-                }
+                /* AqRaft adopt-in-place: `src` is already a valid r_allocator
+                 * kvobj (header+key+value) living in the registered-existing
+                 * landing block. Index it DIRECTLY — no per-key memcpy. Safe
+                 * because: (a) migrationShadowDictType.keyDestructor==NULL, so
+                 * dictRelease(shadow) below won't free src; (b) the landing
+                 * block is NOT unregistered (kept as live storage) and the pool
+                 * is retired (not recycled/madvised), so these pages stay valid;
+                 * (c) is_registered_existing blocks orphan-on-free, so a later
+                 * delete/overwrite of this key won't corrupt the allocator. */
+                dictEntry *ex = NULL;
+                kvstoreDictAddRaw(w->db->keys, w->slot, src, &ex);
+                w->moved++;
             }
             budget--;
         }
@@ -3095,13 +3132,10 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
          * The dequeue + zfree(w) + timer logic after this block stays
          * unconditional so the follower's work item is still freed. */
         if (b != NULL) {
-        /* AqRaft pool-reuse: this slot's keys are now copied out into the
-         * recipient's own managed blocks; unlink the transient landing block so
-         * the slot band is clean for the next donor/round to re-register the
-         * reused pool (prevents a stale 2nd block in slot_blocks[]). Leader-
-         * recipient path only (batch != NULL); the chain-follower path keeps its
-         * g_chain_landing_registered guard unchanged. */
-        r_allocator_unregister_existing_blocks(w->slot);
+        /* AqRaft adopt-in-place: do NOT unregister the landing block — it now
+         * holds the LIVE keyspace kvobjs (indexed in-place, not copied out).
+         * Unlinking it (and retiring the pool) would orphan live data. The block
+         * stays in the slot list as permanent (orphan-on-free) storage. */
         atomic_fetch_add_explicit(&b->idx, 1, memory_order_release);
         atomic_fetch_add_explicit(&b->applied, w->moved, memory_order_relaxed);
         atomic_fetch_add_explicit(&b->clobber_skipped,
@@ -3248,32 +3282,47 @@ static void *backpatchPoolWorkerMain(void *arg) {
          * chain forwarder later RDMA-WRITEs this snapshot to followers
          * verbatim — no dense re-encode. */
         if (w->batch->landing_va != NULL) {
-            int n_covered = 0;
-            int *covered = NULL;
-            pthread_mutex_lock(&w->batch->covered_mu);
-            n_covered = w->batch->covered_slot_count;
-            covered = w->batch->covered_slots;
-            int found_idx = -1;
-            for (int i = 0; i < n_covered; i++) {
-                if (covered[i] == w->slot) { found_idx = i; break; }
-            }
-            pthread_mutex_unlock(&w->batch->covered_mu);
-            if (found_idx >= 0) {
-                /* AqRaft zero-copy chain forward: capture the donor LANDING block
-                 * VA (is_registered_existing), NOT slot_blocks head, and NOT a
-                 * copy. The forwarder RDMA-reads these exact pages. Capture now,
-                 * while the block is still registered + pristine — before this
-                 * batch's merge/unregister. The block pages stay valid because
-                 * (a) the refcount keeps the ring buffer mapped until the forward
-                 * is done and (b) the merge copies kvobjs OUT (the only in-place
-                 * write is the benign kv->ptr repoint, which followers recompute). */
-                char *landing = (char *) r_allocator_get_landing_block_for_slot(w->slot);
-                w->batch->landing_va[found_idx] = landing;
-                /* Publish: release barrier so the VA store is visible before the
-                 * readiness flag the forwarder gates on. */
-                if (w->batch->snapshot_ready != NULL)
-                    atomic_store_explicit(&w->batch->snapshot_ready[found_idx], 1,
-                                          memory_order_release);
+            /* AqRaft Stage 3: capture EVERY landing block of this slot, one per
+             * chain "position". slot_pos_base[slot]/slot_pos_nb[slot] were set in
+             * Phase C; the blocks enumerate in the same order (allocator list
+             * order), so block m lands at position base+m. Block order within a
+             * slot is immaterial — each block self-describes its own kvobjs, so F1
+             * decodes them independently. */
+            int base = w->batch->slot_pos_base[w->slot];
+            int nb   = w->batch->slot_pos_nb[w->slot];
+            if (base >= 0 && nb > 0) {
+                /* Capture the donor LANDING block VAs (is_registered_existing), NOT
+                 * slot_blocks head, NOT copies. The forwarder RDMA-reads these exact
+                 * pages while still registered + pristine (the refcount keeps them
+                 * mapped; the merge copies kvobjs OUT, never overwrites them). */
+                void **blks = zmalloc((size_t) nb * sizeof(void *));
+                int got = r_allocator_get_landing_blocks_for_slot(w->slot, blks, nb);
+                int lim = (got < nb) ? got : nb;
+                for (int m = 0; m < lim; m++) {
+                    w->batch->landing_va[base + m] = blks[m];
+                    /* Publish: release barrier so the VA store is visible before the
+                     * readiness flag the forwarder gates on. */
+                    if (w->batch->snapshot_ready != NULL)
+                        atomic_store_explicit(&w->batch->snapshot_ready[base + m], 1,
+                                              memory_order_release);
+                }
+                if (got != nb) {
+                    /* Count drifted between Phase C and capture (should not happen:
+                     * blocks are unregistered only post-merge). Mark the surplus
+                     * positions ready with the newest block so the pipelined
+                     * forwarder can't stall waiting on a never-captured position. */
+                    serverLog(LL_WARNING,
+                        "CHAIN capture: slot=%d block count drift got=%d expected=%d "
+                        "(sess=%lld)", w->slot, got, nb, w->batch->src_mig_id);
+                    void *fill = (lim > 0) ? blks[lim - 1] : NULL;
+                    for (int m = lim; m < nb; m++) {
+                        w->batch->landing_va[base + m] = fill;
+                        if (w->batch->snapshot_ready != NULL)
+                            atomic_store_explicit(&w->batch->snapshot_ready[base + m], 1,
+                                                  memory_order_release);
+                    }
+                }
+                zfree(blks);
             }
 
             /* AqRaft parallel-chain: once ALL slot snapshots are captured,
@@ -3672,6 +3721,9 @@ static void *registerWorkerThread(void *arg) {
      * gate (g_active_merge_batch / g_pending_sessions) so two sessions never
      * shadow-build+merge at once (that races r_allocator/Fenwick → SIGSEGV — the
      * reason a naive 2-pool ping-pong without the gate crashed). Off → 1 pool. */
+    /* Adopt-in-place never recycles pools (each is retired as live storage), so it
+     * needs the full ring (>= n_rounds*n_donors) to avoid round-2 blocking on the
+     * free-wait. */
     const int n_pools = server.rdma_chain_xsession ? N_LANDING_POOLS : 1;
 
     /* Create any pool not yet allocated (or too small / wrong PD). The mmap +
@@ -3769,6 +3821,10 @@ static void *registerWorkerThread(void *arg) {
      * madvise'd/dereg'd (backpatchReleaseLandingPool skips cached bufs). */
     job->conn->landing_pool_base  = pool;
     job->conn->landing_pool_bytes = this_pool_bytes;
+    /* AqRaft Stage 3: remember the per-block count so DONE-SLOTS-INIT can size the
+     * chain-forward arrays (one position per BLOCK, not per slot) and request a
+     * big-enough F1 pool. */
+    job->conn->landing_pool_total_blocks = total_blocks;
     const uint32_t shared_rkey = rdmamig_buffer_rkey(pool_buf);
 
     serverLog(LL_NOTICE,
@@ -4069,6 +4125,113 @@ static rdmaOutboundLink *rdmaOutboundLinkOpen(const char *host, int port) {
     return L;
 }
 
+/* ======================================================================= *
+ *  Zero-copy multi-block TRANSFER — live-block MR side table
+ *
+ *  Maps a donor r_allocator block_start -> the rdmamig_buffer (ibv_reg_mr) that
+ *  wraps that live block, so TRANSFER can RDMA-WRITE directly from the live
+ *  block (no memcpy into a staging pool, no in-window ibv_reg_mr). The slow
+ *  registration is paid at MIGRATE-WARM time. Keyed on the raw block pointer
+ *  (stored as the dict key value; no key allocation). The wrapped MRs are
+ *  deregistered (NOT madvise'd — the blocks stay live) at table destroy.
+ * ======================================================================= */
+
+static uint64_t blockMrPtrHash(const void *key) {
+    /* splitmix64 finalizer over the pointer bits — good distribution for
+     * 2 MiB-aligned block_start values that share low zero bits. */
+    uint64_t x = (uint64_t)(uintptr_t) key;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+static int blockMrPtrCompare(dictCmpCache *cache, const void *k1, const void *k2) {
+    (void) cache;
+    return k1 == k2;
+}
+
+/* key dup/destructor NULL: the key IS the raw block pointer (not owned).
+ * val destructor NULL: blockMrTableDestroy deregs+frees each MR explicitly. */
+static dictType blockMrDictType = {
+    blockMrPtrHash,
+    NULL,
+    NULL,
+    blockMrPtrCompare,
+    NULL,
+    NULL,
+    NULL
+};
+
+typedef struct blockMrTable {
+    dict *map;                  /* block_start (void*) -> rdmamig_buffer* */
+    struct rdma_cm_id *cm_id;   /* MRs registered against this cm_id's PD/QP */
+    long long reg_count;        /* verification meter: total NEW registrations */
+    pthread_mutex_t mu;
+} blockMrTable;
+
+static blockMrTable *blockMrTableCreate(struct rdma_cm_id *cm_id) {
+    blockMrTable *t = zmalloc(sizeof(*t));
+    t->map = dictCreate(&blockMrDictType);
+    t->cm_id = cm_id;
+    t->reg_count = 0;
+    pthread_mutex_init(&t->mu, NULL);
+    return t;
+}
+
+/* Return the MR wrapping `block_start`, registering it on first sight. The slow
+ * ibv_reg_mr runs OUTSIDE the lock; a double-checked insert under the lock makes
+ * the first registrant win and dereg's a loser's duplicate. Returns NULL only on
+ * registration failure. Increments reg_count on each genuinely-new registration
+ * (the in-window verification meter). */
+static rdmamig_buffer *blockMrTableGetOrRegister(blockMrTable *t,
+                                                 void *block_start, size_t len) {
+    if (t == NULL || block_start == NULL) return NULL;
+
+    pthread_mutex_lock(&t->mu);
+    rdmamig_buffer *b = dictFetchValue(t->map, block_start);
+    pthread_mutex_unlock(&t->mu);
+    if (b != NULL) return b;
+
+    /* Slow path: register the live block as an MR without holding the lock. */
+    rdmamig_buffer *nb = rdmamig_buffer_create(t->cm_id, (char *) block_start, len, 0);
+    if (nb == NULL) return NULL;
+
+    pthread_mutex_lock(&t->mu);
+    rdmamig_buffer *cur = dictFetchValue(t->map, block_start);
+    if (cur != NULL) {
+        /* Lost the race — keep the existing winner, drop our duplicate. */
+        pthread_mutex_unlock(&t->mu);
+        rdmamig_buffer_dereg(nb);
+        return cur;
+    }
+    dictAdd(t->map, block_start, nb);
+    t->reg_count++;
+    pthread_mutex_unlock(&t->mu);
+    return nb;
+}
+
+static long long blockMrTableRegCount(blockMrTable *t) {
+    if (t == NULL) return 0;
+    pthread_mutex_lock(&t->mu);
+    long long c = t->reg_count;
+    pthread_mutex_unlock(&t->mu);
+    return c;
+}
+
+static void blockMrTableDestroy(blockMrTable *t) {
+    if (t == NULL) return;
+    dictIterator *di = dictGetIterator(t->map);
+    dictEntry *de;
+    while ((de = dictNext(di)) != NULL) {
+        rdmamig_buffer *b = dictGetVal(de);
+        if (b != NULL) rdmamig_buffer_dereg(b);   /* dereg only — never madvise live blocks */
+    }
+    dictReleaseIterator(di);
+    dictRelease(t->map);
+    pthread_mutex_destroy(&t->mu);
+    zfree(t);
+}
+
 /* Dict valDestructor — invoked by dictRelease/dictDelete on the
  * server.rdma_outbound_links dict. */
 void rdmaOutboundLinkFree(void *v) {
@@ -4077,6 +4240,12 @@ void rdmaOutboundLinkFree(void *v) {
     if (L->client) zfree(L->client);  /* rdmamig_client has no public disconnect/free */
     if (L->ctrl)   redisFree(L->ctrl);
     if (L->prepared_slot) zfree(L->prepared_slot);  /* AqRaft prepare-ahead */
+    /* Zero-copy multi-block: free per-slot landing-buffer vectors + the
+     * live-block MR side table (deregs each MR; never madvises). */
+    for (int s = 0; s < CLUSTER_SLOTS; s++) {
+        if (L->block_buffers[s]) zfree(L->block_buffers[s]);
+    }
+    if (L->block_mr_tbl) blockMrTableDestroy(L->block_mr_tbl);
     pthread_mutex_destroy(&L->mu);
     if (L->addr)   sdsfree(L->addr);
     zfree(L);
@@ -5032,6 +5201,26 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     }
     int src_port = (int) server.port;
 
+    /* Zero-copy multi-block: compute the REAL number of live r_allocator blocks
+     * per slot (was hardcoded 1, which dropped every block beyond [0] — a ~5%
+     * multi-block key shortfall). The recipient sizes its landing pool to
+     * sum(nblocks) and returns sum(nblocks) (VA,rkey) tuples in slot-asc /
+     * block-asc order. Enumerate under the slot's allocator mutex (race-safe
+     * count-then-walk; not lock_slot_blocks — no freezing here). An empty slot
+     * still preps 1 landing block (matches the legacy always-1 behaviour). */
+    int *nblocks_for_slot = zmalloc((size_t) n_slots * sizeof(int));
+    int total_blocks_req = 0;
+    for (int i = 0; i < n_slots; i++) {
+        r_allocator_lock_slot(slots[i]);
+        int nb = 0;
+        char **blks = r_allocator_get_block_buffers_for_slot(slots[i], &nb);
+        if (blks) zfree(blks);
+        r_allocator_unlock_slot(slots[i]);
+        if (nb < 1) nb = 1;
+        nblocks_for_slot[i] = nb;
+        total_blocks_req += nb;
+    }
+
     pthread_mutex_lock(&L->mu);
 
     /* Build the wire command:
@@ -5053,7 +5242,7 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     for (int i = 0; i < n_slots; i++) {
         argvlen[6 + 2*i]     = (size_t) snprintf(numbuf[2*i],     16, "%d", slots[i]);
         argv  [6 + 2*i]      = numbuf[2*i];
-        argvlen[6 + 2*i + 1] = (size_t) snprintf(numbuf[2*i + 1], 16, "%d", 1);
+        argvlen[6 + 2*i + 1] = (size_t) snprintf(numbuf[2*i + 1], 16, "%d", nblocks_for_slot[i]);
         argv  [6 + 2*i + 1]  = numbuf[2*i + 1];
     }
     redisReply *r = redisCommandArgv(L->ctrl, argc, argv, argvlen);
@@ -5080,6 +5269,7 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
         pthread_mutex_destroy(&p->mu);
         pthread_cond_destroy(&p->cond);
         zfree(p);
+        zfree(nblocks_for_slot);
         return -1;
     }
     freeReplyObject(r);
@@ -5121,23 +5311,40 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     if (got_error) {
         if (err_out) *err_out = err_copy ? err_copy : sdsnew("REGISTER-RESULT: error");
         if (buf_copy) zfree(buf_copy);
+        zfree(nblocks_for_slot);
         return -1;
     }
-    if (total != n_slots) {
+    if (total != total_blocks_req) {
         if (err_out) *err_out = sdscatfmt(sdsempty(),
-            "REGISTER-RESULT: got %i tuples, expected %i", total, n_slots);
+            "REGISTER-RESULT: got %i tuples, expected %i (sum of per-slot nblocks)",
+            total, total_blocks_req);
         if (buf_copy) zfree(buf_copy);
         if (err_copy) sdsfree(err_copy);
+        zfree(nblocks_for_slot);
         return -1;
     }
 
-    /* Populate L->buffers[slot]. */
+    /* Slice the reply (slot-asc / block-asc) into per-slot landing vectors.
+     * block_buffers[slot][k] is the recipient landing buffer for donor block k;
+     * buffers[slot] mirrors block 0 so all legacy block-0 readers + the
+     * buffers[slot].ptr==0 "not-prepped" marker keep working. */
     pthread_mutex_lock(&L->mu);
+    int off = 0;
     for (int i = 0; i < n_slots; i++) {
-        L->buffers[slots[i]] = buf_copy[i];
+        int slot = slots[i];
+        int nb = nblocks_for_slot[i];
+        if (L->block_buffers[slot]) zfree(L->block_buffers[slot]);
+        L->block_buffers[slot] = zmalloc((size_t) nb * sizeof(rdmaRemoteBufferInfo));
+        for (int k = 0; k < nb; k++) {
+            L->block_buffers[slot][k] = buf_copy[off + k];
+        }
+        L->n_block_buffers[slot] = nb;
+        L->buffers[slot] = buf_copy[off];   /* block-0 mirror */
+        off += nb;
     }
     pthread_mutex_unlock(&L->mu);
     zfree(buf_copy);
+    zfree(nblocks_for_slot);
     if (err_copy) sdsfree(err_copy);
     return 0;
 }
@@ -5389,6 +5596,26 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
  * slot's data is durable in the recipient's pool. Chunked CHUNK RPCs sent
  * AFTER each chunk's wait_sends are race-free for the recipient's backpatch
  * pool worker to consume. */
+
+/* Zero-copy multi-block TRANSFER: cap on RDMA-WRITE WRs kept in flight before a
+ * mid-slot safety reap. Stays well under MAX_SEND_WR (4096) so a chunk whose
+ * slots carry many blocks can never overflow the QP send queue. */
+#define RDMA_TRANSFER_WR_CAP 2048
+
+/* Resolve the recipient (VA,rkey) for donor block `k` of `slot`: the per-block
+ * landing vector when PREP filled it (multi-block), else the legacy single
+ * buffers[slot] (block 0 only — back-compat for links prepped the old way). */
+static void rdmaTransferRemoteBlock(rdmaOutboundLink *L, int slot, int k,
+                                    uint64_t *ptr_out, uint32_t *rkey_out) {
+    if (L->block_buffers[slot] != NULL && k < L->n_block_buffers[slot]) {
+        *ptr_out  = L->block_buffers[slot][k].ptr;
+        *rkey_out = L->block_buffers[slot][k].rkey;
+    } else {
+        *ptr_out  = L->buffers[slot].ptr;
+        *rkey_out = L->buffers[slot].rkey;
+    }
+}
+
 static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                                   const int *chosen, int n_slots,
                                   long long mig_id, sds *err_out) {
@@ -5450,78 +5677,125 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
     size_t total_bytes = 0;
     int errs = 0;
     /* AqRaft: number of RDMA WRs posted to the QP but not yet reaped from the
-     * send CQ. With pipelining we post up to K WRs before reaping them as a
-     * batch — keeping K writes in flight instead of stalling per-slot on
-     * wait_send (which capped the transfer at ~1 WR in flight, ~5 Gbps). */
+     * send CQ. With pipelining we post up to a chunk's worth of WRs before
+     * reaping them as a batch — keeping writes in flight instead of stalling
+     * per-slot on wait_send (which capped the transfer at ~1 WR in flight,
+     * ~5 Gbps). */
     int inflight = 0;
     long long transfer_t0 = ustime();   /* per-donor TRANSFER wall-clock (overlap A/B) */
+
+    /* Zero-copy: ensure the live-block MR side table exists (warm normally
+     * created + populated it; if warm didn't run we create it here and every
+     * block registers in-window, which shows up as a large inwindow_reg).
+     * L->mu is held for the whole function, so this is race-free. */
+    if (L->block_mr_tbl == NULL)
+        L->block_mr_tbl = blockMrTableCreate(rdmamig_client_cm_id(L->client));
+    long long reg0 = blockMrTableRegCount(L->block_mr_tbl);   /* verification snapshot */
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
-        char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
-        /* Patch 9 (raw-block pass-through TRANSFER): ship the donor's
-         * r_allocator block byte-for-byte. The recipient walks it via
-         * r_allocator_walk_used_segments + dbAdds each kvobj in place
-         * (fixing kv->ptr from data_offset). No encode/decode pass.
-         * Falls back to encode if the slot has no r_allocator block yet
-         * (shouldn't happen for migrated slots — they were loaded by YCSB
-         * which goes through r_allocator). */
+
+        /* Enumerate the slot's live r_allocator blocks. FLIP already locked
+         * every slot's blocks (r_allocator_lock_slot_blocks) BEFORE TRANSFER,
+         * so the block list is frozen — RDMA-writing directly from the live
+         * blocks is equivalent to the old snapshot memcpy, with zero copies. */
         int n_blocks = 0;
         char **donor_blocks = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
-        uint32_t n_entries = 0;  /* Used only by debug log below. */
+        int nremote = (L->block_buffers[slot] != NULL) ? L->n_block_buffers[slot] : 1;
+
         if (donor_blocks != NULL && n_blocks > 0 && donor_blocks[0] != NULL) {
-            /* Patch 9 limitation: only block[0] is shipped per slot. Slots
-             * with n_blocks > 1 (typically slots that grew after the initial
-             * insert, e.g. via UPDATE) leak keys in the additional blocks.
-             * For workloada/b/c with ~30 keys per slot in 2 MiB blocks this
-             * is a ~5% shortfall. Multi-block ship would need n MR posts per
-             * slot OR a contiguous donor-side block layout. */
-            memcpy(staging, donor_blocks[0], RDMAMIG_BLOCK_SIZE_BYTES);
+            /* Zero-copy multi-block path: ship every live block we have a
+             * landing buffer for. nship = min(n_blocks, nremote): if the slot
+             * grew between PREP and FLIP the extra (newest, front) blocks have
+             * no landing buffer and are dropped; if it shrank we ship fewer.
+             * Each block is RDMA-written straight from its live MR (registered
+             * at warm; GetOrRegister covers any block warm missed). */
+            int nship = (n_blocks < nremote) ? n_blocks : nremote;
+            for (int k = 0; k < nship; k++) {
+                if (donor_blocks[k] == NULL) continue;
+                uint64_t rptr; uint32_t rkey;
+                rdmaTransferRemoteBlock(L, slot, k, &rptr, &rkey);
+                rdmamig_buffer *mr = blockMrTableGetOrRegister(
+                    L->block_mr_tbl, donor_blocks[k], RDMAMIG_BLOCK_SIZE_BYTES);
+                if (mr == NULL) {
+                    errs++;
+                    serverLog(LL_WARNING,
+                        "RDMA MIGRATE worker: slot=%d block=%d MR register failed",
+                        slot, k);
+                    continue;
+                }
+                int rc = rdmamig_client_post_write(mr, donor_blocks[k],
+                                                   rptr, rkey,
+                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+                if (rc != 0) {
+                    errs++;
+                    serverLog(LL_WARNING,
+                        "RDMA MIGRATE worker: slot=%d block=%d post_write failed rc=%d",
+                        slot, k, rc);
+                    continue;
+                }
+                inflight++;
+                total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+                /* Mid-slot QP-depth safety reap: keep in-flight WRs under the
+                 * cap so a many-block chunk can't overflow the send queue. RC
+                 * completes in order, so draining confirms these writes landed;
+                 * the slot-aligned CHUNK RPC still fires at the slot boundary. */
+                if (inflight >= RDMA_TRANSFER_WR_CAP) {
+                    int reaped = 0;
+                    while (reaped < inflight) {
+                        struct ibv_wc wc[64];
+                        int n = rdmamig_client_poll_send(L->client, wc, 64);
+                        if (n < 0) { errs++; break; }
+                        if (n == 0) continue;
+                        reaped += n;
+                    }
+                    inflight = 0;
+                }
+            }
+            if (server.rdma_reshard_debug_bytes) {
+                r_allocator_log_slot_stats(slot);
+                serverLog(LL_NOTICE,
+                    "RDMA MIGRATE worker TX: slot=%d n_blocks=%d nremote=%d shipped=%d",
+                    slot, n_blocks, nremote, nship);
+            }
         } else {
-            /* No r_allocator block — fall back to encode. */
-            n_entries = rdmaEncodeSlotEntries(db, slot, staging,
-                                              RDMAMIG_BLOCK_SIZE_BYTES);
+            /* No r_allocator block — fall back to the encode path: pack the
+             * slot's entries into the registered staging buffer (block 0) and
+             * RDMA-write from there to the block-0 landing buffer. Single block;
+             * shouldn't happen for migrated slots (they were loaded via
+             * r_allocator), but keeps correctness. */
+            char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
+            uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
+                                                       RDMAMIG_BLOCK_SIZE_BYTES);
+            (void) n_entries;
+            int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
+                                               L->buffers[slot].ptr,
+                                               L->buffers[slot].rkey,
+                                               RDMAMIG_BLOCK_SIZE_BYTES);
+            if (rc != 0) {
+                errs++;
+                serverLog(LL_WARNING,
+                    "RDMA MIGRATE worker: slot=%d encode-fallback post_write failed rc=%d",
+                    slot, rc);
+            } else {
+                inflight++;
+                total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
+            }
         }
         if (donor_blocks) zfree(donor_blocks);
-        rdmaDebugDumpSlotBytes("SRC", slot, staging);
-        if (server.rdma_reshard_debug_bytes) {
-            r_allocator_log_slot_stats(slot);
-            serverLog(LL_NOTICE,
-                "RDMA MIGRATE worker TX: slot=%d n_entries=%u rdma_bytes=%d",
-                slot, n_entries, RDMAMIG_BLOCK_SIZE_BYTES);
-        }
-        /* DECISIVE: re-CRC the staging buffer RIGHT BEFORE the wire post. If
-         * SRC2 != SRC the donor buffer mutated between capture and send; if
-         * SRC2 == SRC but != recipient RCV, then bytes-sent != bytes-received. */
-        rdmaDebugDumpSlotBytes("SRC2", slot, staging);
-        /* AqRaft (pipelined): post the WR and keep it in flight — do NOT
-         * wait_send per slot. rdmamig_client_post_write signals every WR, so
-         * we reap the whole batch at the chunk boundary below. Posting up to
-         * K (2 MiB) writes before reaping fills the QP send queue and the NIC
-         * pipe; the old post-1/wait-1 capped throughput at ~1 WR in flight
-         * (~5 Gbps regardless of payload size). */
-        int rc = rdmamig_client_post_write(L->source_buffers[slot], staging,
-                                           L->buffers[slot].ptr,
-                                           L->buffers[slot].rkey,
-                                           RDMAMIG_BLOCK_SIZE_BYTES);
-        if (rc != 0) {
-            errs++;
-            serverLog(LL_WARNING,
-                "RDMA MIGRATE worker: slot=%d post_write failed rc=%d", slot, rc);
-            continue;
-        }
-        inflight++;
-        total_bytes += RDMAMIG_BLOCK_SIZE_BYTES;
-        if (overlap) chunk_slots[chunk_used++] = slot;
-        (void) n_entries;  /* per-slot success log dropped; n_entries kept for the debug-bytes log above */
 
-        /* Batch boundary: reap all in-flight WRs (RC QP completes in order, so
-         * draining `inflight` completions confirms every write in this batch
-         * has landed in the recipient's pinned memory). For the overlap path
-         * we then fire the chunk's DONE-SLOTS-CHUNK RPC — the recipient can
-         * backpatch this chunk while we transfer the next batch — preserving
-         * the existing "data has landed before CHUNK RPC" invariant. */
+        /* Slot-keyed chunk accounting: one slot == one chunk unit (a slot may
+         * post several block WRs). Record the slot for the overlap CHUNK RPC,
+         * then advance chunk_used. */
+        if (overlap) chunk_slots[chunk_used] = slot;
+        chunk_used++;
+
+        /* Batch boundary: reap all in-flight WRs (RC completes in order, so
+         * draining `inflight` confirms every write in this chunk has landed in
+         * the recipient's pinned memory), then — overlap only — fire the
+         * chunk's DONE-SLOTS-CHUNK RPC so the recipient backpatches this chunk
+         * while we transfer the next, preserving "data landed before CHUNK". */
         int is_last_slot = (i + 1 == n_slots);
-        if (is_last_slot || inflight >= K) {
+        if (is_last_slot || chunk_used >= K) {
             int reaped = 0;
             while (reaped < inflight) {
                 struct ibv_wc wc[64];
@@ -5575,9 +5849,9 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                  * would later block redisGetReply forever on a reply that never comes. */
                 if (!write_failed) pending_replies++;
                 chunk_seq++;
-                chunk_used = 0;
                 zfree(cargv); zfree(cargvlen); zfree(cnumbuf);
             }
+            chunk_used = 0;   /* reset moved OUT of the overlap-only block (slot-keyed) */
         }
     }
 
@@ -5624,9 +5898,10 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
             if (cr) freeReplyObject(cr);
         }
         serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunk_errs=%d chunks=%d transfer_ms=%lld",
+            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunk_errs=%d chunks=%d transfer_ms=%lld inwindow_reg=%lld",
             n_slots, total_bytes, errs, chunk_errs, chunk_seq,
-            (ustime() - transfer_t0) / 1000);
+            (ustime() - transfer_t0) / 1000,
+            blockMrTableRegCount(L->block_mr_tbl) - reg0);
     } else {
         /* Legacy path: single end-of-TRANSFER DONE-SLOTS RPC. The recipient
          * also accepts the legacy 2-arg form for back-compat (no tracking). */
@@ -5654,8 +5929,9 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
         if (r) freeReplyObject(r);
 
         serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d transfer_ms=%lld",
-            n_slots, total_bytes, errs, (ustime() - transfer_t0) / 1000);
+            "RDMA MIGRATE worker: TRANSFER finished n=%d bytes=%zu errs=%d transfer_ms=%lld inwindow_reg=%lld",
+            n_slots, total_bytes, errs, (ustime() - transfer_t0) / 1000,
+            blockMrTableRegCount(L->block_mr_tbl) - reg0);
     }
 
     pthread_mutex_unlock(&L->mu);
@@ -6852,11 +7128,47 @@ static void *warmRegisterThread(void *arg) {
             wa->L->prepared_slot = zcalloc((size_t) CLUSTER_SLOTS * sizeof(uint8_t));
         for (int i = 0; i < wa->n_slots; i++)
             wa->L->prepared_slot[wa->chosen[i]] = 1;
+        /* Zero-copy: create the live-block MR side table (against this link's
+         * client cm_id — the QP TRANSFER posts on). */
+        if (wa->L->block_mr_tbl == NULL)
+            wa->L->block_mr_tbl =
+                blockMrTableCreate(rdmamig_client_cm_id(wa->L->client));
+        struct blockMrTable *tbl = wa->L->block_mr_tbl;
         pthread_mutex_unlock(&wa->L->mu);
+
+        /* Pre-register every migrated slot's live r_allocator blocks so TRANSFER
+         * pays no ibv_reg_mr in the measured window. We hold the slot's
+         * allocator mutex (r_allocator_lock_slot — the SAME recursive mutex
+         * r_allocator_insert_kv takes, NOT lock_slot_blocks) only for the
+         * duration of the read-only enumeration: this serialises against a
+         * concurrent insert (which could prepend a block and race
+         * r_allocator_get_block_buffers_for_slot's count-then-walk into an
+         * array overrun) WITHOUT freezing the slot or resetting its freelist —
+         * warm stays side-effect-free; FLIP freezes the blocks later. Blocks
+         * added after warm are caught by GetOrRegister's fallback at TRANSFER. */
+        long long live_blocks = 0, registered_blocks = 0;
+        for (int i = 0; i < wa->n_slots; i++) {
+            int slot = wa->chosen[i];
+            r_allocator_lock_slot(slot);
+            int nb = 0;
+            char **blks = r_allocator_get_block_buffers_for_slot(slot, &nb);
+            if (blks != NULL) {
+                for (int k = 0; k < nb; k++) {
+                    if (blks[k] == NULL) continue;
+                    live_blocks++;
+                    if (blockMrTableGetOrRegister(tbl, blks[k],
+                                                  RDMAMIG_BLOCK_SIZE_BYTES) != NULL)
+                        registered_blocks++;
+                }
+                zfree(blks);
+            }
+            r_allocator_unlock_slot(slot);
+        }
         serverLog(LL_NOTICE,
             "RDMA MIGRATE-WARM(async): registered=%d n_slots=%d — %d slots flagged "
-            "prepared (REGISTERING will be skipped in-window)",
-            registered, wa->n_slots, wa->n_slots);
+            "prepared (REGISTERING will be skipped in-window); zero-copy MR table "
+            "%lld/%lld live blocks registered",
+            registered, wa->n_slots, wa->n_slots, registered_blocks, live_blocks);
     } else {
         serverLog(LL_WARNING,
             "RDMA MIGRATE-WARM(async): source register failed: %s "

@@ -172,6 +172,11 @@ typedef struct rdmaCachedConnection {
      * kvobjs have been copied into the recipient's own managed blocks). */
     void  *landing_pool_base;
     size_t landing_pool_bytes;
+    /* AqRaft Stage 3 (multi-block chain forward): total landing BLOCKS registered
+     * for this session (sum of per-slot nblocks). Known at REGISTER-BLOCK-SLOTS,
+     * read at DONE-SLOTS-INIT to size the per-block chain-forward arrays + the F1
+     * pool. Equals number_of_assigned_slots when every slot is single-block. */
+    size_t landing_pool_total_blocks;
 } rdmaCachedConnection;
 
 /* Source-side bootstrap cache for the RDMA migration data path. One entry per
@@ -188,7 +193,15 @@ typedef struct rdmaOutboundLink {
     sds addr;                                       /* "host:port", matches dict key */
     struct rdmamig_client *client;                  /* active RDMA QP (rdmamig client) */
     struct redisContext *ctrl;                      /* hiredis TCP control channel */
-    rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];    /* recipient (VA, rkey) per slot */
+    rdmaRemoteBufferInfo buffers[CLUSTER_SLOTS];    /* recipient (VA, rkey) per slot — block[0] for multi-block */
+    /* Zero-copy multi-block TRANSFER: per-slot vector of recipient landing
+     * buffers, one entry per donor block. block_buffers[slot][0] mirrors
+     * buffers[slot], so all legacy block-0 readers (and the buffers[slot].ptr==0
+     * "not-yet-prepped" marker) keep working unchanged. NULL until PREP fills it
+     * for the slot. n_block_buffers[slot] is the vector length. */
+    rdmaRemoteBufferInfo *block_buffers[CLUSTER_SLOTS];   /* per-slot, one per donor block; [0] mirrors buffers[slot] */
+    int n_block_buffers[CLUSTER_SLOTS];                   /* length of block_buffers[slot] (0 if not prepped) */
+    struct blockMrTable *block_mr_tbl;                    /* opaque; side table block_start -> live-block MR (cluster_rdma.c) */
     struct rdmamig_buffer *source_buffers[CLUSTER_SLOTS]; /* sender-side registered MR per slot (Phase 1) */
     /* AqRaft Stage 5 (donor big-MR): one contiguous mmap pool + ONE ibv_reg_mr
      * covering all this link's source slots, registered once and reused across

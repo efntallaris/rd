@@ -88,6 +88,12 @@ int r_allocator_unregister_existing_blocks(int slot);
  * copied-out managed block once the landing block is unlinked). */
 void *r_allocator_get_landing_block_for_slot(int slot);
 
+/* AqRaft Stage 3: enumerate ALL of a slot's landing blocks (is_registered_existing),
+ * oldest→newest. Fills out[0..min(n,max)-1] with block_start pointers; returns the
+ * total count (pass out=NULL,max=0 to just count). Used by the chain forward to
+ * ship every block of a multi-block slot to followers. */
+int r_allocator_get_landing_blocks_for_slot(int slot, void **out, int max);
+
 /* Total bytes the caller must allocate per block for use with
  * r_allocator_register_existing_block (prologue word + BLOCK_SIZE_BYTES +
  * epilogue word). Use this to size the pool — do not hardcode WSIZE in

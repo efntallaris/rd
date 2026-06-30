@@ -3140,7 +3140,7 @@ standardConfig static_configs[] = {
     createBoolConfig("cluster-rdma-reshard-debug-bytes", NULL, MODIFIABLE_CONFIG, server.rdma_reshard_debug_bytes, 0, NULL, NULL),
     createBoolConfig("cluster-rdma-landing-barrier", NULL, MODIFIABLE_CONFIG, server.rdma_landing_barrier, 1, NULL, NULL),
     createBoolConfig("cluster-rdma-transfer-overlap", NULL, MODIFIABLE_CONFIG, server.rdma_transfer_overlap, 1, NULL, NULL),
-    createIntConfig("cluster-rdma-transfer-chunk-slots", NULL, MODIFIABLE_CONFIG, 1, 256, server.rdma_transfer_chunk_slots, 32, INTEGER_CONFIG, NULL, NULL),
+    createIntConfig("cluster-rdma-transfer-chunk-slots", NULL, MODIFIABLE_CONFIG, 1, 16384, server.rdma_transfer_chunk_slots, 32, INTEGER_CONFIG, NULL, NULL),
     createIntConfig("cluster-rdma-merge-keys-per-tick", NULL, MODIFIABLE_CONFIG, 1, 1048576, server.rdma_merge_keys_per_tick, 512, INTEGER_CONFIG, NULL, NULL),
     createBoolConfig("slot-meta-reply", NULL, MODIFIABLE_CONFIG, server.slot_meta_reply, 0, NULL, NULL),
     createIntConfig("rdma-migration-port", NULL, MODIFIABLE_CONFIG, 1, 65535, server.rdma_migration_port, 17777, INTEGER_CONFIG, NULL, NULL), /* Source side picks this; recipient binds it when asked via RDMA INIT-SERVER. */

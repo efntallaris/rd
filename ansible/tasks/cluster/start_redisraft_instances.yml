@@ -48,6 +48,7 @@
     # the jinja first() lookup of raft_id would fail for non-member hosts.
     - name: Start one redis-server per shardgroup membership
       shell: |
+        ulimit -l unlimited
         {{ redis_bin_dir }}/redis-server \
           --port {{ sg.port }} \
           --bind 0.0.0.0 \
