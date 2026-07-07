@@ -344,6 +344,16 @@ void recipientBackpatchWorkerStop(void);
 void recipientBackpatchMuLock(void);
 void recipientBackpatchMuUnlock(void);
 
+/* AqRaft --rdma-merge-background: cluster-independent per-slot rwlocks so the
+ * shadow->live merge can run on the backpatch worker under real mutual
+ * exclusion in redisraft mode (where clusterSlot* locks no-op). bgMergeInit
+ * arms the array at startup (no-op unless server.rdma_merge_background).
+ * bgMergeSlotSetActive marks a slot as being background-merged, which makes
+ * clusterSlotIsImporting(slot) true so main-thread keyspace accessors take the
+ * slot lock. See cluster_legacy.c. */
+void bgMergeInit(void);
+void bgMergeSlotSetActive(int slot, int active);
+
 /* Phase 4d: recipient backpatch worker thread. Started by InitServerLast();
  * stops on server shutdown. The thread drains the SPSC ring populated by
  * rdmaDoneSlotsCommand and applies migrated slots into the keyspace under

@@ -288,7 +288,7 @@ static kvobj *lookupKeyImpl(redisDb *db, robj *key, int flags, dictEntryLink *li
 kvobj *lookupKey(redisDb *db, robj *key, int flags, dictEntryLink *link) {
     int slot = -1;
     int wrap = 0;
-    if (server.cluster_enabled && !cluster_slot_lock_held_by_thread) {
+    if ((server.cluster_enabled || server.rdma_merge_background) && !cluster_slot_lock_held_by_thread) {
         slot = getKeySlot(key->ptr);
         wrap = clusterSlotIsImporting(slot);
     }
@@ -459,7 +459,7 @@ kvobj *dbAddInternal(redisDb *db, robj *key, robj **valref, dictEntryLink *link,
                      const KeyMetaSpec *keymeta)
 {
     int slot = getKeySlot(key->ptr);
-    int wrap = server.cluster_enabled
+    int wrap = (server.cluster_enabled || server.rdma_merge_background)
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
     if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
@@ -687,7 +687,7 @@ static void dbSetValueImpl(redisDb *db, robj *key, robj **valref, dictEntryLink 
 static void dbSetValue(redisDb *db, robj *key, robj **valref, dictEntryLink link,
                        int overwrite, int updateKeySizes, int keepTTL) {
     int slot = getKeySlot(key->ptr);
-    int wrap = server.cluster_enabled
+    int wrap = (server.cluster_enabled || server.rdma_merge_background)
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
     if (wrap) {
@@ -1018,7 +1018,7 @@ static int dbGenericDeleteImpl(redisDb *db, robj *key, int async, int flags, int
 /* Helper for sync and async delete. */
 int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
     int slot = getKeySlot(key->ptr);
-    int wrap = server.cluster_enabled
+    int wrap = (server.cluster_enabled || server.rdma_merge_background)
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
     if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
@@ -2845,7 +2845,7 @@ void swapdbCommand(client *c) {
 int removeExpire(redisDb *db, robj *key) {
     int table;
     int slot = getKeySlot(key->ptr);
-    int wrap = server.cluster_enabled
+    int wrap = (server.cluster_enabled || server.rdma_merge_background)
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
     if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
@@ -2880,7 +2880,7 @@ static kvobj *setExpireByLinkImpl(client *c, redisDb *db, sds key, long long whe
 /* Like setExpire(), but accepts an optional `keyLink` to save lookup. */
 kvobj *setExpireByLink(client *c, redisDb *db, sds key, long long when, dictEntryLink keyLink) {
     int slot = getKeySlot(key);
-    int wrap = server.cluster_enabled
+    int wrap = (server.cluster_enabled || server.rdma_merge_background)
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
     if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }

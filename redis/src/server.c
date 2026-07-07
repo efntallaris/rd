@@ -3274,6 +3274,11 @@ void InitServerLast(void) {
      * the pthread survives into the daemonized child — the lesson from
      * Attempt-1 in cluster_rdma.c history. */
     recipientBackpatchThreadStart();
+    /* AqRaft: arm the cluster-independent per-slot rwlock array before any
+     * backpatch worker can drain a shadow into the live keyspace. No-op unless
+     * --rdma-merge-background is set. Must run post-fork (same rationale as the
+     * backpatch thread above). */
+    bgMergeInit();
     server.initial_memory_usage = zmalloc_used_memory();
 }
 

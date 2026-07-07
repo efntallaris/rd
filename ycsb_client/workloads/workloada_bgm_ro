@@ -1,0 +1,15 @@
+# AqRaft bg-merge READ-ONLY byte-integrity variant — 1M records.
+# readproportion=1.0 -> no client writes during migration, so the recipient's
+# backpatched keyspace must be a byte-exact copy of the donor snapshot:
+# per-slot SRC2==RCV, MISMATCH=0. Validates the concurrent worker-add vs
+# main-thread-read path doesn't corrupt the dict.
+recordcount=1000000
+operationcount=30000000
+maxexecutiontime=100
+workload=site.ycsb.workloads.CoreWorkload
+readallfields=true
+readproportion=1.0
+updateproportion=0.0
+scanproportion=0
+insertproportion=0
+requestdistribution=zipfian

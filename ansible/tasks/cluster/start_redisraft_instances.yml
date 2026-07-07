@@ -63,13 +63,14 @@
           --pidfile /tmp/redis_{{ inventory_hostname }}_{{ sg.id }}.pid \
           {% if 'custom' in (redis_variant | default('custom')) %}--rdma-chain-followers "{{ sg.nodes | rejectattr('host', 'equalto', inventory_hostname) | map(attribute='host') | map('regex_replace', '^(.+)$', '\1:' + sg.port|string) | join(' ') }}" \
           --rdma-chain-pool-bytes 67108864 \
-          --rdma-backpatch-pool-size {{ rdma_backpatch_pool_size | default(1) }} \
+          --rdma-backpatch-pool-size {{ rdma_backpatch_pool_size | default(3) }} \
           --rdma-chain-pipeline {{ rdma_chain_pipeline | default('no') }} \
           --rdma-chain-xsession {{ rdma_chain_xsession | default('no') }} \
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
           --cluster-rdma-reshard-debug-bytes {{ rdma_reshard_debug_bytes | default('no') }} \
           --cluster-rdma-merge-keys-per-tick {{ rdma_merge_keys_per_tick | default(512) }} \
+          --rdma-merge-background {{ rdma_merge_background | default('yes') }} \
           --cluster-rdma-landing-barrier {{ rdma_landing_barrier | default('yes') }} \
           --rdma-migration-redisraft-mode yes \
           --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \

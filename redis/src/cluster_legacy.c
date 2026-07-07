@@ -1014,8 +1014,59 @@ void clusterSlotUnlock(int slot) {
  *   2. The experiment runs migrations serially (one RECV-FLIP at a time).
  *   3. lookupKey only takes it for importing slots, where ownership is
  *      already established. */
+/* ---- AqRaft background-merge: cluster-independent per-slot rwlocks ----
+ *
+ * Under redisraft mode server.cluster == NULL, so every clusterSlot*NoTopology
+ * helper above no-ops and provides ZERO mutual exclusion. That is fine while the
+ * shadow->live merge runs on the main thread (single writer). With
+ * --rdma-merge-background the merge runs on the backpatch POOL WORKER, so a
+ * background thread mutates db->keys concurrently with main-thread client
+ * GET/SET + raft-apply — which needs REAL locks. This array provides them,
+ * independent of server.cluster. It is initialized once at startup (bgMergeInit)
+ * when server.rdma_merge_background is set. g_bgm_active[slot] mirrors the
+ * cluster-mode importing_slots_from[] predicate: 1 while a slot is being
+ * background-merged (set in rdmaDoneSlotsCommand before workers are dispatched,
+ * cleared by the worker after that slot's drain). The NoTopology helpers and
+ * clusterSlotIsImporting fall back to this array when server.cluster == NULL. */
+static pthread_rwlock_t *g_bgm_slot_locks = NULL;    /* [CLUSTER_SLOTS], lazy */
+static _Atomic unsigned char g_bgm_slot_active[CLUSTER_SLOTS];
+
+void bgMergeInit(void) {
+    if (!server.rdma_merge_background) return;
+    if (g_bgm_slot_locks != NULL) return;
+    g_bgm_slot_locks = zmalloc(sizeof(pthread_rwlock_t) * CLUSTER_SLOTS);
+    for (int i = 0; i < CLUSTER_SLOTS; i++) {
+        pthread_rwlock_init(&g_bgm_slot_locks[i], NULL);
+        atomic_store_explicit(&g_bgm_slot_active[i], 0, memory_order_relaxed);
+    }
+    serverLog(LL_NOTICE, "AqRaft: bgMergeInit — %d cluster-independent per-slot "
+                         "rwlocks armed (rdma-merge-background on)", CLUSTER_SLOTS);
+}
+
+/* Mark/unmark a slot as background-merging. Release order so a main-thread
+ * accessor that observes active==1 also sees the lock as usable. */
+void bgMergeSlotSetActive(int slot, int active) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return;
+    atomic_store_explicit(&g_bgm_slot_active[slot],
+                          (unsigned char)(active ? 1 : 0), memory_order_release);
+}
+
+/* True iff this slot is a background-merge target right now (redisraft path). */
+static inline int bgMergeSlotActive(int slot) {
+    return g_bgm_slot_locks != NULL &&
+           atomic_load_explicit(&g_bgm_slot_active[slot], memory_order_acquire);
+}
+
+/* Lock/unlock symmetry note: callers decide WHETHER to take the lock (db.c via
+ * clusterSlotIsImporting, the backpatch worker explicitly). Once decided, the
+ * lock and its matching unlock must both act — so these operate on
+ * g_bgm_slot_locks whenever the array exists, NOT on the (mutable) active flag,
+ * which the worker may clear between a main-thread lock and its unlock. */
 void clusterSlotLockReadNoTopology(int slot) {
-    if (server.cluster == NULL) return;
+    if (server.cluster == NULL) {
+        if (g_bgm_slot_locks != NULL) pthread_rwlock_rdlock(&g_bgm_slot_locks[slot]);
+        return;
+    }
     serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
     pthread_rwlock_rdlock(&server.cluster->slot_locks[slot]);
 }
@@ -1026,19 +1077,33 @@ void clusterSlotLockReadNoTopology(int slot) {
  * avoid stalling the event loop: on a 0 return the caller falls back to the
  * donor (two-sided read) instead of waiting. */
 int clusterSlotTryLockReadNoTopology(int slot) {
-    if (server.cluster == NULL) return 1;
+    if (server.cluster == NULL) {
+        /* Background-merge (redisraft): there is no donor to fall back to
+         * post-FLIP, so a "try failed → return NULL" would be a phantom miss.
+         * BLOCK on the rdlock instead — the worker holds the wrlock only for a
+         * ~µs per-key burst, so the event-loop stall is negligible. Always
+         * report success. */
+        if (g_bgm_slot_locks != NULL) pthread_rwlock_rdlock(&g_bgm_slot_locks[slot]);
+        return 1;
+    }
     serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
     return pthread_rwlock_tryrdlock(&server.cluster->slot_locks[slot]) == 0;
 }
 
 void clusterSlotLockWriteNoTopology(int slot) {
-    if (server.cluster == NULL) return;
+    if (server.cluster == NULL) {
+        if (g_bgm_slot_locks != NULL) pthread_rwlock_wrlock(&g_bgm_slot_locks[slot]);
+        return;
+    }
     serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
     pthread_rwlock_wrlock(&server.cluster->slot_locks[slot]);
 }
 
 void clusterSlotUnlockNoTopology(int slot) {
-    if (server.cluster == NULL) return;
+    if (server.cluster == NULL) {
+        if (g_bgm_slot_locks != NULL) pthread_rwlock_unlock(&g_bgm_slot_locks[slot]);
+        return;
+    }
     serverAssert(slot >= 0 && slot < CLUSTER_SLOTS);
     pthread_rwlock_unlock(&server.cluster->slot_locks[slot]);
 }
@@ -1053,8 +1118,8 @@ void clusterSlotUnlockNoTopology(int slot) {
  * staged yet). The slot lock itself fences any read that actually
  * matters. */
 int clusterSlotIsImporting(int slot) {
-    if (server.cluster == NULL) return 0;
     if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
+    if (server.cluster == NULL) return bgMergeSlotActive(slot);   /* redisraft bg-merge */
     return server.cluster->importing_slots_from[slot] != NULL;
 }
 

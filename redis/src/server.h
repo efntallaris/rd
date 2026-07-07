@@ -2188,6 +2188,15 @@ struct redisServer {
     int rdma_reshard_debug_bytes;
     int rdma_landing_barrier;   /* recipient landing barrier before backpatch apply (default on) */
     int rdma_merge_keys_per_tick; /* AqRaft: copy-out keys per mergeBackpatchTick (was #define 512). Higher drains the shadow->managed copy-out faster so every session finishes copying out, at the cost of longer main-thread stalls per tick. */
+    int rdma_merge_background;  /* AqRaft: drain the shadow->live merge on the
+                                   backpatch POOL WORKER threads (under real per-slot rwlocks)
+                                   instead of on the main-thread mergeBackpatchTick. Default ON.
+                                   Requires the cluster-independent per-slot lock array
+                                   (bgMergeInit) so the locks are real under redisraft mode
+                                   (where clusterSlot* locks no-op). Main-thread keyspace
+                                   accessors (db.c wrap sites) take the same locks when the
+                                   slot is background-merging. See mergeBackpatchTick /
+                                   backpatchPoolWorkerMain. */
                                                                        /* If true, RDMA RESHARD-TRANSFER and rdmaBackpatchSlot
                                        emit per-slot byte dumps (first 32 + last 16)
                                        on both source and recipient, for cross-checking

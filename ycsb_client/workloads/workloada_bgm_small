@@ -1,0 +1,15 @@
+# AqRaft bg-merge SMALL smoke variant — 1M records, ~2-min timed run.
+# Fast end-to-end so we can watch --rdma-merge-background behave and validate.
+recordcount=1000000
+operationcount=30000000
+maxexecutiontime=120
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

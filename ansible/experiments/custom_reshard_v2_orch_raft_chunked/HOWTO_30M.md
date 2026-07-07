@@ -95,13 +95,22 @@ cd /users/entall/rd/ansible
 sudo ansible-playbook -i inventory.ini \
   experiments/custom_reshard_v2_orch_raft_chunked/workload_nround.yml \
   -e redis_variant=custom -e pre_reshard_pause=20 -e n_rounds=2 \
-  -e rdma_backpatch_pool_size=4 -e rdma_migration_peer_stagger_ms=0 \
+  -e rdma_backpatch_pool_size=3 -e rdma_migration_peer_stagger_ms=0 \
   -e ycsb_slotpoll_ms=100 -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
   -e rdma_async_apply=yes -e rdma_transfer_chunk_slots=171 \
   -e '{"rdma_follower_proxy": "no"}' \
   -e redis_workload=workloada_prod_30m_run10min \
   -e experiment_name=perchunk_30m_workloada
 ```
+
+> **Background merge is now ON by default** (`--rdma-merge-background`, config default
+> yes). The recipient's shadow→live keyspace merge runs on the backpatch pool-worker
+> threads (`rdma_backpatch_pool_size`, default 3) under real per-slot rwlocks, instead of
+> the throttled main-thread `mergeBackpatchTick`. This frees the event loop (main-thread
+> merge cost ~17% → ~0.1%) and compresses the post-migration throughput recovery
+> (30M: **t≈54s → t≈33s**, ~21s sooner). Validated at 30M + read-only byte-integrity
+> (MISMATCH=0, no corruption). To reproduce the **legacy main-thread-merge baseline**,
+> add `-e rdma_merge_background=no`.
 
 Total wall time ~35 min: ~22 min load (30M inserts) + 20s pause + ~12s migration +
 10-min timed run + collect. A clean run ends `failed=0` on every host.
@@ -162,12 +171,21 @@ MISMATCH=0.
 
 ## 8. Tunable knobs added this work
 
+- `--rdma-merge-background` (**default yes**): drain the shadow→live merge on the
+  backpatch pool-worker threads under real per-slot rwlocks, instead of the
+  main-thread `mergeBackpatchTick`. Off the event loop + unthrottled + parallel
+  across `rdma_backpatch_pool_size` workers → merge window ~22s → ~6s, main-thread
+  cost ~17% → ~0.1%, throughput recovery t≈54s → t≈33s. The merge worker takes
+  `clusterSlotLockWriteNoTopology(slot)` per key; main-thread GET/SET take the
+  matching lock (db.c wrap sites now fire under this flag too, via a
+  cluster-independent lock array armed by `bgMergeInit` — needed because under
+  redisraft `server.cluster==NULL` makes the normal slot-locks no-ops). Set
+  `-e rdma_merge_background=no` for the legacy main-thread-merge baseline.
 - `--cluster-rdma-merge-keys-per-tick` (default 512): keys copied out of the
-  landing pool per `mergeBackpatchTick` (main thread). Higher drains the per-key
-  copy-out faster but lengthens main-thread stalls. NOTE: raising it does **not**
-  reliably make every session's `applied` non-zero — the recipient `pool-free`
-  drain (copy-out fully completing for every session) is still WIP, which is why
-  sg4 carries elevated post-migration RSS.
+  landing pool per `mergeBackpatchTick` (main thread). **Only relevant when
+  `rdma_merge_background=no`** — with background merge the worker drains the whole
+  shadow per slot in one pass, ignoring this per-tick budget. Higher drains the
+  per-key copy-out faster but lengthens main-thread stalls.
 
 ---
 

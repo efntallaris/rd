@@ -785,6 +785,36 @@ static void *registerWorkerThread(void *arg);
  * worker thread, when done, opens a fresh TCP connection back to
  * src-host:src-port and issues `RDMA REGISTER-RESULT <register_id>
  * <binary-VA-rkey-tuples>` to deliver the result. */
+
+/* AqRaft --rdma-merge-background: inc/dec recipient_backpatch_in_progress and,
+ * on the 0<->1 edges, globally forbid/restore dict resize+rehash.
+ *
+ * WHY: with background merge the pool worker mutates slot dicts OFF the main
+ * thread. A concurrent main-thread dbAdd whose insert triggers an inline rehash
+ * step (_dictBucketRehash) races the worker -> the dict.c:548 bucket assert
+ * (the per-slot rwlock serializes same-slot dbAdds but does NOT cover the dict's
+ * own rehash-state transitions across all interleavings). DICT_RESIZE_FORBID
+ * makes _dictBucketRehash a no-op (dict.c) and blocks auto-expand, so NO dict
+ * rehashes during the backpatch window and the assert is unreachable. The
+ * worker's presize uses EXPLICIT dictExpand, which bypasses the global forbid
+ * (it only checks rehash/size), so the empty recipient dicts are still sized
+ * correctly; they just don't incrementally rehash until the window ends, when
+ * cron catches up. All three transition sites run on the main event loop, so the
+ * edge test is race-free. No-op unless server.rdma_merge_background. */
+static void recipientBackpatchInProgressAdd(int delta) {
+    if (delta > 0) {
+        int prev; atomicGet(server.recipient_backpatch_in_progress, prev);
+        atomicIncr(server.recipient_backpatch_in_progress, 1);
+        if (server.rdma_merge_background && prev == 0)
+            dictSetResizeEnabled(DICT_RESIZE_FORBID);
+    } else {
+        atomicDecr(server.recipient_backpatch_in_progress, 1);
+        int now; atomicGet(server.recipient_backpatch_in_progress, now);
+        if (server.rdma_merge_background && now == 0)
+            dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+    }
+}
+
 void rdmaRegisterBlockSlotsCommand(client *c) {
     rdmaCachedConnection *cs = rdmaGetConnection(c);
     if (cs == NULL) {
@@ -871,7 +901,7 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
      * mutating via dbAdd. Per-slot rwlock doesn't cover this cross-slot
      * shared state. Reset in rdmaReshardRecvFlipCommand once the backpatch
      * completes and ownership swaps. */
-    atomicIncr(server.recipient_backpatch_in_progress, 1);
+    recipientBackpatchInProgressAdd(1);   /* +FORBID dict resize on 0->1 (bg-merge) */
 
     /* Aqueduct: defer Fenwick-tree updates on the keys kvstore while backpatch
      * is in flight. Each dbAdd would otherwise hit the cross-slot Fenwick
@@ -1603,6 +1633,11 @@ typedef struct backpatchBatch {
  * after the chain-forward machinery; called from rdmaDoneSlotsInitCommand). */
 static void rdmaSpawnPipelineForward(backpatchBatch *b);
 
+/* chain-pipeline: capture one slot's landing-block snapshot (defined far below,
+ * near backpatchPoolWorkerMain). Called from rdmaDoneSlotsChunkCommand at
+ * chunk-arrival so the forwarder can post without waiting on the pool workers. */
+static void captureSlotSnapshot(backpatchBatch *b, int slot);
+
 #define BACKPATCH_RING_CAPACITY 64u
 
 static backpatchBatch *backpatch_ring[BACKPATCH_RING_CAPACITY];
@@ -1716,6 +1751,12 @@ typedef struct backpatchMergeWork {
                                        * the staged value was discarded because a
                                        * post-FLIP client write is fresher. Aggregated
                                        * into batch->clobber_skipped at BACKPATCH_DONE. */
+    int             already_drained;  /* AqRaft --rdma-merge-background: the pool worker
+                                       * already drained shadow->live under per-slot locks
+                                       * (moved/skipped_existing preset, shadow freed).
+                                       * mergeBackpatchTick then skips the drain loop and
+                                       * only runs the completion accounting on the main
+                                       * thread. */
 } backpatchMergeWork;
 
 #define MERGE_KEYS_PER_TICK 512
@@ -1724,6 +1765,12 @@ typedef struct backpatchMergeWork {
 static list           *backpatch_merge_queue   = NULL; /* list of backpatchMergeWork* */
 static pthread_mutex_t backpatch_merge_mu      = PTHREAD_MUTEX_INITIALIZER;
 static long long       backpatch_merge_timer_id = -1;
+
+/* AqRaft --rdma-merge-background instrumentation: measure the worker-thread merge. */
+static _Atomic long long g_bgm_cpu_us   = 0;  /* cumulative pool-worker merge CPU (µs) */
+static _Atomic long long g_bgm_moved    = 0;  /* cumulative keys adopted into live */
+static _Atomic long long g_bgm_skipped  = 0;  /* cumulative don't-clobber skips */
+static _Atomic long long g_bgm_first_us  = 0;  /* ustime() of the first worker drain */
 extern dictType        dbDictType;             /* server.c — shadow uses same type as live */
 
 static sds backpatchBatchKey(const char *src_node_id, long long src_mig_id) {
@@ -1882,6 +1929,13 @@ void rdmaDoneSlotsCommand(client *c) {
      * (see server.recipient_backpatch_in_progress in databasesCron). Main-
      * thread reads on importing slots still serialize against the backpatch
      * thread's dbAdd via the per-slot rwlock (Path B narrow wraps in db.c). */
+    /* AqRaft --rdma-merge-background: mark all of this batch's slots as
+     * background-merging on the main thread before the backpatch thread fans
+     * them out to workers (see rdmaDoneSlotsChunkCommand for the rationale). */
+    if (server.rdma_merge_background) {
+        for (int i = 0; i < n_slots; i++) bgMergeSlotSetActive(b->slots[i], 1);
+    }
+
     int enqueued = 0;
     if (backpatch_thread_started) {
         uint64_t head = atomic_load_explicit(&backpatch_ring_head, memory_order_relaxed);
@@ -1923,7 +1977,7 @@ void rdmaDoneSlotsCommand(client *c) {
         b->t_ended = time(NULL);
         /* Re-enable databasesCron — backpatch is done. Paired with the incr in
          * rdmaRegisterBlockSlotsCommand (moved out of RECV-FLIP for early-FLIP). */
-        atomicDecr(server.recipient_backpatch_in_progress, 1);
+        recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge) */
         /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
         kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
         kvstoreFenwickRebuild(server.db[0].keys);
@@ -2211,6 +2265,33 @@ void rdmaDoneSlotsChunkCommand(client *c) {
      * starts with its transfer instead of waiting for the prior session's whole
      * merge — and gates only FillShadow+merge by the serialization (buffering a
      * pending item in held_items AFTER capture; see backpatchPoolWorkerMain). */
+    /* AqRaft --rdma-merge-background: mark these slots as background-merging on
+     * the MAIN THREAD, BEFORE the workers can pick them up. This makes
+     * clusterSlotIsImporting(slot) true so every subsequent main-thread keyspace
+     * accessor takes the per-slot lock — closing the TOCTOU with the worker's
+     * locked drain (the worker clears the flag after draining each slot). */
+    if (server.rdma_merge_background) {
+        for (int j = 0; j < n_slots; j++) bgMergeSlotSetActive(items[j]->slot, 1);
+    }
+
+    /* AqRaft chain-pipeline: capture each slot's landing-block snapshot NOW on the
+     * MAIN THREAD (the chunk's data has just landed), BEFORE enqueuing the work
+     * items — so the pipelined chain forwarder can post immediately, instead of
+     * waiting for a pool worker (which may be saturated draining the ACTIVE
+     * session's merge) to reach this chunk. This decouples chain-forward start
+     * from the merge pipeline: a PENDING/last session's forward overlaps its own
+     * backpatch (previously it was serialized behind the active session's merge,
+     * leaving the chain wire idle ~1s). Mark captured=1 so the worker skips its
+     * now-redundant capture and jumps to FillShadow. Chain-configured only
+     * (landing_va != NULL). Must precede the enqueue: once enqueued, a worker
+     * could FillShadow the slot and overwrite the block before we capture it. */
+    if (b->landing_va != NULL) {
+        for (int j = 0; j < n_slots; j++) {
+            captureSlotSnapshot(b, items[j]->slot);
+            items[j]->captured = 1;
+        }
+    }
+
     pthread_mutex_lock(&backpatch_work_mu);
     for (int j = 0; j < n_slots; j++) listAddNodeTail(backpatch_work_queue, items[j]);
     pthread_cond_broadcast(&backpatch_work_cv);
@@ -3150,6 +3231,17 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
              * donor's poll correctly waits until chain has replicated to
              * majority AND MGN_INDX_UPD has committed. */
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
+            if (server.rdma_merge_background) {
+                long long first = atomic_load_explicit(&g_bgm_first_us, memory_order_relaxed);
+                serverLog(LL_NOTICE,
+                    "AqRaft bg-merge: session mig_id=%lld merge_done — cumulative "
+                    "worker_cpu=%lldms moved=%lld skipped=%lld wall_since_first=%lldms",
+                    b->src_mig_id,
+                    atomic_load_explicit(&g_bgm_cpu_us, memory_order_relaxed) / 1000,
+                    atomic_load_explicit(&g_bgm_moved, memory_order_relaxed),
+                    atomic_load_explicit(&g_bgm_skipped, memory_order_relaxed),
+                    first ? (ustime() - first) / 1000 : 0);
+            }
             /* AqRaft zero-copy chain forward: the merge has copied this session's
              * keys OUT of the landing pool, so the MERGE consumer is done with it.
              * Drop its refcount; the ring slot is returned to g_lp_free only once
@@ -3185,7 +3277,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
                 pthread_mutex_unlock(&backpatch_work_mu);
             }
             b->t_ended = time(NULL);
-            atomicDecr(server.recipient_backpatch_in_progress, 1);
+            recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge) */
 
             /* AqRaft lever #4 fix: the merge has now fully drained — no more
              * mergeBackpatchTick reads of v=src->ptr into the landing pool. It
@@ -3242,6 +3334,119 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
     return MERGE_TICK_DELAY_MS;
 }
 
+/* AqRaft --rdma-merge-background: drain a worker-built SHADOW dict directly into
+ * the live keyspace ON THE POOL WORKER THREAD, under the cluster-independent
+ * per-slot rwlock (real under redisraft, where clusterSlot* no-op). Mirrors
+ * mergeBackpatchTick's adopt-in-place don't-clobber logic, plus the presize +
+ * pause-rehash discipline from rdmaBackpatchSlotWithStats: with rehashing
+ * paused, neither our per-key adds nor a concurrent main-thread rdlock'd lookup
+ * (which would otherwise take a _dictRehashStepIfNeeded step) can race on the
+ * dict's rehashidx / bucket chain. The slot's active flag must already be set
+ * (rdmaDoneSlotsChunkCommand) so main-thread Path-B accessors take the lock.
+ * Returns keys moved into live; *out_skipped = don't-clobber skips. Frees shadow. */
+static int bgMergeDrainShadowLocked(redisDb *db, int slot, dict *shadow, int *out_skipped) {
+    int moved = 0, skipped = 0;
+    if (out_skipped) *out_skipped = 0;
+    if (shadow == NULL) return 0;
+
+    unsigned long staged = dictSize(shadow);
+
+    /* Presize + pause rehashing ONCE under the write lock. */
+    clusterSlotLockWriteNoTopology(slot);
+    cluster_slot_lock_held_by_thread++;
+    if (staged > 0)
+        kvstoreDictExpand(db->keys, slot, (kvstoreDictSize(db->keys, slot) + staged) * 2);
+    dict *slot_dict = kvstoreGetDict(db->keys, slot);
+    if (slot_dict) { dictPauseRehashing(slot_dict); dictPauseAutoResize(slot_dict); }
+    cluster_slot_lock_held_by_thread--;
+    clusterSlotUnlockNoTopology(slot);
+
+    dictIterator *it = dictGetSafeIterator(shadow);
+    dictEntry *de;
+    while ((de = dictNext(it)) != NULL) {
+        kvobj *src = (kvobj *) dictGetKV(de);
+        sds    k   = kvobjGetKey(src);
+        /* Per-key write lock: main event loop is never stalled more than one
+         * find+add (~µs). Add into `slot` — the donor classified this key's
+         * block into it, matching mergeBackpatchTick's semantics. */
+        clusterSlotLockWriteNoTopology(slot);
+        cluster_slot_lock_held_by_thread++;
+        if (kvstoreDictFind(db->keys, slot, k) != NULL) {
+            skipped++;                                   /* don't-clobber: client write wins */
+        } else {
+            dictEntry *ex = NULL;
+            kvstoreDictAddRaw(db->keys, slot, src, &ex); /* adopt-in-place, no memcpy */
+            moved++;
+        }
+        cluster_slot_lock_held_by_thread--;
+        clusterSlotUnlockNoTopology(slot);
+    }
+    dictReleaseIterator(it);
+
+    clusterSlotLockWriteNoTopology(slot);
+    cluster_slot_lock_held_by_thread++;
+    if (slot_dict) { dictResumeRehashing(slot_dict); dictResumeAutoResize(slot_dict); }
+    cluster_slot_lock_held_by_thread--;
+    clusterSlotUnlockNoTopology(slot);
+
+    /* migrationShadowDictType.keyDestructor == NULL → releasing the shadow frees
+     * only its dictEntries, not the kvobjs (now owned by the live keyspace). */
+    dictRelease(shadow);
+    if (out_skipped) *out_skipped = skipped;
+    return moved;
+}
+
+/* AqRaft chain-pipeline: capture ONE slot's landing-block VAs into b->landing_va
+ * and publish b->snapshot_ready so the pipelined chain forwarder can RDMA-read
+ * the pristine donor bytes straight out of the landing pool. Must run BEFORE any
+ * FillShadow of this slot (which overwrites the block's segment headers with
+ * kvobj segments). Idempotent-per-slot via the caller (called exactly once per
+ * slot — either in rdmaDoneSlotsChunkCommand at chunk-arrival, or in the pool
+ * worker for non-chunked paths). Increments snapshots_captured and, on the last
+ * slot, spawns the (bulk/fallback) chain forwarder. Safe on the main thread: the
+ * landing blocks are registered + stable once DONE-SLOTS-CHUNK has landed and no
+ * worker has touched the slot yet. */
+static void captureSlotSnapshot(backpatchBatch *b, int slot) {
+    if (b->landing_va != NULL) {
+        int base = b->slot_pos_base[slot];
+        int nb   = b->slot_pos_nb[slot];
+        if (base >= 0 && nb > 0) {
+            void **blks = zmalloc((size_t) nb * sizeof(void *));
+            int got = r_allocator_get_landing_blocks_for_slot(slot, blks, nb);
+            int lim = (got < nb) ? got : nb;
+            for (int m = 0; m < lim; m++) {
+                b->landing_va[base + m] = blks[m];
+                if (b->snapshot_ready != NULL)
+                    atomic_store_explicit(&b->snapshot_ready[base + m], 1,
+                                          memory_order_release);
+            }
+            if (got != nb) {
+                serverLog(LL_WARNING,
+                    "CHAIN capture: slot=%d block count drift got=%d expected=%d "
+                    "(sess=%lld)", slot, got, nb, b->src_mig_id);
+                void *fill = (lim > 0) ? blks[lim - 1] : NULL;
+                for (int m = lim; m < nb; m++) {
+                    b->landing_va[base + m] = fill;
+                    if (b->snapshot_ready != NULL)
+                        atomic_store_explicit(&b->snapshot_ready[base + m], 1,
+                                              memory_order_release);
+                }
+            }
+            zfree(blks);
+        }
+        int captured = atomic_fetch_add_explicit(
+            &b->snapshots_captured, 1, memory_order_acq_rel) + 1;
+        if (captured == b->n_slots) {
+            int expected = 0;
+            if (atomic_compare_exchange_strong_explicit(
+                    &b->chain_spawn_initiated, &expected, 1,
+                    memory_order_acq_rel, memory_order_relaxed)) {
+                spawnChainForwardWorker(b);
+            }
+        }
+    }
+}
+
 static void *backpatchPoolWorkerMain(void *arg) {
     long worker_idx = (long) arg;
     while (1) {
@@ -3276,75 +3481,12 @@ static void *backpatchPoolWorkerMain(void *arg) {
         }
 
         /* Pass-through chain snapshot: before the shadow-merge corrupts
-         * r_allocator's block[0] for this slot (by allocating kvobj
-         * segments INTO the same memory the donor RDMA-WROTE), capture
-         * the raw 2 MiB block into the batch's donor_snapshot_pool. The
-         * chain forwarder later RDMA-WRITEs this snapshot to followers
-         * verbatim — no dense re-encode. */
-        if (w->batch->landing_va != NULL) {
-            /* AqRaft Stage 3: capture EVERY landing block of this slot, one per
-             * chain "position". slot_pos_base[slot]/slot_pos_nb[slot] were set in
-             * Phase C; the blocks enumerate in the same order (allocator list
-             * order), so block m lands at position base+m. Block order within a
-             * slot is immaterial — each block self-describes its own kvobjs, so F1
-             * decodes them independently. */
-            int base = w->batch->slot_pos_base[w->slot];
-            int nb   = w->batch->slot_pos_nb[w->slot];
-            if (base >= 0 && nb > 0) {
-                /* Capture the donor LANDING block VAs (is_registered_existing), NOT
-                 * slot_blocks head, NOT copies. The forwarder RDMA-reads these exact
-                 * pages while still registered + pristine (the refcount keeps them
-                 * mapped; the merge copies kvobjs OUT, never overwrites them). */
-                void **blks = zmalloc((size_t) nb * sizeof(void *));
-                int got = r_allocator_get_landing_blocks_for_slot(w->slot, blks, nb);
-                int lim = (got < nb) ? got : nb;
-                for (int m = 0; m < lim; m++) {
-                    w->batch->landing_va[base + m] = blks[m];
-                    /* Publish: release barrier so the VA store is visible before the
-                     * readiness flag the forwarder gates on. */
-                    if (w->batch->snapshot_ready != NULL)
-                        atomic_store_explicit(&w->batch->snapshot_ready[base + m], 1,
-                                              memory_order_release);
-                }
-                if (got != nb) {
-                    /* Count drifted between Phase C and capture (should not happen:
-                     * blocks are unregistered only post-merge). Mark the surplus
-                     * positions ready with the newest block so the pipelined
-                     * forwarder can't stall waiting on a never-captured position. */
-                    serverLog(LL_WARNING,
-                        "CHAIN capture: slot=%d block count drift got=%d expected=%d "
-                        "(sess=%lld)", w->slot, got, nb, w->batch->src_mig_id);
-                    void *fill = (lim > 0) ? blks[lim - 1] : NULL;
-                    for (int m = lim; m < nb; m++) {
-                        w->batch->landing_va[base + m] = fill;
-                        if (w->batch->snapshot_ready != NULL)
-                            atomic_store_explicit(&w->batch->snapshot_ready[base + m], 1,
-                                                  memory_order_release);
-                    }
-                }
-                zfree(blks);
-            }
-
-            /* AqRaft parallel-chain: once ALL slot snapshots are captured,
-             * spawn chainForwardWorker IMMEDIATELY so chain replication runs
-             * in parallel with the remaining shadow build + main-thread
-             * merge. The shadow build for this slot is about to overwrite
-             * the donor's block segment headers, so by the time the last
-             * worker reaches this point every slot's snapshot is safe to
-             * forward. CAS-guard so we spawn exactly once (racing with
-             * mergeBackpatchTick's fallback). */
-            int captured = atomic_fetch_add_explicit(
-                &w->batch->snapshots_captured, 1,
-                memory_order_acq_rel) + 1;
-            if (captured == w->batch->n_slots) {
-                int expected = 0;
-                if (atomic_compare_exchange_strong_explicit(
-                        &w->batch->chain_spawn_initiated, &expected, 1,
-                        memory_order_acq_rel, memory_order_relaxed)) {
-                    spawnChainForwardWorker(w->batch);
-                }
-            }
-        }
+         * r_allocator's block[0] for this slot, capture the raw block VAs +
+         * publish snapshot_ready. For the chunked path this ALREADY ran on the
+         * main thread at chunk-arrival (rdmaDoneSlotsChunkCommand set
+         * w->captured=1 and we jumped past this via the goto). This call remains
+         * for the non-chunked / legacy paths that don't pre-capture. */
+        captureSlotSnapshot(w->batch, w->slot);
 
         /* AqRaft chain∥merge decouple: capture is done (the chain forwarder can
          * read this slot now). Gate FillShadow+merge by the serialization — only
@@ -3400,6 +3542,30 @@ static void *backpatchPoolWorkerMain(void *arg) {
         mw->iter   = NULL;
         mw->total  = total;
         mw->moved  = 0;
+
+        /* AqRaft --rdma-merge-background: drain shadow->live HERE on the worker
+         * thread under per-slot locks, rather than handing the shadow to the
+         * main-thread mergeBackpatchTick. The tick still runs (batch accounting /
+         * BACKPATCH_DONE / chain spawn) but skips the key drain (already_drained).
+         * The slot's active flag was set in rdmaDoneSlotsChunkCommand; clear it
+         * now that this slot's keys are live and no worker will touch it again. */
+        if (server.rdma_merge_background) {
+            long long z = 0;
+            atomic_compare_exchange_strong_explicit(&g_bgm_first_us, &z, ustime(),
+                memory_order_relaxed, memory_order_relaxed);
+            long long t0 = ustime();
+            int skipped = 0;
+            int moved = bgMergeDrainShadowLocked(w->db, w->slot, shadow, &skipped);
+            bgMergeSlotSetActive(w->slot, 0);
+            long long us = ustime() - t0;
+            atomic_fetch_add_explicit(&g_bgm_cpu_us,  us,      memory_order_relaxed);
+            atomic_fetch_add_explicit(&g_bgm_moved,   moved,   memory_order_relaxed);
+            atomic_fetch_add_explicit(&g_bgm_skipped, skipped, memory_order_relaxed);
+            mw->shadow = NULL;                 /* drained + freed by the helper */
+            mw->moved  = moved;
+            mw->skipped_existing = skipped;
+            mw->already_drained  = 1;
+        }
 
         pthread_mutex_lock(&backpatch_merge_mu);
         if (backpatch_merge_queue == NULL) {
@@ -3705,7 +3871,20 @@ static void *registerWorkerThread(void *arg) {
     }
 
     const size_t stride = r_allocator_block_stride_bytes();
-    const size_t pool_bytes = total_blocks * stride;
+    /* AqRaft landing-pool size bucketing: round the per-donor block count up to a
+     * coarse granularity so small per-donor variance collapses to the SAME pool
+     * size across ALL donors. Without this, donor N+1's slightly-larger need
+     * (e.g. ~34 extra slots that got a 2nd block from post-FLIP client writes)
+     * exceeds the first pool's +32-block headroom → misses the cache
+     * (g_lp_bytes[i] < pool_bytes) → pays a fresh ~0.8s ibv_reg_mr IN-WINDOW (the
+     * sg3 CONNECT bar / TRANSFER gap in the gantt). All donors migrate the same
+     * slot count, so they land in the same 512-block (1 GiB) bucket and reuse the
+     * first-registered pool. Order-independent (unlike headroom-only, which needs
+     * the FIRST registrant to be the largest). ~0.5 GiB extra per pool. */
+    #define LP_BLOCK_BUCKET 512
+    size_t bucketed_blocks =
+        ((total_blocks + LP_BLOCK_BUCKET - 1) / LP_BLOCK_BUCKET) * LP_BLOCK_BUCKET;
+    const size_t pool_bytes = bucketed_blocks * stride;
 
     /* AqRaft landing-pool ring (see g_lp_* globals). n_pools=1 without xsession
      * (original serial single-pool reuse); n_pools=2 with xsession so donor N+1
