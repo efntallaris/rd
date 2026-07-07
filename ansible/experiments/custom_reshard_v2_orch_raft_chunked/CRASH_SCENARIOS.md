@@ -157,6 +157,21 @@ Consequences:
     correctly stalls until a node returns (= Scenario 3 out-of-scope). No liveness lost in single-fault.
   - → **#4's chain re-form is the PREREQUISITE that makes #1's recovery sound**; the two are coupled.
 
+  **⚠️ EMPIRICAL (VALIDATED on real runs) — the invariant is ALREADY VIOLATED in the CLEAN baseline:**
+  Grepping the recipient log of the *validated no-crash* run `bgm_30m_4ck` (and `_capfix`):
+  - `chain-ack observed` = **0**; `pending CHAIN-ACK timeout` = **3**; `firing MGN_INDX_UPD anyway` = **3**
+    (ALL 3 sessions degrade to Raft-only on the 5s timeout — with every follower healthy, no crash).
+  - BUT `CHAIN-ACK: sess=1 ... count=3..6` DOES appear → the followers **do** receive + ack the bytes,
+    just **after** the 5s deadline (the follower-side merge of the 2.86 GB pool takes > 5s).
+  Root cause: **`CHAIN_PENDING_TIMEOUT_MS`=5000 is mistuned** — shorter than the follower merge. So the
+  leader fires `INDX_UPD` *before* the ack, every time. Happy path survives (data becomes durable late),
+  but there is a real **vulnerability window** [INDX_UPD fired → real ack]. A leader crash in that window
+  is exactly the S1 gap. S4's *immediate* degrade (dead F1 → forward fails) and the baseline *timeout*
+  degrade are two flavors of one root cause: **INDX_UPD fires before durability is confirmed.**
+  → #4 fix is very achievable: the ack mechanism WORKS (acks arrive), so "wait for the real majority ack,
+  no matter what" just means **don't give up at 5s** (wait for the ack; re-form only if a member is
+  actually dead). This is a **baseline correctness fix**, not only a crash-recovery feature.
+
 ### Concurrent multi-donor sessions (assume all 3 donors migrate at once)
 Each donor session has its own `INDX_UPD` stream; **per-session `mgn_executed_idx`** lets the new leader
 reconcile each `sess` independently (per-session `CHAIN-STATUS` → gap-pull → execute → advance that
