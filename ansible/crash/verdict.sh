@@ -17,7 +17,10 @@ B="/tmp/experiments/$EXP"
 SSH="sudo ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
 CRASH_RE="ASSERTION FAILED|REDIS BUG|Crashed by signal|SIGSEGV|dict.c:548"
 
-ssh_grep_c() { $SSH "$1" "grep -icE '$3' '$2' 2>/dev/null" 2>/dev/null || echo "?"; }
+# grep -c exits 1 on a zero count and 2 on a missing file; append `; true` so
+# ssh returns 0 and we keep the printed count. Empty (missing file / host
+# down) -> 0.
+ssh_grep_c() { local o; o=$($SSH "$1" "grep -icaE '$3' '$2' 2>/dev/null; true" 2>/dev/null); echo "${o:-0}"; }
 ssh_cmd()    { $SSH "$1" "$2" 2>/dev/null || echo "(unreachable)"; }
 
 hr() { printf '%s\n' "------------------------------------------------------------"; }

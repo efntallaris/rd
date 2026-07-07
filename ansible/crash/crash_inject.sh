@@ -48,12 +48,15 @@ log "ARM   : $ARM_HOST:$ARM_LOG  marker=/$ARM_MARKER/  x$ARM_COUNT"
 log "TARGET: $TARGET_HOST  kill -9 \$(cat $PIDFILE)"
 log "waiting for marker (max ${MAX_WAIT}s)..."
 
-# Follow only NEW lines (-n0) so a stale prior-run marker cannot fire
-# instantly. grep -m<N> exits after the Nth match, closing the pipe (the
-# remote tail dies on SIGPIPE). No pipefail inside this subshell so the
-# pipeline's exit status is grep's (0 on match), not the SIGPIPE'd ssh.
-if timeout "$MAX_WAIT" bash -c \
-   "sudo ssh $SSH_OPTS '$ARM_HOST' \"tail -Fn0 '$ARM_LOG'\" | grep -m'$ARM_COUNT' -E '$ARM_MARKER' >/dev/null"; then
+# Remote POLL loop (single ssh): re-grep the log every 0.3s and exit 0 once
+# the marker has appeared >= ARM_COUNT times. `grep -c` re-opens the file
+# each iteration, so this is immune to the clean_runtime log-dir wipe +
+# recreate (a long-lived `tail -F` does NOT reliably re-attach across that).
+# `grep -c` exits 1 on a zero count, so we capture the number and compare
+# numerically rather than trusting grep's exit status.
+POLL='log="__LOG__"; n=__N__; while :; do c=$(grep -acE "__RE__" "$log" 2>/dev/null); c=${c:-0}; [ "$c" -ge "$n" ] && exit 0; sleep 0.3; done'
+POLL="${POLL//__LOG__/$ARM_LOG}"; POLL="${POLL//__N__/$ARM_COUNT}"; POLL="${POLL//__RE__/$ARM_MARKER}"
+if timeout "$MAX_WAIT" sudo ssh $SSH_OPTS "$ARM_HOST" "$POLL"; then
   T_ARM=$(date -u +%s.%N)
   log "MARKER HIT (x$ARM_COUNT)  t_arm=$T_ARM"
 else
