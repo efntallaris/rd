@@ -254,10 +254,22 @@ commit → migration stalls/fails. That is a double-fault / leader-crash case, n
 - **Target:** `redis4` or `redis5` (sg4 chain follower). Handle: `/tmp/redis_redis4_sg4.pid`, log `redis4_sg4.log`.
   (`verify_follower_crash_loop.sh` already scans sg4 followers for crash signatures.)
 - **Injection point (proposed):** mid-chain, armed off `forward FIRST-POST` (or a `DONE-SLOTS-CHUNK`).
-- **Current behavior (from code):** chain forward to the dead member fails silently (logs `LL_WARNING`,
-  returns). Leader never gets `CHAIN-ACK`; `chainPendingTick` hits the **5s timeout**, logs
-  "firing MGN_INDX_UPD anyway", sets `chain_acked=1` — **silently degrades to Raft-only durability**
-  with that follower missing bytes. No failover / retry / member re-election.
+- **Current behavior (from code + VALIDATED baseline run `crash_s4`):** there are **TWO** degrade paths,
+  and killing F1 (redis4) triggers the **synchronous** one, not the timeout:
+  1. **Synchronous forward-failure (the one that fires on a clean kill):** the leader's *pipelined*
+     forward to F1 detects the dead peer immediately — `CHAIN: sess=N pipelined forward failed
+     (CHAIN-FORWARDED to F1 failed: Connection reset by peer / poll_send ... reaped) - firing
+     MGN_INDX_UPD immediately as fallback`. All 3 sessions degraded this way (observed: 3 immediate, 0
+     timeout). The leader ALREADY detects F1 death synchronously — good for #4 (no 5s wait needed).
+  2. **5s timeout (`chainPendingTick`):** `firing MGN_INDX_UPD anyway`. Secondary path.
+  Both **degrade to Raft-only durability** with the killed follower (and downstream F2) missing bytes.
+- **Baseline result (`crash_s4`, redis4 killed at 1st `forward FIRST-POST`):** client-invisible —
+  DBSIZE exact 7,492,753, bg-merge moved=7,448,411/skipped=44,341, YCSB ~81k/client, 0 UPDATE errors.
+  But durability degraded (3 immediate degrades). Gantt signature: migration 3.45s→**6.08s**,
+  4,098→**2,731 blocks**, **ALL-REPLICAS (tail hop F1→F2) row empty**, session 3.1 INDEX-UPDATE
+  751ms→**3.66s**. Figures: `figures/crash_s4_gantt.png`, `figures/crash_s4_ycsb.png`.
+  → **#4 must intercept BOTH degrade paths** (esp. the synchronous "immediately as fallback"), replacing
+  the degrade with re-form-until-live-majority.
 
 ### What should happen (DEFINED): leader re-forms the chain
 The predecessor of the failed node **detects** the death (see below), **notifies the leader**, and the

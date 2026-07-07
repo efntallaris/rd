@@ -72,6 +72,17 @@ if kill -0 "$INJ_PID" 2>/dev/null; then
   wait "$INJ_PID" 2>/dev/null || true
 fi
 
+# 2b. The base collect_results skips the sg4 followers redis4/redis5 — grab
+#     their logs into the experiment dir (dead node's log is frozen; the
+#     survivor's is live) so the verdict + posterity have them.
+for h in redis4 redis5; do
+  d="/tmp/experiments/$EXP_NAME/logs/$h/tmp/redis_logs"
+  sudo mkdir -p "$d" 2>/dev/null || true
+  sudo ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 "$h" \
+    "cat /tmp/redis_logs/${h}_sg4.log 2>/dev/null" 2>/dev/null \
+    | sudo tee "$d/${h}_sg4.log" >/dev/null 2>&1 || true
+done
+
 # 3. Verdict.
 echo "[run] collecting verdict..."
 bash "$SCRIPT_DIR/verdict.sh" "$SCENARIO" "$EXP_NAME" || true
