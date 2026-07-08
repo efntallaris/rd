@@ -41,6 +41,13 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
                              const char **hosts, int *ports,
                              char *errbuf, size_t errbuf_len);
 
+/* AqRaft #4 Part B: drop a dead chain head (peers[0]) and promote the next
+ * follower into peers[0] so a re-invoked forward routes straight to the
+ * surviving follower (chain re-form after a recipient-follower crash).
+ * Returns C_OK if a live follower is now at peers[0], C_ERR if none remains. */
+int rdmaLeaderChainDropDeadHead(long long src_mig_id,
+                                char *errbuf, size_t errbuf_len);
+
 /* rdmaLeaderChainForwardPerSlot: pass-through chain forward.
  *
  * Caller supplies `snapshot_pool` — a snapshot of the donor's raw 2 MiB

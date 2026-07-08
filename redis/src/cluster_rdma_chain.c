@@ -1644,6 +1644,97 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
     return C_OK;
 }
 
+/* AqRaft #4 Part B (chain re-form): a forward to the current head peers[0]
+ * (F1) failed because F1 is dead. Drop the dead head and promote the next
+ * follower into peers[0] so a re-invoked forward (which always targets
+ * peers[0], registering the source against that peer's PD lazily) routes
+ * straight to the surviving follower — e.g. leader -> F2 directly. The leader
+ * already opened a QP + PREP'd a landing pool to EVERY follower at establish
+ * time (see Pass 1 above), so peers[1] already has a live client + pool
+ * addr/rkey; no new RDMA handshake is needed. F2 was WIRE'd as the tail
+ * (is_tail=1, holds the leader's host:port), so on receiving CHAIN-FORWARDED
+ * directly from the leader it applies + CHAIN-ACKs back — giving a REAL
+ * majority (leader + F2). We do NOT destroy F1's broken QP here (it may be
+ * shared across sessions and is in an error state); we just detach it.
+ *
+ * Returns C_OK if peers[0] is now a live follower to re-forward to, or C_ERR
+ * if no live follower remains (only the dead head was left -> a majority is
+ * unreachable -> caller must NOT fake durability). */
+int rdmaLeaderChainDropDeadHead(long long src_mig_id,
+                                char *errbuf, size_t errbuf_len) {
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaLeaderChainState *st = findLeaderState(src_mig_id);
+    if (st == NULL) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        snprintf(errbuf, errbuf_len, "no leader chain state for sess=%lld", src_mig_id);
+        return C_ERR;
+    }
+    if (st->n_peers < 1) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        snprintf(errbuf, errbuf_len,
+                 "no followers left for sess=%lld (majority unreachable)", src_mig_id);
+        return C_ERR;
+    }
+    if (st->n_peers == 1) {
+        /* IMPORTANT: multiple forward-batches share one session's chain state.
+         * A prior/concurrent batch already dropped the dead head, so peers[0] is
+         * the sole SURVIVING follower — do NOT drop it (that would leave zero
+         * followers = no majority). Just report OK so the caller re-forwards to
+         * it. If that follower is itself dead the re-forward fails and the batch
+         * fails loud (one attempt, no infinite retry). */
+        void *only_client = st->peers[0].client;
+        sds only_host = st->peers[0].host ? sdsdup(st->peers[0].host) : NULL;
+        int only_port = st->peers[0].port;
+        pthread_mutex_unlock(&g_chain_state_mu);
+        serverLog(LL_NOTICE,
+            "CHAIN: sess=%lld RE-FORM — dead head already dropped; re-forwarding to "
+            "sole surviving follower %s:%d", src_mig_id,
+            only_host ? only_host : "?", only_port);
+        if (only_host) sdsfree(only_host);
+        if (only_client == NULL) {
+            snprintf(errbuf, errbuf_len,
+                     "sole surviving follower for sess=%lld has no live QP", src_mig_id);
+            return C_ERR;
+        }
+        return C_OK;
+    }
+    /* n_peers >= 2: drop the dead head, promote the next.
+     * Save the dead head's identity for logging + freeing, then shift the
+     * remaining peers down so peers[0] becomes the next follower. */
+    sds dead_host = st->peers[0].host;   /* now unreferenced after memmove */
+    int dead_port = st->peers[0].port;
+    memmove(&st->peers[0], &st->peers[1],
+            (size_t) (st->n_peers - 1) * sizeof(rdmaChainPeer));
+    st->n_peers--;
+    for (int i = 0; i < st->n_peers; i++) st->peers[i].chain_position = i + 1;
+    void *new_client   = st->peers[0].client;
+    sds   new_host_ref = st->peers[0].host;   /* NULL if this peer was never established */
+    int   new_port     = st->peers[0].port;
+    /* Dup for logging ONLY when valid: sdsdup(NULL) segfaults, and a chain
+     * establish that failed partway (e.g. the dead follower died mid-establish,
+     * before the successor's peer entry was filled with sdsnew(host)) leaves the
+     * promoted entry all-zero (host=NULL, client=NULL). */
+    sds new_host = (new_host_ref != NULL) ? sdsdup(new_host_ref) : NULL;
+    pthread_mutex_unlock(&g_chain_state_mu);
+
+    serverLog(LL_WARNING,
+        "CHAIN: sess=%lld RE-FORM — dropped dead head %s:%d, promoted %s:%d to "
+        "direct successor (leader will re-forward straight to it)",
+        src_mig_id, dead_host ? dead_host : "?", dead_port,
+        new_host ? new_host : "?", new_port);
+    if (dead_host) sdsfree(dead_host);
+    if (new_host)  sdsfree(new_host);
+
+    if (new_client == NULL || new_host_ref == NULL) {
+        snprintf(errbuf, errbuf_len,
+                 "promoted follower for sess=%lld not established "
+                 "(client=%p host=%p) — chain establish likely failed; fail loud",
+                 src_mig_id, new_client, (void *) new_host_ref);
+        return C_ERR;
+    }
+    return C_OK;
+}
+
 /* ====================================================================== *
  *  RDMA DEBUG-CHAIN-ESTABLISH <src_mig_id> <pool_bytes>                 *
  *                             <host1> <port1> [<host2> <port2> ...]     *

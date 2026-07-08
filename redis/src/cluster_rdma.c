@@ -2839,10 +2839,38 @@ static void *chainForwardWorker(void *arg) {
                                                 b->landing_va,
                                                 b->landing_pool_buf,
                                                 errbuf, sizeof(errbuf));
-        /* Forwarder is done RDMA-reading the landing buffer — drop the chain
-         * forward consumer's hold BEFORE any (possibly disposing) finalize below,
-         * to avoid a use-after-free of b. Only in NON-pipelined mode is this
-         * worker the forward consumer (pipelined: chainPipelineForwardWorker is). */
+        /* AqRaft #4 Part B: if the forward to the head (F1) failed, F1 is dead.
+         * Re-form the chain to the surviving follower and re-forward BEFORE we
+         * drop the landing hold (the re-forward RDMA-reads the same landing
+         * buffer). NEVER fake durability: if no live follower remains, leave the
+         * batch un-finalized so the donor's poll fails the migration loudly. */
+        if (frc != C_OK) {
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld leader forward failed (%s) — attempting chain "
+                "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
+            char rfe[256] = {0};
+            if (rdmaLeaderChainDropDeadHead(b->src_mig_id, rfe, sizeof(rfe)) == C_OK) {
+                char fe2[256] = {0};
+                frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
+                                                    job->slots_copy, job->n_slots,
+                                                    b->landing_va, b->landing_pool_buf,
+                                                    fe2, sizeof(fe2));
+                if (frc != C_OK)
+                    serverLog(LL_WARNING,
+                        "CHAIN: sess=%lld re-forward after RE-FORM also failed (%s) — NOT "
+                        "firing MGN_INDX_UPD; fail loud rather than fake durability",
+                        b->src_mig_id, fe2);
+            } else {
+                serverLog(LL_WARNING,
+                    "CHAIN: sess=%lld chain RE-FORM impossible (%s) — no live majority; NOT "
+                    "firing MGN_INDX_UPD (fail loud)", b->src_mig_id, rfe);
+            }
+        }
+        /* Forwarder is done RDMA-reading the landing buffer (success OR give-up) —
+         * drop the chain forward consumer's hold BEFORE any (possibly disposing)
+         * finalize below, to avoid a use-after-free of b. Only in NON-pipelined
+         * mode is this worker the forward consumer (pipelined:
+         * chainPipelineForwardWorker is). */
         if (!server.rdma_chain_pipeline && b->landing_fwd_counted)
             landingConsumerDone(b);
         if (frc == C_OK) {
@@ -2863,21 +2891,9 @@ static void *chainForwardWorker(void *arg) {
                 "pass-through forwarded %d slots (%zu B), MGN_INDX_UPD deferred [off-main]",
                 b->src_mig_id, job->n_slots,
                 (size_t) job->n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
-        } else {
-            serverLog(LL_WARNING,
-                "CHAIN: sess=%lld leader forward failed (%s) - "
-                "firing MGN_INDX_UPD immediately as fallback",
-                b->src_mig_id, errbuf);
-            /* AqRaft 3-flag DONE: chain forward failed → there will be no
-             * CHAIN-ACK. The migration falls back to "MGN_INDX_UPD raft
-             * replication is the durability path" — which itself reaches
-             * majority via the recipient's raft group. Set chain_acked=1 so
-             * BACKPATCH-STATUS doesn't hang waiting for an ack that will
-             * never come; the indx_applied flag (set inside backpatchFinalize)
-             * remains the substantive durability proof. */
-            b->chain_acked = 1;
-            backpatchFinalize(b);  /* (D) finalize runs in this worker thread */
         }
+        /* else: frc != C_OK even after re-form → leave b un-finalized so the
+         * donor's 60s BACKPATCH-STATUS poll fails the migration loudly. */
     } else {
         /* No chain forward ran here (no chain configured, or chain not ready).
          * In NON-pipelined mode this worker is the forward consumer, so drop its
@@ -2920,9 +2936,45 @@ static void *chainPipelineForwardWorker(void *arg) {
                   b->landing_va, b->landing_pool_buf,
                   b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
                   errbuf, sizeof(errbuf));
-    /* Forwarder is done RDMA-reading the landing buffer (success or failure):
-     * drop the chain-forward consumer's hold so the ring slot is recycled once
-     * the merge consumer is also done. (Gated on the stable counted flag.) */
+    /* AqRaft #4 Part B: if the forward to the head (F1) failed, F1 is dead.
+     * Re-form the chain to the surviving follower and re-forward BEFORE dropping
+     * the landing hold (the re-forward RDMA-reads the same landing buffer).
+     * NEVER fake durability: on a genuine re-form + re-forward, a REAL majority
+     * (leader + F2) ends up holding the bytes and chainPendingTick finalizes on
+     * F2's real CHAIN-ACK; if no live follower remains, leave the batch
+     * un-finalized so the donor's poll fails the migration loudly. */
+    if (frc != C_OK) {
+        serverLog(LL_WARNING,
+            "CHAIN: sess=%lld pipelined forward failed (%s) — attempting chain "
+            "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
+        char rfe[256] = {0};
+        if (rdmaLeaderChainDropDeadHead(b->src_mig_id, rfe, sizeof(rfe)) == C_OK) {
+            char fe2[256] = {0};
+            frc = rdmaLeaderChainForwardPipelined(
+                      b->src_mig_id, b->covered_slots, b->total_blocks,
+                      b->landing_va, b->landing_pool_buf,
+                      b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
+                      fe2, sizeof(fe2));
+            if (frc == C_OK)
+                serverLog(LL_NOTICE,
+                    "CHAIN: sess=%lld RE-FORMED + re-forwarded to surviving follower — "
+                    "MGN_INDX_UPD deferred (awaiting REAL CHAIN-ACK from new tail)",
+                    b->src_mig_id);
+            else
+                serverLog(LL_WARNING,
+                    "CHAIN: sess=%lld re-forward after RE-FORM also failed (%s) — NOT "
+                    "firing MGN_INDX_UPD; fail loud rather than claim false durability",
+                    b->src_mig_id, fe2);
+        } else {
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld chain RE-FORM impossible (%s) — no live majority; NOT "
+                "firing MGN_INDX_UPD (fail loud, never fake durability)",
+                b->src_mig_id, rfe);
+        }
+    }
+    /* All RDMA-reads of the landing buffer are done (success OR give-up) — drop
+     * the chain-forward consumer's hold BEFORE adding to pending, to avoid a
+     * use-after-free of b once chainPendingTick can dispose it. */
     if (b->landing_fwd_counted) landingConsumerDone(b);
     if (frc == C_OK) {
         b->chain_forwarded = 1;
@@ -2934,13 +2986,8 @@ static void *chainPipelineForwardWorker(void *arg) {
         serverLog(LL_NOTICE,
             "CHAIN: sess=%lld pipelined forward complete -> BACKPATCH_DONE "
             "(MGN_INDX_UPD deferred)", b->src_mig_id);
-    } else {
-        serverLog(LL_WARNING,
-            "CHAIN: sess=%lld pipelined forward failed (%s) - "
-            "firing MGN_INDX_UPD immediately as fallback", b->src_mig_id, errbuf);
-        b->chain_acked = 1;
-        backpatchFinalize(b);
     }
+    /* else: frc != C_OK even after re-form → leave b un-finalized (fail loud). */
     zfree(job);
     return NULL;
 }
