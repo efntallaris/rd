@@ -1660,7 +1660,10 @@ static pthread_mutex_t backpatch_chain_pending_mu = PTHREAD_MUTEX_INITIALIZER;
 static list *backpatch_chain_pending = NULL;
 static long long chain_pending_timer_id = -1;
 #define CHAIN_PENDING_TICK_MS 25
-#define CHAIN_PENDING_TIMEOUT_MS 5000   /* fire MGN_INDX_UPD anyway after timeout */
+/* AqRaft #4: retired — the leader no longer fires MGN_INDX_UPD on a deadline
+ * (it faked durability; the real CHAIN-ACK always arrives, just after ~5s). Kept
+ * defined for reference / possible future "probe the tail" cadence. */
+#define CHAIN_PENDING_TIMEOUT_MS 5000   /* (unused) former fake-durability deadline */
 
 /* Aqueduct: per-slot work threadpool. The dispatcher (the single consumer of
  * the SPSC backpatch_ring) fans a batch's slots out across N pool workers;
@@ -3016,10 +3019,15 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
 }
 
 /* Main thread: poll the per-batch chain-ack state. For each pending batch:
- *   - if chain ack arrived (ack_count > baseline) → fire MGN_INDX_UPD and
- *     proceed with dispose;
- *   - if pending > CHAIN_PENDING_TIMEOUT_MS → log warning and finalize anyway
- *     so a stuck chain doesn't block protocol log entries forever. */
+ *   - if the real CHAIN-ACK arrived (ack_count > baseline) → fire MGN_INDX_UPD
+ *     and proceed with dispose.
+ * AqRaft #4: there is NO deadline fallback. A committed MGN_INDX_UPD must mean a
+ * live majority physically holds the bytes, so we wait for the real ack as long
+ * as it takes (the follower merge of the ~2.86 GB pool legitimately runs longer
+ * than the old 5s window). If the ack never comes, we do NOT fake it — the batch
+ * stays pending and the donor's BACKPATCH-STATUS poll fails the migration loudly
+ * (correct: never claim durability we don't have). A genuinely dead chain member
+ * is handled by the forward-failure re-form path (Part B), not here. */
 static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientData) {
     UNUSED(el); UNUSED(id); UNUSED(clientData);
     pthread_mutex_lock(&backpatch_chain_pending_mu);
@@ -3031,7 +3039,6 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
     }
     /* Move ready batches to a local list under the lock; finalize outside. */
     list *ready = listCreate();
-    long long now_ms = mstime();
     listIter li;
     listNode *ln;
     listRewind(backpatch_chain_pending, &li);
@@ -3039,19 +3046,19 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
         backpatchBatch *b = listNodeValue(ln);
         long long count = rdmaLeaderChainAckCount(b->src_mig_id);
         int acked = (count > b->chain_baseline_ack_count);
-        int timed_out = (now_ms - b->t_ended * 1000LL) > CHAIN_PENDING_TIMEOUT_MS;
-        if (acked || timed_out) {
-            if (timed_out && !acked) {
-                serverLog(LL_WARNING,
-                    "CHAIN: sess=%lld pending CHAIN-ACK timeout after %dms — "
-                    "firing MGN_INDX_UPD anyway",
-                    b->src_mig_id, CHAIN_PENDING_TIMEOUT_MS);
-            } else {
-                serverLog(LL_NOTICE,
-                    "CHAIN: sess=%lld chain-ack observed (count %lld > base %lld) — "
-                    "finalizing batch",
-                    b->src_mig_id, count, b->chain_baseline_ack_count);
-            }
+        /* AqRaft #4: NEVER fire MGN_INDX_UPD on a deadline. A committed
+         * INDX_UPD MUST mean a live majority physically holds the bytes, so we
+         * wait for the real CHAIN-ACK as long as it takes. The ack DOES arrive
+         * — the follower merge of the ~2.86 GB pool simply runs longer than the
+         * old 5s window, which faked durability on every session (observed:
+         * clean baseline fired "anyway" 3/3 while CHAIN-ACK count still climbed
+         * afterwards). A genuinely dead chain member is handled by the
+         * forward-failure re-form path, not by faking an ack here. */
+        if (acked) {
+            serverLog(LL_NOTICE,
+                "CHAIN: sess=%lld chain-ack observed (count %lld > base %lld) — "
+                "finalizing batch (real live-majority durability)",
+                b->src_mig_id, count, b->chain_baseline_ack_count);
             b->chain_acked = 1;
             listAddNodeTail(ready, b);
             listDelNode(backpatch_chain_pending, ln);
