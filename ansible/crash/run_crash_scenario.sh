@@ -26,6 +26,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ANSIBLE_DIR="$REPO_ROOT/ansible"
 RESULT_DIR="/tmp/crash_inject"
 EXP_NAME="crash_${SCENARIO,,}"
+[ "${RDMA_NAIVE:-no}" = "yes" ] && EXP_NAME="${EXP_NAME}_naive"  # paper: naive durability baseline arm
 
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/scenarios.env"
@@ -58,6 +59,7 @@ sudo ansible-playbook -i inventory.ini \
   -e rdma_migration_peer_stagger_ms=0 \
   -e ycsb_slotpoll_ms=100 -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
   -e rdma_async_apply=yes -e rdma_transfer_chunk_slots=342 \
+  -e rdma_naive_durability="${RDMA_NAIVE:-no}" \
   -e '{"rdma_follower_proxy": "no"}' \
   -e redis_workload=workloada_prod_30m_run10min \
   -e experiment_name="$EXP_NAME"

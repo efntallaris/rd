@@ -1745,6 +1745,26 @@ struct COMMAND_ARG RDMA_EVICT_SLOTS_Args[] = {
 {MAKE_ARG("hi",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA MGN_RECOVER ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+#define RDMA_MGN_RECOVER_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+#define RDMA_MGN_RECOVER_Tips NULL
+#endif
+
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+#define RDMA_MGN_RECOVER_Keyspecs NULL
+#endif
+
+/* RDMA MGN_RECOVER argument table */
+struct COMMAND_ARG RDMA_MGN_RECOVER_Args[] = {
+{MAKE_ARG("role",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("sess",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA CHAIN_WARM ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1973,6 +1993,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("reshard-recv-flip","Recipient side: receive the v2 early-flip state from the source. Sets importing_slots_from[slot]=<source-node> and takes ownership of the listed slots in a single atomic call, bypassing the standard CLUSTER SETSLOT safety checks that forbid (owner + importing-from) simultaneous state.","O(N) in number of slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_RECV_FLIP_History,0,RDMA_RESHARD_RECV_FLIP_Tips,0,rdmaReshardRecvFlipCommand,-4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_RECV_FLIP_Keyspecs,0,NULL,2),.args=RDMA_RESHARD_RECV_FLIP_Args},
 {MAKE_CMD("reshard-transfer","Source side: Phase 2 of bulk RDMA reshard. For each of the N slots that the prior RDMA RESHARD registered, encodes the slot's keys into the source's staging buffer, RDMA-WRITEs the bytes to the recipient's landing buffer, then sends RDMA DONE-SLOTS so the recipient backpatches the staged entries into its keyspace.","O(N * K) where K is the number of keys per slot.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_RESHARD_TRANSFER_History,0,RDMA_RESHARD_TRANSFER_Tips,0,rdmaReshardTransferCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_RESHARD_TRANSFER_Keyspecs,0,NULL,3),.args=RDMA_RESHARD_TRANSFER_Args},
 {MAKE_CMD("transfer-slots","Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_TRANSFER_SLOTS_History,0,RDMA_TRANSFER_SLOTS_Tips,0,rdmaTransferSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_TRANSFER_SLOTS_Keyspecs,0,NULL,3),.args=RDMA_TRANSFER_SLOTS_Args},
+{MAKE_CMD("mgn-recover","AqRaft roll-forward recovery: on become-leader, drive resume of an in-flight migration session (reverse loopback from the redisraft module).","O(1) trigger.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MGN_RECOVER_History,0,RDMA_MGN_RECOVER_Tips,0,rdmaMgnRecoverCommand,-4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MGN_RECOVER_Keyspecs,0,NULL,2),.args=RDMA_MGN_RECOVER_Args},
 {0}
 };
 

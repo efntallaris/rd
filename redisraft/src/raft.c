@@ -1044,6 +1044,7 @@ static int raftPersistMetadata(raft_server_t *raft, void *user_data,
 #define MGN_MAX_ACTIVE 64
 static long long g_mgn_active[MGN_MAX_ACTIVE];   /* 0 = empty slot */
 static int       g_mgn_active_count = 0;
+static char      g_mgn_payload[MGN_MAX_ACTIVE][208]; /* TXN_START payload per active sess (recipient+slots) */
 static long long mgnParseSess(const char *data, int len) {
     if (data == NULL || len <= 0) return -1;
     for (int i = 0; i + 5 <= len; i++) {
@@ -1055,10 +1056,14 @@ static long long mgnParseSess(const char *data, int len) {
     }
     return -1;
 }
-static void mgnMarkActive(long long sess) {
+static void mgnMarkActive(long long sess, const char *payload) {
     if (sess < 0) return;
     for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess) return;
-    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == 0) { g_mgn_active[i] = sess; g_mgn_active_count++; return; }
+    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == 0) {
+        g_mgn_active[i] = sess;
+        snprintf(g_mgn_payload[i], sizeof(g_mgn_payload[i]), "%s", payload ? payload : "");
+        g_mgn_active_count++; return;
+    }
 }
 static void mgnMarkDone(long long sess) {
     if (sess < 0) return;
@@ -1161,9 +1166,12 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                        raftLogTypeName(entry->type), len, entry->data);
             /* AqRaft foundation: track in-flight sessions for become-leader recovery. */
             {
+                char _pl[208]; int _pn = len < (int)sizeof(_pl) - 1 ? len : (int)sizeof(_pl) - 1;
+                if (_pn > 0) memcpy(_pl, entry->data, _pn);
+                _pl[_pn > 0 ? _pn : 0] = '\0';
                 long long _sess = mgnParseSess(entry->data, len);
                 if (entry->type == RAFT_LOGTYPE_MGN_TXN_START ||
-                    entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START) mgnMarkActive(_sess);
+                    entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START) mgnMarkActive(_sess, _pl);
                 else if (entry->type == RAFT_LOGTYPE_MGN_TXN_DONE ||
                          entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE) mgnMarkDone(_sess);
             }
@@ -1359,8 +1367,14 @@ static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_stat
             for (int _i = 0; _i < MGN_MAX_ACTIVE; _i++) {
                 if (g_mgn_active[_i] != 0) {
                     LOG_NOTICE("AqRaft become-leader: in-flight migration sess=%lld detected on "
-                               "promotion (START seen, no DONE) — roll-forward recovery hook fires "
-                               "here [foundation: detection only, RDMA resume TODO]", g_mgn_active[_i]);
+                               "promotion (START seen, no DONE) — driving roll-forward recovery",
+                               g_mgn_active[_i]);
+                    /* Reverse loopback into cluster_rdma (separate translation unit, shared
+                     * only via RESP): drive the actual resume. Diagnostic v1 logs + acks. */
+                    RedisModuleCallReply *_rep = RedisModule_Call(redis_raft.ctx, "RDMA", "cclc",
+                                                    "MGN-RECOVER", "auto", (long long) g_mgn_active[_i],
+                                                    g_mgn_payload[_i]);
+                    if (_rep) RedisModule_FreeCallReply(_rep);
                 }
             }
             break;

@@ -67,6 +67,7 @@
           --rdma-chain-pipeline {{ rdma_chain_pipeline | default('no') }} \
           --rdma-chain-xsession {{ rdma_chain_xsession | default('no') }} \
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
+          --rdma-naive-durability {{ rdma_naive_durability | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
           --cluster-rdma-reshard-debug-bytes {{ rdma_reshard_debug_bytes | default('no') }} \
           --cluster-rdma-merge-keys-per-tick {{ rdma_merge_keys_per_tick | default(512) }} \

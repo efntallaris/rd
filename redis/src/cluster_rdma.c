@@ -3093,6 +3093,20 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
         backpatchBatch *b = listNodeValue(ln);
         long long count = rdmaLeaderChainAckCount(b->src_mig_id);
         int acked = (count > b->chain_baseline_ack_count);
+        /* EXPERIMENT (paper naive baseline): if rdma-naive-durability is set,
+         * fire MGN_INDX_UPD on the 5s deadline even WITHOUT a real ack — the
+         * pre-Part-A "faked durability" behaviour. Off by default (honest). */
+        int naive_fire = 0;
+        if (!acked && server.rdma_naive_durability) {
+            long long now_ms = mstime();
+            if ((now_ms - (long long) b->t_ended * 1000LL) > CHAIN_PENDING_TIMEOUT_MS) {
+                serverLog(LL_WARNING,
+                    "CHAIN: sess=%lld pending CHAIN-ACK timeout after %dms — firing "
+                    "MGN_INDX_UPD anyway (NAIVE durability baseline: faked)",
+                    b->src_mig_id, CHAIN_PENDING_TIMEOUT_MS);
+                naive_fire = 1;
+            }
+        }
         /* AqRaft #4: NEVER fire MGN_INDX_UPD on a deadline. A committed
          * INDX_UPD MUST mean a live majority physically holds the bytes, so we
          * wait for the real CHAIN-ACK as long as it takes. The ack DOES arrive
@@ -3101,8 +3115,8 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
          * clean baseline fired "anyway" 3/3 while CHAIN-ACK count still climbed
          * afterwards). A genuinely dead chain member is handled by the
          * forward-failure re-form path, not by faking an ack here. */
-        if (acked) {
-            serverLog(LL_NOTICE,
+        if (acked || naive_fire) {
+            if (acked) serverLog(LL_NOTICE,
                 "CHAIN: sess=%lld chain-ack observed (count %lld > base %lld) — "
                 "finalizing batch (real live-majority durability)",
                 b->src_mig_id, count, b->chain_baseline_ack_count);
@@ -7430,6 +7444,48 @@ static void *warmRegisterThread(void *arg) {
  *
  * Local delete on the leader only (by_command=1); the recipient already owns
  * and serves the slot, so the donor's residual replicas are irrelevant. */
+/* AqRaft roll-forward recovery entry point (reverse loopback). The redisraft
+ * module's become-leader hook RedisModule_Call's `RDMA MGN-RECOVER <role> <sess>`
+ * when this node is elected leader with an in-flight migration session, so the
+ * migration can ROLL FORWARD instead of failing. Diagnostic v1: log + ack, to
+ * verify the module->cluster_rdma bridge fires on a real crash before wiring the
+ * actual resume (S2 donor re-ship / S1 gap-pull + execute-before-serve). */
+void rdmaMgnRecoverCommand(client *c) {
+    /* RDMA MGN-RECOVER <role> <sess> [payload]
+     * payload is the TXN_START marker: "sess=K slots=lo-hi n=N recipient=host:port". */
+    sds role = c->argv[2]->ptr;
+    long long sess = -1;
+    (void) getLongLongFromObject(c->argv[3], &sess);
+    const char *payload = (c->argc >= 5) ? (const char *) c->argv[4]->ptr : "";
+    serverLog(LL_NOTICE,
+        "AqRaft MGN-RECOVER: role=%s sess=%lld payload=\"%s\" — driving roll-forward resume",
+        role ? role : "(nil)", sess, payload);
+
+    /* B#2 donor resume: re-dispatch the migration for this (newly-elected) leader's
+     * owned slots to the recipient. On a fresh leader the reshard offset is 0, so
+     * startLocalMigration picks the same first-N owned slots the crashed donor was
+     * migrating; the recipient's don't-clobber merge makes re-shipping idempotent. */
+    char rhost[128]; rhost[0] = '\0'; int rport = 0, nslots = 0;
+    const char *rp = strstr(payload, "recipient=");
+    const char *np = strstr(payload, "n=");
+    if (rp) sscanf(rp, "recipient=%127[^: ]:%d", rhost, &rport);
+    if (np) sscanf(np, "n=%d", &nslots);
+    if (rhost[0] && rport > 0 && nslots > 0) {
+        const char *err = NULL;
+        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err);
+        if (mid < 0)
+            serverLog(LL_WARNING, "AqRaft MGN-RECOVER: sess=%lld resume dispatch FAILED: %s",
+                      sess, err ? err : "(unknown)");
+        else
+            serverLog(LL_NOTICE, "AqRaft MGN-RECOVER: sess=%lld RESUMED — re-dispatched migration "
+                      "id=%lld to %s:%d n_slots=%d", sess, mid, rhost, rport, nslots);
+    } else {
+        serverLog(LL_NOTICE, "AqRaft MGN-RECOVER: sess=%lld — no donor recipient/n in payload "
+                  "(recipient-side session, or parse miss); resume not dispatched", sess);
+    }
+    addReply(c, shared.ok);
+}
+
 void rdmaEvictSlotsCommand(client *c) {
     long long lo, hi;
     if (getLongLongFromObject(c->argv[2], &lo) != C_OK ||

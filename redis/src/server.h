@@ -2240,6 +2240,10 @@ struct redisServer {
                                        conf template also defaults it to yes). */
     int rdma_transfer_chunk_slots;  /* Aqueduct: K = slots per DONE-SLOTS-CHUNK RPC.
                                        Only consulted when rdma_transfer_overlap=1. */
+    int rdma_naive_durability;      /* EXPERIMENT (paper baseline): when on, chainPendingTick
+                                       fires MGN_INDX_UPD on the 5s CHAIN_PENDING_TIMEOUT_MS
+                                       deadline even without a real CHAIN-ACK (the pre-Part-A
+                                       "faked durability" behaviour). Default off (honest). */
     int rdma_async_apply;           /* Aqueduct: separate Raft COMMIT from APPLY. When on,
                                        the recipient reports BACKPATCH-STATUS "done" to the
                                        donor as soon as the migration is COMMITTED (chain
@@ -4466,6 +4470,7 @@ void rdmaMigrateAllCommand(client *c);
 void rdmaMigrateWarmCommand(client *c);
 void rdmaChainWarmCommand(client *c);
 void rdmaEvictSlotsCommand(client *c);
+void rdmaMgnRecoverCommand(client *c);   /* AqRaft roll-forward recovery (reverse loopback) */
 void rdmaMigrateAllStatusCommand(client *c);
 void rdmaMigrateCompleteCommand(client *c);
 void rdmaRegisterResultCommand(client *c);
