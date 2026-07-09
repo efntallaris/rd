@@ -93,6 +93,17 @@ T_KILL=$(date -u +%s.%N)
 log "KILLED $TARGET_HOST pid=$PID (verified alive)  t_kill=$T_KILL"
 echo "result=KILLED label=$LABEL target=$TARGET_HOST pid=$PID t_arm=$T_ARM t_kill=$T_KILL" >> "$RES"
 
+# Durable leader-log snapshot. The arm-host (recipient LEADER) log is WIPED at
+# end-of-run (the instance is restarted at teardown), destroying the re-form /
+# CHAIN-ACK evidence before verdict.sh reads it (observed 2026-07-08: collected
+# redis3 log = 0 bytes). Snapshot it ~120s after the kill — re-form + finalize
+# complete within ~30s, the wipe is ~10min later — to a path that survives.
+LEADER_SNAP="$RESULT_DIR/${LABEL}_leaderlog.snap"
+log "arming leader-log snapshot of $ARM_HOST:$ARM_LOG at t_kill+120s -> $LEADER_SNAP"
+sleep 120
+sudo ssh $SSH_OPTS "$ARM_HOST" "cat '$ARM_LOG'" > "$LEADER_SNAP" 2>/dev/null
+log "leader-log snapshot captured ($(wc -l < "$LEADER_SNAP" 2>/dev/null || echo 0) lines)"
+
 if [ "$RESTART" = "yes" ]; then
   log "RESTART=yes; sleeping ${POST_KILL_DELAY}s before relaunch"
   sleep "$POST_KILL_DELAY"

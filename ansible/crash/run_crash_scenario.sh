@@ -75,7 +75,7 @@ fi
 # 2b. The base collect_results skips the sg4 followers redis4/redis5 — grab
 #     their logs into the experiment dir (dead node's log is frozen; the
 #     survivor's is live) so the verdict + posterity have them.
-for h in redis4 redis5; do
+for h in redis3 redis4 redis5; do  # redis3 added: base collection left a STALE leader log (false PASS 2026-07-08)
   d="/tmp/experiments/$EXP_NAME/logs/$h/tmp/redis_logs"
   sudo mkdir -p "$d" 2>/dev/null || true
   sudo ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 "$h" \

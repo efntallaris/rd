@@ -26,8 +26,16 @@ CRASH_RE="ASSERTION FAILED|REDIS BUG|Crashed by signal|SIGSEGV|dict.c:548"
 # else a fresh live fetch), or empty if neither is available.
 resolve_log() {
   local host="$1" sg="$2"
+  # Recipient LEADER (redis3) log is wiped at end-of-run; prefer the injector's
+  # durable leader-log snapshot (crash_inject.sh, taken ~120s after the kill) if
+  # present and non-empty — the collected/live copies are empty/stale by now.
+  if [ "$host" = "redis3" ]; then
+    local snap
+    snap=$(ls -1 /tmp/crash_inject/${SCENARIO}*_leaderlog.snap 2>/dev/null | head -1)
+    if [ -n "$snap" ] && sudo test -s "$snap" 2>/dev/null; then echo "$snap"; return; fi
+  fi
   local col="$LOGROOT/$host/tmp/redis_logs/${host}_${sg}.log"
-  if sudo test -f "$col" 2>/dev/null; then echo "$col"; return; fi
+  if sudo test -f "$col" 2>/dev/null && [ "$(sudo wc -l < "$col" 2>/dev/null || echo 0)" -gt 0 ]; then echo "$col"; return; fi
   local dst="$FETCH/${host}_${sg}.log"
   if sudo ssh $SSHO "$host" "test -f /tmp/redis_logs/${host}_${sg}.log" 2>/dev/null; then
     sudo ssh $SSHO "$host" "cat /tmp/redis_logs/${host}_${sg}.log" >"$dst" 2>/dev/null && echo "$dst" && return
