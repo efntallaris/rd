@@ -96,13 +96,19 @@ echo "result=KILLED label=$LABEL target=$TARGET_HOST pid=$PID t_arm=$T_ARM t_kil
 # Durable leader-log snapshot. The arm-host (recipient LEADER) log is WIPED at
 # end-of-run (the instance is restarted at teardown), destroying the re-form /
 # CHAIN-ACK evidence before verdict.sh reads it (observed 2026-07-08: collected
-# redis3 log = 0 bytes). Snapshot it ~120s after the kill — re-form + finalize
-# complete within ~30s, the wipe is ~10min later — to a path that survives.
+# redis3 log = 0 bytes). Snapshot it after the kill to a path that survives.
+#
+# DETACHED (setsid) + t_kill+60s: for LEADER-kill scenarios (S1/S2) the migration
+# FAILS FAST, so the wrapper reaps this injector early — a synchronous sleep was
+# killed before it fired (observed 2026-07-09: S1/S2 snapshots empty). Detaching
+# survives the reap; 60s (< the ~90s fail-fast playbook end) means the snapshot is
+# ready BEFORE verdict.sh runs, yet still captures re-form+ack+INDX_UPD (all within
+# ~30s of the kill). For follower-kill S4 the run lasts ~10min so 60s is ample too.
 LEADER_SNAP="$RESULT_DIR/${LABEL}_leaderlog.snap"
-log "arming leader-log snapshot of $ARM_HOST:$ARM_LOG at t_kill+120s -> $LEADER_SNAP"
-sleep 120
-sudo ssh $SSH_OPTS "$ARM_HOST" "cat '$ARM_LOG'" > "$LEADER_SNAP" 2>/dev/null
-log "leader-log snapshot captured ($(wc -l < "$LEADER_SNAP" 2>/dev/null || echo 0) lines)"
+log "arming DETACHED leader-log snapshot of $ARM_HOST:$ARM_LOG at t_kill+60s -> $LEADER_SNAP"
+setsid bash -c "sleep 60; sudo ssh $SSH_OPTS '$ARM_HOST' \"cat '$ARM_LOG'\" > '$LEADER_SNAP' 2>/dev/null; echo \"[crash_inject snapshot] captured \$(wc -l < '$LEADER_SNAP' 2>/dev/null || echo 0) lines -> $LEADER_SNAP\" >> '$RES'" </dev/null >/dev/null 2>&1 &
+disown 2>/dev/null || true
+log "leader-log snapshot detached (fires at t_kill+60s regardless of run outcome)"
 
 if [ "$RESTART" = "yes" ]; then
   log "RESTART=yes; sleeping ${POST_KILL_DELAY}s before relaunch"

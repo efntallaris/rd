@@ -91,6 +91,8 @@ typedef struct rdmaChainPeer {
     /* Outgoing QP + control channel to this follower. NULL until Phase A.full. */
     void *client;              /* struct rdmamig_client * */
     void *ctrl;                /* struct redisContext * */
+    int  established;          /* AqRaft #4b: 1 iff INIT-QP+PREP succeeded; 0 =
+                                * follower dead at establish, excluded from chain */
 } rdmaChainPeer;
 
 /* Per-session chain state on the recipient LEADER. Keyed in g_leader_chains
@@ -1342,6 +1344,7 @@ static void *findLivePeerClient(const char *host, int port, long long exclude_se
         if (ls == NULL || ls->src_mig_id == exclude_sess) continue;
         for (int p = 0; p < ls->n_peers; p++) {
             if (ls->peers[p].client != NULL &&
+                ls->peers[p].established &&
                 ls->peers[p].host != NULL &&
                 ls->peers[p].port == port &&
                 strcmp(ls->peers[p].host, host) == 0) {
@@ -1562,10 +1565,12 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
      * RDMA-connect populates server_cm_id, then PREP can rdmamig_buffer_create
      * against that cm_id and return a real rkey. */
     int peer_rdma_ports[CLUSTER_NAMELEN] = {0};
+    int n_live = 0;
     for (int i = 0; i < n_followers; i++) {
         st->peers[i].host = sdsnew(hosts[i]);
         st->peers[i].port = ports[i];
         st->peers[i].chain_position = i + 1;
+        st->peers[i].established = 0;
 
         /* AqRaft Stage 1: reuse a prior round's live QP to this follower if
          * one exists (the follower's singleton rdmamig_server can't accept a
@@ -1585,7 +1590,14 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
             if (sendChainInitQp(hosts[i], ports[i], src_mig_id,
                                 &peer_rdma_ports[i],
                                 errbuf, errbuf_len) != C_OK) {
-                return C_ERR;
+                /* AqRaft #4b: follower dead at establish-time. DON'T abort the
+                 * whole chain (that left later peers unpopulated so a re-form had
+                 * nothing to promote — S4 run 2310). Exclude + keep going. */
+                serverLog(LL_WARNING,
+                    "CHAIN: sess=%lld peer%d %s:%d INIT-QP failed (%s) — excluding "
+                    "from chain (establish-time death), survivors continue",
+                    src_mig_id, i, hosts[i], ports[i], errbuf);
+                continue;
             }
             if (leaderConnectToFollower(hosts[i], peer_rdma_ports[i],
                                         &st->peers[i],
@@ -1601,8 +1613,20 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
         }
         if (sendChainPrep(hosts[i], ports[i], src_mig_id, pool_bytes,
                           &st->peers[i], errbuf, errbuf_len) != C_OK) {
-            return C_ERR;
+            /* AqRaft #4b: dead at PREP — exclude + continue (see INIT-QP above). */
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld peer%d %s:%d PREP failed (%s) — excluding from "
+                "chain (establish-time death), survivors continue",
+                src_mig_id, i, hosts[i], ports[i], errbuf);
+            continue;
         }
+        st->peers[i].established = 1;
+        n_live++;
+    }
+    if (n_live == 0) {
+        snprintf(errbuf, errbuf_len,
+                 "sess=%lld: no live followers established", src_mig_id);
+        return C_ERR;
     }
 
     /* Resolve our own (leader's) host:port so followers can CHAIN-ACK back.
@@ -1618,23 +1642,37 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
     /* Pass 2: WIRE each follower with its pred + succ + leader (including
      * succ's rdma_port so the follower can rdmamig_client_create to its
      * successor, and leader's host:port so the tail can CHAIN-ACK back). */
-    for (int i = 0; i < n_followers; i++) {
-        const char *pred_host = (i == 0) ? "-" : hosts[i - 1];
-        int pred_port = (i == 0) ? 0 : ports[i - 1];
-        const char *succ_host = (i == n_followers - 1) ? "-" : hosts[i + 1];
-        int succ_port = (i == n_followers - 1) ? 0 : ports[i + 1];
-        int succ_rdma_port = (i == n_followers - 1) ? 0 : peer_rdma_ports[i + 1];
-        uint64_t succ_addr = (i == n_followers - 1) ? 0 : st->peers[i + 1].peer_pool_addr;
-        uint32_t succ_rkey = (i == n_followers - 1) ? 0 : st->peers[i + 1].peer_pool_rkey;
+    /* Wire only the LIVE followers as a chain (peers excluded in Pass 1 are
+     * skipped, and a shorter chain is wired over the survivors). When every
+     * follower is healthy nlive==n_followers and live[j]==j, so this is
+     * byte-identical to the plain 0..n-1 chain — zero change on the hot path. */
+    int live[CLUSTER_NAMELEN]; int nlive = 0;
+    for (int i = 0; i < n_followers; i++)
+        if (st->peers[i].established) live[nlive++] = i;
+    for (int j = 0; j < nlive; j++) {
+        int i  = live[j];
+        int pj = (j == 0)         ? -1 : live[j - 1];
+        int sj = (j == nlive - 1) ? -1 : live[j + 1];
+        const char *pred_host = (pj < 0) ? "-" : hosts[pj];
+        int pred_port         = (pj < 0) ?  0 : ports[pj];
+        const char *succ_host = (sj < 0) ? "-" : hosts[sj];
+        int succ_port         = (sj < 0) ?  0 : ports[sj];
+        int succ_rdma_port    = (sj < 0) ?  0 : peer_rdma_ports[sj];
+        uint64_t succ_addr    = (sj < 0) ?  0 : st->peers[sj].peer_pool_addr;
+        uint32_t succ_rkey    = (sj < 0) ?  0 : st->peers[sj].peer_pool_rkey;
         if (sendChainWire(hosts[i], ports[i], src_mig_id,
-                          i + 1, n_followers,
+                          j + 1, nlive,
                           pred_host, pred_port,
                           succ_host, succ_port,
                           succ_rdma_port,
                           succ_addr, succ_rkey,
                           leader_host, leader_port,
                           errbuf, errbuf_len) != C_OK) {
-            return C_ERR;
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld WIRE to %s:%d failed (%s) — excluding, survivors continue",
+                src_mig_id, hosts[i], ports[i], errbuf);
+            st->peers[i].established = 0;
+            continue;
         }
     }
 
