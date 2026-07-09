@@ -1033,6 +1033,38 @@ static int raftPersistMetadata(raft_server_t *raft, void *user_data,
     return 0;
 }
 
+/* ------------------------------------------------------------------------
+ * AqRaft become-leader recovery FOUNDATION (log-only keystone).
+ * Track in-flight migration sessions as their mgn-log markers apply, so a
+ * newly-elected leader can detect "START seen, no DONE" and roll the migration
+ * FORWARD (S1 recipient-leader / S2 donor-leader recovery). Each sg instance is
+ * its own process, so these process-globals track that group's sessions. For now
+ * the become-leader hook only LOGS in-flight sessions (no RDMA resume yet), so the
+ * wiring is verifiable on a real crash before any recovery code is added. */
+#define MGN_MAX_ACTIVE 64
+static long long g_mgn_active[MGN_MAX_ACTIVE];   /* 0 = empty slot */
+static int       g_mgn_active_count = 0;
+static long long mgnParseSess(const char *data, int len) {
+    if (data == NULL || len <= 0) return -1;
+    for (int i = 0; i + 5 <= len; i++) {
+        if (strncmp(data + i, "sess=", 5) == 0) {
+            long long v = 0; int j = i + 5, any = 0;
+            while (j < len && data[j] >= '0' && data[j] <= '9') { v = v*10 + (data[j]-'0'); j++; any = 1; }
+            return any ? v : -1;
+        }
+    }
+    return -1;
+}
+static void mgnMarkActive(long long sess) {
+    if (sess < 0) return;
+    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess) return;
+    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == 0) { g_mgn_active[i] = sess; g_mgn_active_count++; return; }
+}
+static void mgnMarkDone(long long sess) {
+    if (sess < 0) return;
+    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess) { g_mgn_active[i] = 0; if (g_mgn_active_count>0) g_mgn_active_count--; return; }
+}
+
 static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entry, raft_index_t entry_idx)
 {
     RedisRaftCtx *rr = user_data;
@@ -1127,6 +1159,14 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
             int len = (int) entry->data_len;
             LOG_NOTICE("%s applied: payload=\"%.*s\"",
                        raftLogTypeName(entry->type), len, entry->data);
+            /* AqRaft foundation: track in-flight sessions for become-leader recovery. */
+            {
+                long long _sess = mgnParseSess(entry->data, len);
+                if (entry->type == RAFT_LOGTYPE_MGN_TXN_START ||
+                    entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START) mgnMarkActive(_sess);
+                else if (entry->type == RAFT_LOGTYPE_MGN_TXN_DONE ||
+                         entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE) mgnMarkDone(_sess);
+            }
             if (req) {
                 RaftReqFree(req);
             }
@@ -1313,6 +1353,16 @@ static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_stat
         case RAFT_STATE_LEADER:
             LOG_NOTICE("State change: Node is now a leader, term %ld",
                        raft_get_current_term(raft));
+            /* AqRaft become-leader recovery FOUNDATION: if promoted while a
+             * migration was in-flight (START seen, no DONE), it must ROLL FORWARD
+             * (S1/S2). For now: detect + log; RDMA resume is the next increment. */
+            for (int _i = 0; _i < MGN_MAX_ACTIVE; _i++) {
+                if (g_mgn_active[_i] != 0) {
+                    LOG_NOTICE("AqRaft become-leader: in-flight migration sess=%lld detected on "
+                               "promotion (START seen, no DONE) — roll-forward recovery hook fires "
+                               "here [foundation: detection only, RDMA resume TODO]", g_mgn_active[_i]);
+                }
+            }
             break;
         default:
             break;
