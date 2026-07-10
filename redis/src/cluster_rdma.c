@@ -7688,6 +7688,63 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
         "(follower-merge drains async -> adopting held blocks into live keyspace)",
         sess, payload ? payload : "", slots_with_blocks, staged, db_before);
 
+    /* B#1 peer-pull increment 2: for this session's slot range, find the slots this
+     * newly-promoted leader LACKS, and ask each surviving sg4 peer (RDMA
+     * CHAIN-STATUS) which of those it holds — building the missing-slot -> holder
+     * coverage. The committed-INDX_UPD durability invariant guarantees a live
+     * majority holds every committed slot, so a survivor covers the gap; a later
+     * step forwards it inward. Slots no peer holds fall back to donor re-ship. */
+    {
+        int slot_lo = -1, slot_hi = -1;
+        const char *sp2 = payload ? strstr(payload, "slots=") : NULL;
+        if (sp2) sscanf(sp2, "slots=%d-%d", &slot_lo, &slot_hi);
+        if (slot_lo >= 0 && slot_hi >= slot_lo && slot_hi < CLUSTER_SLOTS) {
+            int nrange = slot_hi - slot_lo + 1;
+            unsigned char *lack = zcalloc((size_t) nrange);   /* 1 = I lack this slot */
+            int gaps = 0;
+            for (int slot = slot_lo; slot <= slot_hi; slot++)
+                if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) == 0) {
+                    lack[slot - slot_lo] = 1; gaps++;
+                }
+            int covered = 0;
+            if (gaps > 0 && server.rdma_chain_followers != NULL &&
+                sdslen(server.rdma_chain_followers) > 0) {
+                int npeers = 0;
+                sds *peers = sdssplitlen(server.rdma_chain_followers,
+                                         sdslen(server.rdma_chain_followers), " ", 1, &npeers);
+                for (int pi = 0; pi < npeers && covered < gaps; pi++) {
+                    char phost[128]; int pport = 0;
+                    if (sscanf(peers[pi], "%127[^:]:%d", phost, &pport) != 2 || pport <= 0)
+                        continue;
+                    redisContext *pc = redisConnect(phost, pport);
+                    if (pc == NULL || pc->err) { if (pc) redisFree(pc); continue; }
+                    redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d",
+                                                   sess, slot_lo, slot_hi);
+                    if (rep != NULL && rep->type == REDIS_REPLY_ARRAY) {
+                        for (size_t k = 0; k < rep->elements; k++) {
+                            long long hs = rep->element[k]->integer;
+                            if (hs >= slot_lo && hs <= slot_hi && lack[hs - slot_lo] == 1) {
+                                lack[hs - slot_lo] = 2;   /* covered by a peer */
+                                covered++;
+                            }
+                        }
+                        serverLog(LL_NOTICE,
+                            "AqRaft B#1 peer-pull: sess=%lld peer %s:%d holds %zu slots "
+                            "in range", sess, phost, pport, rep->elements);
+                    }
+                    if (rep) freeReplyObject(rep);
+                    redisFree(pc);
+                }
+                if (peers) sdsfreesplitres(peers, npeers);
+            }
+            serverLog(LL_NOTICE,
+                "AqRaft B#1 peer-pull: sess=%lld range=%d-%d I-lack=%d peer-covered=%d "
+                "donor-fallback=%d (increment 2: gap+holder map; forward is next)",
+                sess, slot_lo, slot_hi, gaps, covered, gaps - covered);
+            zfree(lack);
+        }
+    }
+
     /* B#1 donor hand-off: the survivors hold only a fraction of the session (chain
      * replication lags the leader's merge), but the DONOR is alive and still holds
      * the full slot range (it never evicted — the migration failed). Ask that donor
