@@ -147,6 +147,16 @@ public class RedisClient extends DB {
       while (true) {
         try {
           Thread.sleep(pollMs);
+          /* AqRaft S1 fix: also poll the RECIPIENT leaders. sg4 owns no slots at
+           * bootstrap (migration hasn't happened), so its nodes are never in the
+           * bootstrap slot map / POLL_TARGETS. The recipient leader is learned via
+           * the read path into SHARED_PEER; add those here so the poller queries
+           * them and (below) learns their REPLICAS — otherwise a recipient-leader
+           * crash (S1) leaves the client with no endpoint for the new sg4 leader. */
+          for (int s = 0; s < SHARED_PEER.length; s++) {
+            HostAndPort peer = SHARED_PEER[s];
+            if (peer != null) { POLL_TARGETS.add(peer); }
+          }
           /* Poll every known master and UNION sg4-owned ranges. We only ever
            * SET collapsed (never unset): a node's stale view of another donor's
            * slots reports the BOOT owner (== SHARED_BOOT_OWNER) and is a no-op,
@@ -168,6 +178,20 @@ public class RedisClient extends DB {
                 String mh = SafeEncoder.encode((byte[]) masterInfo.get(0));
                 long   mp = (Long) masterInfo.get(1);
                 HostAndPort owner = new HostAndPort(mh, (int) mp);
+                // AqRaft S1 fix: learn this range's REPLICAS as poll targets, so a
+                // promoted replica is discoverable after a leader crash (especially
+                // the sg4 recipient group, whose replicas were never in the
+                // bootstrap slot map). The promoted replica reports ITSELF as master
+                // in its own CLUSTER SLOTS, letting the union below re-resolve
+                // ownership to the new leader.
+                for (int ri = 3; ri < range.size(); ri++) {
+                  try {
+                    List<Object> rep = (List<Object>) range.get(ri);
+                    POLL_TARGETS.add(new HostAndPort(
+                        SafeEncoder.encode((byte[]) rep.get(0)),
+                        (int) (long) (Long) rep.get(1)));
+                  } catch (Exception ignore) { /* skip malformed replica */ }
+                }
                 for (int s = startSlot; s <= endSlot && s < 16384; s++) {
                   HostAndPort boot = SHARED_BOOT_OWNER[s];
                   if (boot != null && !owner.equals(boot)) {
