@@ -6549,9 +6549,10 @@ static void *migrationWorker(void *arg) {
         char src_id[CLUSTER_NAMELEN + 1];
         rdmaMigrationSelfName(src_id);
 
-        const int max_polls = 6000;  /* ~60 s at 10 ms each */
+        const int max_polls = 6000;  /* ~60 s at 10 ms each (recipient slow-but-alive) */
         int polls = 0;
         int done = 0;
+        int conn_fail_streak = 0;    /* consecutive recipient-unreachable polls */
         int chain_durable_sent = 0;  /* AqRaft Round 2: early dispatch signal */
         sds backpatch_err = NULL;
 
@@ -6576,11 +6577,26 @@ static void *migrationWorker(void *arg) {
                 "RDMA BACKPATCH-STATUS %s %lld", src_id, mig->id);
             pthread_mutex_unlock(&mig->L->mu);
             if (r == NULL) {
-                /* Hiredis error — treat as transient; brief sleep and retry. */
+                /* AqRaft B#1 DONOR TIMEOUT (distinct from the backpatch-completion
+                 * timeout): a NULL reply means the recipient LEADER is unreachable
+                 * (connection refused / broken socket) — an instant, unambiguous
+                 * "recipient is gone" signal, not "recipient is slow finishing the
+                 * merge". Declare it dead after ~100ms of consecutive failures
+                 * (10 polls x 10ms) and break to the re-home path, instead of
+                 * burning the full 60s backpatch-completion timeout on a dead
+                 * socket. Cuts S1 recovery from ~60s to ~0.1s. */
+                if (++conn_fail_streak >= 10) {
+                    serverLog(LL_WARNING,
+                        "AqRaft B#1 donor timeout: recipient leader unresponsive "
+                        "~100ms (id=%lld) — declaring recipient dead, driving re-home",
+                        mig->id);
+                    break;
+                }
                 usleep(10000);
                 polls++;
                 continue;
             }
+            conn_fail_streak = 0;   /* got a reply — recipient alive */
             if (r->type == REDIS_REPLY_ERROR) {
                 /* Recipient says no such batch (yet) — early poll race; retry. */
                 freeReplyObject(r);
@@ -6650,7 +6666,22 @@ static void *migrationWorker(void *arg) {
              * whatever the survivors already hold idempotent. */
             char nh[128]; int nport = 0;
             int slot_lo = (mig->n_slots > 0) ? mig->chosen[0] : -1;
-            if (slot_lo >= 0 && donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) {
+            int got_rehome = 0;
+            if (slot_lo >= 0) {
+                /* The fast donor timeout detected the recipient's death in ~100ms,
+                 * but its elected successor records the re-home endpoint a few
+                 * seconds later (election + become-leader hook). Wait for it —
+                 * poll donorRehomeLookup up to ~30s at 100ms — before re-shipping.
+                 * (Decouples fast death-DETECTION from the re-ship, which must wait
+                 * for the new leader to exist.) */
+                for (int w = 0; w < 300 && !got_rehome; w++) {
+                    if (donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) {
+                        got_rehome = 1; break;
+                    }
+                    usleep(100000);
+                }
+            }
+            if (got_rehome) {
                 const char *rerr = NULL;
                 long long saved_next = server.rdma_migration_next_id;
                 server.rdma_migration_next_id =
@@ -6670,7 +6701,8 @@ static void *migrationWorker(void *arg) {
                     "AqRaft B#1 donor re-home: re-ship to %s:%d FAILED: %s — failing "
                     "migration", nh, nport, rerr ? rerr : "(unknown)");
             }
-            migFail(mig, sdsnew("recipient backpatch timed out after 60s of polling"));
+            migFail(mig, sdsnew("recipient leader dead and no re-home endpoint "
+                                "recorded within 30s"));
             return NULL;
         }
     }
