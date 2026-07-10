@@ -172,6 +172,39 @@ Consequences:
   no matter what" just means **don't give up at 5s** (wait for the ack; re-form only if a member is
   actually dead). This is a **baseline correctness fix**, not only a crash-recovery feature.
 
+### EMPIRICAL RESULT (2026-07-10) — RECIPIENT-LEADER RECOVERY ✅ WORKS (donor-driven)
+
+Recipient-leader (redis3) crash mid-migration is now survived: a follower promotes and every
+in-flight/migrated session is recovered to the new leader with GENUINE durability, no data loss.
+Before this work the promoted follower held ~43K keys and the in-flight migration was lost.
+
+Mechanism (donor-driven, per design step E — donor hand-off on backpatch timeout):
+1. **Recipient become-leader recovery** (raft.c role tracking + slot-lo session correlation): on
+   promotion the new sg4 leader detects the in-flight recipient session(s) and, for each, tells the
+   affected donor where it re-homed via `RDMA MGN-DONOR-REHOME <slot_lo> <host> <port>`.
+2. **Donor timeout re-ship**: the donor's in-flight migration keeps polling BACKPATCH-STATUS on the
+   dead leader; on its 60s timeout (by which the new leader is stable) it re-ships the crashed
+   session's EXACT slots (mig->chosen[], via startLocalMigration want_slots — NOT the offset-based
+   next chunk) to the recorded new leader. The re-ship's own BACKPATCH-STATUS poll IS the status
+   query, and it finalizes (done) on the new leader.
+3. **Chain re-form on the new head**: the re-ship's chain forward finds the old tail (dead redis3)
+   gone and auto-runs the #4 re-form to the surviving follower → real CHAIN-ACK from a live majority
+   → MGN_INDX_UPD → adopted. Verified on a real S1 crash:
+
+     DONOR-REHOME recorded slot_lo=5461 -> redis4:8000
+     ~56s (timeout): donor re-home -> re-shipped slots lo=5461 n=1365 -> redis4 id=8e17+5461
+     redis4: CHAIN RE-FORMED around dead redis3 -> CHAIN-ACK count=1 -> MGN_INDX_UPD applied=2489319
+       -> RECP_TXN_DONE; donor worker DONE
+     recovered sessions on redis4: slots=0-1364 (1361864) + slots=5461-6824 (2489319)
+     redis4 DBSIZE 43K -> 5,022,812 ; cluster total intact (donors hold un-migrated 3rd range)
+
+Commits: `2330de0a` (foundation), `9b08cb78` (donor-timeout re-home + exact-slot targeting).
+
+SCOPE (honest): the MIGRATION-level recovery is complete — in-flight sessions recover to the new
+leader with real durability and zero data loss. Reaching the full 7,492,752 on the recipient needs
+the ORCHESTRATION to continue the interrupted reshard (migrate donors that hadn't started yet to the
+new leader) — the same Phase-B #2 orchestration gap as S2, separate from the crash recovery.
+
 ### Concurrent multi-donor sessions (assume all 3 donors migrate at once)
 Each donor session has its own `INDX_UPD` stream; **per-session `mgn_executed_idx`** lets the new leader
 reconcile each `sess` independently (per-session `CHAIN-STATUS` → gap-pull → execute → advance that
