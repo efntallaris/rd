@@ -230,6 +230,47 @@ Open design decisions:
 - (b) Payload: `sess`+range+recipient already replicated; may also carry old node_id / chunk plan for
   precise resume (minor enrichment of the `TXN_START` payload).
 
+### EMPIRICAL RESULT (2026-07-10) — MIGRATION-LEVEL ROLL-FORWARD ✅ WORKS (reproduced)
+
+The crashed donor's in-flight migration now **rolls forward end-to-end with GENUINE durability**.
+Verified across debug cycles 5–13 and reproduced on a fresh run:
+
+  become-leader detects in-flight `sess=1` (TXN_START, no TXN_DONE) → `RDMA MGN-RECOVER` reverse
+  loopback re-dispatches the migration under a distinct recovery session id (`8e17+sess`) → recipient
+  re-merges (moved ≈2.46M) → **real chain forward** (`wrote 2,862,612,480 bytes leader→F1 @ 23 Gbps`)
+  → **RDMA CHAIN-ACK count=2** (both followers) → `chain-ack observed — finalizing (real live-majority
+  durability)` → **MGN_INDX_UPD applied** (`n_slots=1365 applied≈1.22M`) → **MGN_RECP_TXN_DONE** →
+  donor worker **DONE**. 0 send-completion errors, 0 crash signatures. Reproduced twice (cycle 13:
+  applied=1226018 DBSIZE=2502162; fresh: applied=1225450 DBSIZE=2500969).
+
+Five real root-cause fixes were required (commits `c0513617`, `b8ca5025`), each found by instrumented
+debugging, none faked:
+1. **per-port INIT-SERVER reuse** + **distinct recovery session id** — resume dials the RDMA link and
+   establishes its own chain without colliding with the crashed session (`31606286`).
+2. **capture-newest-on-drift** — the crashed donor's stale landing block sits alongside the resume's
+   fresh block; capture the newest, not the oldest.
+3. **zombie-forwarder STALL-ABORT** — the crashed session's chain forwarder spun forever (snapshots stop
+   mid-stream) holding `g_chain_forward_mu` and starving the recovery forward; abort after ~10s of zero
+   progress and release the mutex (never fake durability — batch left un-finalized, `STALL-ABORT`
+   sentinel skips a pointless re-form).
+4. **twin-MR cache invalidation** on landing-pool slot reassign/retire.
+5. **pool-filter capture** (the keystone) — the definitive `post_write` check showed `pd_bad=0
+   range_bad=1`: the captured landing block lived in a DIFFERENT pool than this batch's landing pool, so
+   the chain-forward RDMA-write sourced from outside the twin MR → `IBV_WC_LOC_PROT_ERR`. Fix:
+   capture only blocks whose address lies inside this batch's own landing pool. No-op for normal
+   migrations (verified: S3 regression clean, DBSIZE exact 7,492,752, 0 errors).
+
+### REMAINING GAP — ORCHESTRATION-LEVEL RECOVERY (Phase-B #2, NOT done)
+
+The full-scenario recipient DBSIZE target is **7,492,752 = sg1+sg2+sg3** (each donor ≈2.5M). After the
+donor-leader crash the recipient reaches only **~2.5M (sg1 only)**. Root cause is NOT the migration
+recovery (which works) but the **orchestration**: the whole reshard is driven by a single
+`RDMA MIGRATE-ALL` issued on the master (redis0). When redis0 is killed, that coordinator dies and
+**sg2/sg3 migrations are never triggered** (0 migration workers on their leaders; the ansible reshard
+aborts). To reach 7,492,752 for S2, a promoted node must **resume the MIGRATE-ALL orchestration** for
+the remaining donors — a distinct piece from the per-migration roll-forward. This is the honest S2
+status: migration roll-forward SOLVED; multi-donor orchestration continuation still OPEN.
+
 ---
 
 ## Scenario 3 — Donor FOLLOWER crash

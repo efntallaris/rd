@@ -147,8 +147,8 @@ flip0 = min((s["FLIPPING"][0] for sg,_,s in rows if sg=="sg1"), default=t0)
 # only a few sessions; sizing off it alone collapses the figure and clips the
 # later TRANSFER/MERGE bars. Scan all [start,end] phase entries instead.
 _all_ends = [v[1] for _,_,s in rows for k, v in s.items()
-             if isinstance(v, list) and len(v) == 2]
-done_last = max(_all_ends)
+             if isinstance(v, list) and len(v) == 2 and v[1] is not None]
+done_last = max(_all_ends) if _all_ends else t0
 # Migration window end = last raft COMMIT (RECP_TXN_DONE). `commit` holds ALL of
 # them (one per session), unlike the per-row COMMIT phase which is tied to the
 # sparse chain-"wrote" lines. With async-apply the MERGE/index-update drain
