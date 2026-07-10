@@ -727,23 +727,36 @@ void rdmaInitServerCommand(client *c) {
     serverLog(LL_NOTICE, "RDMA INIT-SERVER: client_id=%llu requesting RDMA listener on port %s",
               (unsigned long long) c->id, rdma_server_port);
 
-    struct rdmamig_server *s = rdmamig_server_create(rdma_server_port);
-    if (s == NULL) {
-        serverLog(LL_WARNING, "RDMA INIT-SERVER: rdmamig_server_create(%s) failed", rdma_server_port);
-        addReplyError(c, "rdmamig_server_create failed");
-        return;
-    }
-    /* The accepted-connection cm_id is set by the listening thread once a
-     * peer connects. NULL here just means we haven't seen a donor yet, which
-     * is fine -- REGISTER-BLOCK-SLOTS will fail later with a clearer error
-     * if the caller proceeds before the connection is established. */
-
-    if (server.rdma_server == NULL) {
-        server.rdma_server = s;
-        serverLog(LL_NOTICE, "RDMA INIT-SERVER: bound RDMA listener on port %s (server.rdma_server set)",
-                  rdma_server_port);
+    /* AqRaft roll-forward recovery: PER-PORT idempotent bind. Normal donors each
+     * use a distinct rdma_migration_port, so each creates its own listener (no
+     * change). But a re-elected donor leader resuming a migration re-uses the
+     * SAME shardgroup port as the crashed donor -- whose listener is still bound
+     * here, so a fresh rdmamig_server_create would fail to re-bind. Reuse the
+     * existing listener for that port; its accept thread takes the resuming
+     * donor as a new cm_id (per-cm_id routing, shared PD -> no cross-wiring). */
+    static struct { char port[16]; struct rdmamig_server *sv; } port_servers[16];
+    static int port_servers_n = 0;
+    struct rdmamig_server *s = NULL;
+    for (int i = 0; i < port_servers_n; i++)
+        if (strcmp(port_servers[i].port, rdma_server_port) == 0) { s = port_servers[i].sv; break; }
+    if (s != NULL) {
+        serverLog(LL_NOTICE, "RDMA INIT-SERVER: reusing existing RDMA listener on port %s "
+                  "for a new peer (resuming donor leader)", rdma_server_port);
     } else {
-        serverLog(LL_NOTICE, "RDMA INIT-SERVER: server.rdma_server already set; using new server for this client only");
+        s = rdmamig_server_create(rdma_server_port);
+        if (s == NULL) {
+            serverLog(LL_WARNING, "RDMA INIT-SERVER: rdmamig_server_create(%s) failed", rdma_server_port);
+            addReplyError(c, "rdmamig_server_create failed");
+            return;
+        }
+        if (port_servers_n < 16) {
+            strncpy(port_servers[port_servers_n].port, rdma_server_port, sizeof(port_servers[0].port) - 1);
+            port_servers[port_servers_n].port[sizeof(port_servers[0].port) - 1] = '\0';
+            port_servers[port_servers_n].sv = s;
+            port_servers_n++;
+        }
+        if (server.rdma_server == NULL) server.rdma_server = s;
+        serverLog(LL_NOTICE, "RDMA INIT-SERVER: bound RDMA listener on port %s", rdma_server_port);
     }
     rdmaAddConnection(c, s);
     serverLog(LL_NOTICE, "RDMA INIT-SERVER: client_id=%llu cached connection, awaiting donor",
@@ -7472,7 +7485,16 @@ void rdmaMgnRecoverCommand(client *c) {
     if (np) sscanf(np, "n=%d", &nslots);
     if (rhost[0] && rport > 0 && nslots > 0) {
         const char *err = NULL;
+        /* Use a RECOVERY-reserved migration id so the resume's chain session does
+         * NOT collide with the original crashed session's still-registered chain
+         * (chain state is keyed by mig_id/sess; the recipient batch is keyed by
+         * (src_node_id, mig_id) and src_node_id already differs, so a distinct id
+         * gives the resume its own batch AND its own chain). Restore the counter
+         * afterwards so normal migrations keep their compact ids. */
+        long long saved_next = server.rdma_migration_next_id;
+        server.rdma_migration_next_id = 800000000000000000LL + (sess > 0 ? sess : 0);
         long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err);
+        server.rdma_migration_next_id = saved_next;
         if (mid < 0)
             serverLog(LL_WARNING, "AqRaft MGN-RECOVER: sess=%lld resume dispatch FAILED: %s",
                       sess, err ? err : "(unknown)");
