@@ -2660,6 +2660,7 @@ static void landingConsumerDone(backpatchBatch *b) {
              * g_lp_free=1 lets the slot be re-created on demand. */
             g_lp_pool[i] = NULL; g_lp_buf[i] = NULL; g_lp_pd[i] = NULL;
             g_lp_bytes[i] = 0;   g_lp_free[i] = 1;
+            g_lp_fwd_buf[i] = NULL; g_lp_fwd_cm[i] = NULL;  /* stale twin MR */
             break;
         }
     }
@@ -2956,7 +2957,16 @@ static void *chainPipelineForwardWorker(void *arg) {
      * (leader + F2) ends up holding the bytes and chainPendingTick finalizes on
      * F2's real CHAIN-ACK; if no live follower remains, leave the batch
      * un-finalized so the donor's poll fails the migration loudly. */
-    if (frc != C_OK) {
+    if (frc != C_OK && strncmp(errbuf, "STALL-ABORT:", 12) == 0) {
+        /* The crashed donor's snapshots never completed — a dead F1 is not the
+         * cause, so re-forming to a follower is pointless (it would stall the
+         * same way and re-hold the forward mutex). Abandon this superseded batch;
+         * the recovery session's own forward carries the data. */
+        serverLog(LL_WARNING,
+            "CHAIN: sess=%lld forward abandoned (%s) — NOT re-forming (donor dead, "
+            "superseded by recovery); batch left un-finalized",
+            b->src_mig_id, errbuf);
+    } else if (frc != C_OK) {
         serverLog(LL_WARNING,
             "CHAIN: sess=%lld pipelined forward failed (%s) — attempting chain "
             "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
@@ -3492,20 +3502,30 @@ static void captureSlotSnapshot(backpatchBatch *b, int slot) {
         int base = b->slot_pos_base[slot];
         int nb   = b->slot_pos_nb[slot];
         if (base >= 0 && nb > 0) {
-            void **blks = zmalloc((size_t) nb * sizeof(void *));
-            int got = r_allocator_get_landing_blocks_for_slot(slot, blks, nb);
-            int lim = (got < nb) ? got : nb;
+            /* In a RECOVERY re-ship (S2 donor-leader roll-forward), a crashed
+             * donor's partially-landed blocks for this slot are still registered
+             * here, so the total landing-block count can exceed nb. The list is
+             * oldest->newest, so the resume's FRESH blocks are at the tail: take
+             * the newest nb (skip the stale leading blocks). For a normal
+             * migration got==nb and this is identical to the old behaviour. */
+            int got = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
+            int cap = (got > nb) ? got : nb;
+            void **blks = zmalloc((size_t) cap * sizeof(void *));
+            int fetched = r_allocator_get_landing_blocks_for_slot(slot, blks, cap);
+            int off = (fetched > nb) ? (fetched - nb) : 0;   /* newest nb blocks */
+            int lim = (fetched - off < nb) ? (fetched - off) : nb;
             for (int m = 0; m < lim; m++) {
-                b->landing_va[base + m] = blks[m];
+                b->landing_va[base + m] = blks[off + m];
                 if (b->snapshot_ready != NULL)
                     atomic_store_explicit(&b->snapshot_ready[base + m], 1,
                                           memory_order_release);
             }
-            if (got != nb) {
+            if (fetched != nb) {
                 serverLog(LL_WARNING,
                     "CHAIN capture: slot=%d block count drift got=%d expected=%d "
-                    "(sess=%lld)", slot, got, nb, b->src_mig_id);
-                void *fill = (lim > 0) ? blks[lim - 1] : NULL;
+                    "(sess=%lld) — using newest %d", slot, fetched, nb,
+                    b->src_mig_id, lim);
+                void *fill = (lim > 0) ? blks[off + lim - 1] : NULL;
                 for (int m = lim; m < nb; m++) {
                     b->landing_va[base + m] = fill;
                     if (b->snapshot_ready != NULL)
@@ -4015,6 +4035,12 @@ static void *registerWorkerThread(void *arg) {
         if (g_lp_pool[i] == NULL || g_lp_pd[i] != pd || g_lp_bytes[i] < pool_bytes) {
             g_lp_pool[i] = np; g_lp_buf[i] = nb; g_lp_bytes[i] = alloc_bytes;
             g_lp_pd[i] = pd; g_lp_free[i] = 1; created[i] = 1;
+            /* The forward twin MR cached for this slot was registered against the
+             * OLD pool memory; a reused warm chain QP has the same f1_cm, so
+             * rdmaLandingFwdBufFor would hand back the stale MR (RDMA-write local
+             * protection error). Invalidate it so the twin is re-registered
+             * against `np`. Critical for S2 crash-recovery re-migration. */
+            g_lp_fwd_buf[i] = NULL; g_lp_fwd_cm[i] = NULL;
             pthread_mutex_unlock(&g_lp_mu);
             serverLog(LL_NOTICE,
                 "RDMA REGISTER-BLOCK-SLOTS: landing pool %d registered (%zu bytes)",

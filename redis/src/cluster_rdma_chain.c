@@ -1932,6 +1932,10 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
      * F1-PD twin MR of the landing buffer (lazily registers it if needed). */
     (void) slots;  /* slot list only used for the CHAIN-FORWARDED RPC below */
     void *fwd_buf = rdmaLandingFwdBufFor(landing_buf, rdmamig_client_cm_id(cli));
+    serverLog(LL_NOTICE,
+        "CHAIN: sess=%lld forward: chain-ready PASSED (F1 pool addr=0x%llx rkey=0x%x), "
+        "scanning %d blocks for snapshot_ready", src_mig_id,
+        (unsigned long long) remote_addr, remote_rkey, n_slots);
     if (fwd_buf == NULL) {
         snprintf(errbuf, errbuf_len,
                  "no F1-PD twin MR for landing buf (perslot) sess=%lld", src_mig_id);
@@ -2124,6 +2128,7 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
         struct ibv_wc wc[64];
         unsigned char *posted = zcalloc((size_t) n_slots);
         int n_posted = 0, reaped = 0;
+        long long stall = 0;
         while (reaped < n_slots) {
             int progressed = 0;
             for (int idx = 0; idx < n_slots && (n_posted - reaped) < INFLIGHT; idx++) {
@@ -2187,9 +2192,43 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                 return C_ERR;
             }
             reaped += n;
-            /* No completion and nothing newly postable → waiting on the merge to
-             * capture more snapshots. Brief sleep to avoid a hot spin. */
-            if (n == 0 && !progressed && n_posted < n_slots) usleep(200);
+            if (progressed || n > 0) {
+                stall = 0;   /* real progress -> reset the stall watchdog */
+            } else if (n_posted < n_slots) {
+                /* No completion and nothing newly postable -> waiting on the merge
+                 * to capture more snapshots. In crash recovery the ORIGINAL
+                 * (crashed-donor) session's snapshots stop mid-stream and never
+                 * complete, so this forwarder would spin forever holding
+                 * g_chain_forward_mu and starve the recovery session's forward.
+                 * Abort after ~10s of zero progress and release the mutex; leave
+                 * the batch un-finalized (loud fail, never fake durability). The
+                 * STALL-ABORT sentinel tells the caller NOT to re-form (the donor
+                 * is dead -- a dead F1 is not the cause). */
+                if ((++stall % 5000) == 0) {   /* ~1s of no forward progress */
+                    int nready = 0;
+                    for (int q = 0; q < n_slots; q++)
+                        if (atomic_load_explicit(&snapshot_ready[q],
+                                                 memory_order_acquire)) nready++;
+                    serverLog(LL_WARNING,
+                        "CHAIN: sess=%lld forward STALL — ready=%d/%d posted=%d "
+                        "reaped=%d (blocked awaiting snapshot capture)",
+                        src_mig_id, nready, n_slots, n_posted, reaped);
+                }
+                if (stall >= 50000) {   /* ~10s of zero progress -> donor dead */
+                    pthread_mutex_unlock(&g_chain_forward_mu);
+                    serverLog(LL_WARNING,
+                        "CHAIN: sess=%lld forward STALL-ABORT at %d/%d posted "
+                        "(donor likely dead) — releasing forward mutex so a "
+                        "recovery session can proceed; batch left un-finalized",
+                        src_mig_id, n_posted, n_slots);
+                    zfree(posted); sdsfree(f1_host);
+                    snprintf(errbuf, errbuf_len,
+                        "STALL-ABORT: forward stalled at %d/%d posted (donor dead)",
+                        n_posted, n_slots);
+                    return C_ERR;
+                }
+                usleep(200);
+            }
         }
         zfree(posted);
     }
