@@ -1045,6 +1045,7 @@ static int raftPersistMetadata(raft_server_t *raft, void *user_data,
 static long long g_mgn_active[MGN_MAX_ACTIVE];   /* 0 = empty slot */
 static int       g_mgn_active_count = 0;
 static char      g_mgn_payload[MGN_MAX_ACTIVE][208]; /* TXN_START payload per active sess (recipient+slots) */
+static char      g_mgn_role[MGN_MAX_ACTIVE];         /* 'd'=donor (MGN_TXN_START), 'r'=recipient (MGN_RECP_TXN_START) */
 static long long mgnParseSess(const char *data, int len) {
     if (data == NULL || len <= 0) return -1;
     for (int i = 0; i + 5 <= len; i++) {
@@ -1056,11 +1057,26 @@ static long long mgnParseSess(const char *data, int len) {
     }
     return -1;
 }
-static void mgnMarkActive(long long sess, const char *payload) {
+/* Recipient sessions have inconsistent per-marker ids (register_id on START,
+ * colliding src_mig_id on DONE), but a unique slot RANGE. Key them by slots-lo,
+ * lifted into a high non-zero range (0 = empty-slot sentinel in g_mgn_active). */
+static long long mgnParseSlotLo(const char *data, int len) {
+    if (data == NULL || len <= 0) return -1;
+    for (int i = 0; i + 6 <= len; i++) {
+        if (strncmp(data + i, "slots=", 6) == 0) {
+            long long v = 0; int j = i + 6, any = 0;
+            while (j < len && data[j] >= '0' && data[j] <= '9') { v = v*10 + (data[j]-'0'); j++; any = 1; }
+            return any ? (700000000000000000LL + v) : -1;
+        }
+    }
+    return -1;
+}
+static void mgnMarkActive(long long sess, const char *payload, char role) {
     if (sess < 0) return;
-    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess) return;
+    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess) { g_mgn_role[i] = role; return; }
     for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == 0) {
         g_mgn_active[i] = sess;
+        g_mgn_role[i]   = role;
         snprintf(g_mgn_payload[i], sizeof(g_mgn_payload[i]), "%s", payload ? payload : "");
         g_mgn_active_count++; return;
     }
@@ -1170,10 +1186,15 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                 if (_pn > 0) memcpy(_pl, entry->data, _pn);
                 _pl[_pn > 0 ? _pn : 0] = '\0';
                 long long _sess = mgnParseSess(entry->data, len);
-                if (entry->type == RAFT_LOGTYPE_MGN_TXN_START ||
-                    entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START) mgnMarkActive(_sess, _pl);
-                else if (entry->type == RAFT_LOGTYPE_MGN_TXN_DONE ||
-                         entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE) mgnMarkDone(_sess);
+                long long _rkey = mgnParseSlotLo(entry->data, len);
+                if (entry->type == RAFT_LOGTYPE_MGN_TXN_START)
+                    mgnMarkActive(_sess, _pl, 'd');
+                else if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START)
+                    mgnMarkActive(_rkey, _pl, 'r');
+                else if (entry->type == RAFT_LOGTYPE_MGN_TXN_DONE)
+                    mgnMarkDone(_sess);
+                else if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE)
+                    mgnMarkDone(_rkey);
             }
             if (req) {
                 RaftReqFree(req);
@@ -1371,8 +1392,9 @@ static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_stat
                                g_mgn_active[_i]);
                     /* Reverse loopback into cluster_rdma (separate translation unit, shared
                      * only via RESP): drive the actual resume. Diagnostic v1 logs + acks. */
+                    const char *_role = (g_mgn_role[_i] == 'r') ? "recipient" : "donor";
                     RedisModuleCallReply *_rep = RedisModule_Call(redis_raft.ctx, "RDMA", "cclc",
-                                                    "MGN-RECOVER", "auto", (long long) g_mgn_active[_i],
+                                                    "MGN-RECOVER", _role, (long long) g_mgn_active[_i],
                                                     g_mgn_payload[_i]);
                     if (_rep) RedisModule_FreeCallReply(_rep);
                 }

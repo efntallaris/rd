@@ -2690,11 +2690,24 @@ static void backpatchFinalize(backpatchBatch *b) {
      * deadlock the event loop on its own RAFT.MGN-LOG. */
     int off_main = !pthread_equal(pthread_self(), server.main_thread_id);
 
+    /* AqRaft B#1: the recipient's session identity across markers is inconsistent
+     * (RECP_TXN_START carries register_id; src_mig_id collides at 1 across donors).
+     * The slot RANGE is unique per donor session, so stamp slots=lo-hi on INDX_UPD
+     * and RECP_TXN_DONE too — the recipient become-leader hook keys recovery on it. */
+    int _slot_lo = CLUSTER_SLOTS, _slot_hi = -1;
+    if (b->covered_slots != NULL) {
+        for (int _s = 0; _s < b->n_slots; _s++) {
+            int _sl = b->covered_slots[_s];
+            if (_sl < _slot_lo) _slot_lo = _sl;
+            if (_sl > _slot_hi) _slot_hi = _sl;
+        }
+    }
+
     {
-        char mgn_payload[160];
+        char mgn_payload[192];
         snprintf(mgn_payload, sizeof(mgn_payload),
-                 "sess=%lld n_slots=%d applied=%lld",
-                 b->src_mig_id, b->n_slots,
+                 "sess=%lld slots=%d-%d n_slots=%d applied=%lld",
+                 b->src_mig_id, _slot_lo, _slot_hi, b->n_slots,
                  (long long) atomic_load(&b->applied));
         if (off_main) rdmaMgnLogSync("INDX_UPD", mgn_payload);
         else          rdmaMgnLogAsync("INDX_UPD", mgn_payload);
@@ -2707,10 +2720,10 @@ static void backpatchFinalize(backpatchBatch *b) {
         atomic_store_explicit(&b->indx_applied, 1, memory_order_release);
     }
     {
-        char mgn_payload[160];
+        char mgn_payload[192];
         snprintf(mgn_payload, sizeof(mgn_payload),
-                 "sess=%lld applied=%lld clobber_skipped=%lld",
-                 b->src_mig_id,
+                 "sess=%lld slots=%d-%d applied=%lld clobber_skipped=%lld",
+                 b->src_mig_id, _slot_lo, _slot_hi,
                  (long long) atomic_load(&b->applied),
                  (long long) atomic_load(&b->clobber_skipped));
         if (off_main) rdmaMgnLogSync("RECP_TXN_DONE", mgn_payload);
@@ -7514,6 +7527,34 @@ static void *warmRegisterThread(void *arg) {
  * migration can ROLL FORWARD instead of failing. Diagnostic v1: log + ack, to
  * verify the module->cluster_rdma bridge fires on a real crash before wiring the
  * actual resume (S2 donor re-ship / S1 gap-pull + execute-before-serve). */
+/* AqRaft B#1 — recipient-leader crash recovery (Increment 1: execute held merges).
+ * On promotion the new sg4 leader must finish the adoption the dead leader never
+ * finalized. A chain follower registers each chain-forwarded raw block into the
+ * r_allocator and installs it into live keyspace via the follower-merge; but the
+ * shadow->live drain / late blocks can be left pending when the leader dies. Re-
+ * drive rdmaFollowerEnqueueSlotMerge for EVERY slot that still holds landing
+ * blocks: the don't-clobber merge is idempotent, so re-merging a partially-merged
+ * slot is safe and only adds the not-yet-adopted keys. Instrumented so a real S1
+ * run reports exactly what the promoted node holds (gap-pull for un-received slots
+ * is Increment 2). */
+static void rdmaRecipientRecover(long long sess, const char *payload) {
+    redisDb *db = &server.db[0];
+    unsigned long long db_before = dbSize(db);
+    int slots_with_blocks = 0, staged = 0;
+    for (int slot = 0; slot < CLUSTER_SLOTS; slot++) {
+        int nb = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
+        if (nb > 0) {
+            slots_with_blocks++;
+            staged += rdmaFollowerEnqueueSlotMerge(db, slot);
+        }
+    }
+    serverLog(LL_NOTICE,
+        "AqRaft B#1 recipient-recover: sess=%lld payload=\"%s\" — held landing state: "
+        "slots_with_blocks=%d re-staged=%d DBSIZE_before=%llu "
+        "(follower-merge drains async -> adopting held blocks into live keyspace)",
+        sess, payload ? payload : "", slots_with_blocks, staged, db_before);
+}
+
 void rdmaMgnRecoverCommand(client *c) {
     /* RDMA MGN-RECOVER <role> <sess> [payload]
      * payload is the TXN_START marker: "sess=K slots=lo-hi n=N recipient=host:port". */
@@ -7524,6 +7565,14 @@ void rdmaMgnRecoverCommand(client *c) {
     serverLog(LL_NOTICE,
         "AqRaft MGN-RECOVER: role=%s sess=%lld payload=\"%s\" — driving roll-forward resume",
         role ? role : "(nil)", sess, payload);
+
+    /* B#1 recipient-leader recovery: this node is a surviving sg4 replica that was
+     * promoted; execute the merges the dead leader never finalized. */
+    if (role && strcmp((const char *) role, "recipient") == 0) {
+        rdmaRecipientRecover(sess, payload);
+        addReply(c, shared.ok);
+        return;
+    }
 
     /* B#2 donor resume: re-dispatch the migration for this (newly-elected) leader's
      * owned slots to the recipient. On a fresh leader the reshard offset is 0, so
