@@ -1932,10 +1932,6 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
      * F1-PD twin MR of the landing buffer (lazily registers it if needed). */
     (void) slots;  /* slot list only used for the CHAIN-FORWARDED RPC below */
     void *fwd_buf = rdmaLandingFwdBufFor(landing_buf, rdmamig_client_cm_id(cli));
-    serverLog(LL_NOTICE,
-        "CHAIN: sess=%lld forward: chain-ready PASSED (F1 pool addr=0x%llx rkey=0x%x), "
-        "scanning %d blocks for snapshot_ready", src_mig_id,
-        (unsigned long long) remote_addr, remote_rkey, n_slots);
     if (fwd_buf == NULL) {
         snprintf(errbuf, errbuf_len,
                  "no F1-PD twin MR for landing buf (perslot) sess=%lld", src_mig_id);

@@ -70,6 +70,10 @@ typedef struct rdmamig_buffer rdmamig_buffer;
 rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
                                       size_t size, int access);
 
+/* Twin-MR variant that registers on id->qp->pd (see rdma_buffer.c). */
+rdmamig_buffer *rdmamig_buffer_create_qp_pd(struct rdma_cm_id *id, char *buffer,
+                                            size_t size, int access);
+
 /* AqRaft Stage 5 (donor big-MR): create a lightweight VIEW over an existing
  * registered buffer, exposing the sub-range [sub_ptr, sub_ptr+sub_size) which
  * must lie inside `parent`'s registered region. The view shares parent's MR

@@ -2585,7 +2585,7 @@ void rdmaEnsureLandingFwdReg(struct rdma_cm_id *f1_cm) {
         if (g_lp_buf[i] == NULL) continue;                 /* slot not created yet */
         if (g_lp_fwd_buf[i] != NULL && g_lp_fwd_cm[i] == f1_cm) continue;
         struct rdmamig_buffer *fb =
-            rdmamig_buffer_create(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
+            rdmamig_buffer_create_qp_pd(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
         if (fb != NULL) {
             g_lp_fwd_buf[i] = fb;          /* leak old twin: no destroy helper, same
                                               no-destroy contract as the src_pool MR */
@@ -2609,7 +2609,7 @@ void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm) {
         if (g_lp_buf[i] != (struct rdmamig_buffer *) landing_buf) continue;
         if (g_lp_fwd_buf[i] == NULL || g_lp_fwd_cm[i] != f1_cm) {
             struct rdmamig_buffer *fb =
-                rdmamig_buffer_create(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
+                rdmamig_buffer_create_qp_pd(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
             if (fb != NULL) { g_lp_fwd_buf[i] = fb; g_lp_fwd_cm[i] = f1_cm; }
         }
         out = g_lp_fwd_buf[i];
@@ -3512,18 +3512,43 @@ static void captureSlotSnapshot(backpatchBatch *b, int slot) {
             int cap = (got > nb) ? got : nb;
             void **blks = zmalloc((size_t) cap * sizeof(void *));
             int fetched = r_allocator_get_landing_blocks_for_slot(slot, blks, cap);
-            int off = (fetched > nb) ? (fetched - nb) : 0;   /* newest nb blocks */
-            int lim = (fetched - off < nb) ? (fetched - off) : nb;
+            /* Keep ONLY blocks that lie inside THIS batch's own landing pool (the
+             * range the chain-forward twin MR covers). A crashed donor's stale
+             * blocks for this slot live in a DIFFERENT pool; capturing one makes
+             * the forward RDMA-write from an address outside the twin MR ->
+             * IBV_WC_LOC_PROT_ERR (range). Compact in place (order preserved:
+             * oldest->newest), then take the newest nb of the in-pool blocks.
+             * For a normal migration all fetched blocks are in-pool == no-op. */
+            char *pbase = NULL; size_t pbytes = 0;
+            for (int z = 0; z < N_LANDING_POOLS; z++) {
+                if (g_lp_buf[z] == b->landing_pool_buf) {
+                    pbase = (char *) g_lp_pool[z]; pbytes = g_lp_bytes[z]; break;
+                }
+            }
+            int ni = 0;
+            for (int q = 0; q < fetched; q++) {
+                if (pbase == NULL ||
+                    ((char *) blks[q] >= pbase &&
+                     (char *) blks[q] + RDMAMIG_BLOCK_SIZE_BYTES <= pbase + pbytes))
+                    blks[ni++] = blks[q];
+            }
+            int off = (ni > nb) ? (ni - nb) : 0;   /* newest nb in-pool blocks */
+            int lim = (ni - off < nb) ? (ni - off) : nb;
+            if (ni != fetched)
+                serverLog(LL_WARNING,
+                    "CHAIN capture: slot=%d sess=%lld pool-filter fetched=%d "
+                    "in_pool=%d (skipped %d cross-pool stale block(s))",
+                    slot, b->src_mig_id, fetched, ni, fetched - ni);
             for (int m = 0; m < lim; m++) {
                 b->landing_va[base + m] = blks[off + m];
                 if (b->snapshot_ready != NULL)
                     atomic_store_explicit(&b->snapshot_ready[base + m], 1,
                                           memory_order_release);
             }
-            if (fetched != nb) {
+            if (ni != nb) {
                 serverLog(LL_WARNING,
-                    "CHAIN capture: slot=%d block count drift got=%d expected=%d "
-                    "(sess=%lld) — using newest %d", slot, fetched, nb,
+                    "CHAIN capture: slot=%d block count drift in_pool=%d expected=%d "
+                    "(sess=%lld) — using newest %d", slot, ni, nb,
                     b->src_mig_id, lim);
                 void *fill = (lim > 0) ? blks[off + lim - 1] : NULL;
                 for (int m = lim; m < nb; m++) {

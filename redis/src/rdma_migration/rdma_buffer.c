@@ -96,6 +96,36 @@ rdmamig_buffer *rdmamig_buffer_create(struct rdma_cm_id *id, char *buffer,
     return b;
 }
 
+/* Like rdmamig_buffer_create, but register the MR on the PD the QP was actually
+ * created with (id->qp->pd) instead of the cm's default PD (id->pd). For a
+ * REUSED warm chain QP these can differ; a post_send whose local SGE lkey is
+ * from id->pd but whose QP lives on id->qp->pd completes with
+ * IBV_WC_LOC_PROT_ERR (status=4). The chain-forward twin MR is exactly this
+ * case (S2 donor-leader crash recovery reuses the warm QP to the follower).
+ * Falls back to id->pd when no QP is attached yet. */
+rdmamig_buffer *rdmamig_buffer_create_qp_pd(struct rdma_cm_id *id, char *buffer,
+                                            size_t size, int access)
+{
+    rdmamig_buffer *b = zmalloc(sizeof(*b));
+    if (b == NULL) return NULL;
+    b->id            = id;
+    b->buffer        = buffer;
+    b->size          = size;
+    b->buffer_access = translate_access_flags(access);
+    b->is_view       = 0;
+    struct ibv_pd *pd = (id->qp != NULL && id->qp->pd != NULL) ? id->qp->pd
+                                                               : id->pd;
+    b->mr = ibv_reg_mr(pd, buffer, size, b->buffer_access);
+    if (b->mr == NULL) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING,
+                 "rdmamig_buffer_create_qp_pd: ibv_reg_mr failed for %zu bytes "
+                 "(errno=%d)", size, errno);
+        zfree(b);
+        return NULL;
+    }
+    return b;
+}
+
 /* AqRaft Stage 5 (donor big-MR): create a lightweight VIEW over an existing
  * registered buffer. The view shares `parent`'s MR (same lkey/rkey, same cm_id)
  * but exposes only the sub-range [sub_ptr, sub_ptr+sub_size). `sub_ptr` MUST lie
