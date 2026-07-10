@@ -2354,3 +2354,37 @@ void rdmaDebugChainStatusCommand(client *c) {
     addReplyLongLong(c, len);
     addReplyLongLong(c, ts_ms);
 }
+
+/* RDMA CHAIN-STATUS <sess> <slot_lo> <slot_hi>
+ *
+ * AqRaft B#1 recipient-leader recovery: the newly-promoted sg4 leader broadcasts
+ * this to every surviving replica to discover WHICH one holds a registered landing
+ * block for each slot in [lo,hi] (a committed INDX_UPD guarantees a majority of sg4
+ * physically holds the blocks). Replies with the list of held slots in the range,
+ * so the new leader can have that holder forward the gap slots inward (reusing the
+ * chain-forward push + rdmaApplySlotBlock — no new transfer primitive).
+ *
+ * "Held" == the r_allocator has >=1 registered foreign landing block for the slot
+ * (the chain-forward apply path registers each received block there). */
+void rdmaChainStatusCommand(client *c) {
+    long long sess, lo, hi;
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &sess, NULL) != C_OK) return;
+    if (getLongLongFromObjectOrReply(c, c->argv[3], &lo, NULL) != C_OK) return;
+    if (getLongLongFromObjectOrReply(c, c->argv[4], &hi, NULL) != C_OK) return;
+    (void) sess;
+    if (lo < 0) lo = 0;
+    if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
+    int cap = (hi >= lo) ? (int) (hi - lo + 1) : 0;
+    long long *held = zmalloc((size_t) (cap > 0 ? cap : 1) * sizeof(long long));
+    int n = 0;
+    for (int slot = (int) lo; slot <= (int) hi; slot++) {
+        if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0)
+            held[n++] = slot;
+    }
+    serverLog(LL_NOTICE,
+        "RDMA CHAIN-STATUS: sess=%lld range=%lld-%lld — this node holds %d/%d slots",
+        sess, lo, hi, n, cap);
+    addReplyArrayLen(c, n);
+    for (int i = 0; i < n; i++) addReplyLongLong(c, held[i]);
+    zfree(held);
+}

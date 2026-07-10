@@ -1440,6 +1440,23 @@ struct COMMAND_ARG RDMA_DEBUG_CHAIN_STATUS_Args[] = {
 {MAKE_ARG("src-mig-id",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA CHAIN_STATUS ********************/
+#ifndef SKIP_CMD_HISTORY_TABLE
+#define RDMA_CHAIN_STATUS_History NULL
+#endif
+#ifndef SKIP_CMD_TIPS_TABLE
+#define RDMA_CHAIN_STATUS_Tips NULL
+#endif
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+#define RDMA_CHAIN_STATUS_Keyspecs NULL
+#endif
+/* RDMA CHAIN_STATUS argument table */
+struct COMMAND_ARG RDMA_CHAIN_STATUS_Args[] = {
+{MAKE_ARG("sess",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot-lo",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot-hi",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA DONE_SLOTS ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -1991,6 +2008,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("debug-chain-establish","Debug-only orchestrator for chain replication. Given a session id, the per-follower landing-pool size, and an ordered list of (host, port) pairs for the followers, drive two passes: CHAIN-PREP each follower in order, then CHAIN-WIRE each with predecessor + successor info. Removed once registerWorkerThread invokes the orchestrator directly.","O(N) RPCs where N is the follower count.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_ESTABLISH_History,0,RDMA_DEBUG_CHAIN_ESTABLISH_Tips,0,rdmaDebugChainEstablishCommand,-6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_ESTABLISH_Keyspecs,0,NULL,4),.args=RDMA_DEBUG_CHAIN_ESTABLISH_Args},
 {MAKE_CMD("debug-chain-forward","Debug-only Phase B test. On the leader: lazy-register a source pool against peers[0].client's PD, fill it with the test pattern (byte[i] = i % 256), RDMA-WRITE <length> bytes to peers[0] (F1) and send CHAIN-FORWARDED. F1 cascades down the chain on its worker thread. Caller then runs CHAIN-PING against each follower to verify byte equality. Removed once Phase B is wired into the real mergeBackpatchTick path.","O(length) RDMA WRITE plus one chain TCP RPC.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_FORWARD_History,0,RDMA_DEBUG_CHAIN_FORWARD_Tips,0,rdmaDebugChainForwardCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_FORWARD_Keyspecs,0,NULL,2),.args=RDMA_DEBUG_CHAIN_FORWARD_Args},
 {MAKE_CMD("debug-chain-status","Debug-only Phase B.4 verification. On the leader: returns a 3-element array [ack_count, last_acked_length, last_acked_at_ms] for the given session, so a test can confirm CHAIN-ACK from the chain tail arrived after DEBUG-CHAIN-FORWARD. ack_count == 0 means no tail ack received yet.","O(1)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DEBUG_CHAIN_STATUS_History,0,RDMA_DEBUG_CHAIN_STATUS_Tips,0,rdmaDebugChainStatusCommand,3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DEBUG_CHAIN_STATUS_Keyspecs,0,NULL,1),.args=RDMA_DEBUG_CHAIN_STATUS_Args},
+{MAKE_CMD("chain-status","AqRaft B#1 recipient-leader peer-pull: report which slots in [lo,hi] this sg4 replica holds a registered landing block for.","O(hi-lo)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_CHAIN_STATUS_History,0,RDMA_CHAIN_STATUS_Tips,0,rdmaChainStatusCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_CHAIN_STATUS_Keyspecs,0,NULL,3),.args=RDMA_CHAIN_STATUS_Args},
 {MAKE_CMD("done-slots","Recipient side: iterate landed segments for the listed slots and apply them into the keyspace via dbAdd.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_History,0,RDMA_DONE_SLOTS_Tips,0,rdmaDoneSlotsCommand,-3,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_Keyspecs,0,NULL,1),.args=RDMA_DONE_SLOTS_Args},
 {MAKE_CMD("done-slots-chunk","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): append K per-slot work items onto backpatch_work_queue for the batch created by a prior DONE-SLOTS-INIT. Pool workers pick them up immediately.","O(K) per call where K is the number of slots in the chunk.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_CHUNK_History,0,RDMA_DONE_SLOTS_CHUNK_Tips,0,rdmaDoneSlotsChunkCommand,-6,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_CHUNK_Keyspecs,0,NULL,4),.args=RDMA_DONE_SLOTS_CHUNK_Args},
 {MAKE_CMD("done-slots-init","Recipient side (Aqueduct TRANSFER/BACKPATCH overlap): pre-allocate a backpatchBatch sized to total_slots before donor begins TRANSFER. Subsequent DONE-SLOTS-CHUNK calls append work items to its pool queue.","O(1).","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_DONE_SLOTS_INIT_History,0,RDMA_DONE_SLOTS_INIT_Tips,0,rdmaDoneSlotsInitCommand,5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_DONE_SLOTS_INIT_Keyspecs,0,NULL,3),.args=RDMA_DONE_SLOTS_INIT_Args},
