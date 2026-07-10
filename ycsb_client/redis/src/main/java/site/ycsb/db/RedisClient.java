@@ -372,6 +372,22 @@ public class RedisClient extends DB {
         getOrOpen(hp);
         POLL_TARGETS.add(hp);   // poller must query EVERY master (no node has the full post-migration map)
         DONOR_HOSTS.add(hp.getHost());   // bootstrap owners are all donor-cluster nodes
+        // AqRaft failover fix: also learn the REPLICAS of each range. On a
+        // leader crash a replica is promoted; without its endpoint the client
+        // only knows the dead master and can NEVER re-resolve (throughput
+        // flatlines). Adding replicas to POLL_TARGETS lets the poller/refresh
+        // query them — the promoted replica reports itself as master in its own
+        // CLUSTER SLOTS, so ownership re-resolves to the new leader.
+        for (int ri = 3; ri < range.size(); ri++) {
+          try {
+            List<Object> rep = (List<Object>) range.get(ri);
+            String rh = SafeEncoder.encode((byte[]) rep.get(0));
+            long rp = (Long) rep.get(1);
+            HostAndPort rhp = new HostAndPort(rh, (int) rp);
+            POLL_TARGETS.add(rhp);
+            DONOR_HOSTS.add(rhp.getHost());
+          } catch (Exception ignore) { /* skip malformed replica entry */ }
+        }
       }
     } catch (Exception e) {
       throw new DBException("CLUSTER SLOTS bootstrap failed: " + e.getMessage());
@@ -454,12 +470,19 @@ public class RedisClient extends DB {
   @SuppressWarnings("unchecked")
   private HostAndPort refreshSlotOwner(int slot) {
     List<HostAndPort> probes = new ArrayList<>();
-    probes.add(seedHostPort);
+    // Probe live cluster members (replicas included via POLL_TARGETS) BEFORE the
+    // seed — the seed is often the crashed donor master, and probing it first
+    // wastes a full socket timeout per re-resolve. A promoted replica answers
+    // CLUSTER SLOTS with the new ownership.
+    for (HostAndPort hp : POLL_TARGETS) {
+      if (!probes.contains(hp)) probes.add(hp);
+    }
     if (conns != null) {
       for (HostAndPort hp : conns.keySet()) {
-        if (!hp.equals(seedHostPort)) probes.add(hp);
+        if (!probes.contains(hp)) probes.add(hp);
       }
     }
+    if (!probes.contains(seedHostPort)) probes.add(seedHostPort);
     for (HostAndPort probe : probes) {
       Jedis j = null;
       try {

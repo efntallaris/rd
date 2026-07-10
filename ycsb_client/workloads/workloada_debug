@@ -1,0 +1,11 @@
+# Smaller workload for fast crash-recovery debugging (loads + runs quickly).
+recordcount=3000000
+operationcount=50000000
+maxexecutiontime=240
+workload=site.ycsb.workloads.CoreWorkload
+readallfields=true
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+requestdistribution=zipfian
