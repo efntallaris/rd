@@ -4471,6 +4471,7 @@ void rdmaMigrateWarmCommand(client *c);
 void rdmaChainWarmCommand(client *c);
 void rdmaEvictSlotsCommand(client *c);
 void rdmaMgnRecoverCommand(client *c);   /* AqRaft roll-forward recovery (reverse loopback) */
+void rdmaMgnDonorRehomeCommand(client *c);  /* AqRaft B#1 recipient-leader recovery re-home */
 void rdmaMigrateAllStatusCommand(client *c);
 void rdmaMigrateCompleteCommand(client *c);
 void rdmaRegisterResultCommand(client *c);

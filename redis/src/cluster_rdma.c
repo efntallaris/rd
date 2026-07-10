@@ -6398,6 +6398,14 @@ static int rdmaLinkSlotsPrepared(rdmaOutboundLink *L, const int *slots, int n) {
     return 1;
 }
 
+/* Forward decls: the backpatch-timeout B#1 re-home path (inside migrationWorker)
+ * calls these before their definitions later in the file. */
+static long long startLocalMigration(const char *host, int port, int n_slots,
+                                     sds orch_endpoint, long long orch_id,
+                                     int start_delay_ms, const char **err_out,
+                                     const int *want_slots);
+static int donorRehomeLookup(int slot_lo, char *host_out, int host_len, int *port_out);
+
 static void *migrationWorker(void *arg) {
     rdmaMigration *mig = (rdmaMigration *) arg;
     sds err = NULL;
@@ -6634,6 +6642,34 @@ static void *migrationWorker(void *arg) {
             return NULL;
         }
         if (!done) {
+            /* B#1 donor re-home: the recipient leader died mid-backpatch. If its
+             * successor recorded where it re-homed, re-ship to that (now-stable)
+             * leader instead of failing loudly. The re-ship worker's own
+             * BACKPATCH-STATUS poll IS the status query + it finalizes (done) on
+             * the new leader; the recipient don't-clobber merge makes re-shipping
+             * whatever the survivors already hold idempotent. */
+            char nh[128]; int nport = 0;
+            int slot_lo = (mig->n_slots > 0) ? mig->chosen[0] : -1;
+            if (slot_lo >= 0 && donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) {
+                const char *rerr = NULL;
+                long long saved_next = server.rdma_migration_next_id;
+                server.rdma_migration_next_id =
+                    800000000000000000LL + (slot_lo > 0 ? slot_lo : 1);
+                long long rid = startLocalMigration(nh, nport, mig->n_slots,
+                                                    NULL, 0, 0, &rerr, mig->chosen);
+                server.rdma_migration_next_id = saved_next;
+                if (rid >= 0) {
+                    serverLog(LL_NOTICE,
+                        "AqRaft B#1 donor re-home: recipient leader gone; re-shipped "
+                        "slots (lo=%d n=%d) to NEW leader %s:%d as id=%lld — original "
+                        "migration id=%lld superseded",
+                        slot_lo, mig->n_slots, nh, nport, rid, mig->id);
+                    return NULL;
+                }
+                serverLog(LL_WARNING,
+                    "AqRaft B#1 donor re-home: re-ship to %s:%d FAILED: %s — failing "
+                    "migration", nh, nport, rerr ? rerr : "(unknown)");
+            }
             migFail(mig, sdsnew("recipient backpatch timed out after 60s of polling"));
             return NULL;
         }
@@ -6702,7 +6738,8 @@ static void *migrationWorker(void *arg) {
 static long long startLocalMigration(const char *host, int port, int n_slots,
                                      sds orch_endpoint, long long orch_id,
                                      int start_delay_ms,
-                                     const char **err_out) {
+                                     const char **err_out,
+                                     const int *want_slots) {
     *err_out = NULL;
 
     /* AqRaft-aware guard: ok if either vanilla-cluster is up OR
@@ -6724,25 +6761,41 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
      * inter-round gap to a dispatch+poll (~0.2s). The donor self-advances the
      * counter so successive RDMA MIGRATE-ALLs pick successive chunks. Reset to 0
      * (CONFIG SET rdma-reshard-migrated 0) before round 0. */
-    int reshard_skip = server.rdma_reshard_migrated;
     int *chosen = zmalloc((size_t) n_slots * sizeof(int));
     int picked = 0;
-    int seen_owned = 0;
-    clusterTopoLockRead();
-    for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
-        if (rdmaMigrationOwnsSlot(i)) {
-            if (seen_owned++ < reshard_skip) continue;   /* already migrated by a prior round */
-            chosen[picked++] = i;
+    if (want_slots != NULL) {
+        /* B#1 recovery re-ship: migrate the crashed session's EXACT slots (still
+         * owned — the donor never evicted after the failed migration), not the
+         * offset-based next chunk. Do NOT advance the reshard offset. */
+        clusterTopoLockRead();
+        for (int i = 0; i < n_slots; i++)
+            if (rdmaMigrationOwnsSlot(want_slots[i])) chosen[picked++] = want_slots[i];
+        clusterTopoUnlock();
+        if (picked < n_slots) {
+            zfree(chosen);
+            if (orch_endpoint) sdsfree(orch_endpoint);
+            *err_out = "recovery: self no longer owns all requested slots";
+            return -1;
         }
+    } else {
+        int reshard_skip = server.rdma_reshard_migrated;
+        int seen_owned = 0;
+        clusterTopoLockRead();
+        for (int i = 0; i < CLUSTER_SLOTS && picked < n_slots; i++) {
+            if (rdmaMigrationOwnsSlot(i)) {
+                if (seen_owned++ < reshard_skip) continue;   /* already migrated by a prior round */
+                chosen[picked++] = i;
+            }
+        }
+        clusterTopoUnlock();
+        if (picked < n_slots) {
+            zfree(chosen);
+            if (orch_endpoint) sdsfree(orch_endpoint);
+            *err_out = "self owns fewer slots than requested (after reshard offset)";
+            return -1;
+        }
+        server.rdma_reshard_migrated += n_slots;   /* advance offset for the next round */
     }
-    clusterTopoUnlock();
-    if (picked < n_slots) {
-        zfree(chosen);
-        if (orch_endpoint) sdsfree(orch_endpoint);
-        *err_out = "self owns fewer slots than requested (after reshard offset)";
-        return -1;
-    }
-    server.rdma_reshard_migrated += n_slots;   /* advance offset for the next round */
 
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
@@ -6849,7 +6902,7 @@ void rdmaMigrateCommand(client *c) {
     const char *err = NULL;
     long long mig_id = startLocalMigration(host, port, n_slots,
                                            orch_endpoint, orch_id,
-                                           (int) start_delay_ms, &err);
+                                           (int) start_delay_ms, &err, NULL);
     if (mig_id < 0) {
         addReplyError(c, err ? err : "RDMA MIGRATE: dispatch failed");
         return;
@@ -7233,7 +7286,7 @@ static long long orchAllocateAndDispatch(client *c,
         long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
                                                     n_slots_per_source,
                                                     self_orch_ep, orch->id,
-                                                    0, &self_err);
+                                                    0, &self_err, NULL);
         if (self_mig_id < 0) {
             serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
                       self_err ? self_err : "?");
@@ -7336,7 +7389,7 @@ static long long orchAllocateAndDispatch(client *c,
         long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
                                                     n_slots_per_source,
                                                     self_orch_ep, orch->id,
-                                                    0, &self_err);
+                                                    0, &self_err, NULL);
         if (self_mig_id < 0) {
             serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
                       self_err ? self_err : "?");
@@ -7527,6 +7580,55 @@ static void *warmRegisterThread(void *arg) {
  * migration can ROLL FORWARD instead of failing. Diagnostic v1: log + ack, to
  * verify the module->cluster_rdma bridge fires on a real crash before wiring the
  * actual resume (S2 donor re-ship / S1 gap-pull + execute-before-serve). */
+/* AqRaft B#1 donor re-home table. When a recipient leader dies mid-migration, its
+ * elected successor tells each affected donor where it re-homed via
+ * RDMA MGN-DONOR-REHOME <slot_lo> <host> <port>. The donor's in-flight migration,
+ * on its backpatch-status timeout (by which the new leader is stable), re-ships to
+ * the recorded endpoint instead of failing. Keyed by the session's first slot. */
+#define DONOR_REHOME_MAX 16
+static struct { int slot_lo; char host[128]; int port; } g_donor_rehome[DONOR_REHOME_MAX];
+static pthread_mutex_t g_donor_rehome_mu = PTHREAD_MUTEX_INITIALIZER;
+
+void rdmaMgnDonorRehomeCommand(client *c) {
+    /* RDMA MGN-DONOR-REHOME <slot_lo> <host> <port> */
+    long long slot_lo = -1, port = 0;
+    if (getLongLongFromObject(c->argv[2], &slot_lo) != C_OK ||
+        getLongLongFromObject(c->argv[4], &port) != C_OK) {
+        addReplyError(c, "syntax: RDMA MGN-DONOR-REHOME <slot_lo> <host> <port>");
+        return;
+    }
+    const char *host = c->argv[3]->ptr;
+    pthread_mutex_lock(&g_donor_rehome_mu);
+    int idx = -1;
+    for (int i = 0; i < DONOR_REHOME_MAX; i++)
+        if (g_donor_rehome[i].host[0] && g_donor_rehome[i].slot_lo == (int) slot_lo) { idx = i; break; }
+    if (idx < 0)
+        for (int i = 0; i < DONOR_REHOME_MAX; i++) if (g_donor_rehome[i].host[0] == 0) { idx = i; break; }
+    if (idx >= 0) {
+        g_donor_rehome[idx].slot_lo = (int) slot_lo;
+        snprintf(g_donor_rehome[idx].host, sizeof(g_donor_rehome[idx].host), "%s", host);
+        g_donor_rehome[idx].port = (int) port;
+    }
+    pthread_mutex_unlock(&g_donor_rehome_mu);
+    serverLog(LL_NOTICE,
+        "AqRaft B#1 DONOR-REHOME recorded: slot_lo=%lld -> new recipient leader %s:%lld "
+        "(in-flight migration for this range will re-ship there on its next backpatch timeout)",
+        slot_lo, host, port);
+    addReply(c, shared.ok);
+}
+
+static int donorRehomeLookup(int slot_lo, char *host_out, int host_len, int *port_out) {
+    int found = 0;
+    pthread_mutex_lock(&g_donor_rehome_mu);
+    for (int i = 0; i < DONOR_REHOME_MAX; i++)
+        if (g_donor_rehome[i].host[0] && g_donor_rehome[i].slot_lo == slot_lo) {
+            snprintf(host_out, host_len, "%s", g_donor_rehome[i].host);
+            *port_out = g_donor_rehome[i].port; found = 1; break;
+        }
+    pthread_mutex_unlock(&g_donor_rehome_mu);
+    return found;
+}
+
 /* AqRaft B#1 — recipient-leader crash recovery (Increment 1: execute held merges).
  * On promotion the new sg4 leader must finish the adoption the dead leader never
  * finalized. A chain follower registers each chain-forwarded raw block into the
@@ -7553,6 +7655,68 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
         "slots_with_blocks=%d re-staged=%d DBSIZE_before=%llu "
         "(follower-merge drains async -> adopting held blocks into live keyspace)",
         sess, payload ? payload : "", slots_with_blocks, staged, db_before);
+
+    /* B#1 donor hand-off: the survivors hold only a fraction of the session (chain
+     * replication lags the leader's merge), but the DONOR is alive and still holds
+     * the full slot range (it never evicted — the migration failed). Ask that donor
+     * to RE-SHIP the range to THIS node (the new sg4 leader) by reusing the S2 donor
+     * re-dispatch: send it MGN-RECOVER donor with recipient=<me>. The donor's
+     * startLocalMigration re-runs the migration; this node's normal recipient path
+     * (REGISTER-BLOCK-SLOTS -> merge -> INDX_UPD) adopts it. Recovery slot state is
+     * idempotent (don't-clobber), so re-shipping what the survivors already have is
+     * safe. */
+    char dhost[256]; dhost[0] = '\0'; int dport = 0, nslots = 0, slot_lo = -1, slot_hi = -1;
+    const char *dp = payload ? strstr(payload, "donor=") : NULL;
+    const char *np = payload ? strstr(payload, "n=") : NULL;
+    const char *sp = payload ? strstr(payload, "slots=") : NULL;
+    if (dp) sscanf(dp, "donor=%255[^: ]:%d", dhost, &dport);
+    if (np) sscanf(np, "n=%d", &nslots);
+    if (sp) sscanf(sp, "slots=%d-%d", &slot_lo, &slot_hi);
+    if (dhost[0] == '\0' || dport <= 0 || nslots <= 0) {
+        serverLog(LL_WARNING,
+            "AqRaft B#1 recipient-recover: sess=%lld — could not parse donor/n from "
+            "payload; donor re-ship not triggered", sess);
+        return;
+    }
+    /* This node's externally-reachable endpoint (what the donor should dial). */
+    char self_buf[256]; const char *self_host;
+    if (server.cluster && server.cluster->myself && server.cluster->myself->ip[0])
+        self_host = server.cluster->myself->ip;
+    else if (gethostname(self_buf, sizeof(self_buf)) == 0) {
+        self_buf[sizeof(self_buf) - 1] = '\0'; self_host = self_buf;
+    } else self_host = "127.0.0.1";
+    int self_port = (int) server.port;
+
+    char donor_payload[256];
+    snprintf(donor_payload, sizeof(donor_payload),
+             "sess=%lld slots=%d-%d n=%d recipient=%s:%d",
+             sess, slot_lo, slot_hi, nslots, self_host, self_port);
+    serverLog(LL_NOTICE,
+        "AqRaft B#1 recipient-recover: sess=%lld — asking donor %s:%d to RE-SHIP "
+        "slots=%d-%d (n=%d) to new leader %s:%d [donor_payload=\"%s\"]",
+        sess, dhost, dport, slot_lo, slot_hi, nslots, self_host, self_port, donor_payload);
+
+    redisContext *ctx = redisConnect(dhost, dport);
+    if (ctx == NULL || ctx->err) {
+        serverLog(LL_WARNING,
+            "AqRaft B#1 recipient-recover: sess=%lld — connect to donor %s:%d failed: %s",
+            sess, dhost, dport, ctx ? ctx->errstr : "(null)");
+        if (ctx) redisFree(ctx);
+        return;
+    }
+    redisReply *rep = redisCommand(ctx, "RDMA MGN-DONOR-REHOME %d %s %d",
+                                   slot_lo, self_host, self_port);
+    if (rep == NULL)
+        serverLog(LL_WARNING,
+            "AqRaft B#1 recipient-recover: sess=%lld — donor MGN-RECOVER RPC got no reply (%s)",
+            sess, ctx->errstr);
+    else {
+        serverLog(LL_NOTICE,
+            "AqRaft B#1 recipient-recover: sess=%lld — donor re-ship requested (reply type=%d)",
+            sess, rep->type);
+        freeReplyObject(rep);
+    }
+    redisFree(ctx);
 }
 
 void rdmaMgnRecoverCommand(client *c) {
@@ -7593,7 +7757,7 @@ void rdmaMgnRecoverCommand(client *c) {
          * afterwards so normal migrations keep their compact ids. */
         long long saved_next = server.rdma_migration_next_id;
         server.rdma_migration_next_id = 800000000000000000LL + (sess > 0 ? sess : 0);
-        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err);
+        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err, NULL);
         server.rdma_migration_next_id = saved_next;
         if (mid < 0)
             serverLog(LL_WARNING, "AqRaft MGN-RECOVER: sess=%lld resume dispatch FAILED: %s",
