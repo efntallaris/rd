@@ -13,10 +13,10 @@ Four crash scenarios with user-defined required behavior, all **roll-forward, ne
 
 | # | scenario | required behavior | status today |
 |---|----------|-------------------|--------------|
-| S1 | recipient **leader** (redis3) | on election: detect active migration → execute committed-but-unexecuted `INDX_UPD`s (third watermark `mgn_executed_idx`) → pull missing blocks from a surviving peer (`CHAIN-STATUS`) → re-form chain → donor hand-off | **designed, not implemented** |
-| S2 | donor **leader** (redis0/1/2) | on election: new donor leader RPCs the recipient for session status → resumes from remaining slots | **designed, not implemented** |
+| S1 | recipient **leader** (redis3) | on election: detect active migration → execute committed-but-unexecuted `INDX_UPD`s (third watermark `mgn_executed_idx`) → pull missing blocks from a surviving peer (`CHAIN-STATUS`) → re-form chain → donor hand-off | **designed, not implemented** — baseline GAP confirmed 2026-07-09 (redis5 elected leader, migration NOT resumed, DBSIZE 42k vs 7.49M). Reconciled build plan: `IMPL_PLAN_S1_S2.md` |
+| S2 | donor **leader** (redis0/1/2) | on election: new donor leader RPCs the recipient for session status → resumes from remaining slots | **designed, not implemented** — baseline run 2026-07-09 (see NIGHT_SUMMARY.md §4). Build plan: `IMPL_PLAN_S1_S2.md` |
 | S3 | donor **follower** | majority (2/3) holds → migration completes unaffected | **PASSES today (validated control)** |
-| S4 | recipient **follower** (redis4/5) | predecessor detects death → **leader re-forms the chain** around the dead member → real majority ack → only then `INDX_UPD` | **implemented, verification in progress** |
+| S4 | recipient **follower** (redis4/5) | predecessor detects death → **leader re-forms the chain** around the dead member → real majority ack → only then `INDX_UPD` | **✅ VERIFIED PASS (2026-07-09, run #3, script-verified)**: reform=1, chain-ack=3 (real durability), INDX_UPD=3, degrade=0, DBSIZE 7,492,752 exact, 0 crash/YCSB err. Fixed 3 harness bugs first (see §1d). |
 
 **Core invariant (drives everything):** `INDX_UPD` committed ⟺ the session's data is
 physically on a **majority** of the recipient group. Never fire it on a timeout or as a
@@ -47,27 +47,55 @@ fallback — wait/repair as long as needed; with no live majority, fail loudly.
   - Fixes found via testing: idempotent re-form for sibling batches sharing one session
     (`n_peers==1` → re-forward to survivor, don't refuse); NULL-peer crash guard
     (`sdsdup(NULL)` segfault when the dead follower died mid-establish).
-- **Verification state of Part B:** the mechanism was OBSERVED WORKING in run v1
-  (`RE-FORM — dropped dead head redis4 → promoted redis5 → re-forwarded → chain-ack
-  observed count=1, real live-majority durability`) but a full clean S4 PASS is still
-  pending — runs v2/v4 had harness timing bugs (kill landed outside the forward window /
-  phantom kill on a stale pid+log; both injector bugs now fixed).
+- **Verification state of Part B: ✅ VERIFIED PASS (2026-07-09, run #3, script-verified).**
+  Kill landed mid-forward (`poll_send for F1 failed after 105/1366 reaped`) → `RE-FORM — dropped
+  dead head redis4 → promoted redis5` → re-forwarded → `chain-ack observed count=1,2,3 (real
+  live-majority durability)` → `MGN_INDX_UPD applied` (=3, fired only after genuine ack) → migration
+  DONE, DBSIZE 7,492,752 exact, degrade=0, fail-loud=0, crash-sig=0, YCSB err=0. It took 3 runs
+  because runs #1/#2 exposed harness bugs (§1d) that were making verdicts LIE — those are fixed.
+  Evidence: NIGHT_SUMMARY.md, S4_RERUN_2345_EVIDENCE.md, snapshot
+  `/tmp/crash_inject/S4-recipient-follower_leaderlog.snap`. Figures `/tmp/plots/crash_s4_{gantt,ycsb}.png`.
+
+### 1c-bis. Local bookkeeping WITHOUT Raft (2026-07-11) — foundation for S1/S2
+User decision: bookkeep locally, never through Raft (node-local facts; consensus wrong + slow).
+Implemented `rdmaSlotInventory` (cluster_rdma_chain.c): per-session received/merged bitmaps +
+executed flag, apply-then-mark rule, hooks at follower chain-apply, leader DONE-SLOTS-CHUNK, and
+the mergeBackpatchTick choke point. `RDMA CHAIN-STATUS <sess> <lo> <hi> [MERGED]` answers from it
+(session-scoped + merge-aware; legacy allocator probe as fallback). Details: IMPL_PLAN_S1_S2.md §1c.
+
+### ⚠️ FINDING (2026-07-11, exposed by the new inventory on its FIRST run): followers only
+APPLY the FIRST donor batch. All donors number their own migrations (3 concurrent donors all
+send sess=1); the follower per-session `applied` guard (cluster_rdma_chain.c:1260, Patch 29 —
+meant for RETRIES of the same batch) misclassifies donor batches 2/3 as retries: evidence on
+redis4+redis5: one `CHAIN apply: sess=1 n_slots=1365` then 2x `already applied — skipping
+re-apply (retry)`. Verified with CHAIN-STATUS: leader holds 4095/4095 migrated slots, EACH
+follower holds only donor #1's 1365. => the durability invariant is violated at the APPLY level
+in EVERY run to date (acks confirm receipt into the pool, not adoption); a promoted follower is
+missing ~2/3 of the migrated keyspace. LIKELY WORSE (needs a targeted read-check): the single
+per-session landing pool means batches 2/3's RDMA-writes overwrite batch 1's bytes, which the
+follower adopted IN-PLACE from that pool — probable corruption of the follower's batch-1 data.
+FIX (S1 prerequisite, not yet done): globally-unique per-batch session identity on the wire
+(e.g. donor-node-qualified sess) OR per-batch pools + per-batch apply tracking.
 
 ### 1d. Harness + docs (ansible/crash/, committed)
 `crash_inject.sh` (marker-armed killer; fresh-log gate + alive-pid check),
 `scenarios.env` (S1–S4 arm/target config), `run_crash_scenario.sh` (one-command:
 arm → base 30M reshard → verdict), `verdict.sh` (crash sigs, leader changes, degrade
-counts, DBSIZE, YCSB errors — reads collected logs, fetches sg4 follower logs the base
-collection skips). Baselines recorded: S3 PASS, S4 gap. Figures in `figures/`.
+counts, DBSIZE, YCSB errors). **3 harness bugs fixed 2026-07-09 (verdicts were untrustworthy):**
+(P1) `verdict.sh` read a **2h-STALE** collected redis3 leader log → false PASS; now fetches redis3
+fresh + rejects empty. (P2) S4 kill armed on `landing F1-PD twins ensured` which fires for the WARM
+pre-establish (sess=9e17), killing redis4 ~10s BEFORE the real forward → now arms on `spawned
+pipelined forwarder`. (P3) recipient-LEADER log is WIPED at end-of-run → injector now snapshots it at
+kill+120s to a durable path; verdict prefers the snapshot. Baselines: S3 PASS, S4 **PASS**, S1/S2 gap.
 
 ---
 
 ## 2. What NEEDS TO BE DONE
 
-1. **Finish S4 verification (next step):** re-run `run_crash_scenario.sh S4` with the
-   fixed injector; expect `RE-FORM dropped dead head` >0, `chain-ack observed` >0,
-   `immediately as fallback` =0, migration DONE, DBSIZE 7,492,752, no crash sigs.
-   Then commit figures + mark S4 done.
+1. ~~**Finish S4 verification**~~ ✅ **DONE 2026-07-09** — verified PASS (§1c), figures generated,
+   3 harness bugs fixed. See NIGHT_SUMMARY.md. (Optional hardening TODO: establish-time-death — if a
+   follower dies DURING a session's establish, `rdmaLeaderChainEstablish` bails leaving later peers
+   unpopulated so re-form can't promote; the mid-forward S4 scenario avoids it. See S4_RUN_ANALYSIS_2310.md §P3.)
 2. **S1/S2 baseline runs** (harness ready): confirm the documented gaps — S1: promoted
    follower does NOT resume the migration; S2: donor FAILED + recipient batch stuck.
 3. **Phase B #1 — recipient-leader recovery** (largest feature):

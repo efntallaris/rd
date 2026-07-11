@@ -180,6 +180,162 @@ static pthread_mutex_t g_chain_forward_mu = PTHREAD_MUTEX_INITIALIZER;
  * F1-PD twin MR is pre-registered off-main by rdmaEnsureLandingFwdReg), so there
  * is no separate scratch pool to allocate, register, or cache. */
 
+/* ====================================================================== *
+ *  AqRaft local slot inventory — bookkeeping WITHOUT Raft                 *
+ *                                                                         *
+ *  Node-LOCAL, in-memory, per-session record of which slots this node     *
+ *  physically HOLDS (received: raw landing block present + registered)    *
+ *  and which it has MERGED into its live keyspace, plus a per-session     *
+ *  EXECUTED flag (merge fully applied). This is deliberately NOT Raft-    *
+ *  replicated: it describes node-local facts (every node's answer         *
+ *  differs), so consensus would be semantically wrong and a Raft round-   *
+ *  trip per slot prohibitively slow. The GLOBAL facts stay in Raft where  *
+ *  they already are (mgn-log TXN_START / INDX_UPD / TXN_DONE).            *
+ *                                                                         *
+ *  Safety WITHOUT durability: the inventory lives and dies with the       *
+ *  in-memory keyspace it describes (sg4 runs snapshot-disable). A crash   *
+ *  kills bytes and bookkeeping together, so a restarted node correctly    *
+ *  claims nothing. The ONE RULE that keeps claims honest: mark a bit      *
+ *  only AFTER the block/merge is actually installed/applied ("apply-then- *
+ *  mark"). Crash in between => data without a claim (harmless: re-pull is *
+ *  idempotent), never a claim without data.                               *
+ *  CAVEAT: if the keyspace ever becomes disk-persistent (snapshots        *
+ *  re-enabled), this inventory must join the same persistence domain or   *
+ *  be discarded/reconciled at boot.                                       *
+ *                                                                         *
+ *  Consumers: RDMA CHAIN-STATUS (peers answer gap-pull queries from       *
+ *  their local inventory), the promoted-leader S1 reconciliation           *
+ *  (gap = committed sessions from MY OWN raft log − MY inventory), and    *
+ *  the S2 donor-status path (merged/remaining per slot).                  *
+ *                                                                         *
+ *  SESSION-ID COLLISION (real, by design of the wire protocol): every     *
+ *  donor numbers its own migrations, so three concurrent donors all send  *
+ *  sess=1; the recipient batch key disambiguates by (src_node_id, sess)   *
+ *  but CHAIN-FORWARDED carries sess only, so this inventory CANNOT key by *
+ *  node id on followers. That is safe for the per-slot bitmaps because    *
+ *  donor slot RANGES are disjoint — a RANGE-scoped query (which is how    *
+ *  all consumers ask, via the TXN_START payload's slots=lo-hi) is exact.  *
+ *  The `executed` bool is therefore ADVISORY under collision (any donor's *
+ *  merge_done sets it); the authoritative "executed for session K" is     *
+ *  "all slots in K's range have the merged bit" = CHAIN-STATUS MERGED.    *
+ * ====================================================================== */
+typedef struct rdmaSlotInventory {
+    long long sess;                              /* 0 = free entry */
+    int       executed;                          /* merge fully applied locally */
+    long long n_received, n_merged;
+    unsigned char received[CLUSTER_SLOTS / 8];   /* raw block held locally */
+    unsigned char merged[CLUSTER_SLOTS / 8];     /* applied to live keyspace */
+} rdmaSlotInventory;
+static rdmaSlotInventory g_slot_inv[RDMA_CHAIN_MAX_SESSIONS];
+static pthread_mutex_t g_slot_inv_mu = PTHREAD_MUTEX_INITIALIZER;
+
+#define INV_BIT_SET(bm, s)  ((bm)[(s) >> 3] |=  (1u << ((s) & 7)))
+#define INV_BIT_GET(bm, s)  (((bm)[(s) >> 3] >> ((s) & 7)) & 1u)
+
+/* Caller holds g_slot_inv_mu. */
+static rdmaSlotInventory *invFind(long long sess, int create) {
+    int free_i = -1;
+    for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
+        if (g_slot_inv[i].sess == sess) return &g_slot_inv[i];
+        if (g_slot_inv[i].sess == 0 && free_i < 0) free_i = i;
+    }
+    if (!create || free_i < 0) return NULL;
+    memset(&g_slot_inv[free_i], 0, sizeof(g_slot_inv[free_i]));
+    g_slot_inv[free_i].sess = sess;
+    return &g_slot_inv[free_i];
+}
+
+/* Mark AFTER the raw landing block for `slot` is physically present and
+ * registered on THIS node (apply-then-mark). */
+void rdmaInvMarkReceived(long long sess, int slot) {
+    if (sess == 0 || slot < 0 || slot >= CLUSTER_SLOTS) return;
+    pthread_mutex_lock(&g_slot_inv_mu);
+    rdmaSlotInventory *inv = invFind(sess, 1);
+    if (inv && !INV_BIT_GET(inv->received, slot)) {
+        INV_BIT_SET(inv->received, slot);
+        inv->n_received++;
+    }
+    pthread_mutex_unlock(&g_slot_inv_mu);
+}
+
+/* Mark AFTER `slot`'s shadow has been fully drained into the live keyspace. */
+void rdmaInvMarkMerged(long long sess, int slot) {
+    if (sess == 0 || slot < 0 || slot >= CLUSTER_SLOTS) return;
+    pthread_mutex_lock(&g_slot_inv_mu);
+    rdmaSlotInventory *inv = invFind(sess, 1);
+    if (inv && !INV_BIT_GET(inv->merged, slot)) {
+        INV_BIT_SET(inv->merged, slot);
+        inv->n_merged++;
+    }
+    pthread_mutex_unlock(&g_slot_inv_mu);
+}
+
+/* Follower merge completions carry no session (backpatchMergeWork.batch==NULL);
+ * resolve by the received bit — slot ranges are disjoint across sessions, so at
+ * most one session claims the slot. */
+void rdmaInvMarkMergedBySlot(int slot) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return;
+    pthread_mutex_lock(&g_slot_inv_mu);
+    for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
+        rdmaSlotInventory *inv = &g_slot_inv[i];
+        if (inv->sess != 0 && INV_BIT_GET(inv->received, slot)) {
+            if (!INV_BIT_GET(inv->merged, slot)) {
+                INV_BIT_SET(inv->merged, slot);
+                inv->n_merged++;
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_slot_inv_mu);
+}
+
+/* Mark AFTER the session's merge is FULLY applied to the live keyspace
+ * (the local mgn_executed watermark — "I executed this INDX_UPD"). */
+void rdmaInvMarkExecuted(long long sess) {
+    if (sess == 0) return;
+    pthread_mutex_lock(&g_slot_inv_mu);
+    rdmaSlotInventory *inv = invFind(sess, 1);
+    if (inv) inv->executed = 1;
+    pthread_mutex_unlock(&g_slot_inv_mu);
+    serverLog(LL_NOTICE,
+        "AqRaft inventory: sess=%lld EXECUTED (merge fully applied locally)", sess);
+}
+
+/* Snapshot query helpers (single lock hold). kind: 0=received, 1=merged.
+ * Fills out[] with slot ids in [lo,hi] whose bit is set; returns count, or -1
+ * if the session has no inventory entry on this node. */
+int rdmaInvSlotsInRange(long long sess, int kind, int lo, int hi,
+                        long long *out, int cap) {
+    pthread_mutex_lock(&g_slot_inv_mu);
+    rdmaSlotInventory *inv = invFind(sess, 0);
+    if (inv == NULL) {
+        pthread_mutex_unlock(&g_slot_inv_mu);
+        return -1;
+    }
+    const unsigned char *bm = (kind == 1) ? inv->merged : inv->received;
+    int n = 0;
+    for (int s = lo; s <= hi && n < cap; s++)
+        if (INV_BIT_GET(bm, s)) out[n++] = s;
+    pthread_mutex_unlock(&g_slot_inv_mu);
+    return n;
+}
+
+/* Summary for logs/status: returns 1 + fills counters if the session exists. */
+int rdmaInvSummary(long long sess, long long *n_received, long long *n_merged,
+                   int *executed) {
+    pthread_mutex_lock(&g_slot_inv_mu);
+    rdmaSlotInventory *inv = invFind(sess, 0);
+    if (inv == NULL) {
+        pthread_mutex_unlock(&g_slot_inv_mu);
+        return 0;
+    }
+    if (n_received) *n_received = inv->n_received;
+    if (n_merged)   *n_merged   = inv->n_merged;
+    if (executed)   *executed   = inv->executed;
+    pthread_mutex_unlock(&g_slot_inv_mu);
+    return 1;
+}
+
 /* Forward decl — definition is further down in the leader-side section. */
 static rdmaLeaderChainState *findLeaderState(long long src_mig_id);
 
@@ -1024,6 +1180,9 @@ static void *chainApplyWorker(void *arg) {
                 /* One merge enqueue per slot drains ALL its registered blocks
                  * (the merge walks the slot's full block list). */
                 g_chain_landing_registered[slot] = 1;
+                /* Local inventory (apply-then-mark): the raw block is now
+                 * physically present AND registered on this node. */
+                rdmaInvMarkReceived(job->src_mig_id, slot);
                 total_staged += rdmaFollowerEnqueueSlotMerge(job->db, slot);
             }
             i += run;
@@ -2366,24 +2525,55 @@ void rdmaDebugChainStatusCommand(client *c) {
  *
  * "Held" == the r_allocator has >=1 registered foreign landing block for the slot
  * (the chain-forward apply path registers each received block there). */
+/* RDMA CHAIN-STATUS <sess> <lo> <hi> [MERGED]
+ *
+ * Report which slots in [lo,hi] this sg4 replica holds for the given session,
+ * answered from the node-LOCAL slot inventory (bookkeeping without Raft: bits
+ * are set apply-then-mark, so a claimed slot is genuinely present). Default
+ * reports RECEIVED (raw landing block held — what a gap-pull needs); the
+ * optional MERGED mode reports slots already applied to the live keyspace
+ * (what the S2 donor-status "remaining" computation needs).
+ *
+ * Compat fallback: if this node has NO inventory entry for the session (e.g.
+ * blocks landed before this feature, or a warm sentinel), fall back to the
+ * session-blind r_allocator probe the B#1 increment shipped with. */
 void rdmaChainStatusCommand(client *c) {
     long long sess, lo, hi;
     if (getLongLongFromObjectOrReply(c, c->argv[2], &sess, NULL) != C_OK) return;
     if (getLongLongFromObjectOrReply(c, c->argv[3], &lo, NULL) != C_OK) return;
     if (getLongLongFromObjectOrReply(c, c->argv[4], &hi, NULL) != C_OK) return;
-    (void) sess;
+    int kind = 0;   /* 0 = received (default), 1 = merged */
+    if (c->argc >= 6) {
+        const char *m = (const char *) c->argv[5]->ptr;
+        if (strcasecmp(m, "MERGED") == 0) kind = 1;
+        else if (strcasecmp(m, "RECEIVED") != 0) {
+            addReplyError(c, "CHAIN-STATUS: expected RECEIVED or MERGED");
+            return;
+        }
+    }
     if (lo < 0) lo = 0;
     if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
     int cap = (hi >= lo) ? (int) (hi - lo + 1) : 0;
     long long *held = zmalloc((size_t) (cap > 0 ? cap : 1) * sizeof(long long));
-    int n = 0;
-    for (int slot = (int) lo; slot <= (int) hi; slot++) {
-        if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0)
-            held[n++] = slot;
+    int n = rdmaInvSlotsInRange(sess, kind, (int) lo, (int) hi, held, cap);
+    const char *src = "inventory";
+    if (n < 0) {
+        /* No inventory for this session on this node — legacy fallback
+         * (session-blind, received-equivalent only). */
+        src = "allocator-fallback";
+        n = 0;
+        if (kind == 0) {
+            for (int slot = (int) lo; slot <= (int) hi; slot++)
+                if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0)
+                    held[n++] = slot;
+        }
     }
+    long long nr = 0, nm = 0; int ex = 0;
+    (void) rdmaInvSummary(sess, &nr, &nm, &ex);
     serverLog(LL_NOTICE,
-        "RDMA CHAIN-STATUS: sess=%lld range=%lld-%lld — this node holds %d/%d slots",
-        sess, lo, hi, n, cap);
+        "RDMA CHAIN-STATUS: sess=%lld range=%lld-%lld %s — holds %d/%d slots [%s; "
+        "session totals received=%lld merged=%lld executed=%d]",
+        sess, lo, hi, kind ? "MERGED" : "RECEIVED", n, cap, src, nr, nm, ex);
     addReplyArrayLen(c, n);
     for (int i = 0; i < n; i++) addReplyLongLong(c, held[i]);
     zfree(held);

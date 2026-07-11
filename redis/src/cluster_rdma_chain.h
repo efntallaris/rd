@@ -48,6 +48,20 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
 int rdmaLeaderChainDropDeadHead(long long src_mig_id,
                                 char *errbuf, size_t errbuf_len);
 
+/* AqRaft local slot inventory (bookkeeping WITHOUT Raft): node-local,
+ * in-memory, per-session record of received (raw block held) / merged
+ * (applied to live keyspace) slots + executed flag. RULE: mark only AFTER
+ * the install/apply succeeded (apply-then-mark). See the module comment in
+ * cluster_rdma_chain.c. */
+void rdmaInvMarkReceived(long long sess, int slot);
+void rdmaInvMarkMerged(long long sess, int slot);
+void rdmaInvMarkMergedBySlot(int slot);   /* follower path: no sess in the work item */
+void rdmaInvMarkExecuted(long long sess);
+int  rdmaInvSlotsInRange(long long sess, int kind /*0=received,1=merged*/,
+                         int lo, int hi, long long *out, int cap);
+int  rdmaInvSummary(long long sess, long long *n_received, long long *n_merged,
+                    int *executed);
+
 /* rdmaLeaderChainForwardPerSlot: pass-through chain forward.
  *
  * Caller supplies `snapshot_pool` — a snapshot of the donor's raw 2 MiB

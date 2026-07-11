@@ -2240,6 +2240,12 @@ void rdmaDoneSlotsChunkCommand(client *c) {
      * covered_slots position to a chunk seq in the forwarder. */
     if (chunk_seq == 0) b->chunk_slots = n_slots;
 
+    /* Local inventory (apply-then-mark): the donor RDMA-WROTE this chunk's
+     * blocks into our landing pool BEFORE sending DONE-SLOTS-CHUNK, so the
+     * bytes are physically present on this node as of now. */
+    for (int j = 0; j < n_slots; j++)
+        rdmaInvMarkReceived(src_mig_id, items[j]->slot);
+
     /* Phase C: append this chunk's slots to covered_slots BEFORE enqueuing
      * the worker items. The pass-through chain snapshot in the backpatch
      * worker looks up the slot's index in covered_slots; if we enqueue
@@ -3308,6 +3314,12 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
          * to do, then drop the work item. If this was the last slot of
          * the batch, transition to BACKPATCH_DONE and dispose. */
         backpatchBatch *b = w->batch;
+        /* Local inventory (apply-then-mark): this slot's shadow is fully
+         * drained into the live keyspace on THIS node. Leader items carry the
+         * batch (sess = src_mig_id); follower items have batch==NULL, so the
+         * session is resolved from the received bit. */
+        if (b != NULL) rdmaInvMarkMerged(b->src_mig_id, w->slot);
+        else           rdmaInvMarkMergedBySlot(w->slot);
         /* AqRaft Patch 29: recipient FOLLOWERS enqueue merge work with
          * batch == NULL (rdmaFollowerEnqueueSlotMerge). They reuse this same
          * main-thread shadow->live drain, but must NOT run the leader-only
@@ -3335,6 +3347,9 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
              * donor's poll correctly waits until chain has replicated to
              * majority AND MGN_INDX_UPD has committed. */
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
+            /* Local inventory: session merge FULLY applied on this node —
+             * the local "mgn executed" watermark advances (no Raft involved). */
+            rdmaInvMarkExecuted(b->src_mig_id);
             if (server.rdma_merge_background) {
                 long long first = atomic_load_explicit(&g_bgm_first_us, memory_order_relaxed);
                 serverLog(LL_NOTICE,

@@ -47,12 +47,35 @@ explicitly marked DONE — this is the build plan for S1 (recipient-leader) and 
   TWO existing dictReplace sites: cluster_rdma.c:1913 (DONE-SLOTS legacy), :2113 (DONE-SLOTS-INIT).
   b->src_mig_id already stored (:1503). Additive, no behavior change — SAFE.
 
-### 1c. Third watermark `mgn_executed_idx` (per-session, durable)   [S1]
-- Semantics: advances only when a session's merge is FULLY APPLIED to live keyspace.
-- Storage: sg4 has `--raft.snapshot-disable yes` => full log retained, every INDX_UPD inspectable.
-  Minimum viable: a per-session in-memory map on the recipient (sess→executed bool) rebuilt on
-  promotion by replaying the log; add field to backpatchBatch too. (Full Raft-persisted watermark
-  only needed if snapshots ever enabled — out of scope now, note it.)
+### 1c. Bookkeeping = LOCAL STATE, NOT Raft   [S1+S2]  — ✅ IMPLEMENTED 2026-07-11
+**DECISION (user): bookkeep locally, never through Raft.** The bookkeeping describes *node-local*
+facts ("which blocks I hold, which merges I applied to MY keyspace") — every node's answer differs,
+so consensus is semantically wrong and a Raft round-trip per slot prohibitively slow. What must be
+global ALREADY IS (mgn-log TXN_START / INDX_UPD / TXN_DONE). On promotion:
+`gap = (slots of committed sessions, from MY OWN raft log — local, snapshot-disable retains it)
+       − (my local inventory)`.
+
+Implemented as `rdmaSlotInventory` (cluster_rdma_chain.c): per-session {received bitmap, merged
+bitmap, executed flag} + `rdmaInvMark{Received,Merged,MergedBySlot,Executed}` / query helpers,
+~4 KB/session static. Hook sites (all apply-then-mark):
+- follower receive: chain apply loop after `r_allocator_register_existing_block` success;
+- leader receive: `rdmaDoneSlotsChunkCommand` (donor RDMA-wrote before sending the RPC);
+- per-slot merged + executed: the single merge choke point in `mergeBackpatchTick`
+  (`w->shadow==NULL` block / `merge_done=1` site; follower items resolve sess by received-bit).
+`RDMA CHAIN-STATUS <sess> <lo> <hi> [MERGED]` now answers from this inventory (session-scoped,
+merge-aware), with the old session-blind allocator probe as compat fallback.
+
+**Safety without durability:** inventory lives and dies with the in-memory keyspace it describes
+(sg4 = snapshot-disable); crash kills bytes+claims together. THE ONE RULE: mark only AFTER the
+install/apply succeeded — a crash in between yields data-without-claim (harmless, idempotent
+re-pull), never claim-without-data. CAVEAT: if snapshots are ever enabled, the inventory must join
+the same persistence domain or be discarded at boot.
+
+**Known collision (wire-protocol reality):** all donors number their own migrations (three
+concurrent donors all send sess=1; CHAIN-FORWARDED carries sess only). Safe for the bitmaps because
+donor slot RANGES are disjoint → range-scoped queries (how all consumers ask, via TXN_START
+`slots=lo-hi`) are exact. `executed` bool is ADVISORY under collision; authoritative "executed for
+session K" = all slots in K's range merged = CHAIN-STATUS MERGED over the range.
 
 ## 2. S1 — recipient-leader recovery (build order)
 Precondition: #4 (S4) verified. Recovery reuses #4's re-form primitive.
