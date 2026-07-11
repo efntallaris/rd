@@ -512,22 +512,24 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
     # (no 0 tick); do not relim/autoscale here — that would re-include 0.
 
     # ONE duration label over the cold-excluded window (no M1/M2/M3).
-    # HIGHLIGHTED: name the band ("migration N.Ns") and point an arrow at it —
-    # the bare duration floated above an invisible band was easy to miss.
+    # HIGHLIGHTED: name the band ("migration N.Ns"), bold, centered directly
+    # above it with a short arrow down into the band. Centered (no horizontal
+    # offset) so the label can never land outside the axes and stretch the
+    # tight bbox — an offset variant did exactly that on mid-run windows.
     if win_start is not None and win_end is not None and win_end > win_start:
         span_mid = (win_start + win_end) / 2.0
         span_total = win_end - win_start
         for ax in (ax_tp, ax_lat):
             ax.annotate(
                 f"migration {span_total:.1f}s",
-                xy=(span_mid, 0.98), xycoords=("data", "axes fraction"),
-                xytext=(28, 14), textcoords="offset points",
-                ha="left", va="bottom",
+                xy=(span_mid, 1.0), xycoords=("data", "axes fraction"),
+                xytext=(0, 18), textcoords="offset points",
+                ha="center", va="bottom",
                 color=PHASE_COLORS["BAND_EDGE"],
                 fontsize=_FS_BAND_LABEL, fontweight="bold",
                 arrowprops=dict(arrowstyle="->", lw=1.2,
                                 color=PHASE_COLORS["BAND_EDGE"],
-                                shrinkA=2, shrinkB=0),
+                                shrinkA=1, shrinkB=0),
             )
         # Footer "Migration window: …" line intentionally omitted.
 
