@@ -495,10 +495,16 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
 
     # Migration shading: ONE band over the cold-excluded window (first donor
     # FLIPPING -> last donor DONE). No per-source M1/M2/M3 bands/labels.
+    # HIGHLIGHTED: a ~3.5s window on a ~600s axis is <1% of the plot width, so a
+    # low-alpha fill alone is invisible — add a stronger fill plus dashed edge
+    # vlines at the window boundaries so the window reads at any zoom.
     if win_start is not None and win_end is not None and win_end > win_start:
         for ax in (ax_tp, ax_lat):
-            ax.axvspan(win_start, win_end, alpha=0.20,
+            ax.axvspan(win_start, win_end, alpha=0.45,
                        color=PHASE_COLORS["BAND_FILL"], zorder=1)
+            for x in (win_start, win_end):
+                ax.axvline(x, color=PHASE_COLORS["BAND_EDGE"], ls="--",
+                           lw=1.2, alpha=0.9, zorder=2)
 
     # Recompute y-limits before annotating so labels sit at correct height.
     ax_lat.relim(); ax_lat.autoscale_view()
@@ -506,17 +512,22 @@ def plot(expdir: Path, output: Path, span_only: bool = False,
     # (no 0 tick); do not relim/autoscale here — that would re-include 0.
 
     # ONE duration label over the cold-excluded window (no M1/M2/M3).
+    # HIGHLIGHTED: name the band ("migration N.Ns") and point an arrow at it —
+    # the bare duration floated above an invisible band was easy to miss.
     if win_start is not None and win_end is not None and win_end > win_start:
         span_mid = (win_start + win_end) / 2.0
         span_total = win_end - win_start
         for ax in (ax_tp, ax_lat):
             ax.annotate(
-                f"{span_total:.1f}s",
-                xy=(span_mid, 1.0), xycoords=("data", "axes fraction"),
-                xytext=(0, 4), textcoords="offset points",
-                ha="center", va="bottom",
+                f"migration {span_total:.1f}s",
+                xy=(span_mid, 0.98), xycoords=("data", "axes fraction"),
+                xytext=(28, 14), textcoords="offset points",
+                ha="left", va="bottom",
                 color=PHASE_COLORS["BAND_EDGE"],
-                fontsize=_FS_BAND_LABEL,
+                fontsize=_FS_BAND_LABEL, fontweight="bold",
+                arrowprops=dict(arrowstyle="->", lw=1.2,
+                                color=PHASE_COLORS["BAND_EDGE"],
+                                shrinkA=2, shrinkB=0),
             )
         # Footer "Migration window: …" line intentionally omitted.
 
