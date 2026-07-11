@@ -74,8 +74,20 @@ in EVERY run to date (acks confirm receipt into the pool, not adoption); a promo
 missing ~2/3 of the migrated keyspace. LIKELY WORSE (needs a targeted read-check): the single
 per-session landing pool means batches 2/3's RDMA-writes overwrite batch 1's bytes, which the
 follower adopted IN-PLACE from that pool — probable corruption of the follower's batch-1 data.
-FIX (S1 prerequisite, not yet done): globally-unique per-batch session identity on the wire
-(e.g. donor-node-qualified sess) OR per-batch pools + per-batch apply tracking.
+FIX ✅ LANDED + VERIFIED (2026-07-11, run chainsess_verify): recipient-synthesized globally-unique
+`chain_sess` per batch (7e17 namespace; backpatchBatch.chain_sess; all leader chain ops re-keyed;
+followers unchanged — they key by the sess on the wire; inventory answers range-aggregate).
+Verified: 3 unique sessions assigned; followers now log 3x `CHAIN apply` + 0x `already applied —
+skipping`; follower inventory 1365/1365/1365 across all donor ranges (received AND merged);
+3 real chain-acks; 0 sg4 elections (the 2 extra in-window CHAIN-PREP registrations did not
+destabilize raft); 0 crash-sigs. Follower keyspace gap shrank 9,697 -> 8,016.
+
+⚠️ RESIDUAL FINDING (open): ~8,016 keys (~3.2%) still missing on BOTH followers, and the missing
+set is DETERMINISTIC (redis4=241,841 vs redis5=241,839 despite very different staged counts) =>
+the same keys are absent everywhere. Suspect: the FOLLOWER-side block decoder
+(rdmaBackpatchSlotFillShadow entry walker) systematically misses ~3.2% of entries that the
+LEADER's different walker (rdmaBackpatchSlotWithStats / adopt-in-place) does adopt from the SAME
+bytes. Needs: walker diff + a DONT_INTERCEPT debug read on a follower to sample the missing keys.
 
 ### 1d. Harness + docs (ansible/crash/, committed)
 `crash_inject.sh` (marker-armed killer; fresh-log gate + alive-pid check),

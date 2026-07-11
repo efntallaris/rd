@@ -303,19 +303,42 @@ void rdmaInvMarkExecuted(long long sess) {
 
 /* Snapshot query helpers (single lock hold). kind: 0=received, 1=merged.
  * Fills out[] with slot ids in [lo,hi] whose bit is set; returns count, or -1
- * if the session has no inventory entry on this node. */
+ * if this node has no inventory at all.
+ *
+ * Lookup is exact-session first, then RANGE-AGGREGATE (union across every
+ * inventory entry): the wire chain session is the recipient-synthesized
+ * unique chain_sess (7e17 namespace), while consumers (B#1 peer-pull, the
+ * promoted-leader reconciliation) query by the TXN_START sess. Donor slot
+ * ranges are disjoint, so the union restricted to [lo,hi] is exact for the
+ * batch that owns that range regardless of which id the bits were filed
+ * under. */
 int rdmaInvSlotsInRange(long long sess, int kind, int lo, int hi,
                         long long *out, int cap) {
     pthread_mutex_lock(&g_slot_inv_mu);
     rdmaSlotInventory *inv = invFind(sess, 0);
-    if (inv == NULL) {
+    int n = 0;
+    if (inv != NULL) {
+        const unsigned char *bm = (kind == 1) ? inv->merged : inv->received;
+        for (int s = lo; s <= hi && n < cap; s++)
+            if (INV_BIT_GET(bm, s)) out[n++] = s;
+        pthread_mutex_unlock(&g_slot_inv_mu);
+        return n;
+    }
+    int have_any = 0;
+    for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++)
+        if (g_slot_inv[i].sess != 0) { have_any = 1; break; }
+    if (!have_any) {
         pthread_mutex_unlock(&g_slot_inv_mu);
         return -1;
     }
-    const unsigned char *bm = (kind == 1) ? inv->merged : inv->received;
-    int n = 0;
-    for (int s = lo; s <= hi && n < cap; s++)
-        if (INV_BIT_GET(bm, s)) out[n++] = s;
+    for (int s = lo; s <= hi && n < cap; s++) {
+        for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
+            rdmaSlotInventory *e = &g_slot_inv[i];
+            if (e->sess == 0) continue;
+            const unsigned char *bm = (kind == 1) ? e->merged : e->received;
+            if (INV_BIT_GET(bm, s)) { out[n++] = s; break; }
+        }
+    }
     pthread_mutex_unlock(&g_slot_inv_mu);
     return n;
 }

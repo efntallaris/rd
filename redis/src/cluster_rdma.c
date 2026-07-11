@@ -1514,6 +1514,19 @@ typedef struct backpatchBatch {
     int      n_slots;
     char     src_node_id[CLUSTER_NAMELEN + 1];
     long long src_mig_id;
+    /* Recipient-synthesized GLOBALLY-UNIQUE chain session id for this batch.
+     * Donors number their own migrations, so three concurrent donors all send
+     * src_mig_id=1; keying the chain (establish/forward/ack/pool) by that
+     * collides all batches into ONE follower session — the follower's
+     * per-session `applied` retry-guard then skips every batch after the
+     * first ("already applied — skipping re-apply"), leaving followers
+     * missing 2/3 of the migrated data, and later batches' RDMA-writes reuse
+     * (overwrite) the first batch's single landing pool while its shadow-fill
+     * may still be decoding. A unique per-batch chain session gives each
+     * batch its own follower state + landing pool: the applied-guard becomes
+     * correct and the overwrite race disappears. 7e17 namespace keeps it
+     * disjoint from the warm sentinel (9e17) and donor re-home ids (8e17). */
+    long long chain_sess;
     _Atomic int          idx;        /* Slots completed so far (pool path); was in-order
                                         position in the single-thread path. */
     _Atomic long long    applied;
@@ -1729,6 +1742,17 @@ static int              backpatch_pool_size  = 0;     /* Snapshot of config at s
 static int              backpatch_pool_started = 0;
 
 static dict *backpatch_batches_by_key = NULL;
+
+/* Recipient-local allocator for globally-unique per-batch chain session ids
+ * (see backpatchBatch.chain_sess). Process-local monotonic counter is enough:
+ * the id only needs to be consistent leader<->followers for one batch's
+ * lifetime, and it does not survive restart (nothing chain-side does). */
+#define RDMA_CHAIN_SESS_BASE 700000000000000000LL
+static _Atomic long long g_chain_sess_seq = 0;
+static long long chainSessAlloc(void) {
+    return RDMA_CHAIN_SESS_BASE +
+           atomic_fetch_add_explicit(&g_chain_sess_seq, 1, memory_order_relaxed);
+}
 static pthread_mutex_t backpatch_batches_mu = PTHREAD_MUTEX_INITIALIZER;
 
 /* ====================================================================== *
@@ -1836,6 +1860,7 @@ void rdmaDoneSlotsCommand(client *c) {
     memcpy(b->src_node_id, src_node_id, strlen(src_node_id));
     b->src_node_id[strlen(src_node_id)] = '\0';
     b->src_mig_id = src_mig_id;
+    b->chain_sess = chainSessAlloc();
     atomic_store(&b->idx, 0);
     atomic_store(&b->applied, 0);
     atomic_store(&b->clobber_skipped, 0);
@@ -1936,7 +1961,13 @@ void rdmaDoneSlotsCommand(client *c) {
     if (server.rdma_chain_followers != NULL &&
         sdslen(server.rdma_chain_followers) > 0) {
         long long pool_bytes = (long long) n_slots * RDMAMIG_BLOCK_SIZE_BYTES;
-        rdmaChainSpawnEstablish(src_mig_id, pool_bytes,
+        /* Chain is keyed by the batch's UNIQUE chain_sess, not the donor's
+         * colliding src_mig_id — each batch gets its own follower session +
+         * landing pool (see backpatchBatch.chain_sess). */
+        serverLog(LL_NOTICE,
+            "AqRaft chain: batch node=%.8s mig_id=%lld -> chain_sess=%lld (legacy DONE-SLOTS)",
+            src_node_id, src_mig_id, b->chain_sess);
+        rdmaChainSpawnEstablish(b->chain_sess, pool_bytes,
                                 server.rdma_chain_followers);
     }
 
@@ -2050,6 +2081,7 @@ void rdmaDoneSlotsInitCommand(client *c) {
     memcpy(b->src_node_id, src_node_id, CLUSTER_NAMELEN);
     b->src_node_id[CLUSTER_NAMELEN] = '\0';
     b->src_mig_id = src_mig_id;
+    b->chain_sess = chainSessAlloc();
     atomic_store(&b->idx, 0);
     atomic_store(&b->applied, 0);
     atomic_store(&b->clobber_skipped, 0);
@@ -2167,7 +2199,13 @@ void rdmaDoneSlotsInitCommand(client *c) {
     if (server.rdma_chain_followers != NULL &&
         sdslen(server.rdma_chain_followers) > 0) {
         long long pool_bytes = (long long) b->total_blocks * RDMAMIG_BLOCK_SIZE_BYTES;
-        rdmaChainSpawnEstablish(src_mig_id, pool_bytes,
+        /* Chain is keyed by the batch's UNIQUE chain_sess, not the donor's
+         * colliding src_mig_id — each batch gets its own follower session +
+         * landing pool (see backpatchBatch.chain_sess). */
+        serverLog(LL_NOTICE,
+            "AqRaft chain: batch node=%.8s mig_id=%lld -> chain_sess=%lld (DONE-SLOTS-INIT)",
+            src_node_id, src_mig_id, b->chain_sess);
+        rdmaChainSpawnEstablish(b->chain_sess, pool_bytes,
                                 server.rdma_chain_followers);
         /* chain-pipeline: spawn the dedicated forwarder NOW (not at merge-done)
          * so it RDMA-forwards each block to F1 as the backpatch workers capture
@@ -2867,7 +2905,7 @@ static void *chainForwardWorker(void *arg) {
         /* (B) Chain forward off-main. rdmaLeaderChainForwardPerSlot is the
          * 2.86 GB memcpy + RDMA-WRITE WR posts that used to block main. */
         char errbuf[256] = {0};
-        int frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
+        int frc = rdmaLeaderChainForwardPerSlot(b->chain_sess,
                                                 job->slots_copy, job->n_slots,
                                                 b->landing_va,
                                                 b->landing_pool_buf,
@@ -2882,9 +2920,9 @@ static void *chainForwardWorker(void *arg) {
                 "CHAIN: sess=%lld leader forward failed (%s) — attempting chain "
                 "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
             char rfe[256] = {0};
-            if (rdmaLeaderChainDropDeadHead(b->src_mig_id, rfe, sizeof(rfe)) == C_OK) {
+            if (rdmaLeaderChainDropDeadHead(b->chain_sess, rfe, sizeof(rfe)) == C_OK) {
                 char fe2[256] = {0};
-                frc = rdmaLeaderChainForwardPerSlot(b->src_mig_id,
+                frc = rdmaLeaderChainForwardPerSlot(b->chain_sess,
                                                     job->slots_copy, job->n_slots,
                                                     b->landing_va, b->landing_pool_buf,
                                                     fe2, sizeof(fe2));
@@ -2965,7 +3003,7 @@ static void *chainPipelineForwardWorker(void *arg) {
      * every block of a fat slot is forwarded. total_blocks == n_slots in the
      * common single-block case. */
     int frc = rdmaLeaderChainForwardPipelined(
-                  b->src_mig_id, b->covered_slots, b->total_blocks,
+                  b->chain_sess, b->covered_slots, b->total_blocks,
                   b->landing_va, b->landing_pool_buf,
                   b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
                   errbuf, sizeof(errbuf));
@@ -2990,10 +3028,10 @@ static void *chainPipelineForwardWorker(void *arg) {
             "CHAIN: sess=%lld pipelined forward failed (%s) — attempting chain "
             "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
         char rfe[256] = {0};
-        if (rdmaLeaderChainDropDeadHead(b->src_mig_id, rfe, sizeof(rfe)) == C_OK) {
+        if (rdmaLeaderChainDropDeadHead(b->chain_sess, rfe, sizeof(rfe)) == C_OK) {
             char fe2[256] = {0};
             frc = rdmaLeaderChainForwardPipelined(
-                      b->src_mig_id, b->covered_slots, b->total_blocks,
+                      b->chain_sess, b->covered_slots, b->total_blocks,
                       b->landing_va, b->landing_pool_buf,
                       b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
                       fe2, sizeof(fe2));
@@ -3071,7 +3109,7 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
     int chain_configured = (server.rdma_chain_followers != NULL &&
                             sdslen(server.rdma_chain_followers) > 0);
     long long ack_count = chain_configured
-        ? rdmaLeaderChainAckCount(b->src_mig_id) : -1;
+        ? rdmaLeaderChainAckCount(b->chain_sess) : -1;
     int chain_ready = (chain_configured && ack_count >= 0 &&
                        b->covered_slots != NULL &&
                        b->covered_slot_count > 0 &&
@@ -3133,7 +3171,7 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
     listRewind(backpatch_chain_pending, &li);
     while ((ln = listNext(&li)) != NULL) {
         backpatchBatch *b = listNodeValue(ln);
-        long long count = rdmaLeaderChainAckCount(b->src_mig_id);
+        long long count = rdmaLeaderChainAckCount(b->chain_sess);
         int acked = (count > b->chain_baseline_ack_count);
         /* EXPERIMENT (paper naive baseline): if rdma-naive-durability is set,
          * fire MGN_INDX_UPD on the 5s deadline even WITHOUT a real ack — the
