@@ -2603,6 +2603,19 @@ static int                    g_lp_next = 0;     /* round-robin cursor (xsession
 static pthread_mutex_t        g_lp_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t         g_lp_cv = PTHREAD_COND_INITIALIZER;
 
+/* AqRaft crash-recovery landing-pool right-sizing. A promoted sg4 leader's
+ * donor re-ship (rdmaRecipientRecover) re-pulls exactly ONE session's slot range,
+ * so registerWorkerThread needs only ONE landing pool, not the full xsession ring
+ * of N_LANDING_POOLS. The normal ring is registered ONCE in the amortized
+ * pre-window; a recovery re-ship happens IN the post-promotion critical path,
+ * where creating all N pools costs ~1s ibv_reg_mr EACH (~7s serial for the 8-pool
+ * ring, all to receive a single ~2.86 GB session — the S1 recovery bottleneck).
+ * rdmaRecipientRecover publishes the active recovery slot range here;
+ * registerWorkerThread caps n_pools to 1 for a job whose slots fall in it.
+ * [lo,hi] during recovery, else [-1,-1]. */
+static _Atomic int            g_recov_active_lo = -1;
+static _Atomic int            g_recov_active_hi = -1;
+
 /* AqRaft zero-copy chain forward: second registration of each landing-ring
  * buffer against the leader->F1 chain QP's cm_id/PD. The landing pool is
  * registered (g_lp_buf) on the recipient SERVER PD (donor incoming RDMA-write);
@@ -4095,7 +4108,26 @@ static void *registerWorkerThread(void *arg) {
     /* Adopt-in-place never recycles pools (each is retired as live storage), so it
      * needs the full ring (>= n_rounds*n_donors) to avoid round-2 blocking on the
      * free-wait. */
-    const int n_pools = server.rdma_chain_xsession ? N_LANDING_POOLS : 1;
+    int n_pools = server.rdma_chain_xsession ? N_LANDING_POOLS : 1;
+    /* AqRaft crash-recovery right-sizing: a promoted leader's donor re-ship carries
+     * ONE session's slots and runs IN the post-promotion critical path — registering
+     * the whole xsession ring here costs ~1s ibv_reg_mr per pool (~7s). Detect the
+     * re-ship by the active recovery slot range (rdmaRecipientRecover) and register
+     * just ONE pool. n_pools=1 is the standard non-xsession mode (fully supported);
+     * the single pool is a normal ring buffer, so chain re-forward + adopt-in-place
+     * are unchanged. */
+    {
+        int first_slot = (job->n_pairs > 0) ? job->slot_ids[0] : -1;
+        int rlo = atomic_load(&g_recov_active_lo);
+        int rhi = atomic_load(&g_recov_active_hi);
+        if (first_slot >= 0 && rlo >= 0 && first_slot >= rlo && first_slot <= rhi) {
+            n_pools = 1;
+            serverLog(LL_NOTICE,
+                "RDMA REGISTER-BLOCK-SLOTS: recovery re-ship (slot %d in %d-%d) — "
+                "registering 1 landing pool, not the %d-pool xsession ring",
+                first_slot, rlo, rhi, server.rdma_chain_xsession ? N_LANDING_POOLS : 1);
+        }
+    }
 
     /* Create any pool not yet allocated (or too small / wrong PD). The mmap +
      * ibv_reg_mr is done WITHOUT the ring lock (it's slow); publish under lock. */
@@ -7828,6 +7860,19 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
         self_buf[sizeof(self_buf) - 1] = '\0'; self_host = self_buf;
     } else self_host = "127.0.0.1";
     int self_port = (int) server.port;
+
+    /* AqRaft crash-recovery right-sizing: publish this session's slot range so the
+     * incoming donor re-ship's registerWorkerThread registers ONE landing pool,
+     * not the full xsession ring (~7s of in-window ibv_reg_mr on the promoted
+     * leader). See g_recov_active_lo/hi. */
+    if (slot_lo >= 0 && slot_hi >= slot_lo) {
+        atomic_store(&g_recov_active_lo, slot_lo);
+        atomic_store(&g_recov_active_hi, slot_hi);
+        serverLog(LL_NOTICE,
+            "AqRaft B#1 recipient-recover: sess=%lld — recovery landing-pool range "
+            "armed slots=%d-%d (re-ship registers 1 pool, not the xsession ring)",
+            sess, slot_lo, slot_hi);
+    }
 
     char donor_payload[256];
     snprintf(donor_payload, sizeof(donor_payload),
