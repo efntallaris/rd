@@ -233,6 +233,27 @@ public class RedisClient extends DB {
                  * sg4's replicas stay in POLL_TARGETS for leader discovery but must
                  * not drive collapse. */
                 boolean targetIsDonor = DONOR_HOSTS.contains(target.getHost());
+                /* AqRaft dead-leader failover (S1 recipient-leader crash): when we
+                 * poll a RECIPIENT node reporting ITSELF as owner of this range (a
+                 * promoted sg4 leader), fail over any slot whose CURRENT owner is a
+                 * now-DEAD recipient leader to this live node IMMEDIATELY — instead
+                 * of waiting ~tens of seconds for the donor's post-reconcile CLUSTER
+                 * SLOTS to propagate (clients otherwise keep writing to the dead
+                 * leader). Safe: only overrides a slot whose current owner is a dead
+                 * RECIPIENT; donor slots have live owners, and sg4's full-range
+                 * self-advertisement can't collapse the keyspace here because a
+                 * non-migrated slot's owner is never dead. */
+                if (!targetIsDonor && owner.equals(target)
+                    && !DEAD_HOSTS.contains(owner.getHost()) && !endpointDead(owner)) {
+                  for (int fs = startSlot; fs <= endSlot && fs < 16384; fs++) {
+                    HostAndPort fcur = SHARED_PEER[fs];
+                    if (fcur != null && !fcur.equals(owner) && endpointDead(fcur)
+                        && !DONOR_HOSTS.contains(fcur.getHost())) {
+                      SHARED_PEER[fs] = owner;
+                      SHARED_COLLAPSED[fs] = true;
+                    }
+                  }
+                }
                 for (int s = startSlot; s <= endSlot && s < 16384; s++) {
                   HostAndPort boot = SHARED_BOOT_OWNER[s];
                   if (boot != null && !owner.equals(boot) && targetIsDonor) {
