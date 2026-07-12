@@ -123,6 +123,39 @@ public class RedisClient extends DB {
    * (sg4) lives on different hosts, so a non-donor SHARED_PEER == the recipient. */
   private static final java.util.Set<String> DONOR_HOSTS =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
+  // AqRaft: hosts that recently failed to connect (e.g. a crash-killed leader).
+  // A dead host must never be (re)pinned as a slot's write target, or ~1/N of
+  // writes stall on it forever after a leader crash. Cleared on reconnect.
+  private static final java.util.Set<String> DEAD_HOSTS =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /* AqRaft follower-crash fix. A killed node's port DROPs packets in this env
+   * (cloudlab), so a control-plane probe to it costs a full socket timeout, not
+   * a fast connection-refused. When a follower dies, every worker re-resolving
+   * the migrated slots hits that dead endpoint in refreshSlotOwner at the same
+   * time and they all block together — observed as a ~6 s CLIENT-WIDE throughput
+   * stall AFTER the migration (the reshard itself is uninterrupted; the recipient
+   * leader is idle-alive with quorum intact). Two-part fix: (a) probe with a
+   * SHORT connect timeout so the first hit fails in ms not seconds; (b) remember
+   * the dead endpoint for a short TTL so concurrent/subsequent re-resolves skip
+   * it. Keyed by host:PORT — one host can run a DEAD sg1 replica and a LIVE sg2
+   * leader, so a host-level skip would wrongly drop a live master. */
+  private static final java.util.concurrent.ConcurrentHashMap<HostAndPort, Long> DEAD_UNTIL =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  private static final int PROBE_CONNECT_TIMEOUT_MS = 400;
+  private static final long DEAD_TTL_MS = 2000;   // re-probe after 2 s in case it recovered
+  private static boolean endpointDead(HostAndPort hp) {
+    Long until = DEAD_UNTIL.get(hp);
+    return until != null && until > System.currentTimeMillis();
+  }
+  private static void markEndpointDead(HostAndPort hp) {
+    DEAD_UNTIL.put(hp, System.currentTimeMillis() + DEAD_TTL_MS);
+  }
+  /* Control-plane (CLUSTER SLOTS) probe: short connect timeout, normal socket timeout. */
+  private static Jedis probeJedis(HostAndPort hp, Integer soTimeoutMs) {
+    int so = (soTimeoutMs != null && soTimeoutMs > 0) ? soTimeoutMs : 2000;
+    return new Jedis(hp.getHost(), hp.getPort(), PROBE_CONNECT_TIMEOUT_MS, so);
+  }
   private static final java.util.concurrent.atomic.AtomicBoolean SLOT_POLLER_STARTED =
       new java.util.concurrent.atomic.AtomicBoolean(false);
   /* All master endpoints the client knows (populated at bootstrap). The poller
@@ -162,9 +195,8 @@ public class RedisClient extends DB {
            * slots reports the BOOT owner (== SHARED_BOOT_OWNER) and is a no-op,
            * while the donor's own view reports sg4 (!= boot) and flips it. */
           for (HostAndPort target : POLL_TARGETS) {
-            Jedis j = (timeoutMs != null)
-                ? new Jedis(target.getHost(), target.getPort(), timeoutMs)
-                : new Jedis(target.getHost(), target.getPort());
+            if (endpointDead(target)) continue;   // skip a known-dead endpoint this tick
+            Jedis j = probeJedis(target, timeoutMs);  // short connect timeout
             try {
               j.connect();
               j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
@@ -192,9 +224,18 @@ public class RedisClient extends DB {
                         (int) (long) (Long) rep.get(1)));
                   } catch (Exception ignore) { /* skip malformed replica */ }
                 }
+                /* AqRaft ownership fix: ONLY trust a collapse report from a DONOR
+                 * host. During migration the recipient sg4 advertises its full
+                 * configured range (0-16383); polling sg4 would collapse EVERY slot
+                 * onto it and route the whole keyspace to one leader (throughput
+                 * collapse). Donors correctly announce ONLY the slots they narrowed
+                 * to sg4, so a donor-only union yields exactly the migrated ranges.
+                 * sg4's replicas stay in POLL_TARGETS for leader discovery but must
+                 * not drive collapse. */
+                boolean targetIsDonor = DONOR_HOSTS.contains(target.getHost());
                 for (int s = startSlot; s <= endSlot && s < 16384; s++) {
                   HostAndPort boot = SHARED_BOOT_OWNER[s];
-                  if (boot != null && !owner.equals(boot)) {
+                  if (boot != null && !owner.equals(boot) && targetIsDonor) {
                     /* AqRaft fix: never DOWNGRADE the write target from a recipient
                      * (sg4) to a donor. Reads learn the true recipient leader from
                      * the migration-window slot-meta and set SHARED_PEER=sg4, but a
@@ -208,7 +249,8 @@ public class RedisClient extends DB {
                     HostAndPort cur = SHARED_PEER[s];
                     boolean curIsRecipient = (cur != null) && !DONOR_HOSTS.contains(cur.getHost());
                     boolean ownerIsDonor = DONOR_HOSTS.contains(owner.getHost());
-                    if (!(curIsRecipient && ownerIsDonor)) {
+                    if (!(curIsRecipient && ownerIsDonor)
+                        && !DEAD_HOSTS.contains(owner.getHost())) {
                       SHARED_PEER[s] = owner;
                     }
                     SHARED_COLLAPSED[s] = true;
@@ -216,7 +258,9 @@ public class RedisClient extends DB {
                 }
               }
             } catch (Exception inner) {
-              /* skip this target this tick (leader moving mid-NARROW etc.) */
+              /* skip this target this tick (leader moving mid-NARROW etc.);
+               * remember a dead endpoint so re-resolves + later ticks skip it. */
+              markEndpointDead(target);
             } finally {
               try { j.close(); } catch (Exception ignore) { /* drain */ }
             }
@@ -393,7 +437,7 @@ public class RedisClient extends DB {
           slotOwner[s] = hp;
           if (SHARED_BOOT_OWNER[s] == null) SHARED_BOOT_OWNER[s] = hp;  // donor snapshot for the poller
         }
-        getOrOpen(hp);
+        try { getOrOpen(hp); } catch (JedisConnectionException ce) { DEAD_HOSTS.add(hp.getHost()); }
         POLL_TARGETS.add(hp);   // poller must query EVERY master (no node has the full post-migration map)
         DONOR_HOSTS.add(hp.getHost());   // bootstrap owners are all donor-cluster nodes
         // AqRaft failover fix: also learn the REPLICAS of each range. On a
@@ -432,7 +476,10 @@ public class RedisClient extends DB {
           SlotEntry se = slotCache[slot];
           se.state = state;
           se.peer = peer.isEmpty() ? null : HostAndPort.parseString(peer);
-          if (se.peer != null) getOrOpen(se.peer);
+          if (se.peer != null) {
+            try { getOrOpen(se.peer); }
+            catch (JedisConnectionException ce) { DEAD_HOSTS.add(se.peer.getHost()); }
+          }
         }
       }
     } catch (Exception e) {
@@ -459,6 +506,7 @@ public class RedisClient extends DB {
                             : new Jedis(hp.getHost(), hp.getPort());
     j.connect();
     conns.put(hp, j);
+    DEAD_HOSTS.remove(hp.getHost());
     return j;
   }
 
@@ -508,10 +556,13 @@ public class RedisClient extends DB {
     }
     if (!probes.contains(seedHostPort)) probes.add(seedHostPort);
     for (HostAndPort probe : probes) {
+      // AqRaft follower-crash fix: skip an endpoint we just found dead — otherwise
+      // every worker re-resolving at once blocks on the same dead node's timeout.
+      if (endpointDead(probe)) continue;
       Jedis j = null;
       try {
-        j = (timeoutMs != null) ? new Jedis(probe.getHost(), probe.getPort(), timeoutMs)
-                                : new Jedis(probe.getHost(), probe.getPort());
+        // Short CONNECT timeout so a dead endpoint fails in ms, not a full socket timeout.
+        j = probeJedis(probe, timeoutMs);
         j.connect();
         j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
         Object reply = j.getClient().getOne();
@@ -529,7 +580,8 @@ public class RedisClient extends DB {
           return newOwner;
         }
       } catch (Exception ignore) {
-        /* try next probe */
+        // Couldn't reach it (dead / unreachable) — remember so peers skip it too.
+        markEndpointDead(probe);
       } finally {
         if (j != null) { try { j.close(); } catch (Exception ignore) { /* drain */ } }
       }
@@ -652,7 +704,8 @@ public class RedisClient extends DB {
         INSTR_DONOR_MOVED.incrementAndGet();
         r.state = SLOT_MIGRATED;
         r.peer  = target;
-        getOrOpen(target);
+        try { getOrOpen(target); }
+        catch (JedisConnectionException ce) { DEAD_HOSTS.add(target.getHost()); }
         r.ok    = true;
       }
       return r;
@@ -696,7 +749,8 @@ public class RedisClient extends DB {
       if (AQDBG.incrementAndGet() % 300000 == 0)
         System.err.println("[AQDBG-RDMIG] slot=" + slot + " set slotOwner=" + target
           + " sharedPeer=" + SHARED_PEER[slot] + " rpeer=" + r.peer);
-      getOrOpen(target);
+      try { getOrOpen(target); }
+      catch (JedisConnectionException ce) { DEAD_HOSTS.add(target.getHost()); }
       se.state = SLOT_STABLE;
       se.peer = null;
       return;
@@ -704,7 +758,8 @@ public class RedisClient extends DB {
     se.state = r.state;
     se.peer = r.peer;
     if (r.peer != null) {
-      getOrOpen(r.peer);
+      try { getOrOpen(r.peer); }
+      catch (JedisConnectionException ce) { DEAD_HOSTS.add(r.peer.getHost()); }
       /* AqRaft fix: do NOT flip slotOwner to the peer during the migration
        * window. slotOwner is the DONOR leg of the double read; flipping it to
        * the recipient here made BOTH legs hit the recipient (the donor's copy
@@ -728,9 +783,13 @@ public class RedisClient extends DB {
     // AqRaft proactive collapse: poller saw this slot narrow → write straight
     // to the recipient, skipping the donor -MOVED rediscovery.
     if (slotOwner != null && SHARED_COLLAPSED[slot] && SHARED_PEER[slot] != null) {
-      slotOwner[slot] = SHARED_PEER[slot];
-      if (AQDBG.incrementAndGet() % 300000 == 0)
-        System.err.println("[AQDBG-COLLAPSE] slot=" + slot + " slotOwner<-sharedPeer=" + SHARED_PEER[slot]);
+      if (DEAD_HOSTS.contains(SHARED_PEER[slot].getHost())) {
+        SHARED_PEER[slot] = null;   // recipient leader crashed — force poller re-learn
+      } else {
+        slotOwner[slot] = SHARED_PEER[slot];
+        if (AQDBG.incrementAndGet() % 300000 == 0)
+          System.err.println("[AQDBG-COLLAPSE] slot=" + slot + " slotOwner<-sharedPeer=" + SHARED_PEER[slot]);
+      }
     }
     HostAndPort hp = (slotOwner != null) ? slotOwner[slot] : seedHostPort;
     boolean ask = false;
@@ -764,6 +823,7 @@ public class RedisClient extends DB {
       try {
         j = getOrOpen(hp);
       } catch (JedisConnectionException ce) {
+        DEAD_HOSTS.add(hp.getHost());
         evictConn(hp);
         HostAndPort newOwner = refreshSlotOwner(slot);
         hp = (newOwner != null) ? newOwner : seedHostPort;
