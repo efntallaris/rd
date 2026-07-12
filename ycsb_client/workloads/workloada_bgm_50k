@@ -1,0 +1,12 @@
+# AqRaft crash-debug variant — 50k records, ~60s timed run. Migration is tiny
+# (~12.5k keys move), so a full crash scenario runs end-to-end in ~3-4 min.
+recordcount=50000
+operationcount=30000000
+maxexecutiontime=60
+workload=site.ycsb.workloads.CoreWorkload
+readallfields=true
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+requestdistribution=zipfian

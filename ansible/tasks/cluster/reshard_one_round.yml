@@ -26,6 +26,31 @@
       sleep 0.05
     done
     echo "Round $RI count=$CNT orch=$oid FINAL=$final attempts=$i"
-    [ "$final" = "DONE" ]
+    if [ "$final" = "DONE" ]; then exit 0; fi
+    # AqRaft leader-crash recovery wait: on a recipient/donor LEADER crash the
+    # MIGRATE-ALL orchestration is stuck on the dead node (FINAL=TIMEOUT), but the
+    # become-leader hook re-drives the migration on the PROMOTED sg4 leader
+    # (verified: recipient DBSIZE recovers + stabilises via B#1 re-ship). Wait for
+    # that recovery to DRAIN, then succeed so NARROW/EVICT/reconcile finish the
+    # ownership handoff and the offload lands. Clean runs exit DONE above.
+    echo "reshard FINAL=$final -> waiting for become-leader recovery on sg4 to drain"
+    SG4_EPS="{% for nd in (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).nodes %}{{ narrow_host_ip_map[nd.host] }}:{{ (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).port }} {% endfor %}"
+    prev=-1; stable=0
+    for w in $(seq 1 300); do
+      lead=""; ldb=0
+      for ep in $SG4_EPS; do
+        ip=${ep%%:*}; pt=${ep##*:}
+        role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+        if [ "$role" = "leader" ]; then lead=$ip; ldb=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" DBSIZE 2>/dev/null); break; fi
+      done
+      if [ -n "$lead" ] && [ "${ldb:-0}" -gt 1000 ] && [ "$ldb" = "$prev" ]; then
+        stable=$((stable+1))
+        if [ "$stable" -ge 12 ]; then echo "recovery DRAINED: sg4 leader=$lead DBSIZE=$ldb (stable 12s) -> proceeding to NARROW"; exit 0; fi
+      else
+        stable=0
+      fi
+      prev=$ldb; sleep 1
+    done
+    echo "sg4 recovery did NOT drain within timeout"; exit 1
   register: rn_round
   changed_when: true

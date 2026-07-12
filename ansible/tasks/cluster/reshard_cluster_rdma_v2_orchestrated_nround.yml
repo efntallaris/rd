@@ -169,7 +169,32 @@
             sleep 0.05
           done
           echo "round $RI count=$CNT orch=$oid FINAL=$final"
-          [ "$final" = "DONE" ] || exit 1
+          if [ "$final" = "DONE" ]; then continue; fi
+          # AqRaft leader-crash recovery wait: on a LEADER crash the MIGRATE-ALL
+          # orchestration is stuck on the dead node (FINAL=TIMEOUT), but the
+          # become-leader hook re-drives the migration on the PROMOTED sg4 leader
+          # (verified @500K: recipient DBSIZE recovers + stabilises via B#1 re-ship).
+          # Wait for that recovery to DRAIN, then continue so NARROW/EVICT/reconcile
+          # finish the ownership handoff and the offload lands. Clean runs hit DONE.
+          echo "round $RI FINAL=$final -> waiting for become-leader recovery on sg4 to drain"
+          SG4_EPS="{% for nd in (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).nodes %}{{ narrow_host_ip_map[nd.host] }}:{{ (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).port }} {% endfor %}"
+          prev=-1; stable=0; drained=0
+          for w in $(seq 1 300); do
+            lead=""; ldb=0
+            for ep in $SG4_EPS; do
+              ip=${ep%%:*}; pt=${ep##*:}
+              role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+              if [ "$role" = "leader" ]; then lead=$ip; ldb=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" DBSIZE 2>/dev/null); break; fi
+            done
+            if [ -n "$lead" ] && [ "${ldb:-0}" -gt 1000 ] && [ "$ldb" = "$prev" ]; then
+              stable=$((stable+1))
+              if [ "$stable" -ge 12 ]; then echo "recovery DRAINED: sg4 leader=$lead DBSIZE=$ldb (stable 12s) -> proceeding to NARROW"; drained=1; break; fi
+            else
+              stable=0
+            fi
+            prev=$ldb; sleep 1
+          done
+          [ "$drained" = "1" ] || { echo "sg4 recovery did NOT drain within timeout"; exit 1; }
         done
       register: all_rounds
       changed_when: true
@@ -185,8 +210,19 @@
     # measured migration window (the window ended at the last donor's commit).
     - name: "async-apply: wait for recipient merges (apply) to drain before NARROW"
       shell: |
-        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[reshard_target] }} -p {{ master_port }} \
-          INFO cluster | tr -d '\r' | grep -oE 'rdma_recipient_backpatch_in_progress:[0-9]+' | cut -d: -f2
+        set -u
+        # Poll the CURRENT sg4 leader (the configured reshard_target may have been
+        # crash-killed and a follower promoted). Discover the live leader first.
+        SG4_EPS="{% for nd in (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).nodes %}{{ narrow_host_ip_map[nd.host] }}:{{ (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).port }} {% endfor %}"
+        for ep in $SG4_EPS; do
+          ip=${ep%%:*}; pt=${ep##*:}
+          role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+          if [ "$role" = "leader" ]; then
+            {{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO cluster | tr -d '\r' | grep -oE 'rdma_recipient_backpatch_in_progress:[0-9]+' | cut -d: -f2
+            exit 0
+          fi
+        done
+        echo "noleader"
       register: merge_drain
       retries: 600
       delay: 1
@@ -221,17 +257,34 @@
     # stops serving them and is actually offloaded — turning the migration from a
     # copy into a move. sg4 already owns + serves the data, so this is safe.
     #
-    # DISABLED (per request): the donor-cleanup EVICT is commented out so donors
-    # KEEP their migrated keys after migration (copy, not move). Re-enable by
-    # uncommenting the task below.
-    # - name: "EVICT migrated slots on each donor (offload — batched, copy -> move)"
-    #   shell: |
-    #     {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
-    #       RDMA EVICT-SLOTS {{ sg.slot_config.split(':')[0] | int }} \
-    #       {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}
-    #   register: evict_results
-    #   loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
-    #   loop_control:
-    #     loop_var: sg
-    #     label: "{{ sg.id }}: evict {{ sg.slot_config.split(':')[0] }}:{{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}"
-    #   changed_when: false
+    # ENABLED: donor-cleanup EVICT turns the migration from a copy into a MOVE so
+    # the (saturated) donors actually shed the migrated slots' load onto the idle
+    # recipient sg4 -> aggregate throughput rises. Comment out for a copy-only run.
+    - name: "EVICT migrated slots on each donor (offload — batched, copy -> move)"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+          RDMA EVICT-SLOTS {{ sg.slot_config.split(':')[0] | int }} \
+          {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}
+      register: evict_results
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+        label: "{{ sg.id }}: evict {{ sg.slot_config.split(':')[0] }}:{{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}"
+      changed_when: false
+
+    # AqRaft ownership reconcile: NARROW leaves each shardgroup knowing only its
+    # OWN handover and sg4 still advertising its full configured range, so the
+    # cluster-wide slot map is inconsistent per node and clients under-route to
+    # the recipient (no throughput gain). Push the authoritative final topology
+    # (each donor's narrowed range + sg4 = the complement) to EVERY leader so all
+    # nodes agree and clients route the full offload to sg4. Idempotent.
+    - name: "Reconcile cluster-wide slot ownership across all shardgroups (offload routing)"
+      command: python3 {{ main_dir }}/ansible/reconcile_ownership.py {{ redis_bin_dir }}/redis-cli
+      run_once: true
+      register: reconcile_out
+      changed_when: false
+
+    - name: "Ownership reconcile result"
+      debug:
+        msg: "{{ reconcile_out.stdout_lines }}"
+

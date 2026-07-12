@@ -55,9 +55,9 @@ cd "$ANSIBLE_DIR"
 set +e
 sudo ansible-playbook -i inventory.ini \
   experiments/custom_reshard_v2_orch_raft_chunked/workload_nround.yml \
-  -e redis_variant=custom -e pre_reshard_pause=20 -e n_rounds=1 \
+  -e redis_variant=custom -e pre_reshard_pause=60 -e n_rounds=1 \
   -e rdma_migration_peer_stagger_ms=0 \
-  -e ycsb_slotpoll_ms=100 -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
+  -e ycsb_slotpoll_ms=100 -e ycsb_threads_run=100 -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
   -e rdma_async_apply=yes -e rdma_transfer_chunk_slots=342 \
   -e rdma_naive_durability="${RDMA_NAIVE:-no}" \
   -e '{"rdma_follower_proxy": "no"}' \
