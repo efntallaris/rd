@@ -1556,6 +1556,13 @@ typedef struct backpatchBatch {
      * the recipient followers haven't received the migrated bytes yet → a
      * recipient-leader crash would silently lose data. */
     _Atomic int          merge_done;
+    /* AqRaft S2 fix: exactly-once guard for releasing this batch's
+     * recipient_backpatch_in_progress hold. A session abandoned mid-transfer
+     * (donor-leader crash -> chain STALL-ABORT) otherwise never finalizes, so its
+     * +1 leaks and the merge-drain barrier can never reach 0 -> NARROW/reconcile
+     * never run. Released once by whichever of {finalize, merge-drain, abandon}
+     * reaches it first. */
+    _Atomic int          bp_inprog_released;
     _Atomic int          indx_applied;
     /* AqRaft parallel-chain: incremented by each backpatch pool worker after
      * it captures its slot's chain snapshot (before shadow-merge would
@@ -1866,6 +1873,7 @@ void rdmaDoneSlotsCommand(client *c) {
     atomic_store(&b->clobber_skipped, 0);
     atomic_store(&b->state, BACKPATCH_QUEUED);
     atomic_store(&b->remaining, n_slots);
+    atomic_store(&b->bp_inprog_released, 0);
     b->err = NULL;
     pthread_mutex_init(&b->err_mu, NULL);
     /* AqRaft pool-free: capture this donor's landing-pool region (set at
@@ -2024,7 +2032,8 @@ void rdmaDoneSlotsCommand(client *c) {
         b->t_ended = time(NULL);
         /* Re-enable databasesCron — backpatch is done. Paired with the incr in
          * rdmaRegisterBlockSlotsCommand (moved out of RECV-FLIP for early-FLIP). */
-        recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge) */
+        if (atomic_exchange(&b->bp_inprog_released, 1) == 0)
+            recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge); exactly-once */
         /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
         kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
         kvstoreFenwickRebuild(server.db[0].keys);
@@ -2087,6 +2096,7 @@ void rdmaDoneSlotsInitCommand(client *c) {
     atomic_store(&b->clobber_skipped, 0);
     atomic_store(&b->state, BACKPATCH_RUNNING);
     atomic_store(&b->remaining, total_slots);
+    atomic_store(&b->bp_inprog_released, 0);
     b->err = NULL;
     pthread_mutex_init(&b->err_mu, NULL);
     /* AqRaft pool-free: capture this donor's landing-pool region for reclaim. */
@@ -3036,6 +3046,12 @@ static void *chainPipelineForwardWorker(void *arg) {
             "CHAIN: sess=%lld forward abandoned (%s) — NOT re-forming (donor dead, "
             "superseded by recovery); batch left un-finalized",
             b->src_mig_id, errbuf);
+        /* AqRaft S2 fix: this abandoned batch's merge will never finalize (donor
+         * dead), so release its backpatch-in-progress hold here — else it leaks +1
+         * forever and the recipient merge-drain barrier never reaches 0, blocking
+         * NARROW/EVICT/reconcile for the donors that DID complete. */
+        if (atomic_exchange(&b->bp_inprog_released, 1) == 0)
+            recipientBackpatchInProgressAdd(-1);
     } else if (frc != C_OK) {
         serverLog(LL_WARNING,
             "CHAIN: sess=%lld pipelined forward failed (%s) — attempting chain "
@@ -3447,7 +3463,8 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
                 pthread_mutex_unlock(&backpatch_work_mu);
             }
             b->t_ended = time(NULL);
-            recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge) */
+            if (atomic_exchange(&b->bp_inprog_released, 1) == 0)
+                recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge); exactly-once */
 
             /* AqRaft lever #4 fix: the merge has now fully drained — no more
              * mergeBackpatchTick reads of v=src->ptr into the landing pool. It
@@ -7929,11 +7946,13 @@ void rdmaMgnRecoverCommand(client *c) {
      * owned slots to the recipient. On a fresh leader the reshard offset is 0, so
      * startLocalMigration picks the same first-N owned slots the crashed donor was
      * migrating; the recipient's don't-clobber merge makes re-shipping idempotent. */
-    char rhost[128]; rhost[0] = '\0'; int rport = 0, nslots = 0;
+    char rhost[128]; rhost[0] = '\0'; int rport = 0, nslots = 0, slot_lo = -1, slot_hi = -1;
     const char *rp = strstr(payload, "recipient=");
     const char *np = strstr(payload, "n=");
+    const char *sp = strstr(payload, "slots=");
     if (rp) sscanf(rp, "recipient=%127[^: ]:%d", rhost, &rport);
     if (np) sscanf(np, "n=%d", &nslots);
+    if (sp) sscanf(sp, "slots=%d-%d", &slot_lo, &slot_hi);
     if (rhost[0] && rport > 0 && nslots > 0) {
         const char *err = NULL;
         /* Use a RECOVERY-reserved migration id so the resume's chain session does
@@ -7944,7 +7963,19 @@ void rdmaMgnRecoverCommand(client *c) {
          * afterwards so normal migrations keep their compact ids. */
         long long saved_next = server.rdma_migration_next_id;
         server.rdma_migration_next_id = 800000000000000000LL + (sess > 0 ? sess : 0);
-        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err, NULL);
+        /* AqRaft S2 fix: re-ship the ORIGINAL session's EXACT slot range (want_slots),
+         * not the offset-based next-N. The fresh leader's reshard offset is 0 and
+         * offset selection picked only a PARTIAL range (S2 migrated slots 0-682 of
+         * 0-1364), so sg1's data never fully reached sg4. startLocalMigration copies
+         * want_slots synchronously, so we free it right after. Falls back to offset
+         * selection if the payload range/n are inconsistent. */
+        int *want = NULL;
+        if (slot_lo >= 0 && slot_hi >= slot_lo && (slot_hi - slot_lo + 1) == nslots) {
+            want = zmalloc((size_t) nslots * sizeof(int));
+            for (int wi = 0; wi < nslots; wi++) want[wi] = slot_lo + wi;
+        }
+        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err, want);
+        if (want) zfree(want);
         server.rdma_migration_next_id = saved_next;
         if (mid < 0)
             serverLog(LL_WARNING, "AqRaft MGN-RECOVER: sess=%lld resume dispatch FAILED: %s",

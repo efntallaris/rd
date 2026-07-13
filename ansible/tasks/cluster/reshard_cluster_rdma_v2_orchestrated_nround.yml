@@ -208,36 +208,63 @@
     # landing-pool read fallback — reads MOVED to sg4 would miss). Poll the
     # recipient until its in-flight merge counter returns to 0. This is OFF the
     # measured migration window (the window ended at the last donor's commit).
-    - name: "async-apply: wait for recipient merges (apply) to drain before NARROW"
+    # AqRaft S2 backstop: bounded, self-contained wait that ALWAYS proceeds instead
+    # of the old 600-retry hard-abort. A session with no live driver (donor-LEADER
+    # crash, unresumed) pins the counter forever; the old barrier then failed the
+    # whole orchestration (NARROW/EVICT/reconcile never ran -> +8% at best). Now:
+    # proceed when the counter drains to 0 (normal), OR is UNCHANGED for 30s (a
+    # genuinely-stuck session -> NARROW the donors that DID complete; offload is
+    # partial for the stuck one), OR after a 300s ceiling. "unchanged 30s" is safe:
+    # an actively-draining merge decrements the counter (a 3M merge drains in ~2s),
+    # so a flat counter means stuck, not draining.
+    - name: "async-apply: wait for recipient merges to drain before NARROW (bounded; proceed on drain/stall)"
       shell: |
         set -u
-        # Poll the CURRENT sg4 leader (the configured reshard_target may have been
-        # crash-killed and a follower promoted). Discover the live leader first.
         SG4_EPS="{% for nd in (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).nodes %}{{ narrow_host_ip_map[nd.host] }}:{{ (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).port }} {% endfor %}"
-        for ep in $SG4_EPS; do
-          ip=${ep%%:*}; pt=${ep##*:}
-          role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
-          if [ "$role" = "leader" ]; then
-            {{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO cluster | tr -d '\r' | grep -oE 'rdma_recipient_backpatch_in_progress:[0-9]+' | cut -d: -f2
-            exit 0
-          fi
+        leadval() {
+          for ep in $SG4_EPS; do
+            ip=${ep%%:*}; pt=${ep##*:}
+            role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+            if [ "$role" = "leader" ]; then
+              {{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO cluster | tr -d '\r' | grep -oE 'rdma_recipient_backpatch_in_progress:[0-9]+' | cut -d: -f2
+              return 0
+            fi
+          done
+          echo ""
+        }
+        prev="x"; stable=0
+        for w in $(seq 1 300); do
+          val=$(leadval)
+          if [ "${val:-}" = "0" ]; then echo "DRAINED: backpatch_in_progress=0 after ${w}s -> NARROW"; exit 0; fi
+          if [ -n "${val:-}" ] && [ "$val" = "$prev" ]; then stable=$((stable+1)); else stable=0; fi
+          if [ "$stable" -ge 30 ]; then echo "STALL: backpatch_in_progress=$val unchanged 30s (unresumed session) -> proceeding to NARROW completed donors (partial offload)"; exit 0; fi
+          prev="$val"; sleep 1
         done
-        echo "noleader"
+        echo "TIMEOUT: backpatch_in_progress not drained in 300s -> proceeding"; exit 0
       register: merge_drain
-      retries: 600
-      delay: 1
-      until: (merge_drain.stdout | default('1') | trim) == '0'
+      changed_when: false
       when: (rdma_async_apply | default('no')) == 'yes'
 
     # NARROW, batched ONCE after all rounds (out of the inter-round path): hand
     # sg4 the full migrated per-source range and shrink each donor. Per-round
     # NARROW is no longer needed because the donor self-offsets chunk selection.
-    - name: "NARROW each donor -> sg4 (full per-source range, batched)"
+    # leader-aware: a donor-LEADER crash (S2) leaves the configured leader dead, so
+    # NARROW must target the CURRENT sg leader (else Connection refused -> abort).
+    - name: "NARROW each donor -> sg4 (full per-source range, batched, leader-aware)"
       shell: |
         set -u
         rm -f /tmp/fin_narrow_*.out
+        dleader() {  # $1=port, rest=candidate ips -> echo the live leader ip (fallback: first)
+          local pt=$1; shift; local first=$1
+          for ip in "$@"; do
+            role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+            [ "$role" = "leader" ] && { echo "$ip"; return; }
+          done
+          echo "$first"
+        }
         {% for sg in redisraft_shardgroups if sg.id != 'sg4' %}
-        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+        DL=$(dleader {{ sg.port }} {% for nd in sg.nodes %}{{ narrow_host_ip_map[nd.host] }} {% endfor %})
+        {{ redis_bin_dir }}/redis-cli -h "$DL" -p {{ sg.port }} \
           RAFT.SHARDGROUP NARROW \
             {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) }}:{{ sg.slot_config.split(':')[1] | int }} \
             {{ sg4_dbid }} 1 3 \
@@ -260,9 +287,16 @@
     # ENABLED: donor-cleanup EVICT turns the migration from a copy into a MOVE so
     # the (saturated) donors actually shed the migrated slots' load onto the idle
     # recipient sg4 -> aggregate throughput rises. Comment out for a copy-only run.
-    - name: "EVICT migrated slots on each donor (offload — batched, copy -> move)"
+    - name: "EVICT migrated slots on each donor (offload — batched, copy -> move, leader-aware)"
       shell: |
-        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[sg.nodes[0].host] }} -p {{ sg.port }} \
+        set -u
+        pt={{ sg.port }}; DL=""
+        for ip in {% for nd in sg.nodes %}{{ narrow_host_ip_map[nd.host] }} {% endfor %}; do
+          role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+          [ "$role" = "leader" ] && { DL="$ip"; break; }
+        done
+        [ -n "$DL" ] || DL={{ narrow_host_ip_map[sg.nodes[0].host] }}
+        {{ redis_bin_dir }}/redis-cli -h "$DL" -p "$pt" \
           RDMA EVICT-SLOTS {{ sg.slot_config.split(':')[0] | int }} \
           {{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}
       register: evict_results
