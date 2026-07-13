@@ -14,7 +14,10 @@
   vars:
     reshard_target: "{{ groups['redis_migrate'][0] }}"
     reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
-    n_rounds: "{{ n_rounds | default(2) }}"
+    # AqRaft: literal default (was self-referential "{{ n_rounds | default(2) }}",
+    # which intermittently tripped ansible recursive-template detector). Extra-vars
+    # (-e n_rounds=N) still override play vars, so the run scripts' -e n_rounds=1 wins.
+    n_rounds: 2
   tasks:
     - name: "Build peer-endpoint list (other donor shardgroup LEADERS)"
       set_fact:
@@ -161,11 +164,24 @@
                   {{ reshard_target }} {{ master_port }} $CNT {{ peer_endpoints | join(' ') }})
           oid=$(printf '%s' "$out" | grep -oE 'orchestration_id=[0-9]+' | grep -oE '[0-9]+' | head -1)
           if [ -z "$oid" ]; then echo "round $RI DISPATCH FAILED: $out"; exit 1; fi
-          final=TIMEOUT
+          final=TIMEOUT; orchdown=0
           for i in $(seq 1 1200); do
-            st=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>/dev/null \
-                   | head -1 | grep -oE 'DONE|FAILED' | head -1)
+            raw=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>&1)
+            st=$(printf '%s' "$raw" | head -1 | grep -oE 'DONE|FAILED' | head -1)
             if [ "$st" = "DONE" ] || [ "$st" = "FAILED" ]; then final=$st; break; fi
+            # AqRaft S2: the orchestrator IS -p master_port (redis_masters[0]:8000). On a
+            # donor-LEADER crash that is the killed node, so every status query hits a dead
+            # orchestrator, never returns DONE, and the loop otherwise burns its full ~60s
+            # budget waiting for a DONE that cannot come. Detect the dead orchestrator
+            # (connection refused) and break FAST: the migration completes via the
+            # become-leader resume, and the recovery-drain below (which watches the LIVE sg4
+            # recipient) waits for that correctly. Require ~1s (20 x 0.05) of refusal so a
+            # transient blip does not trip it.
+            if printf '%s' "$raw" | grep -qiE 'could not connect|connection refused'; then orchdown=$((orchdown+1)); else orchdown=0; fi
+            if [ "$orchdown" -ge 20 ]; then
+              echo "round $RI orch=$oid: orchestrator (-p {{ master_port }}) unreachable ~1s (donor-leader crash) -> skipping dead poll, going to recovery-drain"
+              final=ORCHDOWN; break
+            fi
             sleep 0.05
           done
           echo "round $RI count=$CNT orch=$oid FINAL=$final"

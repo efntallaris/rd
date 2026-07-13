@@ -18,11 +18,15 @@
             {{ reshard_target }} {{ master_port }} $CNT {{ peer_endpoints | join(' ') }})
     oid=$(printf '%s' "$out" | grep -oE 'orchestration_id=[0-9]+' | grep -oE '[0-9]+' | head -1)
     if [ -z "$oid" ]; then echo "DISPATCH FAILED: $out"; exit 1; fi
-    final=TIMEOUT
+    final=TIMEOUT; orchdown=0
     for i in $(seq 1 1200); do
-      st=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>/dev/null \
-             | head -1 | grep -oE 'DONE|FAILED' | head -1)
+      raw=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>&1)
+      st=$(printf '%s' "$raw" | head -1 | grep -oE 'DONE|FAILED' | head -1)
       if [ "$st" = "DONE" ] || [ "$st" = "FAILED" ]; then final=$st; break; fi
+      # AqRaft S2: -p master_port is the orchestrator = the node a donor-leader crash kills;
+      # polling a dead orchestrator never returns DONE. Break fast to the recovery-drain.
+      if printf '%s' "$raw" | grep -qiE 'could not connect|connection refused'; then orchdown=$((orchdown+1)); else orchdown=0; fi
+      if [ "$orchdown" -ge 20 ]; then echo "orch=$oid unreachable ~1s (donor-leader crash) -> recovery-drain"; final=ORCHDOWN; break; fi
       sleep 0.05
     done
     echo "Round $RI count=$CNT orch=$oid FINAL=$final attempts=$i"
