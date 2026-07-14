@@ -321,6 +321,13 @@
         loop_var: sg
         label: "{{ sg.id }}: evict {{ sg.slot_config.split(':')[0] }}:{{ (sg.slot_config.split(':')[0] | int) + (reshard_slots_per_source | int) - 1 }}"
       changed_when: false
+      # AqRaft EXPERIMENT: EVICT disabled to test whether the synchronous
+      # clusterDelKeysInSlot() sweep (deleting the migrated keys on the donor main
+      # threads) is what causes the ~7s throughput drop-to-zero right after NARROW.
+      # With this off the migration is a COPY (donors keep the migrated keys as dead
+      # weight) — ownership still transfers via NARROW/reconcile, so clients still
+      # route the migrated slots to sg4. Re-enable by removing this when: false.
+      when: false
 
     # AqRaft ownership reconcile: NARROW leaves each shardgroup knowing only its
     # OWN handover and sg4 still advertising its full configured range, so the
