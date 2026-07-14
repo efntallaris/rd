@@ -17,8 +17,8 @@
 set -euo pipefail
 
 SCENARIO="${1:-}"
-if [[ ! "$SCENARIO" =~ ^S[1-4]$ ]]; then
-  echo "usage: $0 <S1|S2|S3|S4>" >&2; exit 1
+if [[ ! "$SCENARIO" =~ ^S[1-5]$ ]]; then
+  echo "usage: $0 <S1|S2|S3|S4|S5>" >&2; exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

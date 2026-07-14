@@ -106,6 +106,9 @@ case "$SCENARIO" in
       echo " orchestration FAILED. (Gap until Phase-B #2.)";;
   S3) echo " CONTROL — should PASS TODAY: crash-sig=0, DBSIZE ~7.49M, UPDATE-err ~0,";
       echo " no sg4 leader change, degrade=0.";;
+  S5) echo " EXPECTATION: sg1 data already on recipient; killing sg1 leader is a";
+      echo " NON-EVENT -> reshard still completes via a new sg1 leader (NARROW/reconcile),";
+      echo " crash-sig=0, UPDATE-err ~0, integrity intact. (Debug 500k: DBSIZE << 7.49M.)";;
   S4) echo " BASELINE EXPECTATION: migration completes but 'firing MGN_INDX_UPD anyway' > 0";
       echo " (chain degraded to Raft-only; killed follower missing bytes). (Gap until Phase-B #4.)";;
 esac

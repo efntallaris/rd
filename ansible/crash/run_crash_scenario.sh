@@ -17,8 +17,8 @@
 set -euo pipefail
 
 SCENARIO="${1:-}"
-if [[ ! "$SCENARIO" =~ ^S[1-4]$ ]]; then
-  echo "usage: $0 <S1|S2|S3|S4>" >&2; exit 1
+if [[ ! "$SCENARIO" =~ ^S[1-5]$ ]]; then
+  echo "usage: $0 <S1|S2|S3|S4|S5>" >&2; exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +57,7 @@ sudo ansible-playbook -i inventory.ini \
   experiments/custom_reshard_v2_orch_raft_chunked/workload_nround.yml \
   -e redis_variant=custom -e n_rounds=1 \
   -e rdma_migration_peer_stagger_ms=0 \
-  -e ycsb_slotpoll_ms=100 -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
+  -e ycsb_slotpoll_ms=100 -e ycsb_threads_run="${YCSB_THREADS:-50}" -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
   -e rdma_async_apply=yes -e rdma_transfer_chunk_slots=342 \
   -e rdma_naive_durability="${RDMA_NAIVE:-no}" \
   -e pre_reshard_pause="${PRE_PAUSE:-20}" \
