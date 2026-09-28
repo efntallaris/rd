@@ -104,7 +104,7 @@
   gather_facts: no
   tasks:
     - name: Compute migration window
-      command: python3 /users/entall/rd/migration_window.py /tmp/experiments/{{ experiment_name }}
+      command: python3 /users/entall/rd/experiments/tools/migration_window.py /tmp/experiments/{{ experiment_name }}
       register: migwin
       changed_when: false
       failed_when: false

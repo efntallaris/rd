@@ -212,7 +212,7 @@ sudo mkdir -p "$PLOTS" && sudo chown entall:streamstore-PG0 "$PLOTS"
 ```bash
 for W in workloada workloadb; do
   D=/tmp/experiments/custom_reshard_v2_orch_raft_chunked_pipeline_${W}_prod
-  python3 plot_ycsb_timeseries.py "$D" --xmin 0 --xmax 100 --smooth 5 \
+  python3 experiments/tools/plot_ycsb_timeseries.py "$D" --xmin 0 --xmax 100 --smooth 5 \
     -o "$PLOTS/ts_${W}.png"
 done
 ```
@@ -227,7 +227,7 @@ window footer are drawn automatically from the logs.
 ```bash
 for W in workloada workloadb; do
   D=/tmp/experiments/custom_reshard_v2_orch_raft_chunked_pipeline_${W}_prod
-  python3 plot_phase_gantt.py "$D" "$PLOTS/gantt_${W}.png"
+  python3 experiments/tools/plot_phase_gantt.py "$D" "$PLOTS/gantt_${W}.png"
 done
 ```
 

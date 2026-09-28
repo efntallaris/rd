@@ -167,7 +167,7 @@ sudo ssh redis3 'L=/tmp/redis_logs/redis3_sg4.log
 ```bash
 cd /users/entall/rd
 OUT=/tmp/plots_bgm; mkdir -p $OUT
-python3 plot_phase_gantt.py /tmp/experiments/bgm_30m_4ck $OUT/gantt.png
+python3 experiments/tools/plot_phase_gantt.py /tmp/experiments/bgm_30m_4ck $OUT/gantt.png
 # ycsb timeseries: extract the LAST run block first (stale prior-run guard), then plot
 ```
 The gantt shows CONNECT + REGISTER **before** the "migration time" arrow (pre-flip),
