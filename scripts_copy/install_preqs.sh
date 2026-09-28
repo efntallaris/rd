@@ -81,13 +81,19 @@ pwd
 chmod +x src/mkreleasehdr.sh
 #sudo rm -rf /usr/local/include/infiniband
 #sudo cp -rf /usr/include/infiniband /usr/local/include
+# Working copy for experiments. The aqueduct branches have no top-level
+# Makefile (Redis lives under redis/); the ansible setup playbooks build it.
+RD_BRANCH=${RD_BRANCH:-aqueduct_broken}
+sudo mkdir -p /users/entall
 cd /users/entall
-git clone https://github.com/efntallaris/rd
+if [ ! -d rd/.git ]; then
+    sudo git clone -b "$RD_BRANCH" https://github.com/efntallaris/rd
+fi
 cd rd
-git reset --hard origin/main
-git checkout aqueduct
+sudo git fetch origin
+sudo git checkout "$RD_BRANCH"
+sudo git reset --hard "origin/$RD_BRANCH"
 git config --global --add safe.directory /users/entall/rd
-
-sudo make
+sudo git config --global --add safe.directory /users/entall/rd
 
 
