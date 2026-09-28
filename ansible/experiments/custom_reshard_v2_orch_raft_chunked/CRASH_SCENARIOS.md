@@ -1,9 +1,24 @@
 # AqRaft 30M BGMERGE — Crash / Fault-Injection Scenarios
 
 > Scope: fault-injection + crash-recovery scenarios layered on top of the validated
-> 30M background-merge reshard (`HOWTO_30M_BGMERGE.md`). Four scenarios below.
-> Baseline run command, topology, and expected clean results all come from that HOWTO.
-> **Proposed final home in repo:** `ansible/experiments/custom_reshard_v2_orch_raft_chunked/CRASH_SCENARIOS.md`
+> 30M background-merge reshard (`HOWTO_30M_BGMERGE.md`). Scenarios S1–S5 plus the double
+> leader crash below. Baseline run command, topology, and expected clean results all come
+> from that HOWTO. Most of this file is the design record written while the work was in
+> progress; the current state is summarized right below and in `FAULT_TOLERANCE_STATUS.md` §0.
+
+## Current status (2026-09-28)
+
+| scenario | status |
+|----------|--------|
+| S1 recipient leader | ✅ recovered — donor-driven re-ship to the promoted leader (details: S1 EMPIRICAL RESULT) |
+| S2 donor leader | ✅ recovered — migration roll-forward AND orchestration continuation (the "remaining gap" below is closed) |
+| S3 donor follower | ✅ PASS (control) |
+| S4 recipient follower | ✅ PASS — chain re-form with real CHAIN-ACK |
+| S5 donor leader after DONE | ✅ added — handover-only, non-event |
+| S1+S2 both leaders | ⚠️ open hazard — see "Double leader crash" |
+
+Uncommitted (built, not yet run): query-first resume `RDMA MGN-RESUME-STATUS` for S2 and the S1
+re-home path — see `FAULT_TOLERANCE_STATUS.md` §0.
 
 ## Shared context (applies to every scenario)
 
@@ -205,6 +220,11 @@ leader with real durability and zero data loss. Reaching the full 7,492,752 on t
 the ORCHESTRATION to continue the interrupted reshard (migrate donors that hadn't started yet to the
 new leader) — the same Phase-B #2 orchestration gap as S2, separate from the crash recovery.
 
+UPDATE (2026-07-12/13): orchestration gap CLOSED. The playbook now waits for the recovery to drain
+on the live sg4 leader and runs leader-aware NARROW + `reconcile_ownership.py` (`d9beb430`); the
+re-ship registers one landing pool instead of the full ring (`7d60b69a`); clients fail over to the
+promoted leader immediately (`56054dcf`). 3M: full throughput in ~38 s (was 68 s), +28% plateau.
+
 ### Concurrent multi-donor sessions (assume all 3 donors migrate at once)
 Each donor session has its own `INDX_UPD` stream; **per-session `mgn_executed_idx`** lets the new leader
 reconcile each `sess` independently (per-session `CHAIN-STATUS` → gap-pull → execute → advance that
@@ -293,7 +313,7 @@ debugging, none faked:
    capture only blocks whose address lies inside this batch's own landing pool. No-op for normal
    migrations (verified: S3 regression clean, DBSIZE exact 7,492,752, 0 errors).
 
-### REMAINING GAP — ORCHESTRATION-LEVEL RECOVERY (Phase-B #2, NOT done)
+### REMAINING GAP — ORCHESTRATION-LEVEL RECOVERY (Phase-B #2) — ✅ CLOSED 2026-07-13
 
 The full-scenario recipient DBSIZE target is **7,492,752 = sg1+sg2+sg3** (each donor ≈2.5M). After the
 donor-leader crash the recipient reaches only **~2.5M (sg1 only)**. Root cause is NOT the migration
@@ -303,6 +323,12 @@ recovery (which works) but the **orchestration**: the whole reshard is driven by
 aborts). To reach 7,492,752 for S2, a promoted node must **resume the MIGRATE-ALL orchestration** for
 the remaining donors — a distinct piece from the per-migration roll-forward. This is the honest S2
 status: migration roll-forward SOLVED; multi-donor orchestration continuation still OPEN.
+
+UPDATE (2026-07-13): CLOSED by `e848e961` + `33564e41`. The stall-abort releases the abandoned
+batch's backpatch hold; the resume re-ships the ORIGINAL exact slot range; the merge-drain barrier
+proceeds on drain/stall/ceiling instead of hard-aborting; NARROW/EVICT find the current leader; the
+poll skips a dead orchestrator (~1 s) and hands off to the recovery drain. 3M: rise +27% (was +8%),
+time-to-plateau 36 s (was 90 s), rc=0, 0 crash signatures.
 
 ---
 
@@ -401,6 +427,32 @@ Acceptance criteria: kill a chain member mid-forward → leader logs re-form →
 dead node → `CHAIN-ACK` received (no 5s-timeout degrade line) → all surviving followers hold the session
 bytes (integrity) → crash-sig = 0 → YCSB UPDATE errors ≈ 0. Optional: restart the killed follower, confirm
 it rejoins Raft and participates in *subsequent* sessions' chains.
+
+---
+
+## Scenario 5 — Donor LEADER crash AFTER its transfer
+
+- **Target:** `redis0:8000` (sg1 leader), armed on its own worker's `id=<n> DONE n_slots=<n>`.
+- **What happens:** nothing is in flight — data, INDX_UPD and TXN_DONE are committed on both sides.
+  sg1 elects a new leader; NARROW and reconcile find it and complete the handover.
+- **Result (`d53dfcd4`):** reshard rc=0, no data loss, UPDATE-err=0.
+
+---
+
+## Double leader crash — donor AND recipient leaders (S1 + S2) — ⚠️ OPEN
+
+Analysis from code, not run. Kill redis0 and redis3 mid-transfer:
+1. Both groups keep 2/3 and elect new leaders.
+2. The new sg1 leader resumes toward `recipient=redis3` (from TXN_START): the RDMA link cannot
+   open, the resume fails once, no retry.
+3. The new sg4 leader sends MGN-DONOR-REHOME to `donor=redis0` (from RECP_TXN_START): connection
+   fails, no retry. The session stays open on both sides forever.
+4. Nothing is lost yet (unwritten keys on sg1's replicas, post-flip writes on sg4's), but the
+   playbook runs NARROW for every donor without checking TXN_DONE, so reads of unwritten keys in
+   that range go to sg4 and miss. Keys survive only because EVICT is disabled.
+
+Proposed: gate NARROW/EVICT on TXN_DONE; store the sg4 member list in TXN_START so the donor finds
+the new recipient leader itself (retry with backoff), which also replaces MGN-DONOR-REHOME.
 
 ---
 

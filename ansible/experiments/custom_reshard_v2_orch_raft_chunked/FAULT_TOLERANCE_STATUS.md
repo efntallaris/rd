@@ -1,4 +1,4 @@
-# AqRaft Fault Tolerance — Status, Roadmap & How to Run (updated 2026-07-08)
+# AqRaft Fault Tolerance — Status, Roadmap & How to Run (updated 2026-09-28)
 
 Fault-tolerance work layered on the validated 30M background-merge reshard
 (`HOWTO_30M_BGMERGE.md`). Design + per-scenario semantics: `CRASH_SCENARIOS.md`.
@@ -6,12 +6,49 @@ Run guide: `HOWTO_CRASH.md`. Harness: `ansible/crash/`. Branch `aqueduct_broken`
 
 ---
 
-## 1. What has been DONE
+## 0. Current status (2026-09-28)
+
+| # | scenario (kill) | status | key result | commits |
+|---|-----------------|--------|------------|---------|
+| S1 | recipient **leader** redis3, chunk 6/12 | ✅ recovered | promoted leader 43K → 5.0M keys (30M), no loss; full throughput in ~38 s (3M, was 68 s), +28% plateau, UPDATE-err=0 | `2330de0a` `9b08cb78` `446fc348` `37b37ad6` `7d60b69a` `56054dcf` `d9beb430` |
+| S2 | donor **leader** redis0, at TRANSFER | ✅ recovered | resume completes with real durability; rise +27% (was +8%), time-to-plateau 36 s (was 90 s), rc=0 (3M) | `8c960594` `31606286` `c0513617` `b8ca5025` `13b2ccd9` `e848e961` `33564e41` |
+| S3 | donor **follower** redis1 | ✅ PASS (control) | migration unaffected; client stall removed (400 ms probes + dead-endpoint marks) | `e45d2df7` |
+| S4 | recipient **follower** redis4 | ✅ PASS | chain re-form, real CHAIN-ACK, DBSIZE 7,492,752 exact, 0 errors; also survives death during chain establish | `557ee1dc` `1ccc7810` `5abd66f3` |
+| S5 | donor **leader** redis0, after its DONE | ✅ added | post-transfer donor loss is a non-event: rc=0, no data loss, UPDATE-err=0 | `d53dfcd4` |
+
+How recovery actually works (differs from the original §1a design):
+- **S1 is donor-driven.** The promoted sg4 leader finds the in-flight session (RECP_TXN_START
+  without RECP_TXN_DONE) and sends `RDMA MGN-DONOR-REHOME` to the donor; the donor detects the
+  dead recipient in ~100 ms and re-ships the session's exact slots to the new leader, whose chain
+  re-forms to the surviving follower. Peer-pull (increments 1–2: gap map + `CHAIN-STATUS`) only
+  logs; survivors hold almost nothing of an in-flight batch because followers apply a batch only
+  after its last chunk.
+- **S2 resumes from the new donor leader.** The become-leader hook finds TXN_START without
+  TXN_DONE and re-dispatches the exact slot range (`RDMA MGN-RECOVER`) under a recovery session id.
+- **Orchestration** survives leader crashes: the playbook skips a dead orchestrator, waits for the
+  recovery to drain on the live sg4 leader, then runs leader-aware NARROW + `reconcile_ownership.py`.
+- **`mgn_executed_idx`** was not built as a Raft watermark; the node-local inventory's per-session
+  `executed` flag (§1c-bis) plays that role.
+- **EVICT is disabled** (`37c71861`): removes the ~8 s post-migration drop; donors keep migrated keys.
+
+Uncommitted in the working tree (built locally, **not yet run on the cluster**):
+- **Query-first resume:** before re-shipping, the donor asks the recipient
+  `RDMA MGN-RESUME-STATUS <lo> <hi>` → per slot durable (merged + chain-acked + INDX_UPD
+  committed) / pending (fully landed, still finishing → wait ≤ 60 s) / missing, and re-ships only
+  non-durable slots. Used by S2 and (since today) the S1 re-home path. It also commits
+  `TXN_DONE` for the original crashed session so a later promotion does not resume it again.
+- For a mid-transfer crash the answer is "all missing" (followers hold nothing yet), so this
+  only saves the re-send when the donor dies after its last chunk.
+
+---
+
+## 1. History: what was done (2026-07-08 → 07-14)
 
 ### 1a. Design (CRASH_SCENARIOS.md — complete)
-Four crash scenarios with user-defined required behavior, all **roll-forward, never roll-back**:
+Four crash scenarios with user-defined required behavior, all **roll-forward, never roll-back**
+(status column as of 2026-07-09; see §0 for the current state):
 
-| # | scenario | required behavior | status today |
+| # | scenario | required behavior | status on 2026-07-09 |
 |---|----------|-------------------|--------------|
 | S1 | recipient **leader** (redis3) | on election: detect active migration → execute committed-but-unexecuted `INDX_UPD`s (third watermark `mgn_executed_idx`) → pull missing blocks from a surviving peer (`CHAIN-STATUS`) → re-form chain → donor hand-off | **designed, not implemented** — baseline GAP confirmed 2026-07-09 (redis5 elected leader, migration NOT resumed, DBSIZE 42k vs 7.49M). Reconciled build plan: `IMPL_PLAN_S1_S2.md` |
 | S2 | donor **leader** (redis0/1/2) | on election: new donor leader RPCs the recipient for session status → resumes from remaining slots | **designed, not implemented** — baseline run 2026-07-09 (see NIGHT_SUMMARY.md §4). Build plan: `IMPL_PLAN_S1_S2.md` |
@@ -104,25 +141,31 @@ kill+120s to a durable path; verdict prefers the snapshot. Baselines: S3 PASS, S
 
 ## 2. What NEEDS TO BE DONE
 
-1. ~~**Finish S4 verification**~~ ✅ **DONE 2026-07-09** — verified PASS (§1c), figures generated,
-   3 harness bugs fixed. See NIGHT_SUMMARY.md. (Optional hardening TODO: establish-time-death — if a
-   follower dies DURING a session's establish, `rdmaLeaderChainEstablish` bails leaving later peers
-   unpopulated so re-form can't promote; the mid-forward S4 scenario avoids it. See S4_RUN_ANALYSIS_2310.md §P3.)
-2. **S1/S2 baseline runs** (harness ready): confirm the documented gaps — S1: promoted
-   follower does NOT resume the migration; S2: donor FAILED + recipient batch stuck.
-3. **Phase B #1 — recipient-leader recovery** (largest feature):
-   third Raft watermark `mgn_executed_idx` (per-session, advances on merge-fully-applied);
-   `RDMA CHAIN-STATUS <sess>` per-slot RPC; recipient become-leader hook (execute pending
-   `INDX_UPD`s, gap-pull blocks from a surviving peer via the chain-forward path pointed
-   inward); re-form as head (#4 primitive); donor hand-off to the new leader.
-4. **Phase B #2 — donor-leader resume:** donor become-leader hook (scan mgn-log for
-   `TXN_START` without `TXN_DONE`); session-keyed status RPC to the recipient; recipient
-   batch adoption keyed on replicated `sess` (not the old node id); resume-from-TRANSFER
-   for remaining slots; backstop abort.
-5. **Wiring:** redisraft state-change callback (`raft.c:1313`) → cluster_rdma
-   become-leader notifications (used by both #1 and #2).
-6. **Re-run all four scenarios post-fix** — same commands, verdicts flip gap→PASS.
-   Optional: RESTART=yes variant (relaunch the killed node, verify Raft rejoin).
+1. **Verify + commit the query-first resume** (§0, uncommitted): rebuild, run S1 and S2, check
+   `AqRaft S2 resume-plan:` on the new donor leader and `AqRaft MGN-RESUME-STATUS:` on the sg4
+   leader. Add a variant that kills redis0 on `state=BACKPATCH` to exercise the skip path.
+2. **Double leader crash (donor + recipient) — HAZARD, analysis from code, untested.** Both
+   recovery calls target the other side's dead old leader (`recipient=redis3` from TXN_START,
+   `donor=redis0` from RECP_TXN_START), fail once, and are never retried; the session stays open
+   on both sides. The playbook then runs NARROW for every donor without checking TXN_DONE, so
+   reads of unwritten keys in that range go to sg4 and miss (keys survive only because EVICT is
+   off). Fixes, in order:
+   - gate NARROW (and EVICT) on the donor session's TXN_DONE — worst case becomes "unfinished";
+   - donor-driven discovery: store the sg4 member list in TXN_START, try the next member when
+     the recipient leader is dead, retry with backoff; this also replaces MGN-DONOR-REHOME.
+3. **S1 durable set on the promoted leader** (design): redis4 derives the slots merged on a live
+   majority (itself + `CHAIN-STATUS … MERGED` from redis5), commits INDX_UPD for them, and
+   reports them durable to MGN-RESUME-STATUS. Small payoff today (only a narrow window between
+   the chain ACK and INDX_UPD).
+4. **Per-chunk durability** (design): CHAIN-FORWARDED + CHAIN-ACK + INDX_UPD per chunk instead of
+   per batch, so a mid-transfer crash loses at most the chunk in flight and the resume query can
+   skip committed chunks. Costs ~4× more Raft commits / ACK round trips per session.
+5. **Residual follower key gap (open):** ~8,016 keys (~3.2%) missing on both followers,
+   deterministic (§1c FINDING). Suspect the follower-side FillShadow entry walker.
+6. **Async EVICT:** reclaim donor memory without the synchronous delete stall.
+7. **Write redirect after S1:** donors' WRITE_FLIP still rotates `-MOVED` through the dead sg4
+   node until reconcile; drop dead nodes at promotion time instead.
+8. Optional: RESTART=yes variant (relaunch the killed node, verify Raft rejoin).
 
 ---
 
@@ -135,8 +178,11 @@ Everything as **root** from the controller (redis0), repo `/users/entall/rd`.
 cd /users/entall/rd/ansible/crash
 ./run_crash_scenario.sh S3   # donor follower  (control — must PASS)
 ./run_crash_scenario.sh S4   # recipient follower (chain re-form test)
-./run_crash_scenario.sh S1   # recipient leader (gap until #1 lands)
-./run_crash_scenario.sh S2   # donor leader     (gap until #2 lands)
+./run_crash_scenario.sh S1   # recipient leader (donor re-ship to the promoted leader)
+./run_crash_scenario.sh S2   # donor leader     (resume from the new donor leader)
+./run_crash_scenario.sh S5   # donor leader after its DONE (handover only)
+# whole campaign (HEALTHY + S1..S5) + metrics/figures/HTML: see ansible/crash/HOWTO_CRASH.md
+./run_all_scenarios.sh
 ```
 Each: arms the killer (fires on the Nth marker in redis3's log, then `kill -9`s the
 target's pidfile after verifying the pid is alive) → runs the exact HOWTO_30M_BGMERGE §1
@@ -174,7 +220,7 @@ sudo grep -c 'chain-ack observed'  $R3    # want 3  (one real ack per session)
 ### 3e. Figures
 ```bash
 cd /users/entall/rd
-python3 plot_phase_gantt.py      /tmp/experiments/crash_s4 /tmp/plots/crash_s4_gantt.png
-python3 plot_ycsb_timeseries.py  /tmp/experiments/crash_s4 --output /tmp/plots/crash_s4_ycsb.png
-# reference figures: ansible/experiments/custom_reshard_v2_orch_raft_chunked/figures/
+python3 experiments/tools/plot_phase_gantt.py      /tmp/experiments/crash_s4 /tmp/plots/crash_s4_gantt.png
+python3 experiments/tools/plot_ycsb_timeseries.py  /tmp/experiments/crash_s4 --output /tmp/plots/crash_s4_ycsb.png
+# reference figures: experiments/2026-07_crash_campaign/figures/
 ```
