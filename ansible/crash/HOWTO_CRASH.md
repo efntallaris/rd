@@ -87,12 +87,12 @@ nohup ./run_all_scenarios.sh > /tmp/crash_inject/campaign/sweep.out 2>&1 &
 ```bash
 cd ansible/crash
 # 1) compute per-scenario metrics + timeline figures
-python3 analyze_crash.py /tmp/crash_inject/campaign
+python3 ../../experiments/tools/analyze_crash.py /tmp/crash_inject/campaign
 #    30M defaults assume pre=(25,55) plateau=(200,550) mig=60; for debug 500k use e.g.:
-#    python3 analyze_crash.py /tmp/crash_inject/campaign --pre 20 40 --plateau 120 300 --mig 20
+#    python3 ../../experiments/tools/analyze_crash.py /tmp/crash_inject/campaign --pre 20 40 --plateau 120 300 --mig 20
 
 # 2) build the self-contained HTML artifact
-python3 build_artifact.py /tmp/crash_inject/campaign
+python3 ../../experiments/tools/build_artifact.py /tmp/crash_inject/campaign
 #    -> /tmp/crash_inject/campaign/crash_artifact.html
 ```
 `analyze_crash.py` writes `metrics.json` + `<S>/fig.png`; `build_artifact.py` embeds the

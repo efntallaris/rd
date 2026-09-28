@@ -277,6 +277,13 @@ typedef struct rdmaMigration {
      * any direct `RDMA MIGRATE` without the new flag). */
     int       start_delay_ms;
 
+    /* AqRaft S2 query-first resume: >0 when this migration is a newly-elected
+     * donor leader's roll-forward of crashed session <resume_of_sess>. The
+     * worker asks the recipient (RDMA MGN-RESUME-STATUS) which slots are
+     * already durably landed and re-ships only the rest; on DONE it also
+     * closes the original session (TXN_DONE sess=<resume_of_sess>). 0 = normal. */
+    long long resume_of_sess;
+
     /* All fields below are guarded by mu. */
     pthread_mutex_t mu;
     rdmaMigrationState state;

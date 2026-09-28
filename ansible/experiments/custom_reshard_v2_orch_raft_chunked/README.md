@@ -134,9 +134,9 @@ Raft events).
 ```bash
 cd /users/entall/rd
 D=/tmp/experiments/<experiment_name>
-python3 plot_ycsb_timeseries.py "$D" --output out/ycsb_timeseries.png   # throughput+latency vs time, migration band
-python3 plot_full_run.py        "$D" out/full_run.png                   # +CPU +cluster-NIC traffic
-python3 plot_raft_migration_timeline.py "$D" out/raft_migration_timeline.png  # per-shardgroup phases + Raft commits (see note)
+python3 experiments/tools/plot_ycsb_timeseries.py "$D" --output out/ycsb_timeseries.png   # throughput+latency vs time, migration band
+python3 experiments/tools/plot_full_run.py        "$D" out/full_run.png                   # +CPU +cluster-NIC traffic
+python3 experiments/tools/plot_raft_migration_timeline.py "$D" out/raft_migration_timeline.png  # per-shardgroup phases + Raft commits (see note)
 ```
 (`plot_raft_migration_timeline.py` lives in `/tmp/` this session — move it into the
 repo if you want it permanent. Plot output dirs under `ansible/` need

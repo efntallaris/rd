@@ -1801,6 +1801,24 @@ struct COMMAND_ARG RDMA_MGN_DONOR_REHOME_Args[] = {
 {MAKE_ARG("port",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** RDMA MGN_RESUME_STATUS ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+#define RDMA_MGN_RESUME_STATUS_History NULL
+#endif
+#ifndef SKIP_CMD_TIPS_TABLE
+#define RDMA_MGN_RESUME_STATUS_Tips NULL
+#endif
+#ifndef SKIP_CMD_KEY_SPECS_TABLE
+#define RDMA_MGN_RESUME_STATUS_Keyspecs NULL
+#endif
+
+/* RDMA MGN_RESUME_STATUS argument table */
+struct COMMAND_ARG RDMA_MGN_RESUME_STATUS_Args[] = {
+{MAKE_ARG("slot-lo",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("slot-hi",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** RDMA CHAIN_WARM ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -2032,6 +2050,7 @@ struct COMMAND_STRUCT RDMA_Subcommands[] = {
 {MAKE_CMD("transfer-slots","Donor side: stage slot data, exchange buffer metadata with recipient, RDMA-write blocks, and trigger DONE-SLOTS.","O(K) where K is the total number of keys in the listed slots.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_TRANSFER_SLOTS_History,0,RDMA_TRANSFER_SLOTS_Tips,0,rdmaTransferSlotsCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_TRANSFER_SLOTS_Keyspecs,0,NULL,3),.args=RDMA_TRANSFER_SLOTS_Args},
 {MAKE_CMD("mgn-recover","AqRaft roll-forward recovery: on become-leader, drive resume of an in-flight migration session (reverse loopback from the redisraft module).","O(1) trigger.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MGN_RECOVER_History,0,RDMA_MGN_RECOVER_Tips,0,rdmaMgnRecoverCommand,-4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MGN_RECOVER_Keyspecs,0,NULL,2),.args=RDMA_MGN_RECOVER_Args},
 {MAKE_CMD("mgn-donor-rehome","AqRaft B#1: recipient successor tells a donor where an in-flight migration re-homed after the recipient leader crashed.","O(1) record.","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MGN_DONOR_REHOME_History,0,RDMA_MGN_DONOR_REHOME_Tips,0,rdmaMgnDonorRehomeCommand,-5,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MGN_DONOR_REHOME_Keyspecs,0,NULL,3),.args=RDMA_MGN_DONOR_REHOME_Args},
+{MAKE_CMD("mgn-resume-status","AqRaft S2 query-first resume: report which slots in [lo,hi] are already durably landed on this recipient (and how many are fully landed but not yet finalized) so a newly-elected donor leader re-ships only the rest.","O(batches*slots)","8.6.2",CMD_DOC_NONE,NULL,NULL,"cluster",COMMAND_GROUP_CLUSTER,RDMA_MGN_RESUME_STATUS_History,0,RDMA_MGN_RESUME_STATUS_Tips,0,rdmaMgnResumeStatusCommand,4,CMD_ADMIN|CMD_NO_ASYNC_LOADING|CMD_STALE,0,RDMA_MGN_RESUME_STATUS_Keyspecs,0,NULL,2),.args=RDMA_MGN_RESUME_STATUS_Args},
 {0}
 };
 

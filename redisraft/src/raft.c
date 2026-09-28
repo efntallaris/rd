@@ -1034,13 +1034,12 @@ static int raftPersistMetadata(raft_server_t *raft, void *user_data,
 }
 
 /* ------------------------------------------------------------------------
- * AqRaft become-leader recovery FOUNDATION (log-only keystone).
+ * AqRaft become-leader recovery.
  * Track in-flight migration sessions as their mgn-log markers apply, so a
  * newly-elected leader can detect "START seen, no DONE" and roll the migration
  * FORWARD (S1 recipient-leader / S2 donor-leader recovery). Each sg instance is
- * its own process, so these process-globals track that group's sessions. For now
- * the become-leader hook only LOGS in-flight sessions (no RDMA resume yet), so the
- * wiring is verifiable on a real crash before any recovery code is added. */
+ * its own process, so these process-globals track that group's sessions. The
+ * become-leader hook hands each one to cluster_rdma via RDMA MGN-RECOVER. */
 #define MGN_MAX_ACTIVE 64
 static long long g_mgn_active[MGN_MAX_ACTIVE];   /* 0 = empty slot */
 static int       g_mgn_active_count = 0;
@@ -1384,14 +1383,14 @@ static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_stat
                        raft_get_current_term(raft));
             /* AqRaft become-leader recovery FOUNDATION: if promoted while a
              * migration was in-flight (START seen, no DONE), it must ROLL FORWARD
-             * (S1/S2). For now: detect + log; RDMA resume is the next increment. */
+             * (S1/S2): hand each in-flight session to cluster_rdma to resume. */
             for (int _i = 0; _i < MGN_MAX_ACTIVE; _i++) {
                 if (g_mgn_active[_i] != 0) {
                     LOG_NOTICE("AqRaft become-leader: in-flight migration sess=%lld detected on "
                                "promotion (START seen, no DONE) — driving roll-forward recovery",
                                g_mgn_active[_i]);
                     /* Reverse loopback into cluster_rdma (separate translation unit, shared
-                     * only via RESP): drive the actual resume. Diagnostic v1 logs + acks. */
+                     * only via RESP): drive the actual resume. */
                     const char *_role = (g_mgn_role[_i] == 'r') ? "recipient" : "donor";
                     RedisModuleCallReply *_rep = RedisModule_Call(redis_raft.ctx, "RDMA", "cclc",
                                                     "MGN-RECOVER", _role, (long long) g_mgn_active[_i],

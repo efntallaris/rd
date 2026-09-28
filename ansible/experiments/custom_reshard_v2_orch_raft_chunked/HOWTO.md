@@ -128,7 +128,7 @@ Results are collected to `/tmp/experiments/<experiment_name>/`:
 ```bash
 cd /users/entall/rd
 mkdir -p ansible/plots_$(date +%Y%m%d)
-python3 plot_phase_gantt.py \
+python3 experiments/tools/plot_phase_gantt.py \
   /tmp/experiments/perchunk_4chunk_workloada \
   ansible/plots_$(date +%Y%m%d)/phase_gantt_workloada.png
 # → wrote ...png  (1960x462, ratio=4.242)
@@ -147,7 +147,7 @@ reuse a root-owned `plots_*` dir, `sudo chown -R entall:streamstore-PG0 <dir>` f
 **PDF export:** just give the output path a `.pdf` (or `.svg`) extension — the format
 is inferred from the extension:
 ```bash
-python3 plot_phase_gantt.py /tmp/experiments/perchunk_4chunk_workloada \
+python3 experiments/tools/plot_phase_gantt.py /tmp/experiments/perchunk_4chunk_workloada \
   ansible/plots_$(date +%Y%m%d)/phase_gantt_workloada.pdf   # → wrote ...pdf
 ```
 
@@ -188,7 +188,7 @@ migration window(s) shaded — the figure that proves traffic stays up during re
 
 ```bash
 cd /users/entall/rd
-python3 plot_ycsb_timeseries.py \
+python3 experiments/tools/plot_ycsb_timeseries.py \
   /tmp/experiments/perchunk_4chunk_workloada \
   -o ansible/plots_$(date +%Y%m%d)/ycsb_timeline_workloada.png
 ```
@@ -203,7 +203,7 @@ python3 plot_ycsb_timeseries.py \
 - **smoothed version:** add `--smooth 5` (centered rolling-median, 5 samples) to tame
   the transient latency spike at migration start:
   ```bash
-  python3 plot_ycsb_timeseries.py /tmp/experiments/perchunk_4chunk_workloada \
+  python3 experiments/tools/plot_ycsb_timeseries.py /tmp/experiments/perchunk_4chunk_workloada \
     --smooth 5 -o ansible/plots_$(date +%Y%m%d)/ycsb_timeline_workloada_smooth.pdf
   ```
 

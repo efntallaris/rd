@@ -152,8 +152,8 @@ grep "AQRAFT-INSTR" "$YO" | tail -1 | grep -oE "writeRedirect:.*"
 ```bash
 cd /users/entall/rd
 OUT=/tmp/plots_30m; mkdir -p $OUT
-python3 plot_ycsb_timeseries.py /tmp/experiments/perchunk_30m_workloada --output $OUT/ycsb_30m.png
-python3 plot_phase_gantt.py     /tmp/experiments/perchunk_30m_workloada $OUT/gantt_30m.png
+python3 experiments/tools/plot_ycsb_timeseries.py /tmp/experiments/perchunk_30m_workloada --output $OUT/ycsb_30m.png
+python3 experiments/tools/plot_phase_gantt.py     /tmp/experiments/perchunk_30m_workloada $OUT/gantt_30m.png
 ```
 
 ---

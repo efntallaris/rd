@@ -4364,6 +4364,16 @@ static const char *backpatchStateName(backpatchBatchState s) {
     return "unknown";
 }
 
+/* The donor-facing durability gate (see rdmaBackpatchStatusCommand): the batch's
+ * data is merged, chain-replicated to a live sg4 majority, and MGN_INDX_UPD is
+ * committed. Under rdma-async-apply the merge is dropped from the gate. */
+static int backpatchBatchDoneGate(backpatchBatch *b) {
+    int md = atomic_load_explicit(&b->merge_done,   memory_order_acquire);
+    int ca = b->chain_acked;
+    int ia = atomic_load_explicit(&b->indx_applied, memory_order_acquire);
+    return server.rdma_async_apply ? (ca && ia) : (md && ca && ia);
+}
+
 void rdmaBackpatchStatusCommand(client *c) {
     if (c->argc != 4) {
         addReplyError(c, "syntax: RDMA BACKPATCH-STATUS src_node_id src_mig_id");
@@ -4409,7 +4419,6 @@ void rdmaBackpatchStatusCommand(client *c) {
      * — a recipient-leader crash in that window silently loses data. */
     int md  = atomic_load_explicit(&b->merge_done,   memory_order_acquire);
     int ca  = b->chain_acked;
-    int ia  = atomic_load_explicit(&b->indx_applied, memory_order_acquire);
     /* AqRaft async-apply (rdma-async-apply): separate Raft COMMIT from APPLY.
      * The migration is durable + ordered once it is COMMITTED — chain replicated
      * to the sg4 majority (chain_acked) and MGN_INDX_UPD in the raft log
@@ -4423,7 +4432,7 @@ void rdmaBackpatchStatusCommand(client *c) {
      * batched to the end) and the final NARROW is barriered on
      * recipient_backpatch_in_progress==0 so no slot is handed off un-merged.
      * Off → byte-identical 3-flag DONE (merge_done && chain_acked && indx_applied). */
-    int done_gate = server.rdma_async_apply ? (ca && ia) : (md && ca && ia);
+    int done_gate = backpatchBatchDoneGate(b);
     int reported_state = state;
     if (state == BACKPATCH_RUNNING && done_gate) {
         /* Durability conditions met — promote the reply to "done" even though we
@@ -4461,6 +4470,94 @@ void rdmaBackpatchStatusCommand(client *c) {
     addReplyBulkSds(c, err_copy);
     addReplyLongLong(c, chain_durable);
     addReplyLongLong(c, md);
+}
+
+/* RDMA MGN-RESUME-STATUS <slot_lo> <slot_hi>
+ *
+ * AqRaft S2 query-first resume (recipient side). A newly-elected donor leader
+ * asks, before re-shipping a crashed session, what already landed here. The
+ * crashed session's batch is keyed by the DEAD leader's node id, which the new
+ * leader doesn't know, so the lookup is by slot: every batch on this node is
+ * scanned and each slot in [lo,hi] classified by the best batch covering it:
+ *
+ *   durable — covered by a batch whose donor-facing DONE gate holds (merged +
+ *             chain-acked by a live sg4 majority + MGN_INDX_UPD committed).
+ *             Safe to skip: the same condition that lets a live donor finish.
+ *   pending — covered by a batch that has received ALL its slots but hasn't
+ *             finalized yet; it completes on its own (merge + chain forward need
+ *             no donor), so the donor should wait rather than re-ship.
+ *   missing — anything else. In particular a batch cut off mid-transfer: the
+ *             chain forwards a batch only after all its chunks land, so no
+ *             follower holds any of it and leader-only bytes are NOT durable.
+ *
+ * Reply: [pending_count, missing_count, [durable slot ids...]]. */
+void rdmaMgnResumeStatusCommand(client *c) {
+    long long lo, hi;
+    if (getLongLongFromObjectOrReply(c, c->argv[2], &lo, NULL) != C_OK) return;
+    if (getLongLongFromObjectOrReply(c, c->argv[3], &hi, NULL) != C_OK) return;
+    if (lo < 0) lo = 0;
+    if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
+    if (hi < lo) {
+        addReplyError(c, "MGN-RESUME-STATUS: empty slot range");
+        return;
+    }
+    int n = (int) (hi - lo + 1);
+    /* 0 = missing, 1 = pending, 2 = durable (best across batches). */
+    unsigned char *cls = zcalloc((size_t) n);
+    int n_batches = 0;
+
+    pthread_mutex_lock(&backpatch_batches_mu);
+    if (backpatch_batches_by_key != NULL) {
+        dictIterator *di = dictGetIterator(backpatch_batches_by_key);
+        dictEntry *de;
+        while ((de = dictNext(di)) != NULL) {
+            backpatchBatch *b = dictGetVal(de);
+            if (b->slot_pos_base == NULL) continue;   /* legacy single-shot batch */
+            if (atomic_load_explicit(&b->state, memory_order_acquire) == BACKPATCH_FAILED)
+                continue;
+            unsigned char mark;
+            pthread_mutex_lock(&b->covered_mu);
+            if (backpatchBatchDoneGate(b)) {
+                mark = 2;
+            } else {
+                int received = 0;
+                for (int s = 0; s < CLUSTER_SLOTS; s++)
+                    if (b->slot_pos_base[s] >= 0) received++;
+                mark = (received >= b->n_slots) ? 1 : 0;
+            }
+            int touched = 0;
+            if (mark > 0) {
+                for (int s = (int) lo; s <= (int) hi; s++) {
+                    if (b->slot_pos_base[s] >= 0 && cls[s - lo] < mark) {
+                        cls[s - lo] = mark;
+                        touched = 1;
+                    }
+                }
+            }
+            pthread_mutex_unlock(&b->covered_mu);
+            n_batches += touched;
+        }
+        dictReleaseIterator(di);
+    }
+    pthread_mutex_unlock(&backpatch_batches_mu);
+
+    long long n_pending = 0, n_missing = 0, n_durable = 0;
+    for (int i = 0; i < n; i++) {
+        if (cls[i] == 2) n_durable++;
+        else if (cls[i] == 1) n_pending++;
+        else n_missing++;
+    }
+    serverLog(LL_NOTICE,
+        "AqRaft MGN-RESUME-STATUS: range=%lld-%lld durable=%lld pending=%lld "
+        "missing=%lld (from %d batches)",
+        lo, hi, n_durable, n_pending, n_missing, n_batches);
+    addReplyArrayLen(c, 3);
+    addReplyLongLong(c, n_pending);
+    addReplyLongLong(c, n_missing);
+    addReplyArrayLen(c, n_durable);
+    for (int i = 0; i < n; i++)
+        if (cls[i] == 2) addReplyLongLong(c, lo + i);
+    zfree(cls);
 }
 
 
@@ -6505,8 +6602,101 @@ static int rdmaLinkSlotsPrepared(rdmaOutboundLink *L, const int *slots, int n) {
 static long long startLocalMigration(const char *host, int port, int n_slots,
                                      sds orch_endpoint, long long orch_id,
                                      int start_delay_ms, const char **err_out,
-                                     const int *want_slots);
+                                     const int *want_slots, long long resume_of_sess);
 static int donorRehomeLookup(int slot_lo, char *host_out, int host_len, int *port_out);
+
+/* AqRaft S2 query-first resume. Before a newly-elected donor leader re-ships a
+ * crashed session, ask the recipient leader (RDMA MGN-RESUME-STATUS) which of the
+ * session's slots are already DURABLY landed — covered by a batch whose 3-flag
+ * DONE gate holds (merged + chain-acked by a live sg4 majority + MGN_INDX_UPD
+ * committed) — and drop those from mig->chosen. Slots of a batch that has fully
+ * landed but not yet finalized ("pending") are waited on (bounded) rather than
+ * re-shipped. Anything else (partially transferred batch: the chain forwards a
+ * batch only once ALL its chunks have landed, so no follower holds it) is
+ * re-shipped. Never skips a slot on leader-only presence — that would claim
+ * durability we don't have.
+ *
+ * Returns 1 if EVERY slot is already durable (caller skips the transfer and just
+ * closes the session), 0 to proceed with the (possibly reduced) mig->chosen. Any
+ * query failure falls back to a full re-ship (0, chosen untouched) — safe, since
+ * the recipient merge is don't-clobber/idempotent. */
+static int donorResumePlan(rdmaMigration *mig) {
+    if (mig->n_slots <= 0 || mig->L == NULL || mig->L->ctrl == NULL) return 0;
+    int lo = mig->chosen[0], hi = mig->chosen[0];
+    for (int i = 1; i < mig->n_slots; i++) {
+        if (mig->chosen[i] < lo) lo = mig->chosen[i];
+        if (mig->chosen[i] > hi) hi = mig->chosen[i];
+    }
+
+    const long long wait_ms = 60000;   /* bound on waiting for a pending batch */
+    long long t0 = mstime(), last_log = 0;
+    redisReply *r = NULL;
+    for (;;) {
+        pthread_mutex_lock(&mig->L->mu);
+        r = redisCommand(mig->L->ctrl, "RDMA MGN-RESUME-STATUS %d %d", lo, hi);
+        pthread_mutex_unlock(&mig->L->mu);
+        if (r == NULL || r->type != REDIS_REPLY_ARRAY || r->elements != 3 ||
+            r->element[0]->type != REDIS_REPLY_INTEGER ||
+            r->element[1]->type != REDIS_REPLY_INTEGER ||
+            r->element[2]->type != REDIS_REPLY_ARRAY) {
+            serverLog(LL_WARNING,
+                "AqRaft S2 resume-plan: id=%lld sess=%lld MGN-RESUME-STATUS %d-%d "
+                "failed (%s) — falling back to full re-ship",
+                mig->id, mig->resume_of_sess, lo, hi,
+                r == NULL ? mig->L->ctrl->errstr
+                          : (r->type == REDIS_REPLY_ERROR ? r->str : "bad reply shape"));
+            if (r) freeReplyObject(r);
+            return 0;
+        }
+        long long pending = r->element[0]->integer;
+        long long now = mstime();
+        if (pending == 0) break;
+        if (now - t0 >= wait_ms) {
+            serverLog(LL_WARNING,
+                "AqRaft S2 resume-plan: id=%lld sess=%lld %lld slots still pending "
+                "after %lldms — re-shipping them too", mig->id, mig->resume_of_sess,
+                pending, now - t0);
+            break;
+        }
+        if (now - last_log >= 1000) {
+            serverLog(LL_NOTICE,
+                "AqRaft S2 resume-plan: id=%lld sess=%lld %lld slots fully landed on "
+                "the recipient but not yet durable — waiting for it to finalize",
+                mig->id, mig->resume_of_sess, pending);
+            last_log = now;
+        }
+        freeReplyObject(r);
+        usleep(100000);
+    }
+
+    unsigned char *durable = zcalloc(CLUSTER_SLOTS);
+    redisReply *dl = r->element[2];
+    long long n_durable = 0;
+    for (size_t i = 0; i < dl->elements; i++) {
+        if (dl->element[i]->type != REDIS_REPLY_INTEGER) continue;
+        long long s = dl->element[i]->integer;
+        if (s >= 0 && s < CLUSTER_SLOTS && !durable[s]) { durable[s] = 1; n_durable++; }
+    }
+    long long n_pending = r->element[0]->integer, n_missing = r->element[1]->integer;
+    freeReplyObject(r);
+
+    int kept = 0;
+    for (int i = 0; i < mig->n_slots; i++)
+        if (!durable[mig->chosen[i]]) mig->chosen[kept++] = mig->chosen[i];
+    zfree(durable);
+    int skipped = mig->n_slots - kept;
+    serverLog(LL_NOTICE,
+        "AqRaft S2 resume-plan: id=%lld sess=%lld range=%d-%d — recipient reports "
+        "durable=%lld pending=%lld missing=%lld; skipping %d already-landed slots, "
+        "re-shipping %d (waited %lldms)",
+        mig->id, mig->resume_of_sess, lo, hi, n_durable, n_pending, n_missing,
+        skipped, kept, mstime() - t0);
+    if (kept == 0) return 1;
+    pthread_mutex_lock(&mig->mu);
+    mig->n_slots = kept;
+    pthread_mutex_unlock(&mig->mu);
+    return 0;
+}
 
 static void *migrationWorker(void *arg) {
     rdmaMigration *mig = (rdmaMigration *) arg;
@@ -6529,6 +6719,25 @@ static void *migrationWorker(void *arg) {
         ts.tv_sec  = mig->start_delay_ms / 1000;
         ts.tv_nsec = (long) (mig->start_delay_ms % 1000) * 1000000L;
         nanosleep(&ts, NULL);
+    }
+
+    /* AqRaft S2 query-first resume: ask the recipient what already landed before
+     * re-shipping. If the whole crashed session is already durable there, there
+     * is nothing to transfer — just close the original session. */
+    if (mig->resume_of_sess > 0 && donorResumePlan(mig)) {
+        char mgn_payload[64];
+        snprintf(mgn_payload, sizeof(mgn_payload), "sess=%lld", mig->resume_of_sess);
+        rdmaMgnLogSync("TXN_DONE", mgn_payload);
+        pthread_mutex_lock(&mig->mu);
+        mig->state = RDMA_MIG_DONE;
+        mig->t_ended = time(NULL);
+        pthread_mutex_unlock(&mig->mu);
+        serverLog(LL_NOTICE,
+            "RDMA MIGRATE worker: id=%lld DONE n_slots=0 — resume of sess=%lld: every "
+            "slot already durable on the recipient, transfer skipped",
+            mig->id, mig->resume_of_sess);
+        migNotifyOrchestratorIfAny(mig, "DONE", 0);
+        return NULL;
     }
 
     /* Protocol log: donor opens a migration session. All donor replicas
@@ -6740,6 +6949,13 @@ static void *migrationWorker(void *arg) {
                     snprintf(mgn_payload, sizeof(mgn_payload),
                              "sess=%lld", mig->id);
                     rdmaMgnLogSync("TXN_DONE", mgn_payload);
+                    /* S2 resume: the crashed session it replaced is now complete
+                     * too — close it so a later promotion doesn't resume it again. */
+                    if (mig->resume_of_sess > 0) {
+                        snprintf(mgn_payload, sizeof(mgn_payload),
+                                 "sess=%lld", mig->resume_of_sess);
+                        rdmaMgnLogSync("TXN_DONE", mgn_payload);
+                    }
                 }
                 else if (state_str && strcmp(state_str, "failed") == 0) {
                     backpatch_err = sdscatfmt(sdsempty(),
@@ -6788,8 +7004,12 @@ static void *migrationWorker(void *arg) {
                 long long saved_next = server.rdma_migration_next_id;
                 server.rdma_migration_next_id =
                     800000000000000000LL + (slot_lo > 0 ? slot_lo : 1);
+                /* resume_of_sess = this session: the re-ship first asks the new
+                 * leader what already landed (MGN-RESUME-STATUS), and on DONE also
+                 * closes this original session (TXN_DONE sess=<mig->id>). */
                 long long rid = startLocalMigration(nh, nport, mig->n_slots,
-                                                    NULL, 0, 0, &rerr, mig->chosen);
+                                                    NULL, 0, 0, &rerr, mig->chosen,
+                                                    mig->id);
                 server.rdma_migration_next_id = saved_next;
                 if (rid >= 0) {
                     serverLog(LL_NOTICE,
@@ -6873,7 +7093,8 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
                                      sds orch_endpoint, long long orch_id,
                                      int start_delay_ms,
                                      const char **err_out,
-                                     const int *want_slots) {
+                                     const int *want_slots,
+                                     long long resume_of_sess) {
     *err_out = NULL;
 
     /* AqRaft-aware guard: ok if either vanilla-cluster is up OR
@@ -6958,6 +7179,7 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
     mig->orchestrator_endpoint = orch_endpoint;   /* takes ownership */
     mig->orchestrator_orch_id  = orch_id;
     mig->start_delay_ms        = (start_delay_ms > 0) ? start_delay_ms : 0;
+    mig->resume_of_sess        = (resume_of_sess > 0) ? resume_of_sess : 0;
     pthread_mutex_init(&mig->mu, NULL);
     mig->state     = RDMA_MIG_INIT;
     mig->registered = 0;
@@ -7036,7 +7258,7 @@ void rdmaMigrateCommand(client *c) {
     const char *err = NULL;
     long long mig_id = startLocalMigration(host, port, n_slots,
                                            orch_endpoint, orch_id,
-                                           (int) start_delay_ms, &err, NULL);
+                                           (int) start_delay_ms, &err, NULL, 0);
     if (mig_id < 0) {
         addReplyError(c, err ? err : "RDMA MIGRATE: dispatch failed");
         return;
@@ -7420,7 +7642,7 @@ static long long orchAllocateAndDispatch(client *c,
         long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
                                                     n_slots_per_source,
                                                     self_orch_ep, orch->id,
-                                                    0, &self_err, NULL);
+                                                    0, &self_err, NULL, 0);
         if (self_mig_id < 0) {
             serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
                       self_err ? self_err : "?");
@@ -7523,7 +7745,7 @@ static long long orchAllocateAndDispatch(client *c,
         long long self_mig_id = startLocalMigration(recipient_host, recipient_port,
                                                     n_slots_per_source,
                                                     self_orch_ep, orch->id,
-                                                    0, &self_err, NULL);
+                                                    0, &self_err, NULL, 0);
         if (self_mig_id < 0) {
             serverLog(LL_WARNING, "RDMA MIGRATE-ALL: self dispatch failed: %s",
                       self_err ? self_err : "?");
@@ -7708,12 +7930,6 @@ static void *warmRegisterThread(void *arg) {
  *
  * Local delete on the leader only (by_command=1); the recipient already owns
  * and serves the slot, so the donor's residual replicas are irrelevant. */
-/* AqRaft roll-forward recovery entry point (reverse loopback). The redisraft
- * module's become-leader hook RedisModule_Call's `RDMA MGN-RECOVER <role> <sess>`
- * when this node is elected leader with an in-flight migration session, so the
- * migration can ROLL FORWARD instead of failing. Diagnostic v1: log + ack, to
- * verify the module->cluster_rdma bridge fires on a real crash before wiring the
- * actual resume (S2 donor re-ship / S1 gap-pull + execute-before-serve). */
 /* AqRaft B#1 donor re-home table. When a recipient leader dies mid-migration, its
  * elected successor tells each affected donor where it re-homed via
  * RDMA MGN-DONOR-REHOME <slot_lo> <host> <port>. The donor's in-flight migration,
@@ -7891,14 +8107,10 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
             sess, slot_lo, slot_hi);
     }
 
-    char donor_payload[256];
-    snprintf(donor_payload, sizeof(donor_payload),
-             "sess=%lld slots=%d-%d n=%d recipient=%s:%d",
-             sess, slot_lo, slot_hi, nslots, self_host, self_port);
     serverLog(LL_NOTICE,
         "AqRaft B#1 recipient-recover: sess=%lld — asking donor %s:%d to RE-SHIP "
-        "slots=%d-%d (n=%d) to new leader %s:%d [donor_payload=\"%s\"]",
-        sess, dhost, dport, slot_lo, slot_hi, nslots, self_host, self_port, donor_payload);
+        "slots=%d-%d (n=%d) to new leader %s:%d",
+        sess, dhost, dport, slot_lo, slot_hi, nslots, self_host, self_port);
 
     redisContext *ctx = redisConnect(dhost, dport);
     if (ctx == NULL || ctx->err) {
@@ -7912,7 +8124,7 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
                                    slot_lo, self_host, self_port);
     if (rep == NULL)
         serverLog(LL_WARNING,
-            "AqRaft B#1 recipient-recover: sess=%lld — donor MGN-RECOVER RPC got no reply (%s)",
+            "AqRaft B#1 recipient-recover: sess=%lld — MGN-DONOR-REHOME got no reply (%s)",
             sess, ctx->errstr);
     else {
         serverLog(LL_NOTICE,
@@ -7923,6 +8135,12 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
     redisFree(ctx);
 }
 
+/* AqRaft roll-forward recovery entry point (reverse loopback). The redisraft
+ * module's become-leader hook calls `RDMA MGN-RECOVER <role> <sess> <payload>`
+ * for every in-flight migration session (START seen, no DONE) when this node is
+ * elected leader, so the migration rolls FORWARD instead of failing:
+ *   recipient -> rdmaRecipientRecover (re-merge held blocks, ask the donor to re-ship)
+ *   donor     -> re-dispatch the session's exact slots with a query-first resume. */
 void rdmaMgnRecoverCommand(client *c) {
     /* RDMA MGN-RECOVER <role> <sess> [payload]
      * payload is the TXN_START marker: "sess=K slots=lo-hi n=N recipient=host:port". */
@@ -7942,10 +8160,10 @@ void rdmaMgnRecoverCommand(client *c) {
         return;
     }
 
-    /* B#2 donor resume: re-dispatch the migration for this (newly-elected) leader's
-     * owned slots to the recipient. On a fresh leader the reshard offset is 0, so
-     * startLocalMigration picks the same first-N owned slots the crashed donor was
-     * migrating; the recipient's don't-clobber merge makes re-shipping idempotent. */
+    /* B#2 donor resume: re-dispatch the crashed session's exact slot range
+     * (want_slots, from the TXN_START payload) to the recipient. The worker first
+     * asks the recipient what already landed (donorResumePlan) and re-ships only
+     * the rest; the recipient's don't-clobber merge makes any re-ship idempotent. */
     char rhost[128]; rhost[0] = '\0'; int rport = 0, nslots = 0, slot_lo = -1, slot_hi = -1;
     const char *rp = strstr(payload, "recipient=");
     const char *np = strstr(payload, "n=");
@@ -7974,7 +8192,7 @@ void rdmaMgnRecoverCommand(client *c) {
             want = zmalloc((size_t) nslots * sizeof(int));
             for (int wi = 0; wi < nslots; wi++) want[wi] = slot_lo + wi;
         }
-        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err, want);
+        long long mid = startLocalMigration(rhost, rport, nslots, NULL, 0, 0, &err, want, sess);
         if (want) zfree(want);
         server.rdma_migration_next_id = saved_next;
         if (mid < 0)
