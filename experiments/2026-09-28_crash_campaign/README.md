@@ -234,6 +234,45 @@ places string values in the r_allocator like live writes (db.c). A HEALTHY run r
 `ws30m` then merged 2,492,421 / 2,481,831 / 2,495,172 keys per range (a YCSB-loaded run: ~7.45M
 total), rc=0. Restore takes ~80 s instead of the ~18-min load.
 
+**Follower crashes and client throughput (2026-09-29 evening).** Question: S3/S4 kill only a
+follower, the system keeps progressing, so why did clients dip? Four runs restored from `ws30m`
+(with leadership moved back to the usual nodes after the restore) and a new per-follower
+AppendEntries round-trip log on every Raft leader (`AE-RTT node= n= avg= max=`, once per second).
+
+| run | kill | client effect | surviving follower's AE round trip |
+|-----|------|---------------|-------------------------------------|
+| S4-quiet | redis4 at YCSB 25 s, before the migration | none (147-153K) | flat ~0.35 ms |
+| S3-quiet | sg1 on redis1 at YCSB 25 s | none (157-165K) | 0.4 -> 0.6 ms |
+| S4 | redis4 during the migration | 75K, then ~2 s with no samples, then 157K at 8.5 ms | avg 0.2 -> 2.4 ms, max 184 / 494 ms |
+| S3 | sg1 on redis1 during the migration | none (163-187K) | flat ~0.3 ms |
+
+- Losing a follower costs nothing by itself (both quiet runs, and S3 during the migration).
+  Last night's S3 dip did not reproduce, so it was not caused by the follower loss.
+- S4 during the migration is real: redis5 becomes sg4's only follower, so every sg4 commit
+  (including writes to slots already redirected to sg4) waits for it, and at that moment its
+  main thread stalls for ~0.5 s after each new session's `CHAIN-PREP` (15:22:21.008 and 21.561,
+  then a burst of queued commands at 21.572). Likely cause: its landing pools must be registered
+  for the new predecessor (the leader instead of redis4), a 2.86 GB `ibv_reg_mr` on the main
+  thread. Fix direction: do follower-side pool registration off the main thread, as CHAIN-WARM
+  already does for the first chain.
+- Restores from a snapshot elect leaders at random; `restore_wait.yml` now moves each group's
+  leadership back to raft id 1 (`RAFT.TRANSFER_LEADER`), since the orchestrator and the crash
+  scenarios assume the usual placement.
+
+**Recipient landing ring moved out of the migration.** In the S3 Gantt the first donor's
+CONNECT took ~6.9 s and sg3's ~0.87 s. Causes: (1) the recipient's first REGISTER-BLOCK-SLOTS
+created the whole 8-pool landing ring (8 x 3.29 GB mmap + ibv_reg_mr); (2) the ring did not
+exist at CHAIN-WARM, so the chain's forward twins were registered during the migration while
+holding the ring lock, which a later donor's registration waited on; and the claim code
+re-created every empty ring slot, including one retired by adopt-in-place, on each registration.
+Fixes: `--rdma-landing-prereg-pools N --rdma-landing-prereg-slots S` register N landing pools at
+startup (off the main thread, device shared PD via the keeper cm_id), so CHAIN-WARM registers
+their twins before the window; and a registration now claims a usable free pool and creates one
+only when none is free. Result (HEALTHY from `ws30m`, `rdma_landing_prereg_pools=3`): all three
+donors' registrations answered from a pre-registered pool in ~1 ms (was 6.9 s / 0.08 s /
+0.87 s); first donor PREP to last commit 5.5 s (was ~13.9 s); no landing pool registered during
+the migration. Figure: `figures/follower_crash/landing_heal_gantt.png`.
+
 ## Layout
 
 - `run.sh` — runs the campaign on the controller (wraps `ansible/crash/run_all_scenarios.sh`).

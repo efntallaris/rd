@@ -40,3 +40,34 @@
 
     - debug:
         msg: "{{ rw_ready.results | map(attribute='stdout') | list }}"
+
+    # A restored group elects whichever node wins first, but the experiments assume
+    # the usual placement (raft id 1 leads: sg1 redis0, sg2 redis1, sg3 redis2,
+    # sg4 redis3): the orchestrator runs on redis0 and the crash scenarios kill
+    # nodes by role. Move leadership back with RAFT.TRANSFER_LEADER.
+    - name: Put leadership back on each shardgroup's usual node (raft id 1)
+      shell: |
+        want=$(for n in {% for nd in sg.nodes %}{{ nd.raft_id }}:{{ (rw_ip_lookup.results | selectattr('item','equalto',nd.host) | first).stdout }} {% endfor %}; do [ "${n%%:*}" = "1" ] && echo ${n#*:}; done)
+        role(){ {{ redis_bin_dir }}/redis-cli -t 2 -h $1 -p {{ sg.port }} INFO raft 2>/dev/null | tr -d '\r' | awk -F: '/^raft_role:/{print $2}'; }
+        moved=0
+        for attempt in 1 2 3 4 5; do
+          if [ "$(role $want)" = "leader" ]; then
+            [ $moved = 1 ] && echo "{{ sg.id }}: leader moved to $want (raft id 1)" || echo "{{ sg.id }}: leader is $want (raft id 1)"
+            exit 0
+          fi
+          moved=1
+          for ip in {% for nd in sg.nodes %}{{ (rw_ip_lookup.results | selectattr('item','equalto',nd.host) | first).stdout }} {% endfor %}; do
+            [ "$(role $ip)" = "leader" ] && {{ redis_bin_dir }}/redis-cli -t 5 -h $ip -p {{ sg.port }} RAFT.TRANSFER_LEADER 1 >/dev/null 2>&1
+          done
+          for i in $(seq 1 20); do [ "$(role $want)" = "leader" ] && break; sleep 0.5; done
+        done
+        [ "$(role $want)" = "leader" ] && { echo "{{ sg.id }}: leader moved to $want"; exit 0; }
+        echo "{{ sg.id }}: could not move leadership to $want"; exit 1
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      register: rw_lead
+      changed_when: false
+
+    - debug:
+        msg: "{{ rw_lead.results | map(attribute='stdout') | list }}"

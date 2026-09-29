@@ -897,6 +897,38 @@ static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const cha
     }
 }
 
+static long long aeMonoUs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long) ts.tv_sec * 1000000LL + ts.tv_nsec / 1000;
+}
+
+/* AqRaft: account one AppendEntries round trip to this follower and log a
+ * per-second summary (count, average, max). A slow or overloaded follower shows
+ * up as a high average/max; when a group has lost one follower, the survivor's
+ * round trip is the group's commit latency. */
+static void aeRttRecord(Node *node, unsigned long msg_id)
+{
+    int k = (int) (msg_id & 63);
+    if (node->ae_sent_id[k] != msg_id || node->ae_sent_us[k] == 0) return;
+    long long now = aeMonoUs();
+    long long rtt = now - node->ae_sent_us[k];
+    node->ae_sent_us[k] = 0;
+    node->ae_rtt_sum_us += rtt;
+    node->ae_rtt_n++;
+    if (rtt > node->ae_rtt_max_us) node->ae_rtt_max_us = rtt;
+    if (node->ae_rtt_win_us == 0) node->ae_rtt_win_us = now;
+    if (now - node->ae_rtt_win_us >= 1000000) {
+        LOG_NOTICE("AE-RTT node=%d n=%lld avg=%.2fms max=%.2fms",
+                   node->id, node->ae_rtt_n,
+                   node->ae_rtt_sum_us / 1000.0 / node->ae_rtt_n,
+                   node->ae_rtt_max_us / 1000.0);
+        node->ae_rtt_sum_us = node->ae_rtt_max_us = node->ae_rtt_n = 0;
+        node->ae_rtt_win_us = now;
+    }
+}
+
 static void handleAppendEntriesResponse(redisAsyncContext *c, void *r, void *privdata)
 {
     Node *node = privdata;
@@ -942,6 +974,8 @@ static void handleAppendEntriesResponse(redisAsyncContext *c, void *r, void *pri
         reply->element[4]->len > 0) {
         mgnPiggybackAcks(rr, node->id, reply->element[4]->str);
     }
+
+    aeRttRecord(node, (unsigned long) response.msg_id);
 
     raft_node_t *raft_node = raft_get_node(rr->raft, node->id);
 
@@ -990,6 +1024,9 @@ static int raftSendAppendEntries(raft_server_t *raft, void *user_data,
                           msg->prev_log_term,
                           msg->leader_commit,
                           msg->msg_id);
+
+    node->ae_sent_id[msg->msg_id & 63] = (unsigned long) msg->msg_id;
+    node->ae_sent_us[msg->msg_id & 63] = aeMonoUs();
 
     argv[4] = nentries_str;
     argvlen[4] = snprintf(nentries_str, sizeof(nentries_str) - 1, "%ld", msg->n_entries);

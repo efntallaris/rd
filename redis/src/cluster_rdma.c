@@ -4207,89 +4207,68 @@ static void *registerWorkerThread(void *arg) {
         }
     }
 
-    /* Create any pool not yet allocated (or too small / wrong PD). The mmap +
-     * ibv_reg_mr is done WITHOUT the ring lock (it's slow); publish under lock. */
-    int created[N_LANDING_POOLS] = {0};
-    for (int i = 0; i < n_pools; i++) {
-        pthread_mutex_lock(&g_lp_mu);
-        int need = (g_lp_pool[i] == NULL || g_lp_pd[i] != pd || g_lp_bytes[i] < pool_bytes);
-        pthread_mutex_unlock(&g_lp_mu);
-        if (!need) continue;
-        void *np = mmap(NULL, alloc_bytes, PROT_READ | PROT_WRITE,
-                        MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        if (np == MAP_FAILED) {
-            job->has_error = 1;
-            snprintf(job->err_msg, sizeof(job->err_msg),
-                "mmap(%zu bytes) for landing pool %d failed: %s", alloc_bytes, i, strerror(errno));
-            goto deliver;
-        }
-        struct rdmamig_buffer *nb = rdmamig_buffer_create(cm, (char *) np, alloc_bytes, 0);
-        if (nb == NULL) {
-            munmap(np, alloc_bytes);
-            job->has_error = 1;
-            snprintf(job->err_msg, sizeof(job->err_msg),
-                "ibv_reg_mr(%zu bytes) for landing pool %d failed: check RLIMIT_MEMLOCK",
-                alloc_bytes, i);
-            goto deliver;
-        }
-        pthread_mutex_lock(&g_lp_mu);
-        if (g_lp_pool[i] == NULL || g_lp_pd[i] != pd || g_lp_bytes[i] < pool_bytes) {
-            g_lp_pool[i] = np; g_lp_buf[i] = nb; g_lp_bytes[i] = alloc_bytes;
-            g_lp_pd[i] = pd; g_lp_free[i] = 1; created[i] = 1;
-            /* The forward twin MR cached for this slot was registered against the
-             * OLD pool memory; a reused warm chain QP has the same f1_cm, so
-             * rdmaLandingFwdBufFor would hand back the stale MR (RDMA-write local
-             * protection error). Invalidate it so the twin is re-registered
-             * against `np`. Critical for S2 crash-recovery re-migration. */
-            g_lp_fwd_buf[i] = NULL; g_lp_fwd_cm[i] = NULL;
-            pthread_mutex_unlock(&g_lp_mu);
-            serverLog(LL_NOTICE,
-                "RDMA REGISTER-BLOCK-SLOTS: landing pool %d registered (%zu bytes)",
-                i, alloc_bytes);
-        } else {
-            pthread_mutex_unlock(&g_lp_mu);   /* lost a race — leak np/nb (no-destroy contract) */
-        }
-    }
-
-    /* Claim a pool with the free-gate — ALWAYS-ON now (AqRaft zero-copy chain
-     * forward). The ring slot is returned to g_lp_free by landingConsumerDone
-     * only once BOTH the merge AND the chain forward (which RDMA-reads the same
-     * pages) are done, so the gate prevents the next donor's RDMA-write from
-     * racing an in-flight forwarder's read. Non-xsession keeps n_pools=1, which
-     * naturally serializes merges (the next donor can't get a landing buffer
-     * until the prior session fully releases), so no merge-serialization gate is
-     * needed there.
+    /* Claim a USABLE free pool: created, on this PD and big enough. Only when none is
+     * free, create ONE pool into an empty (or unusable) slot. Pools are neither
+     * created eagerly nor recycled: the old code created every missing slot of the
+     * ring on each registration, so the first donor paid for all 8 pools (~7 s) even
+     * when pre-registered pools were free, and a slot retired by adopt-in-place was
+     * re-created (~0.9 s) for a later donor although other pools were free.
      *
-     * Two correctness points the original 5 s xsession-only gate got wrong once
-     * the buffer is held until the FORWARD finishes AND async-apply lets the
-     * merge drain in the background:
-     *   1. The wait must be long enough for the prior session's async merge +
-     *      forward to drain (single-pool xsession-off serializes on this), so use
-     *      a generous 30 s bound (a merge is ~1 s; 30 s only triggers on a real
-     *      stall).
-     *   2. On timeout we must NOT reuse a still-busy pool — with zero-copy that
-     *      RDMA-writes a buffer a forwarder/merge is still reading → corruption +
-     *      SIGSEGV in r_allocator_insert_kvobj. Fail the registration instead;
-     *      the migration aborts cleanly rather than corrupting follower data. */
-    int idx = -1;
+     * The free-gate is ALWAYS-ON (AqRaft zero-copy chain forward): a slot is returned
+     * to g_lp_free by landingConsumerDone only once BOTH the merge AND the chain
+     * forward (which RDMA-reads the same pages) are done, so the next donor's
+     * RDMA-write never races an in-flight forwarder's read. With no usable free pool
+     * and no slot to create into, wait up to 30 s; on timeout fail the registration
+     * rather than reuse a busy pool (zero-copy would corrupt follower data). */
+    #define LP_USABLE(i) (g_lp_pool[i] != NULL && g_lp_pd[i] == pd && g_lp_bytes[i] >= pool_bytes)
+    int idx = -1, created_idx = -1;
     {
-        pthread_mutex_lock(&g_lp_mu);
         struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_sec += 30;
+        pthread_mutex_lock(&g_lp_mu);
         for (;;) {
-            int cand = g_lp_next % n_pools;
-            if (!g_lp_free[cand]) {
-                cand = -1;
-                for (int i = 0; i < n_pools; i++) if (g_lp_free[i]) { cand = i; break; }
+            int start = g_lp_next % n_pools;
+            for (int k = 0; k < n_pools; k++) {
+                int i = (start + k) % n_pools;
+                if (g_lp_free[i] && LP_USABLE(i)) { idx = i; break; }
             }
-            if (cand >= 0) { idx = cand; break; }
-            if (pthread_cond_timedwait(&g_lp_cv, &g_lp_mu, &ts) == ETIMEDOUT) {
-                idx = -1;   /* all pools still busy — fail safely, do NOT reuse */
+            if (idx >= 0) break;
+            int slot = -1;
+            for (int i = 0; i < n_pools; i++) if (g_lp_free[i] && !LP_USABLE(i)) { slot = i; break; }
+            if (slot >= 0) {
+                g_lp_free[slot] = 0;                  /* reserve the slot while registering */
+                pthread_mutex_unlock(&g_lp_mu);       /* mmap + ibv_reg_mr are slow: no lock */
+                void *np = mmap(NULL, alloc_bytes, PROT_READ | PROT_WRITE,
+                                MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+                struct rdmamig_buffer *nb = (np == MAP_FAILED) ? NULL
+                    : rdmamig_buffer_create(cm, (char *) np, alloc_bytes, 0);
+                pthread_mutex_lock(&g_lp_mu);
+                if (nb == NULL) {
+                    if (np != MAP_FAILED) munmap(np, alloc_bytes);
+                    g_lp_free[slot] = 1;
+                    pthread_mutex_unlock(&g_lp_mu);
+                    job->has_error = 1;
+                    snprintf(job->err_msg, sizeof(job->err_msg),
+                        "mmap/ibv_reg_mr(%zu bytes) for landing pool %d failed: check RLIMIT_MEMLOCK",
+                        alloc_bytes, slot);
+                    goto deliver;
+                }
+                /* A stale pool in this slot (wrong PD / too small) is leaked: same
+                 * no-destroy contract as before. Its forward twin was registered
+                 * against the old memory, so invalidate it (critical for S2 re-migration). */
+                g_lp_pool[slot] = np; g_lp_buf[slot] = nb; g_lp_bytes[slot] = alloc_bytes;
+                g_lp_pd[slot] = pd; g_lp_fwd_buf[slot] = NULL; g_lp_fwd_cm[slot] = NULL;
+                idx = created_idx = slot;
+                serverLog(LL_NOTICE,
+                    "RDMA REGISTER-BLOCK-SLOTS: landing pool %d registered (%zu bytes) — no free pool to reuse",
+                    slot, alloc_bytes);
                 break;
             }
+            if (pthread_cond_timedwait(&g_lp_cv, &g_lp_mu, &ts) == ETIMEDOUT) break;
         }
         if (idx >= 0) { g_lp_next = (idx + 1) % n_pools; g_lp_free[idx] = 0; }
         pthread_mutex_unlock(&g_lp_mu);
     }
+    #undef LP_USABLE
     if (idx < 0) {
         job->has_error = 1;
         snprintf(job->err_msg, sizeof(job->err_msg),
@@ -4301,7 +4280,7 @@ static void *registerWorkerThread(void *arg) {
     void *pool = g_lp_pool[idx];
     struct rdmamig_buffer *pool_buf = g_lp_buf[idx];
     size_t this_pool_bytes = g_lp_bytes[idx];
-    int reused = !created[idx];
+    int reused = (created_idx != idx);
 
     job->conn->aqueduct_pool_buf = pool_buf;
     /* AqRaft pool-free: record the landing-pool region. The pool is NOT
@@ -6018,11 +5997,27 @@ static void *g_src_prereg_pool = NULL;
 static size_t g_src_prereg_bytes = 0;
 static struct rdmamig_buffer *g_src_prereg_parent = NULL;
 
+#define LP_PREREG_BUCKET 512   /* must equal LP_BLOCK_BUCKET in registerWorkerThread */
+
+/* One keeper cm_id per process, shared by every startup pre-registration: it pins
+ * the RDMA device's shared PD (the one every rdma_create_ep(pd=NULL) link and every
+ * accepted donor connection on that device gets) for the process lifetime. */
+static struct rdma_cm_id *g_prereg_keeper = NULL;
+static pthread_mutex_t g_prereg_keeper_mu = PTHREAD_MUTEX_INITIALIZER;
+static struct rdma_cm_id *rdmaPreregKeeper(void) {
+    pthread_mutex_lock(&g_prereg_keeper_mu);
+    if (g_prereg_keeper == NULL)
+        g_prereg_keeper = rdmamig_keeper_create(server.rdma_src_prereg_bind);
+    struct rdma_cm_id *k = g_prereg_keeper;
+    pthread_mutex_unlock(&g_prereg_keeper_mu);
+    return k;
+}
+
 static void *rdmaSrcPreregThreadMain(void *arg) {
     UNUSED(arg);
     long long t0 = ustime();
     size_t bytes = (size_t) server.rdma_src_prereg_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
-    struct rdma_cm_id *keeper = rdmamig_keeper_create(server.rdma_src_prereg_bind);
+    struct rdma_cm_id *keeper = rdmaPreregKeeper();
     if (keeper == NULL) {
         serverLog(LL_WARNING, "RDMA SRC-PREREG: no RDMA device found for the keeper cm_id; "
                   "source pool will be registered lazily");
@@ -6073,6 +6068,68 @@ void rdmaSrcPreregStart(void) {
         serverLog(LL_NOTICE, "RDMA SRC-PREREG: registering %d x 2 MiB source blocks in the "
                   "background", server.rdma_src_prereg_slots);
     }
+    pthread_attr_destroy(&attr);
+}
+
+/* AqRaft recipient landing-ring pre-registration (--rdma-landing-prereg-pools N
+ * --rdma-landing-prereg-slots S). The recipient's first REGISTER-BLOCK-SLOTS used to
+ * create the whole landing ring (8 x ~3.3 GB mmap + ibv_reg_mr, ~6.9 s) inside the
+ * first donor's PREP, and CHAIN-WARM could not register the ring's forward twins
+ * because the ring did not exist yet, so they were registered under g_lp_mu during
+ * the migration (a later donor's REGISTER then waited on the lock, ~0.9 s). Register
+ * N ring pools at startup on the device's shared PD instead, sized exactly like
+ * registerWorkerThread sizes them for S slots; registerWorkerThread then finds them
+ * (same PD, big enough) and CHAIN-WARM registers their twins before the window. */
+static void *rdmaLandingPreregThreadMain(void *arg) {
+    UNUSED(arg);
+    struct rdma_cm_id *keeper = rdmaPreregKeeper();
+    if (keeper == NULL) {
+        serverLog(LL_WARNING, "RDMA LANDING-PREREG: no RDMA device for the keeper cm_id; "
+                  "landing pools will be registered lazily");
+        return NULL;
+    }
+    const size_t stride = r_allocator_block_stride_bytes();
+    size_t blocks = (size_t) server.rdma_landing_prereg_slots + 2;   /* a few slots carry a 2nd block */
+    size_t bucketed = ((blocks + LP_PREREG_BUCKET - 1) / LP_PREREG_BUCKET) * LP_PREREG_BUCKET;
+    size_t alloc_bytes = (bucketed + 32) * stride;
+    void *pd = rdmamig_cm_pd(keeper);
+    int n = server.rdma_landing_prereg_pools;
+    if (n > N_LANDING_POOLS) n = N_LANDING_POOLS;
+    long long t0 = ustime();
+    for (int i = 0; i < n; i++) {
+        void *np = mmap(NULL, alloc_bytes, PROT_READ | PROT_WRITE,
+                        MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+        if (np == MAP_FAILED) {
+            serverLog(LL_WARNING, "RDMA LANDING-PREREG: mmap(%zu) failed: %s", alloc_bytes, strerror(errno));
+            return NULL;
+        }
+        struct rdmamig_buffer *nb = rdmamig_buffer_create(keeper, (char *) np, alloc_bytes, 0);
+        if (nb == NULL) {
+            munmap(np, alloc_bytes);
+            serverLog(LL_WARNING, "RDMA LANDING-PREREG: ibv_reg_mr(%zu) failed (RLIMIT_MEMLOCK?)", alloc_bytes);
+            return NULL;
+        }
+        pthread_mutex_lock(&g_lp_mu);
+        if (g_lp_pool[i] == NULL) {
+            g_lp_pool[i] = np; g_lp_buf[i] = nb; g_lp_bytes[i] = alloc_bytes;
+            g_lp_pd[i] = pd; g_lp_free[i] = 1;
+            g_lp_fwd_buf[i] = NULL; g_lp_fwd_cm[i] = NULL;
+        }
+        pthread_mutex_unlock(&g_lp_mu);
+    }
+    serverLog(LL_NOTICE, "RDMA LANDING-PREREG: %d landing pools ready (%zu B each, %zu blocks, pd=%p) "
+              "in %lld ms [startup, off-main]", n, alloc_bytes, bucketed + 32, pd, (ustime() - t0) / 1000);
+    return NULL;
+}
+
+void rdmaLandingPreregStart(void) {
+    if (server.rdma_landing_prereg_pools <= 0 || server.rdma_landing_prereg_slots <= 0) return;
+    pthread_attr_t attr;
+    pthread_t tid;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&tid, &attr, rdmaLandingPreregThreadMain, NULL) != 0)
+        serverLog(LL_WARNING, "RDMA LANDING-PREREG: pthread_create failed; pools registered lazily");
     pthread_attr_destroy(&attr);
 }
 

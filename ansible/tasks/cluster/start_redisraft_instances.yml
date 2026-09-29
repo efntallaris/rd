@@ -69,6 +69,9 @@
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
           {% if sg.id != 'sg4' %}--rdma-src-prereg-slots {{ rdma_src_prereg_slots | default(0) }} \
           --rdma-src-prereg-bind {{ host_ip_map[inventory_hostname] }} \
+          {% endif %}{% if sg.id == 'sg4' and rdma_landing_prereg_pools is defined %}--rdma-landing-prereg-pools {{ rdma_landing_prereg_pools }} \
+          --rdma-landing-prereg-slots {{ rdma_landing_prereg_slots | default(1365) }} \
+          --rdma-src-prereg-bind {{ host_ip_map[inventory_hostname] }} \
           {% endif %}{% if rdma_chain_ack_via_raft is defined %}--rdma-chain-ack-via-raft {{ rdma_chain_ack_via_raft }} \
           {% endif %}          --rdma-naive-durability {{ rdma_naive_durability | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \

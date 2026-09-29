@@ -464,6 +464,11 @@ typedef struct Node {
     long pending_proxy_response_num;  /* Number of pending proxy responses */
     struct sc_list pending_responses; /* List of PendingResponse objects */
     struct sc_list entries;           /* Next Node item in the list */
+    /* AqRaft: AppendEntries round-trip instrumentation (leader side), logged
+     * once per second per follower as "AE-RTT node=<id> n= avg= max=". */
+    unsigned long ae_sent_id[64];
+    long long ae_sent_us[64];
+    long long ae_rtt_sum_us, ae_rtt_max_us, ae_rtt_n, ae_rtt_win_us;
 } Node;
 
 /* General purpose status code.  Convention is this:

@@ -2247,6 +2247,8 @@ struct redisServer {
     sds rdma_src_prereg_bind;       /* AqRaft: local IP whose RDMA device the migration links use (keeper cm_id binds here); empty = first RDMA-capable address. */
     int rdma_indx_upd_after_merge;  /* AqRaft: log MGN_INDX_UPD only after the recipient leader's merge finishes (default on). */
     int rdma_chain_ack_via_raft;    /* AqRaft: recipient followers report received migration batches on their Raft AppendEntries replies instead of a TCP CHAIN-ACK. */
+    int rdma_landing_prereg_pools;  /* AqRaft recipient: landing-ring pools to register at startup (0 = lazily at the first REGISTER-BLOCK-SLOTS). */
+    int rdma_landing_prereg_slots;  /* AqRaft recipient: slots per donor those pools are sized for. */
     int rdma_src_prereg_slots;      /* AqRaft: pre-register the donor source big-MR pool (this many 2 MiB blocks) at startup; 0 = register lazily at MIGRATE-WARM / REGISTERING. */
     int rdma_async_apply;           /* Aqueduct: separate Raft COMMIT from APPLY. When on,
                                        the recipient reports BACKPATCH-STATUS "done" to the
