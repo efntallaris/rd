@@ -56,6 +56,16 @@ bp_init = times(lambda l: "DONE-SLOTS-INIT: batch" in l and "total_slots" in l)
 # before any bytes exist. BACKPATCH cannot begin merging before this point.
 first_chunk = times(lambda l: "DONE-SLOTS-CHUNK" in l and " seq=0 " in l)
 mg_done = times(lambda l: "backpatch-merge: batch DONE" in l)
+# The leader's merge really ends at the background merge's "merge_done" line; "batch
+# DONE" only means every chunk has been staged. Use merge_done when the log has it.
+mg_real = times(lambda l: "bg-merge: session" in l and "merge_done" in l)
+# First follower ack per chain session = the batch is on a majority (leader + 1 of 2).
+_first_ack = {}
+for l in rlog:
+    m = re.search(r"CHAIN-ACK: sess=(\d+) .*\(count=(\d+)\)", l)
+    if m and m.group(1) not in _first_ack:
+        _first_ack[m.group(1)] = secs(l)
+maj_ack = sorted(_first_ack.values())
 ch_wrote = times(lambda l: "CHAIN: sess=" in l and " wrote " in l and " bytes" in l)
 commit  = times(lambda l: "RECP_TXN_DONE logged" in l)
 # The REAL chain-replication start: when the forwarder posts its first RDMA WRITE
@@ -114,8 +124,9 @@ for i, r in enumerate(rows):
         ri = r[1]
         # BACKPATCH: first chunk landed -> merge done (the real data-movement span).
         m_start = first_chunk[i] if i < len(first_chunk) else bp_init[i]
-        if i < len(mg_done):
-            r[2]["MERGE"] = [m_start, mg_done[i]]
+        merge_end = mg_real[i] if i < len(mg_real) else (mg_done[i] if i < len(mg_done) else None)
+        if merge_end is not None:
+            r[2]["MERGE"] = [m_start, merge_end]
         # CHAIN start = the REAL forward first-post (accurate; already reflects the
         # single-wire serialization). Fall back to the old estab/merge anchors only
         # for logs that predate the FIRST-POST marker.
@@ -132,8 +143,14 @@ for i, r in enumerate(rows):
         if i < len(ch_wrote):
             r[2]["CHAIN"]    = [c_start, ch_wrote[i]]
             prev_chain_end   = max(prev_chain_end, ch_wrote[i])
+            if i < len(maj_ack):
+                r[2]["ACK"] = [c_start, maj_ack[i]]
             if i < len(commit):
-                r[2]["COMMIT"]   = [ch_wrote[i], commit[i]]
+                # DONE COMMIT = the commit itself: from the moment it is allowed (majority
+                # ack AND leader merge done) to RECP_TXN_DONE. Usually a few ms.
+                ready = max(maj_ack[i] if i < len(maj_ack) else ch_wrote[i],
+                            merge_end if merge_end is not None else ch_wrote[i])
+                r[2]["COMMIT"] = [min(ready, commit[i]), commit[i]]
             if i < len(tail_ack):
                 r[2]["CHAINTAIL"] = [ch_wrote[i], tail_ack[i]]
         if i < len(mg_done) and i < len(commit):
@@ -154,14 +171,23 @@ done_last = max(_all_ends) if _all_ends else t0
 # sparse chain-"wrote" lines. With async-apply the MERGE/index-update drain
 # continues AFTER commit, so the x-axis (done_last) extends past mig_end — that's
 # expected, and keeps those late bars visible instead of clipped.
-mig_end = max(commit) if commit else \
-          max([s[k][1] for _,_,s in rows for k in ("MERGE","TRANSFER") if k in s])
+# Migration window end = the last donor's TXN_DONE (the donor closes its session
+# once the recipient reports done); falls back to the last RECP_TXN_DONE.
+_txn_done = []
+for _sg, _host, _suf in DONORS:
+    _p = expdir / "logs" / _host / "tmp" / "redis_logs" / f"{_host}_{_suf}.log"
+    if _p.exists():
+        _txn_done += [secs(l) for l in _p.read_text(errors="ignore").splitlines()
+                      if "RAFT.MGN-LOG TXN_DONE logged" in l]
+mig_end = max(_txn_done) if _txn_done else (max(commit) if commit else
+          max([s[k][1] for _,_,s in rows for k in ("MERGE","TRANSFER") if k in s]))
 
-PHASES = ["PREP","REGISTERING","FLIPPING","TRANSFER","MERGE","CHAIN","CHAINTAIL","COMMIT"]
+PHASES = ["PREP","REGISTERING","FLIPPING","TRANSFER","MERGE","CHAIN","ACK","CHAINTAIL","COMMIT"]
 LANE_Y = {ph: i for i, ph in enumerate(reversed(PHASES))}
 LABEL = {"PREP":"CONNECT","REGISTERING":"REGISTER",
          "FLIPPING":"CH_OWNSHIP","TRANSFER":"TRANSFER",
-         "MERGE":"INDEX UPDATE","CHAIN":"CHAIN-REPLICATION",
+         "MERGE":"LEADER MERGE","CHAIN":"CHAIN-REPLICATION",
+         "ACK":"MAJORITY ACK\n(first follower)",
          "CHAINTAIL":"ALL REPLICAS\n(tail hop F1$\\rightarrow$F2)","COMMIT":"DONE COMMIT"}
 
 import matplotlib.patheffects as pe
@@ -236,23 +262,37 @@ for (rd, seq, t) in bp_raw:
 PHASE_CK = {"TRANSFER": tr_ck, "MERGE": bp_ck, "CHAIN": ch_ck}
 
 # --- bars (sharp) + labels
-for sg, ri, s in rows:
+# A lane whose consecutive sessions overlap in time (e.g. a session's tail ack lands
+# after the next session's forward starts) draws its bars in two half-height
+# sub-lanes, alternating, so a later bar never hides an earlier one.
+_overlap = {}
+for ph in PHASES:
+    spans = [s[ph] for _, _, s in rows if ph in s and s[ph][1] is not None]
+    _overlap[ph] = any(spans[k][0] < spans[k-1][1] - 1e-6 for k in range(1, len(spans)))
+for idx, (sg, ri, s) in enumerate(rows):
     for ph in PHASES:
         if ph not in s or s[ph][1] is None: continue
         a, b = s[ph]; y = LANE_Y[ph]; w = b-a
+        bar_h = BAR_H
+        if _overlap.get(ph):
+            bar_h = BAR_H * 0.48
+            y = y + (BAR_H * 0.26 if idx % 2 == 0 else -BAR_H * 0.26)
         is_cold = (ph == "CHAIN" and s.get("_cold"))
         ec = COLD_EC if is_cold else "white"
         # min rendered width so sub-pixel phases (FLIPPING ~12ms, DONE COMMIT
         # ~4ms) stay visible; the in/over-bar label always shows the TRUE ms.
         draw_w = w if w >= 0.05 else 0.05
-        ax.barh(y, draw_w, left=a-t0, height=BAR_H, color=SG_GRAY[sg],
+        ax.barh(y, draw_w, left=a-t0, height=bar_h, color=SG_GRAY[sg],
                 edgecolor=ec, linewidth=2.4 if is_cold else 0.8, zorder=4)
         # CONNECT (PREP) / REGISTER (REGISTERING) bars are left unlabelled.
         if ph in ("PREP", "REGISTERING"):
             continue
         dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
         txtcol = SG_TXT[sg]
-        if w > 0.22:
+        if w > 0.22 and bar_h < BAR_H:
+            ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="center",
+                    fontsize=6, color=txtcol, zorder=6, fontweight="bold")
+        elif w > 0.22:
             ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri}\n{dlabel}", ha="center", va="center",
                     fontsize=7, color=txtcol, zorder=6, linespacing=1.0, fontweight="bold")
         elif w > 0.05:
