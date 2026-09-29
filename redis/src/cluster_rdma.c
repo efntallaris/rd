@@ -157,7 +157,7 @@ static void mgnAsyncReplyCb(redisAsyncContext *c, void *r, void *privdata) {
  * 127.0.0.1:<server.port>; sends RAFT.MGN-LOG without blocking. The reply
  * is logged from the callback. Safe ONLY from the main thread (event-loop
  * thread); worker threads must use rdmaMgnLogSync below. */
-static void rdmaMgnLogAsync(const char *type, const char *payload) {
+static int mgnAsyncEnsure(const char *type) {
     if (mgn_async_ctx == NULL) {
         redisAsyncContext *ac = redisAsyncConnect("127.0.0.1", server.port);
         if (ac == NULL || ac->err) {
@@ -165,24 +165,40 @@ static void rdmaMgnLogAsync(const char *type, const char *payload) {
                 "RAFT.MGN-LOG %s (async): connect failed: %s",
                 type, ac ? ac->errstr : "(null ctx)");
             if (ac) redisAsyncFree(ac);
-            return;
+            return 0;
         }
         if (mgnRedisAeAttach(server.el, ac) != C_OK) {
             serverLog(LL_WARNING,
                 "RAFT.MGN-LOG %s (async): event-loop attach failed", type);
             redisAsyncFree(ac);
-            return;
+            return 0;
         }
         redisAsyncSetDisconnectCallback(ac, mgnAsyncDisconnectCb);
         mgn_async_ctx = ac;
     }
+    return 1;
+}
 
+static void rdmaMgnLogAsync(const char *type, const char *payload) {
+    if (!mgnAsyncEnsure(type)) return;
     int ret = redisAsyncCommand(mgn_async_ctx, mgnAsyncReplyCb,
                                 zstrdup(type),
                                 "RAFT.MGN-LOG %s %s", type, payload);
     if (ret != REDIS_OK) {
         serverLog(LL_WARNING,
             "RAFT.MGN-LOG %s (async): redisAsyncCommand failed", type);
+    }
+}
+
+/* AqRaft (--rdma-chain-ack-via-raft): record, in the local RedisRaft module, that
+ * a migration batch landed in this follower's pool. RedisRaft then reports it on
+ * this node's AppendEntries replies. Main thread only (same async loopback as
+ * rdmaMgnLogAsync). */
+void rdmaMgnReceivedAsync(long long sess, long long len) {
+    if (!mgnAsyncEnsure("RECEIVED")) return;
+    if (redisAsyncCommand(mgn_async_ctx, mgnAsyncReplyCb, zstrdup("RECEIVED"),
+                          "RAFT.MGN-RECEIVED %lld %lld", sess, len) != REDIS_OK) {
+        serverLog(LL_WARNING, "RAFT.MGN-RECEIVED sess=%lld: redisAsyncCommand failed", sess);
     }
 }
 
@@ -1548,6 +1564,7 @@ typedef struct backpatchBatch {
      * on chain-majority CHAIN-ACK arriving. */
     int                  chain_forwarded;
     int                  chain_acked;
+    int                  indx_wait_logged;   /* logged once: INDX_UPD waiting for merge */
     long long            chain_baseline_ack_count; /* ack_count snapshot when forward was issued */
     /* AqRaft 3-flag DONE invariant: BACKPATCH-STATUS reports "done" only when
      * ALL THREE are true — leader merge complete (merge_done), chain replicated
@@ -2557,6 +2574,7 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
  * is needed. */
 static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *clientData);
 static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientData);
+static void chainPendingEnqueue(backpatchBatch *b);
 
 /* Phase B.5: fire MGN_INDX_UPD + RECP_TXN_DONE for a finished batch and
  * push it onto the dispose list. Called both from the no-chain immediate
@@ -2999,7 +3017,11 @@ static void *chainForwardWorker(void *arg) {
          * replication is the sole durability path. Set chain_acked=1 so the
          * BACKPATCH-STATUS handler doesn't gate on a chain that doesn't exist. */
         b->chain_acked = 1;
-        backpatchFinalize(b);
+        if (server.rdma_indx_upd_after_merge &&
+            !atomic_load_explicit(&b->merge_done, memory_order_acquire))
+            chainPendingEnqueue(b);   /* INDX_UPD after the merge (tick) */
+        else
+            backpatchFinalize(b);
     }
 
     zfree(job->slots_copy);
@@ -3134,6 +3156,20 @@ static void rdmaSpawnPipelineForward(backpatchBatch *b) {
  * / failed paths). Caller MUST hold the CAS on b->chain_spawn_initiated so
  * we spawn exactly once across the pool-worker (last-snapshot) and
  * mergeBackpatchTick (last-merge) racing paths. */
+/* Queue b for chainPendingTick (thread-safe; wakes main via the dispose pipe,
+ * which arms the tick timer). Used by paths that have no chain ack to wait for,
+ * so --rdma-indx-upd-after-merge still holds INDX_UPD until the merge is done. */
+static void chainPendingEnqueue(backpatchBatch *b) {
+    pthread_mutex_lock(&backpatch_chain_pending_mu);
+    if (backpatch_chain_pending == NULL)
+        backpatch_chain_pending = listCreate();
+    listAddNodeTail(backpatch_chain_pending, b);
+    pthread_mutex_unlock(&backpatch_chain_pending_mu);
+    char tick = 1;
+    ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+    (void) wr;
+}
+
 static void spawnChainForwardWorker(backpatchBatch *b) {
     int chain_configured = (server.rdma_chain_followers != NULL &&
                             sdslen(server.rdma_chain_followers) > 0);
@@ -3168,7 +3204,12 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
         zfree(job);
         kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
         kvstoreFenwickRebuild(server.db[0].keys);
-        backpatchFinalize(b);
+        b->chain_acked = 1;
+        if (server.rdma_indx_upd_after_merge &&
+            !atomic_load_explicit(&b->merge_done, memory_order_acquire))
+            chainPendingEnqueue(b);   /* INDX_UPD after the merge (tick) */
+        else
+            backpatchFinalize(b);
     } else {
         pthread_detach(tid);
     }
@@ -3224,12 +3265,32 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
          * clean baseline fired "anyway" 3/3 while CHAIN-ACK count still climbed
          * afterwards). A genuinely dead chain member is handled by the
          * forward-failure re-form path, not by faking an ack here. */
+        /* A batch queued without a chain (no chain configured / not ready)
+         * arrives with chain_acked already set. */
+        if (b->chain_acked) acked = 1;
         if (acked || naive_fire) {
-            if (acked) serverLog(LL_NOTICE,
+            if (acked && !b->chain_acked) serverLog(LL_NOTICE,
                 "CHAIN: sess=%lld chain-ack observed (count %lld > base %lld) — "
-                "finalizing batch (real live-majority durability)",
+                "real live-majority durability",
                 b->src_mig_id, count, b->chain_baseline_ack_count);
             b->chain_acked = 1;
+            /* AqRaft (--rdma-indx-upd-after-merge, default on): MGN_INDX_UPD is
+             * logged only once the recipient leader's own merge has finished, so
+             * a committed INDX_UPD means both "a majority holds the batch" and
+             * "the leader's keyspace has it". The chain ack can arrive first
+             * (forward starts when the batch has landed, in parallel with the
+             * merge); the batch then stays here and this tick picks it up on the
+             * first tick after merge_done. */
+            if (server.rdma_indx_upd_after_merge &&
+                !atomic_load_explicit(&b->merge_done, memory_order_acquire)) {
+                if (!b->indx_wait_logged) {
+                    b->indx_wait_logged = 1;
+                    serverLog(LL_NOTICE,
+                        "CHAIN: sess=%lld acked — MGN_INDX_UPD waits for the leader merge "
+                        "to finish", b->src_mig_id);
+                }
+                continue;
+            }
             listAddNodeTail(ready, b);
             listDelNode(backpatch_chain_pending, ln);
         }
@@ -5578,6 +5639,26 @@ __thread int cluster_slot_lock_held_by_thread = 0;
  *  looks up the table entry by register_id, copies the payload, and
  *  signals the condvar. The PREP-thread wakes, parses the payload into
  *  L->buffers[], frees the entry. */
+/* AqRaft S1: is the recipient at "host:port" still answering on its TCP port?
+ * Fresh short-timeout connection (thread-safe; does not touch the link's ctrl). */
+static int rdmaRecipientAlive(const char *addr) {
+    char host[256]; int port = 0;
+    const char *colon = addr ? strrchr(addr, ':') : NULL;
+    if (colon == NULL || (size_t) (colon - addr) >= sizeof(host)) return 1;   /* unknown: don't fail */
+    memcpy(host, addr, (size_t) (colon - addr)); host[colon - addr] = '\0';
+    port = atoi(colon + 1);
+    struct timeval tv = { 0, 500000 };
+    redisContext *ctx = redisConnectWithTimeout(host, port, tv);
+    if (ctx == NULL) return 0;
+    if (ctx->err) { redisFree(ctx); return 0; }
+    redisSetTimeout(ctx, tv);
+    redisReply *r = redisCommand(ctx, "PING");
+    int ok = (r != NULL && r->type != REDIS_REPLY_ERROR);
+    if (r) freeReplyObject(r);
+    redisFree(ctx);
+    return ok;
+}
+
 typedef struct pendingRegistration {
     int               done;
     int               error;
@@ -5805,8 +5886,50 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     serverLog(LL_NOTICE,
         "RDMA REGISTER-BLOCK-SLOTS: dispatched register_id=%s, waiting for callback...",
         register_id);
+    /* AqRaft S1: bounded wait. The callback only comes if the recipient survives
+     * until its dial-back; a recipient-leader crash in this window used to block
+     * this worker forever (state stuck at PREP, never FAILED), so nothing could
+     * re-drive the session to the promoted sg4 leader. Wake every second; after
+     * 3 s probe the recipient's TCP port with PING, and give up after 2 failed
+     * probes in a row (or a 120 s ceiling). A normal registration takes ~6 s. */
     pthread_mutex_lock(&p->mu);
-    while (!p->done) pthread_cond_wait(&p->cond, &p->mu);
+    long long reg_wait_t0 = mstime();
+    int reg_probe_fails = 0, reg_abandoned = 0;
+    while (!p->done) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 1;
+        pthread_cond_timedwait(&p->cond, &p->mu, &ts);
+        if (p->done) break;
+        long long waited = mstime() - reg_wait_t0;
+        if (waited < 3000) continue;
+        pthread_mutex_unlock(&p->mu);
+        int alive = rdmaRecipientAlive(L->addr);
+        pthread_mutex_lock(&p->mu);
+        if (p->done) break;
+        reg_probe_fails = alive ? 0 : reg_probe_fails + 1;
+        if (reg_probe_fails >= 2 || waited >= 120000) {
+            reg_abandoned = 1;
+            break;
+        }
+    }
+    if (reg_abandoned) {
+        pthread_mutex_unlock(&p->mu);
+        /* Unpublish p so a late callback finds nothing. Do NOT free it: a callback
+         * that fetched p just before this delete may still lock p->mu. Leaking one
+         * small struct on this failure path is the safe trade. */
+        pthread_mutex_lock(&pending_registrations_mu);
+        dictDelete(pending_registrations, key);
+        pthread_mutex_unlock(&pending_registrations_mu);
+        serverLog(LL_WARNING,
+            "RDMA REGISTER-BLOCK-SLOTS: register_id=%s abandoned after %lld ms — recipient %s "
+            "unreachable (failing this migration so it can be re-driven to the current leader)",
+            register_id, mstime() - reg_wait_t0, L->addr);
+        if (err_out) *err_out = sdscatprintf(sdsempty(),
+            "recipient %s unreachable while waiting for REGISTER-RESULT", L->addr);
+        zfree(nblocks_for_slot);
+        return -1;
+    }
     int got_error = p->error;
     sds err_copy = p->err_msg ? sdsdup(p->err_msg) : NULL;
     int total = p->total_buffers;
@@ -5872,6 +5995,118 @@ static int rdmaMigratePrepHelper(rdmaOutboundLink *L,
     return 0;
 }
 
+/* AqRaft startup pre-registration of the donor source big-MR pool
+ * (--rdma-src-prereg-slots N).
+ *
+ * Registering the pool lazily (MIGRATE-WARM / REGISTERING) mmaps a fresh
+ * multi-GB region and ibv_reg_mr faults in, zeroes and pins every page while
+ * the donor leader is serving clients: throughput drops for ~7 s just before
+ * each migration, even though the registration runs off the main thread.
+ *
+ * Instead, at startup (no client traffic yet) a background thread creates a
+ * keeper cm_id bound to the local RDMA address -- which pins librdmacm's shared
+ * per-device PD for the process lifetime -- and registers an N x 2 MiB pool on
+ * that PD with MAP_POPULATE. Every later rdma_create_ep(pd=NULL) link on the
+ * same device gets the same PD, so the first link that needs a source pool
+ * adopts this one (no mmap, no ibv_reg_mr). A second link, a link on another
+ * PD, a larger request, or a request that arrives before the pool is ready
+ * falls back to the lazy path. The pool is never freed (as with lazy pools). */
+enum { SRC_PREREG_OFF = 0, SRC_PREREG_BUSY, SRC_PREREG_READY, SRC_PREREG_CLAIMED, SRC_PREREG_FAILED };
+static _Atomic int g_src_prereg_state = SRC_PREREG_OFF;
+static struct rdma_cm_id *g_src_prereg_keeper = NULL;
+static void *g_src_prereg_pool = NULL;
+static size_t g_src_prereg_bytes = 0;
+static struct rdmamig_buffer *g_src_prereg_parent = NULL;
+
+static void *rdmaSrcPreregThreadMain(void *arg) {
+    UNUSED(arg);
+    long long t0 = ustime();
+    size_t bytes = (size_t) server.rdma_src_prereg_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+    struct rdma_cm_id *keeper = rdmamig_keeper_create(server.rdma_src_prereg_bind);
+    if (keeper == NULL) {
+        serverLog(LL_WARNING, "RDMA SRC-PREREG: no RDMA device found for the keeper cm_id; "
+                  "source pool will be registered lazily");
+        atomic_store(&g_src_prereg_state, SRC_PREREG_FAILED);
+        return NULL;
+    }
+    void *pool = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                      MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+    if (pool == MAP_FAILED) {
+        serverLog(LL_WARNING, "RDMA SRC-PREREG: mmap(%zu) failed: %s; source pool will be "
+                  "registered lazily", bytes, strerror(errno));
+        atomic_store(&g_src_prereg_state, SRC_PREREG_FAILED);
+        return NULL;
+    }
+    long long t_map = ustime();
+    struct rdmamig_buffer *parent = rdmamig_buffer_create(keeper, (char *) pool, bytes, 0);
+    if (parent == NULL) {
+        munmap(pool, bytes);
+        serverLog(LL_WARNING, "RDMA SRC-PREREG: ibv_reg_mr(%zu) failed; source pool will be "
+                  "registered lazily", bytes);
+        atomic_store(&g_src_prereg_state, SRC_PREREG_FAILED);
+        return NULL;
+    }
+    g_src_prereg_keeper = keeper;
+    g_src_prereg_pool   = pool;
+    g_src_prereg_bytes  = bytes;
+    g_src_prereg_parent = parent;
+    atomic_store(&g_src_prereg_state, SRC_PREREG_READY);   /* publishes the fields above */
+    serverLog(LL_NOTICE, "RDMA SRC-PREREG: source pool ready base=%p bytes=%zu blocks=%d "
+              "rkey=0x%x pd=%p (mmap+populate %lld ms, ibv_reg_mr %lld ms) [startup, off-main]",
+              pool, bytes, server.rdma_src_prereg_slots, rdmamig_buffer_rkey(parent),
+              rdmamig_cm_pd(keeper), (t_map - t0) / 1000, (ustime() - t_map) / 1000);
+    return NULL;
+}
+
+void rdmaSrcPreregStart(void) {
+    if (server.rdma_src_prereg_slots <= 0) return;
+    atomic_store(&g_src_prereg_state, SRC_PREREG_BUSY);
+    pthread_attr_t attr;
+    pthread_t tid;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&tid, &attr, rdmaSrcPreregThreadMain, NULL) != 0) {
+        serverLog(LL_WARNING, "RDMA SRC-PREREG: pthread_create failed; source pool will be "
+                  "registered lazily");
+        atomic_store(&g_src_prereg_state, SRC_PREREG_FAILED);
+    } else {
+        serverLog(LL_NOTICE, "RDMA SRC-PREREG: registering %d x 2 MiB source blocks in the "
+                  "background", server.rdma_src_prereg_slots);
+    }
+    pthread_attr_destroy(&attr);
+}
+
+/* Hand the startup pool to link L if it fits and shares L's PD. Caller holds L->mu. */
+static int rdmaSrcPreregAdopt(rdmaOutboundLink *L, int n_slots) {
+    int st = atomic_load(&g_src_prereg_state);
+    if (st == SRC_PREREG_OFF || st == SRC_PREREG_FAILED) return 0;
+    if (st == SRC_PREREG_BUSY) {
+        serverLog(LL_WARNING, "RDMA SRC-PREREG: startup pool not ready yet; registering lazily");
+        return 0;
+    }
+    if (st == SRC_PREREG_CLAIMED) return 0;   /* another link owns it */
+    size_t need = (size_t) n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+    void *link_pd = rdmamig_cm_pd(rdmamig_client_cm_id(L->client));
+    if (link_pd != rdmamig_cm_pd(g_src_prereg_keeper) || need > g_src_prereg_bytes) {
+        serverLog(LL_WARNING, "RDMA SRC-PREREG: startup pool not usable for this link "
+                  "(link pd=%p pool pd=%p, need %zu B, have %zu B); registering lazily",
+                  link_pd, rdmamig_cm_pd(g_src_prereg_keeper), need, g_src_prereg_bytes);
+        return 0;
+    }
+    int expected = SRC_PREREG_READY;
+    if (!atomic_compare_exchange_strong(&g_src_prereg_state, &expected, SRC_PREREG_CLAIMED))
+        return 0;
+    L->src_mr_pool        = g_src_prereg_pool;
+    L->src_mr_pool_bytes  = g_src_prereg_bytes;
+    L->src_mr_parent      = g_src_prereg_parent;
+    L->src_mr_used_blocks = 0;
+    serverLog(LL_NOTICE, "RDMA RESHARD: adopted startup-registered source pool base=%p "
+              "bytes=%zu blocks=%zu (skipped mmap + ibv_reg_mr) [AqRaft SRC-PREREG]",
+              g_src_prereg_pool, g_src_prereg_bytes,
+              g_src_prereg_bytes / (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
+    return 1;
+}
+
 /* REGISTER-helper: the hot ibv_reg_mr loop. Mirrors rdmaReshardCommand's
  * inline body (lines ~883-923). `progress` is bumped under L->mu each time
  * a slot is registered, so RDMA MIGRATE-STATUS can read progress without
@@ -5890,7 +6125,7 @@ static int rdmaReshardRegisterHelper(rdmaOutboundLink *L,
      * range). The pool persists on the link and is reused across rounds, so
      * round 2+ pay zero registration. Mirrors the recipient's big-MR PREP
      * ("replaces N ibv_reg_mr ioctls with 1"). */
-    if (L->src_mr_pool == NULL) {
+    if (L->src_mr_pool == NULL && !rdmaSrcPreregAdopt(L, n_slots)) {
         size_t stride   = (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
         /* Size the pool for the whole keyspace band this link can migrate so it
          * never needs re-registration across rounds. n_slots for the first
@@ -5943,7 +6178,10 @@ static int rdmaReshardRegisterHelper(rdmaOutboundLink *L,
             /* Carve the next pool block as a view (no ibv_reg_mr). */
             char *sub = (char *) L->src_mr_pool
                       + (size_t) L->src_mr_used_blocks * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
-            memset(sub, 0, RDMAMIG_BLOCK_SIZE_BYTES);
+            /* No memset: pool blocks come from a fresh anonymous mmap (already
+             * zero) and are handed out once (src_mr_used_blocks only grows).
+             * Zeroing 1365 x 2 MiB here wrote 2.86 GB right before the migration
+             * (~1.7 s on a loaded donor host) and dented client throughput. */
             rb = rdmamig_buffer_create_view(L->src_mr_parent, sub,
                                             RDMAMIG_BLOCK_SIZE_BYTES);
             if (rb != NULL) L->src_mr_used_blocks++;

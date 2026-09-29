@@ -1,0 +1,103 @@
+---
+# Save the freshly loaded dataset as snapshot {{ dataset_snapshot }}.
+# Run right after init_redisraft_shardgroups + load_ycsb, with the same
+# -e dataset_snapshot=<name> (so the data dir is on {{ aq_disk }}).
+#
+# Per instance: RAFT.DEBUG COMPACT writes the RDB snapshot (with RedisRaft's
+# metadata: membership, shardgroups, slot map) and truncates the Raft log; the
+# instance is then stopped and its RDB + raft log files (.db/.idx/.meta) are
+# moved into {{ aq_disk }}/snapshots/{{ dataset_snapshot }}/. On restart with
+# those files a node goes LOADING -> loads the RDB -> replays the short log ->
+# rejoins its group with its original id.
+- name: "Record expected key counts per shardgroup"
+  hosts: redis_masters[0]
+  become: yes
+  tasks:
+    - name: Resolve shardgroup member IPs
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | flatten | map(attribute='host') | unique | list }}"
+      register: snap_ip_lookup
+      changed_when: false
+
+    - name: DBSIZE on each shardgroup leader
+      shell: |
+        for ip in {% for nd in sg.nodes %}{{ (snap_ip_lookup.results | selectattr('item','equalto',nd.host) | first).stdout }} {% endfor %}; do
+          role=$({{ redis_bin_dir }}/redis-cli -t 2 -h $ip -p {{ sg.port }} INFO raft | tr -d '\r' | awk -F: '/^raft_role:/{print $2}')
+          [ "$role" = "leader" ] && { echo "{{ sg.id }} $({{ redis_bin_dir }}/redis-cli -h $ip -p {{ sg.port }} DBSIZE)"; exit 0; }
+        done
+        echo "{{ sg.id }} NOLEADER"; exit 1
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      register: snap_counts
+      changed_when: false
+
+    - name: Keep the manifest text for the next play
+      set_fact:
+        snap_manifest: "{{ snap_counts.results | map(attribute='stdout') | join('\n') }}"
+
+- name: "Compact, stop and save every instance"
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
+  become: yes
+  vars:
+    snap_dir: "{{ aq_disk }}/snapshots/{{ dataset_snapshot }}"
+  tasks:
+    - name: Refuse to run without a snapshot name
+      assert:
+        that: dataset_snapshot | length > 0
+        fail_msg: "set -e dataset_snapshot=<name>"
+
+    - name: RAFT.DEBUG COMPACT on each local instance (writes the RDB snapshot)
+      shell: "{{ redis_bin_dir }}/redis-cli -h 127.0.0.1 -p {{ sg.port }} RAFT.DEBUG COMPACT"
+      register: compact_out
+      failed_when: "'OK' not in compact_out.stdout"
+      async: 1800
+      poll: 10
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      when: inventory_hostname in (sg.nodes | map(attribute='host') | list)
+
+    - name: Stop each local instance
+      shell: |
+        pf=/tmp/redis_{{ inventory_hostname }}_{{ sg.id }}.pid
+        pid=$(cat $pf 2>/dev/null) || exit 0
+        kill $pid 2>/dev/null
+        for i in $(seq 1 120); do kill -0 $pid 2>/dev/null || exit 0; sleep 1; done
+        kill -9 $pid 2>/dev/null; exit 0
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      when: inventory_hostname in (sg.nodes | map(attribute='host') | list)
+
+    - name: Create snapshot dir (replacing an older snapshot of the same name)
+      shell: rm -rf {{ snap_dir }} && mkdir -p {{ snap_dir }}
+
+    - name: Move RDB and copy raft log files into the snapshot
+      shell: |
+        set -e
+        rdb={{ redis_data_dir }}/{{ inventory_hostname }}_{{ sg.id }}.rdb
+        log={{ raft_log_dir }}/raft_{{ sg.id }}_{{ inventory_hostname }}.db
+        test -s $rdb && test -s $log.meta
+        mv $rdb {{ snap_dir }}/
+        cp -p $log $log.idx $log.meta {{ snap_dir }}/
+        chmod 0444 {{ snap_dir }}/*
+        ls -la {{ snap_dir }}/ | grep {{ sg.id }}
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      when: inventory_hostname in (sg.nodes | map(attribute='host') | list)
+
+    - name: Write the manifest (expected DBSIZE per shardgroup leader)
+      copy:
+        dest: "{{ snap_dir }}/MANIFEST"
+        content: |
+          {{ hostvars[groups['redis_masters'][0]]['snap_manifest'] }}
+        mode: '0444'
+
+    - name: Show snapshot size
+      shell: du -sh {{ snap_dir }}
+      register: snap_du
+      changed_when: false
+
+    - debug: var=snap_du.stdout

@@ -637,7 +637,27 @@ kvobj *dbAddRDBLoad(redisDb *db, sds key, robj **valref, const KeyMetaSpec *keyM
 
     /* Create kvobj with metadata bits from KeyMetaSpec */
     robj *val = *valref;
-    kvobj *kv = kvobjSet(key, val, keyMetaSpec->metabits);
+    kvobj *kv = NULL;
+    /* AqRaft: place string values in the slot-keyed r_allocator exactly like
+     * dbAddInternalImpl does for live writes. The RDMA migration ships keys
+     * from r_allocator segments (zero-copy), so keys loaded from an RDB into
+     * plain jemalloc objects were invisible to it: a run restored from a
+     * dataset snapshot migrated ~6% of the keys a YCSB-loaded run did. */
+    if ((server.cluster_enabled || server.rdma_migration_redisraft_mode)
+        && val->type == OBJ_STRING
+        && (val->encoding == OBJ_ENCODING_RAW || val->encoding == OBJ_ENCODING_EMBSTR)
+        && keyMetaSpec->metabits == 0) {
+        int allocated_new_block = 0;
+        kv = r_allocator_insert_kvobj(slot, key, (sds) val->ptr, &allocated_new_block);
+        if (kv != NULL) {
+            server.rdma_alloc_inserts++;
+            decrRefCount(val);   /* value bytes were copied into the segment */
+        }
+    }
+    if (kv == NULL) kv = kvobjSet(key, val, keyMetaSpec->metabits);
+    /* Both paths may free or reallocate 'val'; hand the live object back so the
+     * caller (rdbLoad sets LRU/LFU on it afterwards) never touches the old one. */
+    *valref = kv;
     initObjectLRUOrLFU(kv);
     kvstoreDictSetAtLink(db->keys, slot, kv, &bucket, 1);
 

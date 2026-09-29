@@ -7,9 +7,17 @@
 # round => shallower (but more) throughput dips.
 - import_playbook: ../../tasks/teardown/kill_processes.yml
 - import_playbook: ../../tasks/teardown/clean_runtime.yml
+# -e dataset_snapshot=<name>: restore a saved post-load dataset (tasks/dataset/)
+# instead of INIT + JOIN + LINK + the ~22 min YCSB load. Empty = load as before.
+- import_playbook: ../../tasks/dataset/restore_place.yml
+  when: dataset_snapshot | length > 0
 - import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/dataset/restore_wait.yml
+  when: dataset_snapshot | length > 0
 - import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+  when: dataset_snapshot | length == 0
 - import_playbook: ../../tasks/ycsb/load_ycsb.yml
+  when: dataset_snapshot | length == 0
 - import_playbook: ../../tasks/monitor/start_monitoring.yml
 - import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
 - import_playbook: ../../tasks/cluster/pause_pre_reshard.yml

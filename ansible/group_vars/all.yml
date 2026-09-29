@@ -13,7 +13,14 @@ ycsb_dir: /users/entall/ycsb_client
 ycsb_dir_bin: "{{ ycsb_dir }}/bin"
 redis_workload_path: "{{ main_dir }}/workloads/"
 redis_log_dir: /tmp/redis_logs
-redis_data_dir: /tmp/redis_data
+# Dataset snapshots (see tasks/dataset/): set -e dataset_snapshot=<name> to
+# restore a saved post-load dataset instead of INIT+JOIN+LINK+YCSB load. The data
+# data dir lives on the same filesystem, so RDBs can be hard-linked into place.
+aq_disk: /mnt/aqsnap
+dataset_snapshot: ""
+# Always on the extra disk: with Raft snapshots disabled every write stays in the
+# Raft log, and a 30M run grows the logs of one host to ~46 GB (the root fs is 64 GB).
+redis_data_dir: "{{ aq_disk }}/redis_data"
 local_log_dir: /users/entall/systat_logs
 ycsb_log_filename: /tmp/ycsb_output
 experimental_output_dir: /tmp/experiments
@@ -30,7 +37,7 @@ node_conf: "/users/entall/{{ inventory_hostname }}.conf"
 
 # ─── YCSB settings ─────────────────────────────────────────────────────────
 ycsb_loader_instance: ycsb0
-ycsb_threads_load: 50
+ycsb_threads_load: 100   # per YCSB node; the load is split across all ycsb_nodes
 ycsb_threads_run: 50
 ycsb_timeout: 10000
 
@@ -50,7 +57,7 @@ io_stat: "_iostat.txt"
 # (CMakeLists places redisraft.so there, not in build/).
 redisraft_src: /users/entall/rd/redisraft
 redisraft_module: /users/entall/rd/redisraft/redisraft.so
-raft_log_dir: /tmp/redis_data   # reuse redis_data_dir so clean_runtime wipes it
+raft_log_dir: "{{ redis_data_dir }}"   # reuse redis_data_dir so clean_runtime wipes it
 
 # 3 ShardGroups x 3 Raft nodes each, 3 procs per physical host.
 # Leaders deliberately spread across redis0/redis1/redis2 (write-CPU balance).

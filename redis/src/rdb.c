@@ -3898,6 +3898,16 @@ int rdbLoadRioWithLoadingCtx(rio *rdb, int rdbflags, rdbSaveInfo *rsi, rdbLoadin
 
         /* If there is no slot info, it means that it's either not cluster mode or we are trying to load legacy RDB file.
          * In this case we want to estimate number of keys per slot and resize accordingly. */
+        /* AqRaft: this fork keeps one dict per slot even with cluster mode off
+         * (RedisRaft fakes cluster mode), so the whole-db RESIZEDB hint would
+         * pre-size EVERY per-slot dict to the full key count: a 10M-key RDB
+         * reserved ~690 GB and the host ran out of memory. Stock Redis only has
+         * one dict here. With per-slot dicts, let each grow as keys load. */
+        if (should_expand_db && kvstoreNumDicts(db->keys) > 1) {
+            serverLog(LL_NOTICE, "DB %d: skipping RESIZEDB hint (%lu keys) for %d per-slot dicts",
+                      db->id, (unsigned long) db_size, kvstoreNumDicts(db->keys));
+            should_expand_db = 0;
+        }
         if (should_expand_db) {
             dbExpand(db, db_size, 0);
             dbExpandExpires(db, expires_size, 0);

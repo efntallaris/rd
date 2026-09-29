@@ -164,6 +164,17 @@ struct rdma_cm_id *rdmamig_server_cm_id(rdmamig_server *s);
  * listener share a PD, so this is a stable cache key for a reusable MR. */
 void *rdmamig_cm_pd(struct rdma_cm_id *id);
 
+/* AqRaft startup pre-registration: create a long-lived cm_id bound to a local
+ * RDMA-capable IPv4 address. Binding attaches the cm_id to its device and to
+ * librdmacm's shared per-device PD -- the same PD every rdma_create_ep(pd=NULL)
+ * connection on that device gets later. librdmacm frees that PD when the last
+ * cm_id on the device goes away, so holding this one for the process lifetime
+ * keeps the PD (and every MR registered on it) valid across migrations.
+ * `ip` must be the local address the migration links use (hosts can have
+ * several RDMA devices, each with its own PD); NULL/empty = first local IPv4
+ * address that maps to any RDMA device. Returns NULL on failure. */
+struct rdma_cm_id *rdmamig_keeper_create(const char *ip);
+
 /* ------------------------------------------------------------------------- *
  * Slot-keyed RDMA-pinned allocator
  * ------------------------------------------------------------------------- *

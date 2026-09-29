@@ -1,0 +1,16 @@
+---
+# Build a reusable post-load dataset snapshot (run once per dataset / binary change):
+#   sudo ansible-playbook -i inventory.ini tasks/dataset/setup_disk.yml        # once per node set
+#   sudo ansible-playbook -i inventory.ini \
+#     experiments/custom_reshard_v2_orch_raft_chunked/dataset_create.yml \
+#     -e redis_variant=custom -e redis_workload=workloada_prod_30m_run10min \
+#     -e dataset_snapshot=ws30m  [same rdma_* -e flags as the experiments]
+# Then pass -e dataset_snapshot=ws30m to workload_nround.yml to skip init + load.
+# The snapshot pins the startup flags only through the data it holds; rdma_* flags
+# can still differ per run because every run restarts the instances.
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/dataset/save_snapshot.yml

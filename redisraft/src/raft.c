@@ -864,6 +864,39 @@ static int raftSendRequestVote(raft_server_t *raft, void *user_data,
 
 /* ------------------------------------ AppendEntries ------------------------------------ */
 
+/* AqRaft: (node, session) pairs already turned into a CHAIN-ACK, so each
+ * follower is counted once per session no matter how many AE replies repeat it. */
+#define MGN_SEEN_MAX 256
+static struct { raft_node_id_t node; long long sess; } g_mgn_seen[MGN_SEEN_MAX];
+static int g_mgn_seen_next = 0, g_mgn_seen_n = 0;
+
+static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const char *status)
+{
+    const char *p = status;
+    while (*p) {
+        long long sess = 0, len = 0;
+        int used = 0;
+        if (sscanf(p, "%lld:%lld%n", &sess, &len, &used) != 2 || used <= 0) break;
+        p += used;
+        if (*p == ',') p++;
+
+        int seen = 0;
+        for (int i = 0; i < g_mgn_seen_n; i++) {
+            if (g_mgn_seen[i].node == node_id && g_mgn_seen[i].sess == sess) { seen = 1; break; }
+        }
+        if (seen) continue;
+        g_mgn_seen[g_mgn_seen_next].node = node_id;
+        g_mgn_seen[g_mgn_seen_next].sess = sess;
+        g_mgn_seen_next = (g_mgn_seen_next + 1) % MGN_SEEN_MAX;
+        if (g_mgn_seen_n < MGN_SEEN_MAX) g_mgn_seen_n++;
+
+        LOG_NOTICE("AqRaft AE-piggyback: node %d holds migration sess=%lld len=%lld -> CHAIN-ACK",
+                   node_id, sess, len);
+        RedisModuleCallReply *rep = RedisModule_Call(rr->ctx, "RDMA", "cll", "CHAIN-ACK", sess, len);
+        if (rep) RedisModule_FreeCallReply(rep);
+    }
+}
+
 static void handleAppendEntriesResponse(redisAsyncContext *c, void *r, void *privdata)
 {
     Node *node = privdata;
@@ -883,7 +916,7 @@ static void handleAppendEntriesResponse(redisAsyncContext *c, void *r, void *pri
         return;
     }
 
-    if (reply->type != REDIS_REPLY_ARRAY || reply->elements != 4 ||
+    if (reply->type != REDIS_REPLY_ARRAY || (reply->elements != 4 && reply->elements != 5) ||
         reply->element[0]->type != REDIS_REPLY_INTEGER ||
         reply->element[1]->type != REDIS_REPLY_INTEGER ||
         reply->element[2]->type != REDIS_REPLY_INTEGER ||
@@ -898,6 +931,17 @@ static void handleAppendEntriesResponse(redisAsyncContext *c, void *r, void *pri
         .current_idx = reply->element[2]->integer,
         .msg_id = reply->element[3]->integer,
     };
+
+    /* AqRaft: migration buffer status piggybacked by the follower (5th element,
+     * "sess:len,..."). Each (node, session) reported for the first time becomes
+     * an in-process RDMA CHAIN-ACK, which the recipient leader's durability gate
+     * counts exactly like the old TCP ack. Only meaningful on the sg4 leader;
+     * elsewhere CHAIN-ACK finds no session and is ignored. */
+    if (reply->elements == 5 && raft_is_leader(rr->raft) &&
+        (reply->element[4]->type == REDIS_REPLY_STRING || reply->element[4]->type == REDIS_REPLY_STATUS) &&
+        reply->element[4]->len > 0) {
+        mgnPiggybackAcks(rr, node->id, reply->element[4]->str);
+    }
 
     raft_node_t *raft_node = raft_get_node(rr->raft, node->id);
 

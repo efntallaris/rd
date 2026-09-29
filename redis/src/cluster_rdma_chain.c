@@ -50,7 +50,18 @@
  *
  * server.rdma_server is a global slot used by both paths (existing
  * INIT-SERVER + this chain code). If already populated we reuse it. */
+void rdmaMgnReceivedAsync(long long sess, long long len);   /* cluster_rdma.c */
 static pthread_mutex_t g_rdma_server_bootstrap_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* AqRaft S1: chain followers listen on their own port range. The recipient
+ * opens one listener per donor on that donor's rdma-migration-port (17777 +
+ * donor index), and a follower used to bind its chain listener on its own
+ * rdma-migration-port (also 17777). Once that follower was promoted to leader,
+ * the first donor's INIT-SERVER could not bind ("rdmamig_server_create failed")
+ * and that donor could never be re-homed. The leader learns this port from the
+ * CHAIN-INIT-QP reply, so moving it needs no other change. */
+#define CHAIN_RDMA_PORT_OFFSET 1000
+static int chainRdmaPort(void) { return server.rdma_migration_port + CHAIN_RDMA_PORT_OFFSET; }
 
 static int ensureLocalRdmamigServer(void) {
     pthread_mutex_lock(&g_rdma_server_bootstrap_mu);
@@ -59,7 +70,7 @@ static int ensureLocalRdmamigServer(void) {
         return C_OK;
     }
     char port_str[16];
-    snprintf(port_str, sizeof(port_str), "%d", server.rdma_migration_port);
+    snprintf(port_str, sizeof(port_str), "%d", chainRdmaPort());
     struct rdmamig_server *s = rdmamig_server_create(port_str);
     if (s == NULL) {
         pthread_mutex_unlock(&g_rdma_server_bootstrap_mu);
@@ -788,12 +799,12 @@ void rdmaChainInitQpCommand(client *c) {
         src_mig_id,
         bootstrapped ? "up, awaiting upstream RDMA connect"
                      : "BOOTSTRAP FAILED (no RDMA hw?) — degraded mode",
-        server.rdma_migration_port);
+        chainRdmaPort());
 
     addReplyArrayLen(c, 2);
     addReplyBulkCString(c,
         bootstrapped ? "CHAIN-INIT-QP-OK" : "CHAIN-INIT-QP-DEGRADED");
-    addReplyLongLong(c, server.rdma_migration_port);
+    addReplyLongLong(c, chainRdmaPort());
 }
 
 /* ====================================================================== *
@@ -1348,7 +1359,12 @@ void rdmaChainForwardedCommand(client *c) {
      * so ack the leader NOW — regardless of tail position. The leader counts
      * acks and proceeds at the first one past the baseline (= majority for a
      * 3-node sg4: leader + this follower). */
-    if (leader_host_dup != NULL && leader_port_snap > 0) {
+    if (server.rdma_chain_ack_via_raft) {
+        /* AqRaft: report on the Raft AppendEntries replies instead of a TCP ack. */
+        rdmaMgnReceivedAsync(src_mig_id, (long long) length);
+        ack_enqueued = 1;
+        if (leader_host_dup != NULL) { sdsfree(leader_host_dup); leader_host_dup = NULL; }
+    } else if (leader_host_dup != NULL && leader_port_snap > 0) {
         ensureChainWorker();
         chainWorkItem *ack = zcalloc(sizeof(*ack));
         ack->kind = CHAIN_WORK_ACK_LEADER;
@@ -1857,6 +1873,37 @@ int rdmaLeaderChainEstablish(long long src_mig_id, long long pool_bytes,
             continue;
         }
     }
+
+    /* AqRaft S1: the forward path and the off-main source-pool pre-registration
+     * always use peers[0] as the chain head. A follower that died before or
+     * during establish (the old leader, when a promoted leader builds its first
+     * chain) was only marked !established and stayed in peers[0], so the
+     * pre-registration failed ("chain not established") and fell back to a
+     * 2.86 GB ibv_reg_mr on the main thread: the new leader stalled ~1.5 s,
+     * lost quorum and stepped down. Compact the live followers to the front,
+     * in chain order. No-op when every follower is live or none is. */
+    pthread_mutex_lock(&g_chain_state_mu);
+    int n_est = 0;
+    for (int i = 0; i < st->n_peers; i++) if (st->peers[i].established) n_est++;
+    if (n_est > 0 && n_est < st->n_peers) {
+        int w = 0, before = st->n_peers;
+        for (int i = 0; i < before; i++) {
+            if (st->peers[i].established) {
+                if (w != i) st->peers[w] = st->peers[i];
+                st->peers[w].chain_position = w + 1;
+                w++;
+            } else if (st->peers[i].host) {
+                sdsfree(st->peers[i].host);
+                st->peers[i].host = NULL;
+            }
+        }
+        st->n_peers = w;
+        serverLog(LL_NOTICE,
+            "CHAIN: sess=%lld dropped %d dead follower(s) at establish; head is now %s:%d",
+            src_mig_id, before - w, st->peers[0].host ? st->peers[0].host : "?",
+            st->peers[0].port);
+    }
+    pthread_mutex_unlock(&g_chain_state_mu);
 
     serverLog(LL_NOTICE,
         "RDMA chain established: sess=%lld n_followers=%d pool_bytes=%lld",

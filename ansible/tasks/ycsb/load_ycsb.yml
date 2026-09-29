@@ -1,6 +1,8 @@
 ---
+# Every YCSB node loads its own contiguous slice of [0, recordcount): YCSB derives each
+# key from its record index, so the loaded dataset is identical to a single-client load.
 - name: "YCSB load phase"
-  hosts: ycsb_nodes[0]
+  hosts: ycsb_nodes
   become: yes
   tasks:
     # status.interval=10 + -s makes ycsb.sh print "<N> sec: <ops> operations" once
@@ -17,5 +19,7 @@
         -P {{ redis_workload_path }}{{ redis_workload }}
         -p maxexecutiontime=0
         -p status.interval=10 -s
+        -p insertstart=$(( {{ groups['ycsb_nodes'].index(inventory_hostname) }} * $(grep -E '^recordcount=' {{ redis_workload_path }}{{ redis_workload }} | cut -d= -f2) / {{ groups['ycsb_nodes'] | length }} ))
+        -p insertcount=$(( ({{ groups['ycsb_nodes'].index(inventory_hostname) }} + 1) * $(grep -E '^recordcount=' {{ redis_workload_path }}{{ redis_workload }} | cut -d= -f2) / {{ groups['ycsb_nodes'] | length }} - {{ groups['ycsb_nodes'].index(inventory_hostname) }} * $(grep -E '^recordcount=' {{ redis_workload_path }}{{ redis_workload }} | cut -d= -f2) / {{ groups['ycsb_nodes'] | length }} ))
         -threads {{ ycsb_threads_load }}
         > {{ ycsb_log_filename }}_load_{{ inventory_hostname }} 2>&1

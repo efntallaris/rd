@@ -1,0 +1,35 @@
+---
+# Restore snapshot {{ dataset_snapshot }} (before start_redisraft_instances).
+# clean_runtime has just removed {{ redis_data_dir }}. The RDB is hard-linked
+# (read-only, never rewritten during a run: saving is off and snapshots are
+# disabled), the small compacted raft log files are copied (they are appended to).
+- name: "Put the dataset snapshot in place"
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
+  become: yes
+  vars:
+    snap_dir: "{{ aq_disk }}/snapshots/{{ dataset_snapshot }}"
+  tasks:
+    - name: Snapshot must exist
+      stat:
+        path: "{{ snap_dir }}/MANIFEST"
+      register: snap_manifest_stat
+      failed_when: not snap_manifest_stat.stat.exists
+
+    - name: Ensure data dir exists
+      file:
+        path: "{{ redis_data_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Link RDB and copy raft log files for each local instance
+      shell: |
+        set -e
+        s={{ snap_dir }}; d={{ redis_data_dir }}
+        rdb={{ inventory_hostname }}_{{ sg.id }}.rdb
+        log=raft_{{ sg.id }}_{{ inventory_hostname }}.db
+        ln -f $s/$rdb $d/$rdb
+        for f in $log $log.idx $log.meta; do cp $s/$f {{ raft_log_dir }}/$f; chmod 0644 {{ raft_log_dir }}/$f; done
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      when: inventory_hostname in (sg.nodes | map(attribute='host') | list)

@@ -28,6 +28,16 @@
         - jemalloc
         - fast_float
 
+    # commands.def carries AqRaft RDMA subcommands (chain-warm, chain-status, mgn-recover,
+    # mgn-donor-rehome, mgn-resume-status, evict-slots) that have no commands/*.json. After a
+    # fresh clone the .json files can look newer, make regenerates commands.def from them and
+    # silently drops those subcommands ("ERR unknown subcommand"). Keep the committed file and
+    # make it newer than its inputs so it is never regenerated.
+    - name: Keep the committed commands.def (never regenerate it from commands/*.json)
+      shell: git -c safe.directory='*' checkout -- src/commands.def && touch src/commands.def
+      args:
+        chdir: "{{ redis_dir }}"
+
     - name: Install Redis binaries
       make:
         chdir: "{{ redis_dir }}"

@@ -67,7 +67,10 @@
           --rdma-chain-pipeline {{ rdma_chain_pipeline | default('no') }} \
           --rdma-chain-xsession {{ rdma_chain_xsession | default('no') }} \
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
-          --rdma-naive-durability {{ rdma_naive_durability | default('no') }} \
+          {% if sg.id != 'sg4' %}--rdma-src-prereg-slots {{ rdma_src_prereg_slots | default(0) }} \
+          --rdma-src-prereg-bind {{ host_ip_map[inventory_hostname] }} \
+          {% endif %}{% if rdma_chain_ack_via_raft is defined %}--rdma-chain-ack-via-raft {{ rdma_chain_ack_via_raft }} \
+          {% endif %}          --rdma-naive-durability {{ rdma_naive_durability | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
           --cluster-rdma-reshard-debug-bytes {{ rdma_reshard_debug_bytes | default('no') }} \
           --cluster-rdma-merge-keys-per-tick {{ rdma_merge_keys_per_tick | default(512) }} \

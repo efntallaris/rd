@@ -1015,6 +1015,8 @@ void JoinCluster(RedisRaftCtx *rr, NodeAddrListElement *el, RaftReq *req, void (
 void importKeys(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *req);
 int cmdRaftImport(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+int cmdRaftMgnReceived(RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
+void MgnReceivedFormat(char *buf, size_t size);
 void MigrateKeys(RedisRaftCtx *rr, RaftReq *req);
 
 /* commands.c */

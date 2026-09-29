@@ -1,0 +1,42 @@
+---
+# After start_redisraft_instances on a restored snapshot: wait until every
+# instance has loaded its RDB and rejoined (raft_state:up), every shardgroup has
+# a leader, and each leader's DBSIZE matches the snapshot MANIFEST.
+- name: "Wait for the restored cluster"
+  hosts: redis_masters[0]
+  become: yes
+  vars:
+    snap_dir: "{{ aq_disk }}/snapshots/{{ dataset_snapshot }}"
+  tasks:
+    - name: Resolve shardgroup member IPs
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | flatten | map(attribute='host') | unique | list }}"
+      register: rw_ip_lookup
+      changed_when: false
+
+    - name: Wait for every shardgroup (all members up, a leader, DBSIZE == manifest)
+      shell: |
+        want=$(awk '$1=="{{ sg.id }}"{print $2}' {{ snap_dir }}/MANIFEST)
+        t0=$(date +%s)
+        while true; do
+          up=0; lead=""
+          for ip in {% for nd in sg.nodes %}{{ (rw_ip_lookup.results | selectattr('item','equalto',nd.host) | first).stdout }} {% endfor %}; do
+            info=$({{ redis_bin_dir }}/redis-cli -t 2 -h $ip -p {{ sg.port }} INFO raft 2>/dev/null | tr -d '\r')
+            echo "$info" | grep -q '^raft_state:up' && up=$((up+1))
+            echo "$info" | grep -q '^raft_role:leader' && lead=$ip
+          done
+          if [ "$up" = "{{ sg.nodes | length }}" ] && [ -n "$lead" ]; then
+            got=$({{ redis_bin_dir }}/redis-cli -t 5 -h $lead -p {{ sg.port }} DBSIZE 2>/dev/null)
+            if [ "$got" = "$want" ]; then echo "{{ sg.id }}: up={{ sg.nodes | length }} leader=$lead DBSIZE=$got (manifest $want) after $(( $(date +%s) - t0 ))s"; exit 0; fi
+          fi
+          [ $(( $(date +%s) - t0 )) -gt 900 ] && { echo "{{ sg.id }}: not ready after 900s (up=$up leader=$lead DBSIZE=${got:-?} want=$want)"; exit 1; }
+          sleep 2
+        done
+      loop: "{{ redisraft_shardgroups }}"
+      loop_control:
+        loop_var: sg
+      register: rw_ready
+      changed_when: false
+
+    - debug:
+        msg: "{{ rw_ready.results | map(attribute='stdout') | list }}"

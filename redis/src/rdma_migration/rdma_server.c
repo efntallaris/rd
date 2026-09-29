@@ -21,6 +21,9 @@
 #include "internal.h"
 #include "zmalloc.h"
 #include <errno.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -187,4 +190,41 @@ struct rdma_cm_id *rdmamig_server_cm_id(rdmamig_server *s) {
  * in <infiniband/verbs.h>; used only as an opaque cache key. */
 void *rdmamig_cm_pd(struct rdma_cm_id *id) {
     return id ? (void *) id->pd : NULL;
+}
+
+struct rdma_cm_id *rdmamig_keeper_create(const char *ip_want) {
+    int want = (ip_want != NULL && ip_want[0] != '\0');
+    struct ifaddrs *ifs = NULL;
+    if (getifaddrs(&ifs) != 0) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "rdmamig_keeper_create: getifaddrs failed (errno=%d)", errno);
+        return NULL;
+    }
+    struct rdma_cm_id *found = NULL;
+    for (struct ifaddrs *ifa = ifs; ifa != NULL && found == NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if ((ifa->ifa_flags & IFF_UP) == 0 || (ifa->ifa_flags & IFF_LOOPBACK) != 0) continue;
+        struct sockaddr_in sin = *(struct sockaddr_in *) ifa->ifa_addr;
+        if (want) {
+            char cur[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &sin.sin_addr, cur, sizeof(cur));
+            if (strcmp(cur, ip_want) != 0) continue;
+        }
+        struct rdma_cm_id *id = NULL;
+        if (rdma_create_id(NULL, &id, NULL, RDMA_PS_TCP) != 0) continue;
+        sin.sin_port = 0;   /* any port: the id is never listened on or connected */
+        if (rdma_bind_addr(id, (struct sockaddr *) &sin) == 0 && id->verbs != NULL && id->pd != NULL) {
+            char ip[INET_ADDRSTRLEN] = "?";
+            inet_ntop(AF_INET, &sin.sin_addr, ip, sizeof(ip));
+            RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdmamig_keeper_create: bound %s (%s) dev=%s pd=%p",
+                     ip, ifa->ifa_name, ibv_get_device_name(id->verbs->device), (void *) id->pd);
+            found = id;
+        } else {
+            rdma_destroy_id(id);
+        }
+    }
+    freeifaddrs(ifs);
+    if (found == NULL)
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "rdmamig_keeper_create: no local IPv4 address %s%smaps to an RDMA device",
+                 want ? ip_want : "", want ? " " : "");
+    return found;
 }

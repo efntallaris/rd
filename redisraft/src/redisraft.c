@@ -973,11 +973,14 @@ static int cmdRaftAppendEntries(RedisModuleCtx *ctx, RedisModuleString **argv, i
         goto out;
     }
 
-    RedisModule_ReplyWithArray(ctx, 4);
+    char mgn_recv[512];
+    MgnReceivedFormat(mgn_recv, sizeof(mgn_recv));
+    RedisModule_ReplyWithArray(ctx, 5);
     RedisModule_ReplyWithLongLong(ctx, resp.term);
     RedisModule_ReplyWithLongLong(ctx, resp.success);
     RedisModule_ReplyWithLongLong(ctx, resp.current_idx);
     RedisModule_ReplyWithLongLong(ctx, resp.msg_id);
+    RedisModule_ReplyWithCString(ctx, mgn_recv);   /* AqRaft: migration buffer status */
 
 out:
     if (msg.n_entries > 0) {
@@ -1955,6 +1958,11 @@ static int registerRaftCommands(RedisModuleCtx *ctx)
     }
 
     if (RedisModule_CreateCommand(ctx, "raft.mgn-log", cmdRaftMgnLog,
+                                  "admin", 0, 0, 0) == REDISMODULE_ERR) {
+        return REDISMODULE_ERR;
+    }
+
+    if (RedisModule_CreateCommand(ctx, "raft.mgn-received", cmdRaftMgnReceived,
                                   "admin", 0, 0, 0) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }

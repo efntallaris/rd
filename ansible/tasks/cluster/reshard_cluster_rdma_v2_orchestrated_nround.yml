@@ -192,25 +192,57 @@
           # (verified @500K: recipient DBSIZE recovers + stabilises via B#1 re-ship).
           # Wait for that recovery to DRAIN, then continue so NARROW/EVICT/reconcile
           # finish the ownership handoff and the offload lands. Clean runs hit DONE.
-          echo "round $RI FINAL=$final -> waiting for become-leader recovery on sg4 to drain"
+          # AqRaft orchestration RE-DRIVE (S1/S2/S5). A leader crash can kill the
+          # orchestrator (it lives in the sg1 leader) or the recipient a donor was
+          # dispatched to, so some donors may never have been dispatched, or were
+          # dispatched to a dead node. The source of truth is the sg4 durable state:
+          # for every donor range, ask the CURRENT sg4 leader MGN-RESUME-STATUS and
+          # re-drive each non-durable range from the donor CURRENT leader with
+          # MGN-RECOVER (exact slots, query-first: re-ships only what is not durable;
+          # the do-not-clobber merge makes a re-ship idempotent). Wait while a range
+          # is pending or its donor still has a migration running. Roll-forward only.
+          echo "round $RI FINAL=$final -> re-driving from sg4 durable state"
           SG4_EPS="{% for nd in (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).nodes %}{{ narrow_host_ip_map[nd.host] }}:{{ (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).port }} {% endfor %}"
-          prev=-1; stable=0; drained=0
+          # donor spec: id:port:slot_lo:ip,ip,ip
+          DONORS="{% for sg in redisraft_shardgroups if sg.id != 'sg4' %}{{ sg.id }}:{{ sg.port }}:{{ sg.slot_config.split(':')[0] | int }}:{% for nd in sg.nodes %}{{ narrow_host_ip_map[nd.host] }}{{ ',' if not loop.last else '' }}{% endfor %} {% endfor %}"
+          role_of() { {{ redis_bin_dir }}/redis-cli -t 2 -h "$1" -p "$2" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n'; }
+          sg4_leader() { for ep in $SG4_EPS; do [ "$(role_of ${ep%%:*} ${ep##*:})" = "leader" ] && { echo "$ep"; return; }; done; echo ""; }
+          donor_leader() { local pt=$1; for ip in $(echo "$2" | tr ',' ' '); do [ "$(role_of $ip $pt)" = "leader" ] && { echo "$ip"; return; }; done; echo ""; }
+          alldone=0
           for w in $(seq 1 300); do
-            lead=""; ldb=0
-            for ep in $SG4_EPS; do
-              ip=${ep%%:*}; pt=${ep##*:}
-              role=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
-              if [ "$role" = "leader" ]; then lead=$ip; ldb=$({{ redis_bin_dir }}/redis-cli -t 2 -h "$ip" -p "$pt" DBSIZE 2>/dev/null); break; fi
+            L4=$(sg4_leader)
+            if [ -z "$L4" ]; then sleep 2; continue; fi
+            L4IP=${L4%%:*}; L4PT=${L4##*:}
+            ndur=0; ntot=0; summary=""
+            for d in $DONORS; do
+              id=$(echo $d | cut -d: -f1); pt=$(echo $d | cut -d: -f2); base=$(echo $d | cut -d: -f3); ips=$(echo $d | cut -d: -f4)
+              lo=$((base + CHUNK * RI)); hi=$((lo + CNT - 1)); ntot=$((ntot+1))
+              st=$({{ redis_bin_dir }}/redis-cli -t 3 -h $L4IP -p $L4PT RDMA MGN-RESUME-STATUS $lo $hi 2>/dev/null | head -2 | tr '\n' ' ')
+              pend=$(echo $st | awk '{print $1}'); miss=$(echo $st | awk '{print $2}')
+              case "$pend$miss" in *[!0-9]*|"") summary="$summary $id=?"; continue;; esac
+              if [ "$pend" = "0" ] && [ "$miss" = "0" ]; then ndur=$((ndur+1)); summary="$summary $id=durable"; continue; fi
+              DL=$(donor_leader $pt $ips)
+              if [ -z "$DL" ]; then summary="$summary $id=no-leader"; continue; fi
+              mst=$({{ redis_bin_dir }}/redis-cli -t 2 -h $DL -p $pt RDMA MIGRATE-STATUS 2>/dev/null | head -1 | tr -d '\r')
+              if [ "$pend" != "0" ] || { [ -n "$mst" ] && ! echo "$mst" | grep -qE 'DONE|FAILED|ERR|no migrations'; }; then
+                summary="$summary $id=waiting(p=$pend,m=$miss,donor=$mst)"; continue
+              fi
+              key="D_${id}_$(echo $L4 | tr '.:' '__')"
+              n=$(eval echo \${$key:-0})
+              if [ "$n" -ge 3 ]; then summary="$summary $id=gave-up"; continue; fi
+              tok=$((700 + RI * 100 + n * 10 + ${id#sg}))
+              {{ redis_bin_dir }}/redis-cli -t 5 -h $DL -p $pt RDMA MGN-RECOVER donor $tok \
+                "sess=$tok slots=$lo-$hi n=$CNT recipient=$L4IP:$L4PT" >/dev/null 2>&1
+              eval "$key=$((n+1))"
+              echo "  re-drive: $id slots=$lo-$hi from $DL:$pt -> sg4 leader $L4 (missing=$miss, attempt $((n+1)), token $tok)"
+              summary="$summary $id=dispatched"
+              sleep 3   # let MIGRATE-STATUS show the new worker before the next poll
             done
-            if [ -n "$lead" ] && [ "${ldb:-0}" -gt 1000 ] && [ "$ldb" = "$prev" ]; then
-              stable=$((stable+1))
-              if [ "$stable" -ge 12 ]; then echo "recovery DRAINED: sg4 leader=$lead DBSIZE=$ldb (stable 12s) -> proceeding to NARROW"; drained=1; break; fi
-            else
-              stable=0
-            fi
-            prev=$ldb; sleep 1
+            [ $((w % 5)) -eq 1 ] && echo "  re-drive poll $w: sg4 leader=$L4 $ndur/$ntot durable:$summary"
+            if [ "$ndur" -eq "$ntot" ]; then echo "RE-DRIVE COMPLETE: all $ntot donor ranges durable on sg4 leader $L4 -> NARROW"; alldone=1; break; fi
+            sleep 2
           done
-          [ "$drained" = "1" ] || { echo "sg4 recovery did NOT drain within timeout"; exit 1; }
+          [ "$alldone" = "1" ] || { echo "RE-DRIVE INCOMPLETE: not every donor range is durable on sg4 (see polls above)"; exit 1; }
         done
       register: all_rounds
       changed_when: true

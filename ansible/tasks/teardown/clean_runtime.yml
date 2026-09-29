@@ -14,16 +14,31 @@
       file:
         path: "{{ redis_log_dir }}"
         state: absent
+      # a redis-server that was just killed may still be flushing its log
+      register: rm_out
+      retries: 10
+      delay: 2
+      until: rm_out is succeeded
 
     - name: Remove monitoring log directory
       file:
         path: "{{ local_log_dir }}"
         state: absent
+      # a redis-server that was just killed may still be flushing its log
+      register: rm_out
+      retries: 10
+      delay: 2
+      until: rm_out is succeeded
 
     - name: Remove Redis data directory (RDB + cluster state)
       file:
         path: "{{ redis_data_dir }}"
         state: absent
+      # a redis-server that was just killed may still be flushing its log
+      register: rm_out
+      retries: 10
+      delay: 2
+      until: rm_out is succeeded
 
     - name: Remove stale cluster state files in legacy locations
       shell: >

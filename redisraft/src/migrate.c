@@ -465,3 +465,53 @@ int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
     RedisModule_ReplyWithSimpleString(ctx, "OK");
     return REDISMODULE_OK;
 }
+
+/* ---- AqRaft: migration buffer status piggybacked on AppendEntries ----------
+ *
+ * With --rdma-chain-ack-via-raft, a recipient follower does not send a TCP
+ * CHAIN-ACK when a migrated batch lands in its landing pool. cluster_rdma
+ * records it here instead (RAFT.MGN-RECEIVED <sess> <len>, main-thread
+ * loopback), and the follower reports its recently received sessions as a 5th
+ * element of every RAFT.AE reply ("sess:len,sess:len,..."). The leader turns
+ * each newly reported (node, session) into the usual RDMA CHAIN-ACK, so the
+ * durability gate (INDX_UPD only once a majority holds the batch) is unchanged;
+ * only the transport moves onto the Raft replication channel. */
+#define MGN_RECV_MAX 16
+static long long g_mgn_recv_sess[MGN_RECV_MAX];
+static long long g_mgn_recv_len[MGN_RECV_MAX];
+static int g_mgn_recv_n = 0, g_mgn_recv_next = 0;
+
+int cmdRaftMgnReceived(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    long long sess, len;
+    if (argc != 3 ||
+        RedisModule_StringToLongLong(argv[1], &sess) != REDISMODULE_OK ||
+        RedisModule_StringToLongLong(argv[2], &len) != REDISMODULE_OK) {
+        return RedisModule_WrongArity(ctx);
+    }
+    for (int i = 0; i < g_mgn_recv_n; i++) {
+        if (g_mgn_recv_sess[i] == sess) {
+            g_mgn_recv_len[i] = len;
+            return RedisModule_ReplyWithSimpleString(ctx, "OK");
+        }
+    }
+    g_mgn_recv_sess[g_mgn_recv_next] = sess;
+    g_mgn_recv_len[g_mgn_recv_next] = len;
+    g_mgn_recv_next = (g_mgn_recv_next + 1) % MGN_RECV_MAX;
+    if (g_mgn_recv_n < MGN_RECV_MAX) g_mgn_recv_n++;
+    LOG_NOTICE("RAFT.MGN-RECEIVED: sess=%lld len=%lld (reported on AppendEntries replies)", sess, len);
+    return RedisModule_ReplyWithSimpleString(ctx, "OK");
+}
+
+/* "sess:len,..." for the RAFT.AE reply; empty string when nothing received. */
+void MgnReceivedFormat(char *buf, size_t size)
+{
+    size_t off = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < g_mgn_recv_n && off < size; i++) {
+        int w = snprintf(buf + off, size - off, "%s%lld:%lld", i ? "," : "",
+                         g_mgn_recv_sess[i], g_mgn_recv_len[i]);
+        if (w < 0 || (size_t) w >= size - off) break;
+        off += (size_t) w;
+    }
+}

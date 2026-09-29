@@ -3274,6 +3274,7 @@ void InitServerLast(void) {
      * the pthread survives into the daemonized child — the lesson from
      * Attempt-1 in cluster_rdma.c history. */
     recipientBackpatchThreadStart();
+    rdmaSrcPreregStart();
     /* AqRaft: arm the cluster-independent per-slot rwlock array before any
      * backpatch worker can drain a shadow into the live keyspace. No-op unless
      * --rdma-merge-background is set. Must run post-fork (same rationale as the
@@ -8134,6 +8135,12 @@ int main(int argc, char **argv) {
         /* Things not needed when running in Sentinel mode. */
         serverLog(LL_NOTICE,"Server initialized");
         aofLoadManifestFromDisk();
+        /* AqRaft: initialize the slot-keyed RDMA block allocator before loading
+         * data. r_allocator_init() resets every slot's block list, so running it
+         * after the load (as before) orphaned all blocks that RDB-loaded keys live
+         * in: the migration, which ships r_allocator blocks, then saw only keys
+         * written after startup (~6% of a restored dataset). */
+        r_allocator_init();
         loadDataFromDisk();
         aofOpenIfNeededOnServerStart();
         aofDelHistoryFiles();
@@ -8183,9 +8190,8 @@ int main(int argc, char **argv) {
      * `serverLog` is a macro, so we use the underlying _serverLog function. */
     rdmamig_set_logger((rdmamig_log_fn) _serverLog);
 
-    /* Initialize the slot-keyed RDMA-registered block allocator used by the
-     * RDMA migration path (cluster_rdma.c). One-shot. */
-    r_allocator_init();
+    /* The slot-keyed RDMA block allocator is initialized BEFORE loadDataFromDisk()
+     * (see above), so keys loaded from an RDB land in tracked r_allocator blocks. */
     r_allocator_set_skip_lock_when_idle(server.rdma_allocator_skip_lock);
     serverLog(LL_NOTICE,
         "RDMA migration allocator initialized — r_allocator is now the default kvobj allocator for cluster-mode string adds. Skip-lock policy (cluster-rdma-allocator-skip-lock): %s",

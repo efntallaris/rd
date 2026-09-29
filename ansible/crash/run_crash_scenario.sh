@@ -63,7 +63,7 @@ sudo ansible-playbook -i inventory.ini \
   -e pre_reshard_pause="${PRE_PAUSE:-20}" \
   -e '{"rdma_follower_proxy": "no"}' \
   -e redis_workload="${WORKLOAD:-workloada_prod_30m_run10min}" \
-  -e experiment_name="$EXP_NAME"
+  -e experiment_name="$EXP_NAME" ${EXTRA_ANSIBLE_ARGS:-}
 PLAYBOOK_RC=$?
 set -e
 echo "[run] playbook exited rc=$PLAYBOOK_RC"

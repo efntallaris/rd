@@ -366,6 +366,7 @@ void bgMergeSlotSetActive(int slot, int active);
  * rdmaDoneSlotsCommand and applies migrated slots into the keyspace under
  * clusterSlotLockWrite(slot). */
 void recipientBackpatchThreadStart(void);
+void rdmaSrcPreregStart(void);
 void recipientBackpatchThreadStop(void);
 
 /* Flags that a module can set in order to prevent certain Redis Cluster

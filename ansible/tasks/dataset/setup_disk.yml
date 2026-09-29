@@ -1,0 +1,32 @@
+---
+# One-time per node set: put a filesystem on the unused part of each redis host's
+# boot disk (CloudLab's mkextrafs) and mount it at {{ aq_disk }}. The dataset
+# snapshots live there, and so does the redis/raft data dir when a snapshot is
+# used, so restored RDBs can be hard-linked into place instead of copied.
+# Idempotent: skips hosts where {{ aq_disk }} is already a mount point.
+- name: "Create the dataset-snapshot filesystem"
+  hosts: redis_masters:redis_migrate:redis_migrate_replicas
+  become: yes
+  tasks:
+    - name: Check whether {{ aq_disk }} is mounted
+      shell: mountpoint -q {{ aq_disk }}
+      register: aq_mounted
+      failed_when: false
+      changed_when: false
+
+    - name: Create and mount the extra filesystem (mkextrafs; the mount point must exist)
+      shell: mkdir -p {{ aq_disk }} && /usr/local/etc/emulab/mkextrafs.pl -f {{ aq_disk }}
+      when: aq_mounted.rc != 0
+
+    - name: Ensure snapshot root exists
+      file:
+        path: "{{ aq_disk }}/snapshots"
+        state: directory
+        mode: '0755'
+
+    - name: Show space
+      shell: df -h {{ aq_disk }} | tail -1
+      register: aq_df
+      changed_when: false
+
+    - debug: var=aq_df.stdout
