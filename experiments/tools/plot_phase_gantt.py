@@ -273,9 +273,10 @@ for idx, (sg, ri, s) in enumerate(rows):
     for ph in PHASES:
         if ph not in s or s[ph][1] is None: continue
         a, b = s[ph]; y = LANE_Y[ph]; w = b-a
-        bar_h = BAR_H
+        # Every bar has the same height; lanes with overlapping sessions offset
+        # alternate sessions into two sub-lanes instead of stacking them.
+        bar_h = BAR_H * 0.48
         if _overlap.get(ph):
-            bar_h = BAR_H * 0.48
             y = y + (BAR_H * 0.26 if idx % 2 == 0 else -BAR_H * 0.26)
         is_cold = (ph == "CHAIN" and s.get("_cold"))
         ec = COLD_EC if is_cold else "white"
@@ -289,14 +290,11 @@ for idx, (sg, ri, s) in enumerate(rows):
             continue
         dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
         txtcol = SG_TXT[sg]
-        if w > 0.22 and bar_h < BAR_H:
+        if w > 0.30:
             ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="center",
                     fontsize=6, color=txtcol, zorder=6, fontweight="bold")
-        elif w > 0.22:
-            ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri}\n{dlabel}", ha="center", va="center",
-                    fontsize=7, color=txtcol, zorder=6, linespacing=1.0, fontweight="bold")
         elif w > 0.05:
-            ax.text((a-t0)+w/2, y+BAR_H/2+0.06, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="bottom",
+            ax.text((a-t0)+w/2, y+bar_h/2+0.04, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="bottom",
                     fontsize=6, color="#777", zorder=6, rotation=90)
 
 # --- per-chunk start ticks, drawn in EACH phase's OWN lane at that phase's
