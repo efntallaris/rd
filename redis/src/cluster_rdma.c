@@ -6908,6 +6908,63 @@ static void migNotifyOrchestratorIfAny(rdmaMigration *mig,
 }
 
 /* Worker-side failure setter. Caller passes ownership of `err` (sds). */
+/* AqRaft warm pins. MIGRATE-WARM registers a slot's blocks with the RDMA device
+ * and the migration later ships them by those registrations. If coalesce() freed
+ * a registered block in between (all its keys deleted or overwritten), a new block
+ * could reuse the address and TRANSFER would post from a stale registration. So a
+ * warmed slot stays pinned (coalesce keeps its empty blocks) until the migration
+ * that ships it ends (DONE or FAILED). A re-homed re-ship covers the same slots and
+ * unpins them when it ends. Slots warmed but never migrated are released by a
+ * sweep of pins older than WARM_PIN_MAX_MS, run at the start of every warm-up; a
+ * leftover pin only keeps empty blocks around. */
+#define WARM_PIN_MAX_MS (10LL * 60 * 1000)
+/* Guarded by the slot's own (recursive) allocator mutex, not a global lock: the
+ * warm-up pins while already holding that mutex, and a global lock taken in the
+ * opposite order by the unpin path could deadlock. */
+static unsigned char g_warm_pinned[CLUSTER_SLOTS];
+static long long g_warm_pin_ms[CLUSTER_SLOTS];
+
+static void warmPinSlot(int slot) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return;
+    r_allocator_lock_slot(slot);
+    if (!g_warm_pinned[slot]) {
+        r_allocator_pin_slot(slot, 1);
+        g_warm_pinned[slot] = 1;
+    }
+    g_warm_pin_ms[slot] = mstime();
+    r_allocator_unlock_slot(slot);
+}
+
+static int warmUnpinOne(int slot, long long older_than_ms) {
+    int released = 0;
+    r_allocator_lock_slot(slot);
+    if (g_warm_pinned[slot] &&
+        (older_than_ms < 0 || mstime() - g_warm_pin_ms[slot] > older_than_ms)) {
+        r_allocator_pin_slot(slot, 0);
+        g_warm_pinned[slot] = 0;
+        released = 1;
+    }
+    r_allocator_unlock_slot(slot);
+    return released;
+}
+
+static void warmUnpinSlots(const int *slots, int n) {
+    if (slots == NULL) return;
+    int released = 0;
+    for (int i = 0; i < n; i++)
+        if (slots[i] >= 0 && slots[i] < CLUSTER_SLOTS) released += warmUnpinOne(slots[i], -1);
+    if (released)
+        serverLog(LL_NOTICE, "RDMA warm-pin: released %d slot pins (migration ended)", released);
+}
+
+static void warmUnpinStale(void) {
+    int released = 0;
+    for (int s = 0; s < CLUSTER_SLOTS; s++)
+        if (g_warm_pinned[s]) released += warmUnpinOne(s, WARM_PIN_MAX_MS);
+    if (released)
+        serverLog(LL_NOTICE, "RDMA warm-pin: released %d stale slot pins (warmed, never migrated)", released);
+}
+
 static void migFail(rdmaMigration *mig, sds err) {
     pthread_mutex_lock(&mig->mu);
     mig->state = RDMA_MIG_FAILED;
@@ -6917,6 +6974,7 @@ static void migFail(rdmaMigration *mig, sds err) {
     pthread_mutex_unlock(&mig->mu);
     serverLog(LL_WARNING,
         "RDMA MIGRATE worker: id=%lld FAILED: %s", mig->id, mig->err);
+    warmUnpinSlots(mig->chosen, mig->n_slots);
     migNotifyOrchestratorIfAny(mig, "FAILED", 0);
 }
 
@@ -7196,6 +7254,7 @@ static void *migrationWorker(void *arg) {
             "RDMA MIGRATE worker: id=%lld DONE n_slots=0 — resume of sess=%lld: every "
             "slot already durable on the recipient, transfer skipped",
             mig->id, mig->resume_of_sess);
+        warmUnpinSlots(mig->chosen, mig->n_slots);
         migNotifyOrchestratorIfAny(mig, "DONE", 0);
         return NULL;
     }
@@ -7492,6 +7551,7 @@ static void *migrationWorker(void *arg) {
     pthread_mutex_unlock(&mig->mu);
     serverLog(LL_NOTICE,
         "RDMA MIGRATE worker: id=%lld DONE n_slots=%d", mig->id, mig->n_slots);
+    warmUnpinSlots(mig->chosen, mig->n_slots);
     migNotifyOrchestratorIfAny(mig, "DONE", (long long) mig->n_slots);
     return NULL;
 }
@@ -8309,12 +8369,21 @@ static void *warmRegisterThread(void *arg) {
          * array overrun) WITHOUT freezing the slot or resetting its freelist —
          * warm stays side-effect-free; FLIP freezes the blocks later. Blocks
          * added after warm are caught by GetOrRegister's fallback at TRANSFER. */
+        /* The slot mutex is held only to list the blocks and pin the slot, NOT
+         * across ibv_reg_mr: the main thread takes the same mutex on every write
+         * to the slot, so registering under it stalled the donor's main thread
+         * (the pre-migration client dip). The pin stops coalesce() from freeing a
+         * listed block while it is being registered, and stays until the
+         * migration that ships the slot ends (warmPinSlot / warmUnpinSlots). */
+        warmUnpinStale();
         long long live_blocks = 0, registered_blocks = 0;
         for (int i = 0; i < wa->n_slots; i++) {
             int slot = wa->chosen[i];
             r_allocator_lock_slot(slot);
             int nb = 0;
             char **blks = r_allocator_get_block_buffers_for_slot(slot, &nb);
+            warmPinSlot(slot);   /* held until the migration shipping this slot ends */
+            r_allocator_unlock_slot(slot);
             if (blks != NULL) {
                 for (int k = 0; k < nb; k++) {
                     if (blks[k] == NULL) continue;
@@ -8325,7 +8394,6 @@ static void *warmRegisterThread(void *arg) {
                 }
                 zfree(blks);
             }
-            r_allocator_unlock_slot(slot);
         }
         serverLog(LL_NOTICE,
             "RDMA MIGRATE-WARM(async): registered=%d n_slots=%d — %d slots flagged "

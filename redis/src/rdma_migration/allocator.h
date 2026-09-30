@@ -105,6 +105,8 @@ size_t r_allocator_block_stride_bytes(void);
  * section (block-walk + sanitize + freelist-reset) so it is mutually exclusive
  * with the main thread's r_allocator_insert_kv on that slot. Must be balanced. */
 void r_allocator_lock_slot(int slot);
+/* Pin (1) / unpin (0) a slot: while pinned, coalesce() keeps empty blocks. */
+void r_allocator_pin_slot(int slot, int pin);
 void r_allocator_unlock_slot(int slot);
 
 /*

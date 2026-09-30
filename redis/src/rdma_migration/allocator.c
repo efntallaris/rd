@@ -176,6 +176,21 @@ struct r_allocator {
 
 r_allocator_t r_allocator;
 
+/* AqRaft: a pinned slot keeps an empty block instead of freeing it in coalesce().
+ * MIGRATE-WARM registers a slot's blocks with the RDMA device outside the slot
+ * mutex (so client writes to that slot are not blocked behind ibv_reg_mr); the
+ * pin keeps those blocks alive until registration is done. Set and read under
+ * r_allocator.mutexes[slot] (coalesce runs under it via r_allocator_free_kv). */
+static unsigned char r_allocator_slot_pinned[SLOTS];
+
+void r_allocator_pin_slot(int slot, int pin)
+{
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    if (pin) r_allocator_slot_pinned[slot]++;
+    else if (r_allocator_slot_pinned[slot] > 0) r_allocator_slot_pinned[slot]--;
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+}
+
 static int r_allocator_skip_lock_when_idle = 0;
 static unsigned long long r_allocator_locks_taken = 0;
 static unsigned long long r_allocator_locks_skipped = 0;
@@ -516,7 +531,9 @@ void coalesce(int slot, void *segment)
 
     // if the free segments is between dummy prologue/epilogue headers,
     // this means the whole block is empty. We can delete the block
-    if (is_next_epilogue && is_prev_prologue) {
+    /* A pinned slot (MIGRATE-WARM registering its blocks) keeps the empty block:
+     * the segment goes back on the free list and the block is reused. */
+    if (is_next_epilogue && is_prev_prologue && !r_allocator_slot_pinned[slot]) {
         // printf("%s:%d %s() ########> Delete whole block\n", __FILE__, __LINE__, __func__);
         alloc_bloc_t *blk = get_block_from_ptr(slot, final_free_sgmt);
         assert(blk != NULL);
