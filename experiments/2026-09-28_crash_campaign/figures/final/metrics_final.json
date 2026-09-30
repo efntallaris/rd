@@ -1,0 +1,183 @@
+{
+ "healthy": {
+  "rc": 0,
+  "kills": [],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 0,
+  "tput_pre_kops": 138.9,
+  "tput_after_kops": 183.7,
+  "tput_min_kops": 120.8,
+  "seconds_below_half": 0,
+  "migration_s": 5.32,
+  "prep_to_done_s": 5.33,
+  "become_leader": 0,
+  "redrives": 0,
+  "resumes": 0,
+  "rehomes": 0,
+  "chain_reforms": 0,
+  "ae_piggyback_acks": 6
+ },
+ "s1": {
+  "rc": 0,
+  "kills": [
+   "redis3 @ 07:59:30.872 UTC"
+  ],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 127,
+  "tput_pre_kops": 137.6,
+  "tput_after_kops": 188.3,
+  "tput_min_kops": 0.0,
+  "seconds_below_half": 23,
+  "migration_s": 74.61,
+  "prep_to_done_s": 74.61,
+  "become_leader": 2,
+  "redrives": 2,
+  "resumes": 2,
+  "rehomes": 2,
+  "chain_reforms": 0,
+  "ae_piggyback_acks": 5
+ },
+ "s2": {
+  "rc": 0,
+  "kills": [
+   "redis0 @ 07:41:43.286 UTC"
+  ],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 0,
+  "tput_pre_kops": 139.3,
+  "tput_after_kops": 182.8,
+  "tput_min_kops": 32.8,
+  "seconds_below_half": 4,
+  "migration_s": 17.2,
+  "prep_to_done_s": 17.21,
+  "become_leader": 1,
+  "redrives": 2,
+  "resumes": 3,
+  "rehomes": 0,
+  "chain_reforms": 0,
+  "ae_piggyback_acks": 6
+ },
+ "s3": {
+  "rc": 0,
+  "kills": [
+   "redis1 @ 01:44:45.215 UTC"
+  ],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 0,
+  "tput_pre_kops": 139.4,
+  "tput_after_kops": 186.2,
+  "tput_min_kops": 66.6,
+  "seconds_below_half": 1,
+  "migration_s": 5.45,
+  "prep_to_done_s": 5.45,
+  "become_leader": 0,
+  "redrives": 0,
+  "resumes": 0,
+  "rehomes": 0,
+  "chain_reforms": 0,
+  "ae_piggyback_acks": 6
+ },
+ "s4": {
+  "rc": 0,
+  "kills": [
+   "redis4 @ 01:57:51.282 UTC"
+  ],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 0,
+  "tput_pre_kops": 142.2,
+  "tput_after_kops": 191.5,
+  "tput_min_kops": 0.0,
+  "seconds_below_half": 3,
+  "migration_s": 6.04,
+  "prep_to_done_s": 6.04,
+  "become_leader": 0,
+  "redrives": 0,
+  "resumes": 0,
+  "rehomes": 0,
+  "chain_reforms": 1,
+  "ae_piggyback_acks": 3
+ },
+ "s5": {
+  "rc": 0,
+  "kills": [
+   "redis0 @ 02:10:59.937 UTC"
+  ],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 0,
+  "tput_pre_kops": 142.6,
+  "tput_after_kops": 183.8,
+  "tput_min_kops": 74.9,
+  "seconds_below_half": 0,
+  "migration_s": 5.5,
+  "prep_to_done_s": 5.5,
+  "become_leader": 0,
+  "redrives": 0,
+  "resumes": 0,
+  "rehomes": 0,
+  "chain_reforms": 0,
+  "ae_piggyback_acks": 6
+ },
+ "s6": {
+  "rc": 0,
+  "kills": [
+   "redis0 @ 02:24:07.257 UTC",
+   "redis3 @ 02:24:07.676 UTC"
+  ],
+  "ranges_committed": [
+   "sg1",
+   "sg2",
+   "sg3"
+  ],
+  "faked_indx_upd": 0,
+  "crash_signatures": 0,
+  "update_errors": 400,
+  "tput_pre_kops": 138.3,
+  "tput_after_kops": 191.0,
+  "tput_min_kops": 0.0,
+  "seconds_below_half": 19,
+  "migration_s": 18.56,
+  "prep_to_done_s": 18.56,
+  "become_leader": 1,
+  "redrives": 2,
+  "resumes": 2,
+  "rehomes": 1,
+  "chain_reforms": 0,
+  "ae_piggyback_acks": 4
+ }
+}

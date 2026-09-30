@@ -121,6 +121,11 @@ typedef struct rdmaLeaderChainState {
     size_t last_acked_length;
     long long last_acked_at_ms;
     long long ack_count;
+    /* Batches the leader has finished forwarding to F1. A CHAIN-ACK before the
+     * first forward is a stale AppendEntries report for an earlier session that
+     * reused this id (ids restart on every new leader); refuse it so the module
+     * retries instead of marking the report seen. */
+    long long fwd_count;
 } rdmaLeaderChainState;
 
 /* Per-session chain state on a FOLLOWER. Keyed in g_follower_chains
@@ -372,6 +377,7 @@ int rdmaInvSummary(long long sess, long long *n_received, long long *n_merged,
 
 /* Forward decl — definition is further down in the leader-side section. */
 static rdmaLeaderChainState *findLeaderState(long long src_mig_id);
+static void chainMarkForwarded(long long src_mig_id);
 
 static rdmaFollowerChainState *findFollowerState(long long src_mig_id) {
     for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS; i++) {
@@ -827,7 +833,11 @@ void rdmaChainInitQpCommand(client *c) {
 static void                  *g_flp_pool[N_FOLLOWER_LANDING_POOLS]  = {0};
 static size_t                 g_flp_bytes[N_FOLLOWER_LANDING_POOLS] = {0};
 static struct rdmamig_buffer *g_flp_buf[N_FOLLOWER_LANDING_POOLS]   = {0};
-static struct rdma_cm_id     *g_flp_cm[N_FOLLOWER_LANDING_POOLS]    = {0};
+/* PD each pool is registered on. The MR belongs to the device's shared PD, not to
+ * one connection, so a new upstream (a new leader, or the leader replacing a dead
+ * predecessor) reuses it; keying on the cm_id re-registered every pool (2.86 GB
+ * ibv_reg_mr, ~0.5 s) on the main thread in CHAIN-PREP. */
+static void                  *g_flp_pd[N_FOLLOWER_LANDING_POOLS]    = {0};
 static int                    g_flp_next      = 0;
 static int                    g_flp_prewarmed = 0;
 static pthread_mutex_t        g_flp_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -839,7 +849,8 @@ static int followerEnsurePool(int idx, struct rdma_cm_id *cm, size_t bytes) {
     if (cm == NULL) return -1;
     size_t cap = (bytes + FLP_GRAIN - 1) & ~(FLP_GRAIN - 1);   /* round up to grain */
     pthread_mutex_lock(&g_flp_mu);
-    int ok = (g_flp_buf[idx] != NULL && g_flp_cm[idx] == cm && g_flp_bytes[idx] >= bytes);
+    void *pd = rdmamig_cm_pd(cm);
+    int ok = (g_flp_buf[idx] != NULL && g_flp_pd[idx] == pd && g_flp_bytes[idx] >= bytes);
     pthread_mutex_unlock(&g_flp_mu);
     if (ok) return 0;
     void *pool = mmap(NULL, cap, PROT_READ | PROT_WRITE,
@@ -851,7 +862,7 @@ static int followerEnsurePool(int idx, struct rdma_cm_id *cm, size_t bytes) {
     /* Publish (leak any prior MR for this slot — no destroy helper; matches the
      * existing recipient big-MR no-destroy contract). */
     g_flp_pool[idx] = pool; g_flp_buf[idx] = buf;
-    g_flp_bytes[idx] = cap; g_flp_cm[idx] = cm;
+    g_flp_bytes[idx] = cap; g_flp_pd[idx] = pd;
     pthread_mutex_unlock(&g_flp_mu);
     return 0;
 }
@@ -871,6 +882,39 @@ static void *followerPrewarmThread(void *arg) {
         done, N_FOLLOWER_LANDING_POOLS, a->bytes);
     zfree(a);
     return NULL;
+}
+
+/* Startup pre-registration of the follower ring on the device's shared PD (the
+ * keeper cm_id pins it), off the main thread and before any client traffic, so no
+ * CHAIN-PREP — not even the first — registers memory on the main thread. Sized
+ * like the leader's request for rdma-landing-prereg-slots slots (grain-rounded). */
+static void *followerPreregThread(void *arg) {
+    UNUSED(arg);
+    struct rdma_cm_id *keeper = rdmaPreregKeeperGet();
+    if (keeper == NULL) {
+        serverLog(LL_WARNING, "CHAIN FOLLOWER-PREREG: no RDMA device for the keeper cm_id; "
+                  "follower pools will be registered lazily");
+        return NULL;
+    }
+    size_t bytes = ((size_t) server.rdma_landing_prereg_slots + 2) * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
+    long long t0 = ustime();
+    int done = 0;
+    for (int i = 0; i < N_FOLLOWER_LANDING_POOLS; i++)
+        if (followerEnsurePool(i, keeper, bytes) == 0) done++;
+    pthread_mutex_lock(&g_flp_mu);
+    g_flp_prewarmed = 1;
+    pthread_mutex_unlock(&g_flp_mu);
+    serverLog(LL_NOTICE, "CHAIN FOLLOWER-PREREG: %d/%d follower pools ready (%zu B each, pd=%p) "
+              "in %lld ms [startup, off-main]", done, N_FOLLOWER_LANDING_POOLS, bytes,
+              rdmamig_cm_pd(keeper), (ustime() - t0) / 1000);
+    return NULL;
+}
+
+void rdmaFollowerPreregStart(void) {
+    if (server.rdma_landing_prereg_pools <= 0 || server.rdma_landing_prereg_slots <= 0) return;
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, followerPreregThread, NULL) == 0) pthread_detach(tid);
+    else serverLog(LL_WARNING, "CHAIN FOLLOWER-PREREG: pthread_create failed; pools registered lazily");
 }
 
 /*
@@ -896,6 +940,11 @@ void rdmaChainPrepCommand(client *c) {
         addReplyError(c, "CHAIN-PREP: pool_bytes must be positive");
         return;
     }
+    /* AqRaft piggyback: chain session ids restart on every new sg4 leader, so a
+     * receipt recorded for an earlier chain with the same id must not be reported
+     * for this one. Forget it before any data for the new chain can arrive (the
+     * forget and the later receipt go through the same ordered loopback). */
+    if (server.rdma_chain_ack_via_raft) rdmaMgnReceivedAsync(src_mig_id, -1);
 
     pthread_mutex_lock(&g_chain_state_mu);
     rdmaFollowerChainState *st = findFollowerState(src_mig_id);
@@ -923,7 +972,13 @@ void rdmaChainPrepCommand(client *c) {
         st->src_mig_id = src_mig_id;
         st->landing_pool_bytes = bytes;
 
-        if (cm != NULL && followerEnsurePool(idx, cm, bytes) == 0) {
+        long long t_ens = ustime();
+        int ens_rc = (cm != NULL) ? followerEnsurePool(idx, cm, bytes) : -1;
+        long long ens_ms = (ustime() - t_ens) / 1000;
+        if (ens_ms >= 50)
+            serverLog(LL_WARNING, "CHAIN-PREP: sess=%lld ring pool[%d] registered on the main "
+                      "thread (%lld ms) — not pre-registered for this PD", src_mig_id, idx, ens_ms);
+        if (ens_rc == 0) {
             pthread_mutex_lock(&g_flp_mu);
             st->landing_pool      = g_flp_pool[idx];
             st->landing_pool_buf  = g_flp_buf[idx];
@@ -1404,6 +1459,13 @@ void rdmaChainForwardedCommand(client *c) {
     addReply(c, shared.ok);
 }
 
+static void chainMarkForwarded(long long src_mig_id) {
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaLeaderChainState *ls = findLeaderState(src_mig_id);
+    if (ls) ls->fwd_count++;
+    pthread_mutex_unlock(&g_chain_state_mu);
+}
+
 /*
  * RDMA CHAIN-ACK <src_mig_id> <length>
  *
@@ -1422,6 +1484,12 @@ void rdmaChainAckCommand(client *c) {
     if (ls == NULL) {
         pthread_mutex_unlock(&g_chain_state_mu);
         addReplyErrorFormat(c, "CHAIN-ACK: no leader state for sess=%lld",
+                            src_mig_id);
+        return;
+    }
+    if (ls->fwd_count == 0) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        addReplyErrorFormat(c, "CHAIN-ACK: forward not complete for sess=%lld",
                             src_mig_id);
         return;
     }
@@ -2225,6 +2293,8 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
         "CHAIN: sess=%lld wrote %zu bytes (n_slots=%d, %d × 2 MiB WRs) leader → F1 (%s)",
         src_mig_id, length, n_slots, n_slots, f1_host);
 
+    chainMarkForwarded(src_mig_id);
+
     /* Send CHAIN-FORWARDED to F1 with the per-slot list. F1 will cascade
      * via its chain worker carrying the same slot list. */
     redisContext *ctx = redisConnect(f1_host, f1_port);
@@ -2467,6 +2537,8 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
             "leader → F1 (%s) — first-post→done %lldms, %.1f Gbps",
             src_mig_id, length, n_slots, f1_host, elapsed_ms, gbps);
     }
+
+    chainMarkForwarded(src_mig_id);
 
     /* Single CHAIN-FORWARDED to F1 (the "one DONE") — F1 cascades to F2. */
     redisContext *ctx = redisConnect(f1_host, f1_port);

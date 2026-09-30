@@ -1,0 +1,412 @@
+<title>S1 Orchestrator Stall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@80..110,500..800&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; diagrams widen to the column and scroll inside their own frame on phones. Same tokens as the AqRaft Migration Log (donor cobalt, recipient ochre). */
+:root {
+  --paper: #F3F5F8; --panel: #FFFFFF; --ink: #17202E; --ink-2: #4A5566; --rule: #D5DBE4; --band: #E9EDF3;
+  --donor: #2C58A0; --donor-bg: #DDE6F5; --recip: #A0650F; --recip-bg: #F5E8D3;
+  --ok: #217A3C; --ok-bg: #E1F2E5; --bad: #A8431C; --bad-bg: #F8E4DA; --idle: #B9C2CF;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #11161E; --panel: #182029; --ink: #E4E9F0; --ink-2: #A3AEBE; --rule: #2C3645; --band: #1A222D;
+    --donor: #86A9E6; --donor-bg: #1E2C45; --recip: #E2AA5A; --recip-bg: #3A2A12;
+    --ok: #6BCB86; --ok-bg: #173222; --bad: #EE8F68; --bad-bg: #3C2017; --idle: #465264;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #11161E; --panel: #182029; --ink: #E4E9F0; --ink-2: #A3AEBE; --rule: #2C3645; --band: #1A222D;
+  --donor: #86A9E6; --donor-bg: #1E2C45; --recip: #E2AA5A; --recip-bg: #3A2A12;
+  --ok: #6BCB86; --ok-bg: #173222; --bad: #EE8F68; --bad-bg: #3C2017; --idle: #465264;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 400 17px/1.6 var(--f-body); padding-inline: 20px; padding-block: 48px 96px; margin: 0; }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 56px; }
+.prose { max-width: 70ch; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(2.1rem, 5vw, 3.1rem); font-weight: 800; font-stretch: 88%; }
+h2 { font-size: 1.65rem; font-weight: 700; font-stretch: 92%; }
+h3 { font-size: 1.12rem; font-weight: 700; }
+p { margin: 0; }
+section { display: grid; gap: 18px; }
+header { display: grid; gap: 16px; }
+.eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.lede { font-size: 1.18rem; color: var(--ink-2); max-width: 66ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font: 400 13px/1.4 var(--f-mono); color: var(--ink-2); }
+.meta b { color: var(--ink); font-weight: 600; }
+code { font-family: var(--f-mono); font-size: .86em; background: var(--band); padding: 1px 5px; border-radius: 3px; }
+.frame { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; overflow-x: auto; }
+.frame svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.cap { font-size: 14px; color: var(--ink-2); max-width: 80ch; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 2px; }
+.tile .v { font: 700 1.9rem/1.1 var(--f-display); font-stretch: 90%; font-variant-numeric: tabular-nums; }
+.tile .k { font-size: 14px; color: var(--ink-2); }
+.tile.hot .v { color: var(--bad); }
+ol.steps { margin: 0; padding-left: 1.4em; display: grid; gap: 10px; max-width: 75ch; }
+.why { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+.why > div { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.tag { font: 600 11px/1 var(--f-mono); letter-spacing: .05em; padding: 5px 8px; border-radius: 999px; justify-self: start; }
+.tag.ok { color: var(--ok); background: var(--ok-bg); }
+.tag.bad { color: var(--bad); background: var(--bad-bg); }
+pre { margin: 0; font: 400 13px/1.55 var(--f-mono); background: var(--band); padding: 12px 14px; border-radius: 4px; overflow-x: auto; white-space: pre; }
+.formula { font: 600 1.05rem/1.5 var(--f-mono); background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 18px; overflow-x: auto; }
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--rule); }
+tr:last-child td { border-bottom: 0; }
+th { font: 600 11px/1.3 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); background: var(--band); }
+td.t { font: 400 13.5px/1.5 var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.rel { text-align: right; }
+tr.stall td { background: var(--bad-bg); }
+.fixes { display: grid; gap: 12px; }
+.fix { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 18px; align-items: start; }
+.fix h3 { grid-column: 1; }
+.fix p { grid-column: 1; color: var(--ink); max-width: 72ch; }
+.fix .save { grid-column: 2; grid-row: 1 / span 2; font: 700 1.2rem/1.2 var(--f-display); color: var(--ok); white-space: nowrap; text-align: right; }
+.fix .save small { display: block; font: 400 12px/1.3 var(--f-mono); color: var(--ink-2); }
+@media (max-width: 560px) { .fix { grid-template-columns: 1fr; } .fix .save { grid-column: 1; grid-row: auto; text-align: left; } }
+/* svg styling through tokens */
+.s-host { fill: var(--panel); stroke: var(--rule); stroke-width: 1.5; }
+.s-host.dead { stroke: var(--bad); stroke-dasharray: 6 4; }
+.s-hostname { font: 700 15px var(--f-display); fill: var(--ink); }
+.s-sub { font: 400 11.5px var(--f-mono); fill: var(--ink-2); }
+.s-chip-d { fill: var(--donor-bg); stroke: var(--donor); stroke-width: 1; }
+.s-chip-dl { fill: var(--donor); }
+.s-chip-r { fill: var(--recip-bg); stroke: var(--recip); stroke-width: 1; }
+.s-chip-rl { fill: var(--recip); }
+.s-chipt { font: 600 11.5px var(--f-mono); fill: var(--ink); }
+.s-chipt-l { font: 600 11.5px var(--f-mono); fill: var(--panel); }
+.s-arrow-d { stroke: var(--donor); stroke-width: 2; fill: none; }
+.s-arrow-r { stroke: var(--recip); stroke-width: 2; fill: none; }
+.s-arrow-o { stroke: var(--ink-2); stroke-width: 1.4; fill: none; stroke-dasharray: 4 4; }
+.s-lbl { font: 400 12px var(--f-body); fill: var(--ink-2); }
+.s-lbl-b { font: 600 12px var(--f-body); fill: var(--ink); }
+.s-bad { font: 700 12px var(--f-mono); fill: var(--bad); }
+.s-badge { fill: var(--ink); }
+.s-badget { font: 600 11px var(--f-mono); fill: var(--panel); }
+.s-grp { fill: none; stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 4; }
+.s-grpt { font: 600 11px var(--f-mono); letter-spacing: .08em; fill: var(--ink-2); }
+.head-d { fill: var(--donor); } .head-r { fill: var(--recip); } .head-o { fill: var(--ink-2); }
+/* swimlane */
+.l-name { font: 600 13px var(--f-body); fill: var(--ink); }
+.l-host { font: 400 11px var(--f-mono); fill: var(--ink-2); }
+.l-grid { stroke: var(--rule); stroke-width: 1; }
+.l-tick { font: 400 11px var(--f-mono); fill: var(--ink-2); }
+.l-band { fill: var(--band); }
+.b-work { fill: var(--donor); } .b-rec { fill: var(--recip); } .b-wait { fill: var(--idle); }
+.b-stall { fill: var(--bad); opacity: .85; } .b-ok { fill: var(--ok); }
+.l-txt { font: 500 11.5px var(--f-body); fill: var(--ink); }
+.l-txt-in { font: 600 11px var(--f-body); fill: var(--panel); }
+.l-kill { stroke: var(--bad); stroke-width: 2; stroke-dasharray: 5 4; }
+.l-killt { font: 700 11.5px var(--f-mono); fill: var(--bad); }
+.l-dot { fill: var(--ink); } .l-dot-bad { fill: var(--bad); } .l-dot-ok { fill: var(--ok); }
+.l-gap { fill: var(--bad-bg); }
+.l-gapt { font: 700 13px var(--f-display); fill: var(--bad); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13.5px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { width: 18px; height: 10px; border-radius: 2px; display: inline-block; }
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">AqRaft · S1 recipient-leader crash</span>
+  <h1>S1 Orchestrator Stall</h1>
+  <p class="lede">After the recipient leader dies, sg2's range is durable on sg4 26.5 s later, but the migration only finishes at 72.1 s. For 39 of those seconds nothing moves: the orchestrator waits for a donor report that never comes, and the playbook waits for the orchestrator until its poll budget runs out.</p>
+  <div class="meta">
+    <span>run <b>2026-09-30 07:59 UTC</b></span>
+    <span>kill <b>redis3 (sg4 leader)</b> at <b>07:59:30.872</b></span>
+    <span>branch <b>aqueduct_broken</b></span>
+    <span>times below are seconds after the kill</span>
+  </div>
+</header>
+
+<section>
+  <div class="tiles">
+    <div class="tile"><span class="v">1.9 s</span><span class="k">redis4 elected sg4 leader</span></div>
+    <div class="tile"><span class="v">26.5 s</span><span class="k">sg2's range durable on redis4</span></div>
+    <div class="tile hot"><span class="v">38.8 s</span><span class="k">nothing happens (26.5 → 65.3 s)</span></div>
+    <div class="tile"><span class="v">72.1 s</span><span class="k">all three ranges durable</span></div>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Topology</span>
+  <h2>Who runs where</h2>
+  <p class="prose">Three donor groups share hosts redis0–2; each group is 3-way replicated and has its leader on a different host. The recipient group sg4 lives on redis3–5 and replicates migrated data down a chain. The orchestrator for a round is the sg1 leader, and the playbook's poll loop runs against it.</p>
+  <div class="frame">
+    <svg viewBox="0 0 1000 560" role="img" aria-label="Topology: donors sg1, sg2, sg3 on redis0 to redis2; recipient sg4 on redis3 to redis5; orchestrator on redis0">
+      <defs>
+        <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-d"/></marker>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-r"/></marker>
+        <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="head-o"/></marker>
+      </defs>
+      <!-- donor group frame -->
+      <rect x="20" y="30" width="960" height="190" rx="8" class="s-grp"/>
+      <text x="36" y="52" class="s-grpt">DONORS · SG1 SG2 SG3 · 30M KEYS, 1,365 SLOTS EACH</text>
+      <!-- redis0 -->
+      <rect x="60" y="68" width="250" height="132" rx="6" class="s-host"/>
+      <text x="76" y="92" class="s-hostname">redis0</text><text x="140" y="92" class="s-sub">10.10.1.1</text>
+      <rect x="76" y="104" width="100" height="26" rx="4" class="s-chip-dl"/><text x="86" y="121" class="s-chipt-l">sg1 L :8000</text>
+      <rect x="184" y="104" width="54" height="26" rx="4" class="s-chip-d"/><text x="194" y="121" class="s-chipt">sg2</text>
+      <rect x="244" y="104" width="54" height="26" rx="4" class="s-chip-d"/><text x="254" y="121" class="s-chipt">sg3</text>
+      <rect x="76" y="140" width="222" height="24" rx="12" class="s-badge"/><text x="90" y="156" class="s-badget">ORCHESTRATOR orch_id=1</text>
+      <text x="76" y="188" class="s-lbl">+ playbook poll loop (redis-cli -p 8000)</text>
+      <!-- redis1 -->
+      <rect x="375" y="68" width="250" height="132" rx="6" class="s-host"/>
+      <text x="391" y="92" class="s-hostname">redis1</text><text x="455" y="92" class="s-sub">10.10.1.2</text>
+      <rect x="391" y="104" width="54" height="26" rx="4" class="s-chip-d"/><text x="401" y="121" class="s-chipt">sg1</text>
+      <rect x="451" y="104" width="100" height="26" rx="4" class="s-chip-dl"/><text x="461" y="121" class="s-chipt-l">sg2 L :8001</text>
+      <rect x="557" y="104" width="54" height="26" rx="4" class="s-chip-d"/><text x="567" y="121" class="s-chipt">sg3</text>
+      <text x="391" y="160" class="s-lbl-b">sg2 range 5461–6825</text>
+      <text x="391" y="180" class="s-lbl">in flight when redis3 dies</text>
+      <!-- redis2 -->
+      <rect x="690" y="68" width="250" height="132" rx="6" class="s-host"/>
+      <text x="706" y="92" class="s-hostname">redis2</text><text x="770" y="92" class="s-sub">10.10.1.3</text>
+      <rect x="706" y="104" width="54" height="26" rx="4" class="s-chip-d"/><text x="716" y="121" class="s-chipt">sg1</text>
+      <rect x="766" y="104" width="54" height="26" rx="4" class="s-chip-d"/><text x="776" y="121" class="s-chipt">sg2</text>
+      <rect x="826" y="104" width="100" height="26" rx="4" class="s-chip-dl"/><text x="836" y="121" class="s-chipt-l">sg3 L :8002</text>
+      <text x="706" y="160" class="s-lbl-b">sg3 range 10922–12286</text>
+      <text x="706" y="180" class="s-lbl">dispatched 0.3 s before the kill</text>
+
+      <!-- transfer arrows donors -> redis3 -->
+      <path d="M185,200 C185,270 330,300 380,330" class="s-arrow-d" marker-end="url(#ad)"/>
+      <path d="M500,200 L430,326" class="s-arrow-d" marker-end="url(#ad)"/>
+      <path d="M815,200 C815,280 560,300 470,332" class="s-arrow-d" marker-end="url(#ad)"/>
+      <text x="560" y="262" class="s-lbl">RDMA transfer, one donor after another (completion-driven)</text>
+      <!-- orchestrator report arrows -->
+      <path d="M540,104 C520,40 300,30 240,98" class="s-arrow-o" marker-end="url(#ao)"/>
+      <path d="M870,104 C850,20 330,10 262,98" class="s-arrow-o" marker-end="url(#ao)"/>
+      <text x="400" y="22" class="s-lbl">MIGRATE-COMPLETE reports back to the orchestrator</text>
+
+      <!-- recipient frame -->
+      <rect x="20" y="300" width="960" height="240" rx="8" class="s-grp"/>
+      <text x="36" y="322" class="s-grpt">RECIPIENT · SG4 · CHAIN LEADER → F1 → F2</text>
+      <!-- redis3 dead -->
+      <rect x="60" y="340" width="250" height="150" rx="6" class="s-host dead"/>
+      <text x="76" y="364" class="s-hostname">redis3</text><text x="140" y="364" class="s-sub">10.10.1.4</text>
+      <rect x="76" y="376" width="110" height="26" rx="4" class="s-chip-rl"/><text x="86" y="393" class="s-chipt-l">sg4 L :8000</text>
+      <text x="76" y="428" class="s-bad">KILLED at t = 0</text>
+      <text x="76" y="450" class="s-lbl">held sg2 batch, acked by redis4,</text>
+      <text x="76" y="468" class="s-lbl">died 41 ms before logging INDX_UPD</text>
+      <!-- redis4 -->
+      <rect x="375" y="340" width="250" height="150" rx="6" class="s-host"/>
+      <text x="391" y="364" class="s-hostname">redis4</text><text x="455" y="364" class="s-sub">10.10.1.5</text>
+      <rect x="391" y="376" width="84" height="26" rx="4" class="s-chip-r"/><text x="401" y="393" class="s-chipt">sg4 F1</text>
+      <text x="484" y="393" class="s-lbl">→ leader at 1.9 s</text>
+      <text x="391" y="428" class="s-lbl-b">new sg4 leader</text>
+      <text x="391" y="450" class="s-lbl">main thread blocked 1.9 → 18.4 s</text>
+      <text x="391" y="468" class="s-lbl">(recovery merge, once per session)</text>
+      <!-- redis5 -->
+      <rect x="690" y="340" width="250" height="150" rx="6" class="s-host"/>
+      <text x="706" y="364" class="s-hostname">redis5</text><text x="770" y="364" class="s-sub">10.10.1.6</text>
+      <rect x="706" y="376" width="84" height="26" rx="4" class="s-chip-r"/><text x="716" y="393" class="s-chipt">sg4 F2</text>
+      <text x="706" y="428" class="s-lbl-b">chain tail</text>
+      <text x="706" y="450" class="s-lbl">also held sg2's full batch</text>
+      <text x="706" y="468" class="s-lbl">(from redis4, at 1.6 s)</text>
+      <!-- chain arrows -->
+      <path d="M310,388 L372,388" class="s-arrow-r" marker-end="url(#ar)"/>
+      <path d="M625,388 L687,388" class="s-arrow-r" marker-end="url(#ar)"/>
+      <text x="60" y="520" class="s-lbl">Clients: ycsb0, ycsb1 · YCSB workload A · 2 × 100 threads · writes to flipped slots go to sg4</text>
+    </svg>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--donor)"></i>donor group leader</span>
+    <span><i style="background:var(--donor-bg);border:1px solid var(--donor)"></i>donor replica</span>
+    <span><i style="background:var(--recip)"></i>recipient leader</span>
+    <span><i style="background:var(--recip-bg);border:1px solid var(--recip)"></i>recipient follower</span>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Mechanism</span>
+  <h2>How a round is tracked</h2>
+  <ol class="steps">
+    <li>The playbook sends <code>RDMA MIGRATE-ALL</code> to the sg1 leader (redis0:8000). That node becomes the orchestrator for the round (<code>orch_id=1</code>) and expects reports from 3 donors.</li>
+    <li>It dispatches the donors one after another. Each donor's migration worker starts with the orchestrator's address and <code>orch_id</code>.</li>
+    <li>When a worker ends, it dials back with <code>RDMA MIGRATE-COMPLETE &lt;orch_id&gt; &lt;donor&gt; DONE|FAILED</code>. The orchestrator counts these reports, and the round ends only when all 3 donors have reported.</li>
+    <li>The playbook polls <code>MIGRATE-ALL-STATUS</code> in a loop and leaves it early only on DONE or FAILED, or when the orchestrator stops answering (the S2 case). Only after the loop does it ask sg4 what is durable and re-send what is missing.</li>
+  </ol>
+</section>
+
+<section>
+  <span class="eyebrow">What happened</span>
+  <h2>The stall, lane by lane</h2>
+  <div class="frame"><svg id="lanes" viewBox="0 0 1000 420" role="img" aria-label="Swimlane timeline of S1 from 4 s before the kill to 75 s after"></svg></div>
+  <div class="legend">
+    <span><i style="background:var(--donor)"></i>transfer / re-send</span>
+    <span><i style="background:var(--recip)"></i>sg4 leader serving</span>
+    <span><i style="background:var(--idle)"></i>waiting</span>
+    <span><i style="background:var(--bad)"></i>blocked or stuck</span>
+    <span><i style="background:var(--ok)"></i>durable</span>
+  </div>
+  <p class="cap">The red band marks 26.5–65.3 s: every range is either durable or failed, but nothing reports it, so nothing moves.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Why it hangs</span>
+  <h2>Two of three donors report, and the third never can</h2>
+  <div class="why">
+    <div>
+      <span class="tag ok">sg1 · reported DONE</span>
+      <p>sg1 committed at −0.52 s, before the kill. The orchestrator counts 1 of 3.</p>
+    </div>
+    <div>
+      <span class="tag bad">sg3 · reported FAILED</span>
+      <p>sg3 was dispatched to redis3 0.3 s before the kill. Its REGISTER wait hit the 8 s limit and it reported FAILED at 7.7 s. The orchestrator counts 2 of 3. Unlike the transfer path, this path fails instead of waiting for a re-home.</p>
+    </div>
+    <div>
+      <span class="tag bad">sg2 · never reported</span>
+      <p>The sg2 worker saw the recipient die at 0.27 s and waited for the new leader's address. At 18.4 s it started a new worker toward redis4 and exited without reporting. The new worker was started with no orchestrator, so when sg2 committed at 26.5 s nobody was told.</p>
+    </div>
+  </div>
+  <pre>// cluster_rdma.c:7315 — donor re-home after the recipient leader died
+long long rid = startLocalMigration(nh, nport, mig-&gt;n_slots,
+                                    NULL, 0,        /* orchestrator endpoint, orch_id: none */
+                                    0, &amp;rerr, mig-&gt;chosen, mig-&gt;id);
+...
+return NULL;                                        /* original worker exits, no MIGRATE-COMPLETE */</pre>
+</section>
+
+<section>
+  <span class="eyebrow">Why 68 seconds</span>
+  <h2>The playbook's poll budget</h2>
+  <p class="prose">The poll loop has no notion of "the recipient changed". It stops on DONE or FAILED for the whole round, or after a fixed number of polls. Each poll spawns <code>redis-cli</code> and then sleeps 50 ms.</p>
+  <div class="formula">1,200 polls × (≈7 ms redis-cli + 50 ms sleep) ≈ 68 s &nbsp;·&nbsp; dispatched −2.48 s → loop gives up at 65.3 s</div>
+  <p class="prose">At 65.3 s the loop reports TIMEOUT and the re-drive block starts. It asks the new sg4 leader what it holds with <code>MGN-RESUME-STATUS</code> and re-sends sg1 and sg3. sg1 was already committed, but a promoted follower answers from an empty in-memory batch list, so it reports sg1 as missing too.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Event log</span>
+  <h2>From dispatch to the last commit</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Log time (UTC)</th><th>t</th><th>Node</th><th>Event</th></tr></thead>
+      <tbody>
+        <tr><td class="t">07:59:28.389</td><td class="t rel">−2.48</td><td>redis0 · orchestrator</td><td><code>MIGRATE-ALL</code> orch_id=1 dispatched; sg1 starts</td></tr>
+        <tr><td class="t">07:59:29.499</td><td class="t rel">−1.37</td><td>redis0 · orchestrator</td><td>sg1 chain-durable → dispatches sg2</td></tr>
+        <tr><td class="t">07:59:30.352</td><td class="t rel">−0.52</td><td>redis0 · orchestrator</td><td>sg1 DONE (1 of 3 reported)</td></tr>
+        <tr><td class="t">07:59:30.582</td><td class="t rel">−0.29</td><td>redis0 · orchestrator</td><td>sg2 chain-durable → dispatches sg3 to redis3</td></tr>
+        <tr><td class="t">07:59:30.831</td><td class="t rel">−0.04</td><td>redis3 · sg4 leader</td><td>sg2 batch forwarded to redis4 and acked: a majority holds it</td></tr>
+        <tr><td class="t">07:59:30.872</td><td class="t rel">0.00</td><td>redis3</td><td><b>killed</b>, before logging INDX_UPD for sg2</td></tr>
+        <tr><td class="t">07:59:31.144</td><td class="t rel">0.27</td><td>redis1 · sg2 donor</td><td>recipient declared dead; waits for a re-home address</td></tr>
+        <tr><td class="t">07:59:32.799</td><td class="t rel">1.93</td><td>redis4</td><td>elected sg4 leader; recovery merge blocks its main thread</td></tr>
+        <tr><td class="t">07:59:38.572</td><td class="t rel">7.70</td><td>redis0 · orchestrator</td><td>sg3 FAILED after REGISTER timeout (2 of 3 reported)</td></tr>
+        <tr><td class="t">07:59:49.287</td><td class="t rel">18.42</td><td>redis1 · sg2 donor</td><td>re-home recorded; new worker 8e17+5461 → redis4, no orchestrator</td></tr>
+        <tr><td class="t">07:59:57.353</td><td class="t rel">26.48</td><td>redis1 · sg2 donor</td><td>sg2 TXN_DONE: durable on sg4, <b>not reported</b></td></tr>
+        <tr class="stall"><td class="t">—</td><td class="t rel">26.5 → 65.3</td><td>everyone</td><td>orchestrator stuck at 2 of 3; playbook keeps polling</td></tr>
+        <tr><td class="t">08:00:36.174</td><td class="t rel">65.30</td><td>controller · playbook</td><td>poll budget spent → re-drive; re-sends sg1 (already committed)</td></tr>
+        <tr><td class="t">08:00:39.249</td><td class="t rel">68.38</td><td>controller · playbook</td><td>re-drives sg3 from redis2 to redis4</td></tr>
+        <tr><td class="t">08:00:41.274</td><td class="t rel">70.40</td><td>redis0 · sg1 donor</td><td>sg1 re-send TXN_DONE</td></tr>
+        <tr><td class="t">08:00:43.008</td><td class="t rel">72.14</td><td>redis2 · sg3 donor</td><td>sg3 TXN_DONE: all three ranges durable</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Fixes</span>
+  <h2>What removes the wait</h2>
+  <div class="fixes">
+    <div class="fix"><h3>1 · The re-homed worker takes over the orchestrator link</h3>
+      <p>Start the re-home worker with the original worker's orchestrator address and <code>orch_id</code>, so it reports DONE when it commits. The round then ends as soon as every donor has reported, at 26.5 s here.</p>
+      <span class="save">−38.8 s<small>ends the stall</small></span></div>
+    <div class="fix"><h3>2 · sg3 re-homes instead of failing</h3>
+      <p>The REGISTER-timeout path should wait for the re-home, as the transfer path already does, and re-send to the new leader on its own. S1 then no longer needs the playbook to re-drive anything.</p>
+      <span class="save">no re-drive<small>sg3 self-recovers</small></span></div>
+    <div class="fix"><h3>3 · The playbook leaves the poll loop sooner</h3>
+      <p>Stop polling as soon as any donor reports FAILED, or when the round's target is no longer sg4's leader. This is a backstop for cases the first two fixes do not cover.</p>
+      <span class="save">backstop<small>bounded by leader change</small></span></div>
+    <div class="fix"><h3>Related · Recovery merge and the held copy</h3>
+      <p>Run the promotion merge once and off the main thread (removes redis4's 16.5 s block), and adopt the batch the survivors already hold instead of asking the donor to re-send it. With these and fixes 1–2, S1 should recover in roughly 10–15 s, close to S2 and S6.</p>
+      <span class="save">72 → ~12 s<small>estimate</small></span></div>
+  </div>
+</section>
+</div>
+
+<script>
+(function () {
+  var svg = document.getElementById('lanes');
+  var NS = 'http://www.w3.org/2000/svg';
+  var X0 = 190, X1 = 980, T0 = -4, T1 = 75, TOP = 34, LH = 58;
+  function x(t) { return X0 + (t - T0) / (T1 - T0) * (X1 - X0); }
+  function el(tag, attrs, text) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    svg.appendChild(e); return e;
+  }
+  var lanes = [
+    ['Orchestrator', 'redis0 · sg1 leader'],
+    ['sg1 donor', 'redis0 :8000'],
+    ['sg2 donor', 'redis1 :8001'],
+    ['sg3 donor', 'redis2 :8002'],
+    ['sg4 leader', 'redis3 → redis4'],
+    ['Playbook', 'poll loop, then re-drive']
+  ];
+  var H = TOP + lanes.length * LH + 20;
+  svg.setAttribute('viewBox', '0 0 1000 ' + H);
+  // stall band
+  el('rect', { x: x(26.5), y: TOP - 8, width: x(65.3) - x(26.5), height: lanes.length * LH + 4, 'class': 'l-gap' });
+  el('text', { x: (x(26.5) + x(65.3)) / 2, y: TOP + lanes.length * LH + 12, 'text-anchor': 'middle', 'class': 'l-gapt' }, '38.8 s with nothing moving');
+  // grid + ticks
+  for (var t = 0; t <= 70; t += 10) {
+    el('line', { x1: x(t), x2: x(t), y1: TOP - 8, y2: TOP + lanes.length * LH - 4, 'class': 'l-grid' });
+    el('text', { x: x(t), y: TOP - 14, 'text-anchor': 'middle', 'class': 'l-tick' }, t + ' s');
+  }
+  lanes.forEach(function (l, i) {
+    var y = TOP + i * LH;
+    if (i % 2 === 0) el('rect', { x: 10, y: y - 6, width: X0 - 20, height: LH - 4, rx: 4, 'class': 'l-band' });
+    el('text', { x: 20, y: y + 16, 'class': 'l-name' }, l[0]);
+    el('text', { x: 20, y: y + 33, 'class': 'l-host' }, l[1]);
+  });
+  function bar(lane, a, b, cls, label, inside) {
+    var y = TOP + lane * LH + 6, h = 22;
+    el('rect', { x: x(a), y: y, width: Math.max(x(b) - x(a), 2), height: h, rx: 3, 'class': cls });
+    if (label) {
+      if (inside) el('text', { x: x(a) + 6, y: y + 15, 'class': cls === 'b-wait' ? 'l-txt' : 'l-txt-in' }, label);
+      else el('text', { x: x(b) + 6, y: y + 15, 'class': 'l-txt' }, label);
+    }
+  }
+  function dot(lane, t, cls, label, above) {
+    var y = TOP + lane * LH + 17;
+    el('circle', { cx: x(t), cy: y, r: 5, 'class': cls });
+    if (label) el('text', { x: x(t) + 8, y: above ? y - 9 : y + 22, 'class': 'l-txt' }, label);
+  }
+  // orchestrator
+  dot(0, -2.48, 'l-dot', null);
+  dot(0, -0.52, 'l-dot-ok', '1/3', true);
+  dot(0, 7.70, 'l-dot-bad', '2/3 (sg3 FAILED)', true);
+  bar(0, 7.8, 75, 'b-stall', 'stuck at 2 of 3 · never reaches 3/3', true);
+  // sg1
+  bar(1, -2.48, -0.52, 'b-work', null);
+  dot(1, -0.52, 'l-dot-ok', 'DONE', true);
+  bar(1, 65.3, 70.4, 'b-work', 're-sent anyway', false);
+  // sg2
+  bar(2, -1.37, -0.04, 'b-work', null);
+  bar(2, 0.27, 18.42, 'b-wait', 'waiting for re-home address', true);
+  bar(2, 18.42, 26.48, 'b-work', 'new worker', true);
+  dot(2, 26.48, 'l-dot-ok', 'durable · no report', false);
+  // sg3
+  bar(3, -0.29, 7.70, 'b-wait', 'REGISTER wait', true);
+  dot(3, 7.70, 'l-dot-bad', 'FAILED', true);
+  bar(3, 68.38, 72.14, 'b-work', 'durable 72.1 s', false);
+  // sg4 leader
+  bar(4, -4, 0, 'b-rec', 'redis3', true);
+  bar(4, 1.93, 18.42, 'b-stall', 'redis4 main thread blocked', true);
+  bar(4, 18.42, 75, 'b-rec', 'redis4 serving', true);
+  // playbook
+  bar(5, -2.48, 65.3, 'b-wait', 'polling MIGRATE-ALL-STATUS · 1,200 × (redis-cli + 50 ms)', true);
+  bar(5, 65.3, 72.14, 'b-work', 're-drive', false);
+  // kill line
+  el('line', { x1: x(0), x2: x(0), y1: TOP - 22, y2: TOP + lanes.length * LH - 4, 'class': 'l-kill' });
+  el('text', { x: x(0) + 5, y: TOP - 24, 'class': 'l-killt' }, 'kill redis3');
+})();
+</script>

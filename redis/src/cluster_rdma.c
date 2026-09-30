@@ -43,6 +43,7 @@
 #include "hiredis.h"
 #include "async.h"
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <sys/mman.h>   /* mmap, munmap, MAP_ANONYMOUS — Aqueduct big-MR pool */
 
 /* ---- Async hiredis adapter for the main event loop ----------------------- *
@@ -2576,6 +2577,20 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
 static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientData);
 static void chainPendingEnqueue(backpatchBatch *b);
 
+/* Add b to backpatch_chain_pending unless it is already there (caller holds
+ * backpatch_chain_pending_mu). A batch listed twice is finalized twice, and
+ * the second finalize reads freed memory. */
+static void chainPendingAddLocked(backpatchBatch *b) {
+    if (backpatch_chain_pending == NULL)
+        backpatch_chain_pending = listCreate();
+    if (listSearchKey(backpatch_chain_pending, b) != NULL) {
+        serverLog(LL_WARNING, "chain-pending: batch %p (chain_sess=%lld) already listed; not re-adding",
+                  (void *) b, b->chain_sess);
+        return;
+    }
+    listAddNodeTail(backpatch_chain_pending, b);
+}
+
 /* Phase B.5: fire MGN_INDX_UPD + RECP_TXN_DONE for a finished batch and
  * push it onto the dispose list. Called both from the no-chain immediate
  * path and from chainPendingTick after chain-ack arrives. Caller must hold
@@ -2988,9 +3003,7 @@ static void *chainForwardWorker(void *arg) {
         if (frc == C_OK) {
             b->chain_forwarded = 1;
             pthread_mutex_lock(&backpatch_chain_pending_mu);
-            if (backpatch_chain_pending == NULL)
-                backpatch_chain_pending = listCreate();
-            listAddNodeTail(backpatch_chain_pending, b);
+            chainPendingAddLocked(b);
             pthread_mutex_unlock(&backpatch_chain_pending_mu);
             /* armChainPendingTimer() is main-thread-only (aeCreateTimeEvent
              * is not thread-safe). Poke the dispose pipe to wake main; the
@@ -3110,8 +3123,7 @@ static void *chainPipelineForwardWorker(void *arg) {
     if (frc == C_OK) {
         b->chain_forwarded = 1;
         pthread_mutex_lock(&backpatch_chain_pending_mu);
-        if (backpatch_chain_pending == NULL) backpatch_chain_pending = listCreate();
-        listAddNodeTail(backpatch_chain_pending, b);
+        chainPendingAddLocked(b);
         pthread_mutex_unlock(&backpatch_chain_pending_mu);
         char tick = 1; ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1); (void) wr;
         serverLog(LL_NOTICE,
@@ -3161,9 +3173,7 @@ static void rdmaSpawnPipelineForward(backpatchBatch *b) {
  * so --rdma-indx-upd-after-merge still holds INDX_UPD until the merge is done. */
 static void chainPendingEnqueue(backpatchBatch *b) {
     pthread_mutex_lock(&backpatch_chain_pending_mu);
-    if (backpatch_chain_pending == NULL)
-        backpatch_chain_pending = listCreate();
-    listAddNodeTail(backpatch_chain_pending, b);
+    chainPendingAddLocked(b);
     pthread_mutex_unlock(&backpatch_chain_pending_mu);
     char tick = 1;
     ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
@@ -4531,6 +4541,27 @@ void rdmaBackpatchStatusCommand(client *c) {
  *             follower holds any of it and leader-only bytes are NOT durable.
  *
  * Reply: [pending_count, missing_count, [durable slot ids...]]. */
+/* AqRaft: per-slot durability from the Raft LOG, not from in-memory batches.
+ * 2 = an MGN_INDX_UPD covering the slot has been applied here (every replica
+ *     applies it, so a promoted follower knows what the old leader committed);
+ * 1 = this node is adopting the slot (held copy on a majority, its own INDX_UPD
+ *     is being committed) — reported as pending so a re-homed donor waits for it
+ *     instead of re-shipping.
+ * The redisraft module calls rdmaMgnDurableMark from its apply path (weak symbol). */
+static volatile uint8_t g_durable_slot[CLUSTER_SLOTS];
+
+void rdmaMgnDurableMark(int lo, int hi) {
+    if (lo < 0) lo = 0;
+    if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
+    for (int s = lo; s <= hi; s++) __atomic_store_n(&g_durable_slot[s], 2, __ATOMIC_RELEASE);
+}
+
+static void rdmaMgnAdoptingMark(int lo, int hi) {
+    for (int s = lo; s <= hi && s < CLUSTER_SLOTS; s++)
+        if (s >= 0 && __atomic_load_n(&g_durable_slot[s], __ATOMIC_ACQUIRE) == 0)
+            __atomic_store_n(&g_durable_slot[s], 1, __ATOMIC_RELEASE);
+}
+
 void rdmaMgnResumeStatusCommand(client *c) {
     long long lo, hi;
     if (getLongLongFromObjectOrReply(c, c->argv[2], &lo, NULL) != C_OK) return;
@@ -4580,6 +4611,13 @@ void rdmaMgnResumeStatusCommand(client *c) {
         dictReleaseIterator(di);
     }
     pthread_mutex_unlock(&backpatch_batches_mu);
+
+    /* Committed in the log (or being adopted) counts too: a promoted follower
+     * has no batches for what the old leader committed. */
+    for (int i = 0; i < n; i++) {
+        uint8_t d = __atomic_load_n(&g_durable_slot[lo + i], __ATOMIC_ACQUIRE);
+        if (d > cls[i]) cls[i] = d;
+    }
 
     long long n_pending = 0, n_missing = 0, n_durable = 0;
     for (int i = 0; i < n; i++) {
@@ -6013,6 +6051,8 @@ static struct rdma_cm_id *rdmaPreregKeeper(void) {
     return k;
 }
 
+struct rdma_cm_id *rdmaPreregKeeperGet(void) { return rdmaPreregKeeper(); }
+
 static void *rdmaSrcPreregThreadMain(void *arg) {
     UNUSED(arg);
     long long t0 = ustime();
@@ -6894,6 +6934,78 @@ static int rdmaLinkSlotsPrepared(rdmaOutboundLink *L, const int *slots, int n) {
 
 /* Forward decls: the backpatch-timeout B#1 re-home path (inside migrationWorker)
  * calls these before their definitions later in the file. */
+/* AqRaft write-redirect leader hint. For a slot in the migration window the
+ * donor's redisraft module answers a write with -MOVED to the recipient group;
+ * it used to cycle through that group's node list, so ~2/3 of redirected writes
+ * went to a follower (one extra hop, and when that follower dies, client threads
+ * hang on it — the S4 client stall). The donor already knows the recipient
+ * LEADER: the address this migration (or its re-home) targets. Record it per slot
+ * as a 10.10.x IP (the form clients and the module know nodes by: short name via
+ * /etc/hosts; a FQDN resolves to the public IP, so strip the domain first) and
+ * let the module redirect to the matching member of the recipient group.
+ * Entries are append-only and published before the per-slot index, so the
+ * module reads them without a lock. */
+#define REDIR_HINT_MAX 32
+static struct { char ip[64]; int port; } g_redir_hint[REDIR_HINT_MAX];
+static int g_redir_hint_n = 0;
+static volatile uint8_t g_redir_hint_idx[CLUSTER_SLOTS];   /* 0 = none, else entry + 1 */
+static pthread_mutex_t g_redir_hint_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static int redirHintResolve(const char *host, char *ip_out, size_t ip_sz) {
+    struct in_addr a;
+    if (inet_pton(AF_INET, host, &a) == 1) { snprintf(ip_out, ip_sz, "%s", host); return 0; }
+    char shortname[128];
+    snprintf(shortname, sizeof(shortname), "%s", host);
+    char *dot = strchr(shortname, '.');
+    if (dot) *dot = '\0';
+    struct addrinfo hints, *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    if (getaddrinfo(shortname, NULL, &hints, &res) != 0 || res == NULL) return -1;
+    inet_ntop(AF_INET, &((struct sockaddr_in *) res->ai_addr)->sin_addr, ip_out, ip_sz);
+    freeaddrinfo(res);
+    return 0;
+}
+
+static void rdmaRedirectHintSet(const int *slots, int n, const char *host, int port) {
+    char ip[64];
+    if (slots == NULL || n <= 0 || host == NULL) return;
+    if (redirHintResolve(host, ip, sizeof(ip)) != 0) {
+        serverLog(LL_WARNING, "AqRaft redirect-hint: cannot resolve %s; writes keep the default redirect", host);
+        return;
+    }
+    pthread_mutex_lock(&g_redir_hint_mu);
+    int e = -1;
+    for (int i = 0; i < g_redir_hint_n; i++)
+        if (g_redir_hint[i].port == port && strcmp(g_redir_hint[i].ip, ip) == 0) { e = i; break; }
+    if (e < 0 && g_redir_hint_n < REDIR_HINT_MAX) {
+        e = g_redir_hint_n;
+        snprintf(g_redir_hint[e].ip, sizeof(g_redir_hint[e].ip), "%s", ip);
+        g_redir_hint[e].port = port;
+        __atomic_store_n(&g_redir_hint_n, e + 1, __ATOMIC_RELEASE);
+    }
+    if (e >= 0)
+        for (int i = 0; i < n; i++)
+            if (slots[i] >= 0 && slots[i] < CLUSTER_SLOTS)
+                __atomic_store_n(&g_redir_hint_idx[slots[i]], (uint8_t) (e + 1), __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&g_redir_hint_mu);
+    if (e >= 0)
+        serverLog(LL_NOTICE, "AqRaft redirect-hint: %d slots (from %d) -> recipient leader %s:%d (%s)",
+                  n, slots[0], ip, port, host);
+}
+
+/* Called by the redisraft module (weak symbol). Fills "ip" and port for the
+ * slot's recipient leader; returns 0 if there is no hint. */
+int rdmaRedirectHintFor(int slot, char *ip_out, size_t ip_sz, int *port_out) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
+    uint8_t v = __atomic_load_n(&g_redir_hint_idx[slot], __ATOMIC_ACQUIRE);
+    if (v == 0) return 0;
+    int e = v - 1;
+    if (ip_out && ip_sz) snprintf(ip_out, ip_sz, "%s", g_redir_hint[e].ip);
+    if (port_out) *port_out = g_redir_hint[e].port;
+    return 1;
+}
+
 static long long startLocalMigration(const char *host, int port, int n_slots,
                                      sds orch_endpoint, long long orch_id,
                                      int start_delay_ms, const char **err_out,
@@ -6991,6 +7103,59 @@ static int donorResumePlan(rdmaMigration *mig) {
     mig->n_slots = kept;
     pthread_mutex_unlock(&mig->mu);
     return 0;
+}
+
+/* B#1 donor re-home. The recipient leader this worker was shipping to died
+ * (detected during TRANSFER or BACKPATCH). Wait for its elected successor to
+ * record where the range should go (DONOR-REHOME, pushed by the new leader's
+ * become-leader hook), then re-ship the same slots there as a new worker and
+ * return 1; the caller then exits WITHOUT reporting, because the re-ship owns the
+ * session from here: it asks the new leader what already landed
+ * (MGN-RESUME-STATUS), closes this session on DONE (resume_of_sess), and reports
+ * to this worker's orchestrator. The recipient's don't-clobber merge makes
+ * re-shipping whatever the survivors already hold idempotent. Returns 0 if no
+ * re-home was recorded within ~30 s or the re-ship could not start; the caller
+ * then fails the migration as before. */
+static int donorRehomeReship(rdmaMigration *mig, const char *phase) {
+    char nh[128]; int nport = 0;
+    int slot_lo = (mig->n_slots > 0) ? mig->chosen[0] : -1;
+    if (slot_lo < 0) return 0;
+    /* Death detection is fast, but the successor records the re-home endpoint
+     * only after election + its become-leader hook. Poll up to ~30 s at 100 ms. */
+    int got_rehome = 0;
+    for (int w = 0; w < 300 && !got_rehome; w++) {
+        if (donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) { got_rehome = 1; break; }
+        usleep(100000);
+    }
+    if (!got_rehome) return 0;
+    const char *rerr = NULL;
+    long long saved_next = server.rdma_migration_next_id;
+    server.rdma_migration_next_id = 800000000000000000LL + (slot_lo > 0 ? slot_lo : 1);
+    /* The re-ship inherits this worker's orchestrator link: this worker exits
+     * without reporting, so the re-ship's DONE/FAILED is the donor's only report.
+     * Same process, so it reports under the same node id and lands on this
+     * donor's orchestrator slot; without it the round never reaches
+     * n_terminal == n_donors. startLocalMigration takes ownership of the copy
+     * (and frees it on error). */
+    sds orch_ep = mig->orchestrator_endpoint ? sdsdup(mig->orchestrator_endpoint) : NULL;
+    long long rid = startLocalMigration(nh, nport, mig->n_slots,
+                                        orch_ep, mig->orchestrator_orch_id,
+                                        0, &rerr, mig->chosen, mig->id);
+    server.rdma_migration_next_id = saved_next;
+    if (rid < 0) {
+        serverLog(LL_WARNING,
+            "AqRaft B#1 donor re-home (%s): re-ship to %s:%d FAILED: %s — failing migration",
+            phase, nh, nport, rerr ? rerr : "(unknown)");
+        return 0;
+    }
+    serverLog(LL_NOTICE,
+        "AqRaft B#1 donor re-home (%s): recipient leader gone; re-shipped slots "
+        "(lo=%d n=%d) to NEW leader %s:%d as id=%lld — original migration id=%lld "
+        "superseded (orchestrator %s orch_id=%lld inherited)",
+        phase, slot_lo, mig->n_slots, nh, nport, rid, mig->id,
+        mig->orchestrator_endpoint ? mig->orchestrator_endpoint : "-",
+        mig->orchestrator_orch_id);
+    return 1;
 }
 
 static void *migrationWorker(void *arg) {
@@ -7134,6 +7299,18 @@ static void *migrationWorker(void *arg) {
      * comes from the dispatching client; cluster mode is single-DB). */
     if (rdmaReshardTransferHelper(mig->L, &server.db[0], mig->chosen, mig->n_slots,
                               mig->id, &err) != 0) {
+        /* S1: the recipient leader died mid-TRANSFER (the slots are already
+         * flipped to sg4, so failing strands them until the playbook re-drives).
+         * If the recipient no longer answers, re-home to its successor exactly as
+         * the BACKPATCH path does. A live recipient that returned errors still
+         * fails as before. */
+        if (!rdmaRecipientAlive(mig->addr)) {
+            serverLog(LL_WARNING,
+                "AqRaft B#1 donor: id=%lld TRANSFER failed (%s) and recipient %s is not "
+                "answering — waiting for its successor to re-home this range",
+                mig->id, err ? err : "?", mig->addr);
+            if (donorRehomeReship(mig, "transfer")) { if (err) sdsfree(err); return NULL; }
+        }
         migFail(mig, err);
         return NULL;
     }
@@ -7271,53 +7448,8 @@ static void *migrationWorker(void *arg) {
             return NULL;
         }
         if (!done) {
-            /* B#1 donor re-home: the recipient leader died mid-backpatch. If its
-             * successor recorded where it re-homed, re-ship to that (now-stable)
-             * leader instead of failing loudly. The re-ship worker's own
-             * BACKPATCH-STATUS poll IS the status query + it finalizes (done) on
-             * the new leader; the recipient don't-clobber merge makes re-shipping
-             * whatever the survivors already hold idempotent. */
-            char nh[128]; int nport = 0;
-            int slot_lo = (mig->n_slots > 0) ? mig->chosen[0] : -1;
-            int got_rehome = 0;
-            if (slot_lo >= 0) {
-                /* The fast donor timeout detected the recipient's death in ~100ms,
-                 * but its elected successor records the re-home endpoint a few
-                 * seconds later (election + become-leader hook). Wait for it —
-                 * poll donorRehomeLookup up to ~30s at 100ms — before re-shipping.
-                 * (Decouples fast death-DETECTION from the re-ship, which must wait
-                 * for the new leader to exist.) */
-                for (int w = 0; w < 300 && !got_rehome; w++) {
-                    if (donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) {
-                        got_rehome = 1; break;
-                    }
-                    usleep(100000);
-                }
-            }
-            if (got_rehome) {
-                const char *rerr = NULL;
-                long long saved_next = server.rdma_migration_next_id;
-                server.rdma_migration_next_id =
-                    800000000000000000LL + (slot_lo > 0 ? slot_lo : 1);
-                /* resume_of_sess = this session: the re-ship first asks the new
-                 * leader what already landed (MGN-RESUME-STATUS), and on DONE also
-                 * closes this original session (TXN_DONE sess=<mig->id>). */
-                long long rid = startLocalMigration(nh, nport, mig->n_slots,
-                                                    NULL, 0, 0, &rerr, mig->chosen,
-                                                    mig->id);
-                server.rdma_migration_next_id = saved_next;
-                if (rid >= 0) {
-                    serverLog(LL_NOTICE,
-                        "AqRaft B#1 donor re-home: recipient leader gone; re-shipped "
-                        "slots (lo=%d n=%d) to NEW leader %s:%d as id=%lld — original "
-                        "migration id=%lld superseded",
-                        slot_lo, mig->n_slots, nh, nport, rid, mig->id);
-                    return NULL;
-                }
-                serverLog(LL_WARNING,
-                    "AqRaft B#1 donor re-home: re-ship to %s:%d FAILED: %s — failing "
-                    "migration", nh, nport, rerr ? rerr : "(unknown)");
-            }
+            /* B#1 donor re-home: the recipient leader died mid-backpatch. */
+            if (donorRehomeReship(mig, "backpatch")) return NULL;
             migFail(mig, sdsnew("recipient leader dead and no re-home endpoint "
                                 "recorded within 30s"));
             return NULL;
@@ -7475,6 +7607,9 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
     mig->orchestrator_orch_id  = orch_id;
     mig->start_delay_ms        = (start_delay_ms > 0) ? start_delay_ms : 0;
     mig->resume_of_sess        = (resume_of_sess > 0) ? resume_of_sess : 0;
+    /* Writes redirected by this donor for these slots go to this recipient
+     * (the leader we ship to; on a re-home, the new leader). */
+    rdmaRedirectHintSet(mig->chosen, mig->n_slots, host, port);
     pthread_mutex_init(&mig->mu, NULL);
     mig->state     = RDMA_MIG_INIT;
     mig->registered = 0;
@@ -8284,16 +8419,59 @@ static int donorRehomeLookup(int slot_lo, char *host_out, int host_len, int *por
  * slot is safe and only adds the not-yet-adopted keys. Instrumented so a real S1
  * run reports exactly what the promoted node holds (gap-pull for un-received slots
  * is Increment 2). */
+/* Main thread: run the merge queue to empty right here. Used on promotion, where
+ * the new leader must not serve (or log INDX_UPD for) slots whose held data is
+ * not yet in its keyspace. */
+static void mergeQueueDrainSync(long long sess) {
+    long long t0 = ustime(); int ticks = 0;
+    for (;;) {
+        pthread_mutex_lock(&backpatch_merge_mu);
+        int empty = (backpatch_merge_queue == NULL || listLength(backpatch_merge_queue) == 0);
+        pthread_mutex_unlock(&backpatch_merge_mu);
+        if (empty) break;
+        if (ustime() - t0 > 60LL * 1000000) {
+            serverLog(LL_WARNING, "AqRaft B#1 recipient-recover: sess=%lld — merge queue "
+                      "not drained after 60 s; continuing (remaining items merge in the "
+                      "background)", sess);
+            armMergeTimer();
+            break;
+        }
+        mergeBackpatchTick(server.el, -1, NULL);
+        ticks++;
+    }
+    serverLog(LL_NOTICE, "AqRaft B#1 recipient-recover: sess=%lld — merge queue drained "
+              "in %lld ms (%d ticks)", sess, (ustime() - t0) / 1000, ticks);
+}
+
 static void rdmaRecipientRecover(long long sess, const char *payload) {
     redisDb *db = &server.db[0];
     unsigned long long db_before = dbSize(db);
     int slots_with_blocks = 0, staged = 0;
-    for (int slot = 0; slot < CLUSTER_SLOTS; slot++) {
-        int nb = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
-        if (nb > 0) {
-            slots_with_blocks++;
-            staged += rdmaFollowerEnqueueSlotMerge(db, slot);
+    /* The held-block merge covers EVERY slot with landing blocks, not just this
+     * session's, so it is needed once per promotion. The become-leader hook calls
+     * us once per in-flight session with the same term (payload "term=N"); only
+     * the first call merges. It blocks on purpose: the new leader must not serve
+     * those slots before their held data is merged. */
+    static long long merged_term = -1;
+    long long term = -1;
+    const char *tp = payload ? strstr(payload, "term=") : NULL;
+    if (tp) term = strtoll(tp + 5, NULL, 10);
+    if (term < 0 || term != merged_term) {
+        long long t0 = ustime();
+        for (int slot = 0; slot < CLUSTER_SLOTS; slot++) {
+            int nb = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
+            if (nb > 0) {
+                slots_with_blocks++;
+                staged += rdmaFollowerEnqueueSlotMerge(db, slot);
+            }
         }
+        serverLog(LL_NOTICE, "AqRaft B#1 recipient-recover: sess=%lld — held-block merge "
+                  "staged in %lld ms (term=%lld)", sess, (ustime() - t0) / 1000, term);
+        mergeQueueDrainSync(sess);
+        merged_term = term;
+    } else {
+        serverLog(LL_NOTICE, "AqRaft B#1 recipient-recover: sess=%lld — held blocks already "
+                  "merged this term (%lld); skipping the re-merge", sess, term);
     }
     serverLog(LL_NOTICE,
         "AqRaft B#1 recipient-recover: sess=%lld payload=\"%s\" — held landing state: "
@@ -8355,6 +8533,72 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
                 "donor-fallback=%d (increment 2: gap+holder map; forward is next)",
                 sess, slot_lo, slot_hi, gaps, covered, gaps - covered);
             zfree(lack);
+        }
+    }
+
+    /* B#1 adopt the held copy. If this node holds every slot of the session's
+     * range and enough surviving peers do too to make a majority, the batch met
+     * the durability rule (bytes on a majority) even though the old leader died
+     * before logging INDX_UPD. Its held blocks were merged above, so this node
+     * logs INDX_UPD + RECP_TXN_DONE itself instead of having the donor re-ship.
+     * The slots are reported "pending" until the INDX_UPD applies (then durable),
+     * so the donor's re-home asks MGN-RESUME-STATUS, waits, and closes its
+     * session without sending anything. Peers are asked directly (CHAIN-STATUS):
+     * a follower registers a batch's blocks only once the whole batch landed, so
+     * "holds every slot" means it holds the complete batch. */
+    {
+        int alo = -1, ahi = -1;
+        const char *asp = payload ? strstr(payload, "slots=") : NULL;
+        if (asp) sscanf(asp, "slots=%d-%d", &alo, &ahi);
+        if (alo >= 0 && ahi >= alo && ahi < CLUSTER_SLOTS) {
+            int nrange = ahi - alo + 1, mine = 0;
+            for (int slot = alo; slot <= ahi; slot++)
+                if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0) mine++;
+            int npeers = 0, peers_full = 0;
+            sds *peers = NULL;
+            if (mine == nrange && server.rdma_chain_followers &&
+                sdslen(server.rdma_chain_followers) > 0) {
+                peers = sdssplitlen(server.rdma_chain_followers,
+                                    sdslen(server.rdma_chain_followers), " ", 1, &npeers);
+                for (int pi = 0; pi < npeers; pi++) {
+                    char phost[128]; int pport = 0;
+                    if (sscanf(peers[pi], "%127[^:]:%d", phost, &pport) != 2 || pport <= 0) continue;
+                    struct timeval tv = { 0, 500000 };
+                    redisContext *pc = redisConnectWithTimeout(phost, pport, tv);
+                    if (pc == NULL || pc->err) { if (pc) redisFree(pc); continue; }
+                    redisSetTimeout(pc, tv);
+                    redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d", sess, alo, ahi);
+                    if (rep && rep->type == REDIS_REPLY_ARRAY && (int) rep->elements == nrange)
+                        peers_full++;
+                    serverLog(LL_NOTICE, "AqRaft B#1 adopt: sess=%lld peer %s:%d holds %d/%d slots of %d-%d",
+                              sess, phost, pport,
+                              (rep && rep->type == REDIS_REPLY_ARRAY) ? (int) rep->elements : -1,
+                              nrange, alo, ahi);
+                    if (rep) freeReplyObject(rep);
+                    redisFree(pc);
+                }
+                if (peers) sdsfreesplitres(peers, npeers);
+            }
+            int need = (npeers + 1) / 2;   /* peers needed besides me for a majority of npeers+1 */
+            if (mine == nrange && npeers > 0 && peers_full >= need) {
+                char pl[256];
+                rdmaMgnAdoptingMark(alo, ahi);
+                snprintf(pl, sizeof(pl), "sess=%lld slots=%d-%d n_slots=%d applied=0 adopted=1",
+                         sess, alo, ahi, nrange);
+                rdmaMgnLogAsync("INDX_UPD", pl);
+                snprintf(pl, sizeof(pl), "sess=%lld slots=%d-%d applied=0 clobber_skipped=0 adopted=1",
+                         sess, alo, ahi);
+                rdmaMgnLogAsync("RECP_TXN_DONE", pl);
+                serverLog(LL_NOTICE,
+                    "AqRaft B#1 adopt: sess=%lld range=%d-%d held by me + %d/%d peers (majority) "
+                    "— adopting the held copy: INDX_UPD + RECP_TXN_DONE logged, donor will not re-ship",
+                    sess, alo, ahi, peers_full, npeers);
+            } else {
+                serverLog(LL_NOTICE,
+                    "AqRaft B#1 adopt: sess=%lld range=%d-%d not adoptable (mine=%d/%d, peers "
+                    "holding all=%d, need %d) — donor re-ships", sess, alo, ahi, mine, nrange,
+                    peers_full, need);
+            }
         }
     }
 

@@ -273,6 +273,55 @@ donors' registrations answered from a pre-registered pool in ~1 ms (was 6.9 s / 
 0.87 s); first donor PREP to last commit 5.5 s (was ~13.9 s); no landing pool registered during
 the migration. Figure: `figures/follower_crash/landing_heal_gantt.png`.
 
+## Final campaign and recovery fixes (2026-09-30)
+
+**Final campaign** (`logs/final_*`, `figures/final/`, report `figures/final/aqraft_failure_campaign.html`,
+built by `final_analysis.py` + `build_failure_report.py`). All seven runs (HEALTHY, S1–S6) recovered
+every range with no faked INDX_UPD and no crash. S1 first failed: chain session ids restart on each
+new sg4 leader, so a follower's leftover AppendEntries report for the old leader's session 0 was
+taken as the new session 0's ack, the real ack was deduped, the donor re-shipped and redis4
+segfaulted finalizing the batch twice. Fix: the leader refuses CHAIN-ACK until it has forwarded
+the session (`fwd_count`), and a batch cannot be queued for commit twice. Recovery times
+(kill to last TXN_DONE, `recovery_times.py`): S1 72.1 s, S2 16.5 s, S5 3.0 s, S6 16.5 s.
+
+**Why S1 took 72 s** (`figures/final/s1_orchestrator_stall.html`): the promoted leader's held-block
+merge ran on the main thread once per in-flight session (16.5 s, clients at zero); the re-homed sg2
+worker was started without the orchestrator link, so the round never reached 3/3 and the playbook
+polled its full ~68 s budget; sg3's TRANSFER failure (7.4 s of RDMA retries) failed instead of
+re-homing; and MGN-RESUME-STATUS answered from in-memory batches, so sg1 (committed before the
+kill) was re-sent.
+
+**Follower-stall fix** (`logs/stall_*`, `figures/stall/`, `stall_compare.py`). Follower landing pools
+were cached per connection, so every new upstream re-registered 2.86 GB on the main thread in
+CHAIN-PREP. They are now keyed by the device's shared PD and registered at startup
+(`CHAIN FOLLOWER-PREREG`, 8 pools in ~5.5 s). HEALTHY/S3/S4: no sg4 follower stall above 100 ms
+(was 400–600 ms per session), and S4's recurring 228 ms stalls after the migration are gone.
+Diagnosed with Redis's watchdog (`watchdog-period`), whose SIGALRM also kills the RDMA accept
+threads: diagnosis only.
+
+**Recovery fixes** (`logs/recov_*`, `figures/recov/`):
+- re-homed donor inherits the orchestrator link; a TRANSFER failure against a dead recipient
+  re-homes (`donorRehomeReship`); RDMA ACK timeout 2^16 × 4.096 us (dead peer in ~1 s);
+- donor redirects writes for migrating slots to the recipient leader it ships to
+  (`rdmaRedirectHintFor`, used by redisraft for -MOVED and the slot-meta peer);
+- promotion merge once per term (term passed in the MGN-RECOVER payload), still blocking, and
+  the merge queue is drained before recovery continues;
+- every replica marks slots durable on applying MGN_INDX_UPD; MGN-RESUME-STATUS reports them;
+- held-copy adoption: a new leader holding the whole range, with a survivor holding it too
+  (CHAIN-STATUS), logs INDX_UPD + RECP_TXN_DONE itself (not exercised yet: in these runs the
+  kill came before the batch was forwarded);
+- playbook leaves its poll loop on a donor FAILED or when the target is no longer sg4 leader.
+
+| run | all ranges durable | seconds below half | lowest in window |
+|---|---|---|---|
+| S1 | 72.1 → **20.6 s** | 24 → 9 | 0 → 0 |
+| S6 | 16.5 → **12.9 s** | 19 → 15 | 0 → 0 |
+| S4 | — | 4 → 1 | 0 → 50 Kops/s |
+
+What remains in S1: election ~1.5 s, blocking merge 4.1 s, and one parallel re-send of each range
+that never reached a majority (13–15 s). Open: one 374 ms sg4 leader stall in the S3 re-run
+(`update_slot_stats`), the run-1 `raft_entry_release` abort.
+
 ## Layout
 
 - `run.sh` — runs the campaign on the controller (wraps `ansible/crash/run_all_scenarios.sh`).

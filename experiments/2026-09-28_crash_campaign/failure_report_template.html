@@ -1,0 +1,232 @@
+<title>AqRaft Failure Campaign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@80..110,500..800&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column that widens for the summary table and figures; shares the AqRaft Migration Log tokens (donor cobalt, recipient ochre). */
+:root {
+  --paper: #F3F5F8; --panel: #FFFFFF; --ink: #17202E; --ink-2: #4A5566; --rule: #D5DBE4; --band: #E9EDF3;
+  --donor: #2C58A0; --recip: #A0650F; --ok: #217A3C; --ok-bg: #E1F2E5; --bad: #A8431C; --bad-bg: #F8E4DA;
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #11161E; --panel: #182029; --ink: #E4E9F0; --ink-2: #A3AEBE; --rule: #2C3645; --band: #1A222D;
+    --donor: #86A9E6; --recip: #E2AA5A; --ok: #6BCB86; --ok-bg: #173222; --bad: #EE8F68; --bad-bg: #3C2017;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #11161E; --panel: #182029; --ink: #E4E9F0; --ink-2: #A3AEBE; --rule: #2C3645; --band: #1A222D;
+  --donor: #86A9E6; --recip: #E2AA5A; --ok: #6BCB86; --ok-bg: #173222; --bad: #EE8F68; --bad-bg: #3C2017;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font: 400 17px/1.6 var(--f-body); padding-inline: 20px; padding-block: 48px 96px; }
+.wrap { max-width: 1040px; margin: 0 auto; display: grid; gap: 56px; }
+.prose { max-width: 70ch; }
+h1, h2, h3, h4 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(2.1rem, 5vw, 3.1rem); font-weight: 800; font-stretch: 88%; }
+h2 { font-size: 1.65rem; font-weight: 700; font-stretch: 92%; }
+h3 { font-size: 1.15rem; font-weight: 700; }
+h4 { font-size: .95rem; font-weight: 700; color: var(--ink-2); }
+p { margin: 0; }
+section { display: grid; gap: 18px; }
+.eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+code { font-family: var(--f-mono); font-size: .86em; background: var(--band); padding: 1px 5px; border-radius: 3px; }
+a { color: var(--donor); }
+.lede { font-size: 1.18rem; color: var(--ink-2); max-width: 66ch; }
+header { display: grid; gap: 16px; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; font: 400 13px/1.4 var(--f-mono); color: var(--ink-2); }
+.meta b { color: var(--ink); font-weight: 600; }
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+tr:last-child td { border-bottom: 0; }
+th { font: 600 11px/1.3 var(--f-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); background: var(--band); }
+td.n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+td .sub { display: block; color: var(--ink-2); font-size: 13px; }
+.pill { display: inline-block; font: 600 11px/1 var(--f-mono); letter-spacing: .04em; padding: 5px 9px; border-radius: 999px; white-space: nowrap; }
+.pill.ok { color: var(--ok); background: var(--ok-bg); }
+.pill.bad { color: var(--bad); background: var(--bad-bg); }
+.box { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 20px; display: grid; gap: 10px; }
+.box ul, .box ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.two > * { min-width: 0; }
+.scen { display: grid; gap: 22px; }
+.sc { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 20px 22px; display: grid; gap: 14px; min-width: 0; scroll-margin-top: 16px; }
+.sc-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.sc-head .pill { margin-left: auto; }
+.sc-id { font: 700 1rem/1 var(--f-mono); color: var(--recip); }
+.sc-grid { display: grid; grid-template-columns: 7rem 1fr; gap: 4px 16px; margin: 0; font-size: 15.5px; }
+.sc-grid dt { font: 600 11px/1.9 var(--f-mono); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-2); }
+.sc-grid dd { margin: 0; }
+ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; max-width: 80ch; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: 400 13px/1 var(--f-mono); padding: 7px 9px; border: 1px solid var(--rule); border-radius: 4px; background: var(--band); font-variant-numeric: tabular-nums; }
+.chip b { font-weight: 600; }
+figure { margin: 0; display: grid; gap: 8px; }
+figure img { width: 100%; height: auto; background: #fff; border: 1px solid var(--rule); border-radius: 4px; }
+figcaption, .note { font-size: 14px; color: var(--ink-2); max-width: 80ch; }
+details { border-top: 1px solid var(--rule); padding-top: 10px; }
+summary { cursor: pointer; font: 600 13px/1.4 var(--f-mono); color: var(--donor); }
+summary:focus-visible, a:focus-visible { outline: 2px solid var(--donor); outline-offset: 2px; }
+details figure { margin-top: 10px; }
+.defs { display: grid; grid-template-columns: 11rem 1fr; gap: 6px 16px; margin: 0; font-size: 15px; }
+.defs dt { font-weight: 600; }
+.defs dd { margin: 0; color: var(--ink-2); }
+@media (max-width: 560px) {
+  body { font-size: 16px; padding-block: 28px 64px; }
+  .sc-grid, .defs { grid-template-columns: 1fr; }
+  .sc-grid dt { margin-top: 6px; line-height: 1.2; }
+  .sc-head .pill { margin-left: 0; }
+}
+</style>
+
+<div class="wrap">
+<header>
+  <span class="eyebrow">Aqueduct + RedisRaft · RDMA slot migration</span>
+  <h1>AqRaft Failure Campaign</h1>
+  <p class="lede">Seven runs of the 30M-key reshard: one without failures and six that kill a node at a critical moment of the migration, including both leaders at once. For each run, what was killed, what the system did, and what clients saw.</p>
+  <div class="meta">
+    <span>runs <b>2026-09-30</b></span>
+    <span>branch <b>aqueduct_broken</b></span>
+    <span>30M keys · 3 donors → sg4 · 4,095 slots</span>
+  </div>
+</header>
+
+<section>
+  <span class="eyebrow">Summary</span>
+  <h2>Every failure recovered</h2>
+  <p class="prose">In every run all three donor ranges ended up committed on the recipient group, durability was never faked (each <code>INDX_UPD</code> followed a real follower ack) and no process crashed. Client impact ranged from nothing (S3, S5) to 19–23 seconds of reduced throughput when a recipient leader died (S1, S6). Recovery after a donor leader dies takes 16–18 s; after the recipient leader dies alone (S1) it takes 72 s, mostly waiting for the playbook to re-drive.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Scenario</th><th>Killed</th><th>Result</th><th>Ranges on sg4</th><th>Faked INDX_UPD</th><th>Update errors</th><th>Seconds below half</th><th>Migration</th><th>Recovery actions</th></tr></thead>
+      <tbody>
+{{ROWS}}
+      </tbody>
+    </table>
+  </div>
+  <dl class="defs">
+    <dt>Ranges on sg4</dt><dd>Donor ranges with a committed <code>MGN_INDX_UPD</code> on the surviving recipient replicas.</dd>
+    <dt>Seconds below half</dt><dd>Seconds in which both clients together ran below half their throughput just before the migration.</dd>
+    <dt>Migration</dt><dd>First donor ownership flip to the last donor <code>TXN_DONE</code>.</dd>
+    <dt>Recovery actions</dt><dd>Resume: a new donor leader restarts its open session. Re-drive: the playbook re-sends a range that sg4 does not hold durably. Re-home: a new recipient leader tells a donor where to send its session. Chain re-form: the recipient leader routes around a dead follower.</dd>
+  </dl>
+</section>
+
+<section>
+  <span class="eyebrow">Recovery time</span>
+  <h2>How long each leader crash takes to recover</h2>
+  <p class="prose">Measured from the kill (the first kill in S6). A new leader is elected in 1–2 s in every case. S2 and S6 finish in 16.5 s. S1 takes 72 s because two of its ranges wait for the playbook to re-drive them (see open issues). S5 needs no re-send; the one range still in flight commits 3 s after the kill.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Scenario</th><th>Killed</th><th>New leader</th><th>First recovery action</th><th>All ranges durable</th><th>Seconds below half</th><th>Update errors</th></tr></thead>
+      <tbody>
+{{RECOVERY}}
+      </tbody>
+    </table>
+  </div>
+  <figure>{{RECOVERY_FIG}}
+    <figcaption>Blue: kill to new leader. Orange: to the first recovery action (resume, re-home or re-drive check). Grey: to the last donor TXN_DONE.</figcaption></figure>
+</section>
+
+<section>
+  <span class="eyebrow">After the recovery fixes · 2026-09-30</span>
+  <h2>S1 recovers in 20.6 s instead of 72 s</h2>
+  <p class="prose">A second build fixed what made recipient-leader recovery slow, plus two throughput problems. S1, S4 and S6 were re-run on it; all three recovered every range with no faked INDX_UPD and no crashes. HEALTHY, S3 and S4 were also re-run after the follower-pool change alone.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Scenario</th><th>All ranges durable</th><th>Seconds below half</th><th>Lowest throughput in the window</th><th>What changed</th></tr></thead>
+      <tbody>
+        <tr><td><b>S1</b> <span class="sub">recipient leader</span></td><td class="n"><b>72.1 → 20.6 s</b></td><td class="n">24 → 9</td><td class="n">0 → 0 Kops/s</td><td>Merge once per promotion; sg3 re-homes instead of failing; no wait on the playbook; sg1 not re-sent</td></tr>
+        <tr><td><b>S6</b> <span class="sub">donor + recipient leaders</span></td><td class="n"><b>16.5 → 12.9 s</b></td><td class="n">19 → 15</td><td class="n">0 → 0 Kops/s</td><td>Playbook re-drives sg3 at 5.9 s instead of after its poll budget; sg1 not re-sent</td></tr>
+        <tr><td><b>S4</b> <span class="sub">recipient follower</span></td><td class="n">—</td><td class="n">4 → 1</td><td class="n">0 → 50 Kops/s</td><td>Writes go to the sg4 leader, so no client thread waits on the dying follower; no follower stalls</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="box">
+    <h3>The changes</h3>
+    <ul>
+      <li><b>Follower pools registered at startup.</b> Pools are keyed by the device's shared protection domain, not by connection, so a new upstream reuses them. No follower main-thread stall during chain setup (was 0.4–0.6 s per session).</li>
+      <li><b>Writes go to the recipient leader.</b> The donor redirects writes for migrating slots to the leader it ships to (the re-home target after a failover) instead of cycling through sg4's nodes.</li>
+      <li><b>Promotion merge once per promotion.</b> Still blocking, so the new leader serves nothing before its held data is merged, but no longer repeated for every in-flight session (16.5 s → 4.1 s).</li>
+      <li><b>Re-homed donors report to the orchestrator</b>, and a donor whose TRANSFER fails because the recipient died re-homes instead of failing. RDMA writes to a dead peer fail in ~1 s instead of 7.4 s.</li>
+      <li><b>Durable from the log.</b> Every replica marks slots durable when it applies INDX_UPD, so a promoted follower reports ranges the old leader committed as durable (sg1 is no longer re-sent).</li>
+      <li><b>Held-copy adoption.</b> A new leader that holds a whole range, with a survivor that holds it too, logs INDX_UPD itself instead of asking the donor to re-send. Not exercised in these runs: the kill came before sg2's batch was forwarded.</li>
+      <li><b>Playbook leaves its poll loop</b> when a donor reports FAILED or the round's target is no longer the sg4 leader.</li>
+    </ul>
+  </div>
+  <figure>{{RECOV_FIG}}
+    <figcaption>Grey: campaign build. Blue: recovery-fix build. Dashed red: kill.</figcaption></figure>
+  <figure>{{STALL_FIG}}
+    <figcaption>HEALTHY, S3 and S4 before and after the follower-pool change alone.</figcaption></figure>
+</section>
+
+<section>
+  <span class="eyebrow">First 70 seconds</span>
+  <h2>Client throughput around the migration</h2>
+  <p class="prose">All seven runs on one time axis, cut at 70 s. The dip at about 40 s appears in every run, HEALTHY included: it is the donors registering memory before their transfer, while holding a lock client writes need. S1 and S6 drop to zero for about 16 s after the recipient leader dies. That is the promoted sg4 leader's main thread re-merging held slots one at a time for each in-flight session, during which sg4 serves nothing and client threads pile up on its keys.</p>
+  <figure>{{ALL70}}
+    <figcaption>Both clients' throughput. Shaded: migration (first donor PREP to last TXN_DONE; in S1 it runs to 117 s). Dashed red: kill.</figcaption></figure>
+</section>
+
+<section>
+  <span class="eyebrow">Setup</span>
+  <h2>How the runs were made</h2>
+  <div class="two">
+    <div class="box">
+      <h3>Cluster</h3>
+      <ul>
+        <li>Donors sg1, sg2, sg3 (leaders redis0, redis1, redis2), each 3-way replicated.</li>
+        <li>Recipient sg4: leader redis3, chain redis4 → redis5.</li>
+        <li>YCSB workload A (50/50 read/update), 2 clients × 100 threads, 10 minutes; the reshard starts after 60 s.</li>
+        <li>Each donor moves 1,365 slots (~2.5M keys) in 4 chunks.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>Configuration</h3>
+      <ul>
+        <li>Dataset restored from the <code>ws30m</code> snapshot (~2 min), leadership moved back to the usual nodes.</li>
+        <li>Donor source pools and 3 recipient landing pools registered at startup.</li>
+        <li><code>INDX_UPD</code> logged after a follower ack and the leader's merge.</li>
+        <li>Follower acks carried on AppendEntries replies.</li>
+        <li>Kills are <code>kill -9</code>, triggered by a log marker. Every host's logs are copied during the run.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Scenarios</span>
+  <h2>Run by run</h2>
+  <div class="scen">
+{{CARDS}}
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Open issues</span>
+  <h2>What these runs did not settle</h2>
+  <div class="box">
+    <ul>
+      <li><b>S1 recovery (fixed after the campaign).</b> The 72 s came from a blocking merge repeated per session, a re-homed donor that never reported to the orchestrator, a TRANSFER failure that did not re-home, and a promoted follower that did not know sg1 was committed. With the fixes S1 recovers in 20.6 s; what remains is election (~1.5 s), the blocking merge (4.1 s) and one re-send of each range that never reached a majority.</li>
+      <li><b>Leader stall after S3 (open).</b> In the S3 re-run the sg4 leader's main thread stalled once for 374 ms, 2.5 minutes after the migration (stack in <code>update_slot_stats</code>). Cause unknown.</li>
+      <li><b>Redis watchdog breaks RDMA accept threads.</b> Its alarm signal interrupted <code>rdma_get_request</code> and the accept loops exited. Use it for diagnosis only.</li>
+      <li><b>Stale AppendEntries ack (fixed during this campaign).</b> Chain session ids restart at 0 on each new recipient leader. In an earlier repeat of S1, a follower's leftover report for the old leader's session 0 reached redis4 17 ms after it set up its own session 0, was taken as that session's ack, and the real ack was then discarded as a duplicate. The batch never committed, the donor re-shipped it and redis4 segfaulted finalizing it twice. The leader now refuses a <code>CHAIN-ACK</code> until it has finished forwarding at least one batch of the session (the report is retried 200 ms later), and a batch can no longer be queued for commit twice. The S1 run shown here used the fixed build.</li>
+      <li><b>Intermittent RedisRaft crash.</b> In the first run of this campaign, S1's surviving replica redis4 aborted in <code>raft_entry_release</code> (a Raft log entry released twice), taking sg4 below a majority for the rest of the run. It did not recur in S6 or in either repeat of S1. Cause unknown.</li>
+      <li><b>YCSB client crash.</b> In the first attempt at S2 one YCSB client stopped with a <code>ClassCastException</code> (an array reply where it expected bytes) about 20 s after the donor leader died. This is a client-side robustness bug; the other client and the cluster were unaffected.</li>
+      <li><b>S4 client stall (fixed after the campaign).</b> Two causes: follower chain setup registered 2.86 GB on the main thread, and clients sent writes to the follower that died and waited on it. Both are fixed; S4 no longer drops to zero.</li>
+      <li><b>Merges run one session at a time.</b> With the connect delays gone, the leader's serial merges set the length of the migration.</li>
+      <li><b>Follower key gap.</b> About 3.2% of keys are missing on both followers after a migration, the same set every time; a promoted follower is therefore re-sent whole ranges rather than trusted.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Where it lives</span>
+  <p class="note">Raw logs, metrics and figures: <code>experiments/2026-09-28_crash_campaign/</code> on the controller (<code>logs/final_*</code>, <code>figures/final/</code>). Analysis: <code>final_analysis.py</code>; this page: <code>build_failure_report.py</code>.</p>
+</section>
+</div>

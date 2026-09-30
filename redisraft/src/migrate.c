@@ -489,6 +489,20 @@ int cmdRaftMgnReceived(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         RedisModule_StringToLongLong(argv[2], &len) != REDISMODULE_OK) {
         return RedisModule_WrongArity(ctx);
     }
+    if (len < 0) {   /* forget: a new chain is being prepared for this session id */
+        for (int i = 0; i < g_mgn_recv_n; i++) {
+            if (g_mgn_recv_sess[i] == sess) {
+                /* compact: move the last entry into this slot */
+                int last = g_mgn_recv_n - 1;
+                g_mgn_recv_sess[i] = g_mgn_recv_sess[last];
+                g_mgn_recv_len[i] = g_mgn_recv_len[last];
+                g_mgn_recv_n--;
+                g_mgn_recv_next = g_mgn_recv_n % MGN_RECV_MAX;
+                break;
+            }
+        }
+        return RedisModule_ReplyWithSimpleString(ctx, "OK");
+    }
     for (int i = 0; i < g_mgn_recv_n; i++) {
         if (g_mgn_recv_sess[i] == sess) {
             g_mgn_recv_len[i] = len;

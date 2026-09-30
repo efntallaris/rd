@@ -368,6 +368,9 @@ void bgMergeSlotSetActive(int slot, int active);
 void recipientBackpatchThreadStart(void);
 void rdmaSrcPreregStart(void);
 void rdmaLandingPreregStart(void);
+void rdmaFollowerPreregStart(void);
+struct rdma_cm_id;
+struct rdma_cm_id *rdmaPreregKeeperGet(void);
 void recipientBackpatchThreadStop(void);
 
 /* Flags that a module can set in order to prevent certain Redis Cluster

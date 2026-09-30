@@ -169,6 +169,20 @@
             raw=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>&1)
             st=$(printf '%s' "$raw" | head -1 | grep -oE 'DONE|FAILED' | head -1)
             if [ "$st" = "DONE" ] || [ "$st" = "FAILED" ]; then final=$st; break; fi
+            # AqRaft: leave early when waiting cannot help. (a) Any donor already
+            # reported FAILED: the round can never end DONE, and the re-drive below
+            # waits for donors that are still running anyway. (b) About once a second,
+            # check that the round target is still the sg4 leader; after a recipient
+            # leader crash the orchestrator may never hear from every donor.
+            nfail=$(printf '%s' "$raw" | sed -n 4p | tr -dc '0-9')
+            if [ -n "$nfail" ] && [ "$nfail" -gt 0 ]; then final=DONORFAILED; break; fi
+            if [ $((i % 20)) -eq 0 ]; then
+              trole=$({{ redis_bin_dir }}/redis-cli -t 1 -h {{ reshard_target }} -p {{ master_port }} INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
+              if [ "$trole" != "leader" ]; then
+                echo "round $RI orch=$oid: target {{ reshard_target }} is no longer the sg4 leader (role=${trole:-unreachable}) -> re-drive"
+                final=LEADERCHANGE; break
+              fi
+            fi
             # AqRaft S2: the orchestrator IS -p master_port (redis_masters[0]:8000). On a
             # donor-LEADER crash that is the killed node, so every status query hits a dead
             # orchestrator, never returns DONE, and the loop otherwise burns its full ~60s

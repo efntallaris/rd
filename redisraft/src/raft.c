@@ -197,6 +197,25 @@ static ShardGroup *getSlotShardGroup(RedisRaftCtx *rr, unsigned int slot, bool a
     return sg;
 }
 
+/* AqRaft: the donor core's per-slot recipient-leader hint (weak: absent in the
+ * standalone test binary). Returns the member of sg matching the hint, or NULL
+ * so the caller keeps its default choice. Only a real member of sg is ever
+ * returned, so a stale or odd hint cannot send a client outside the group. */
+extern int rdmaRedirectHintFor(int slot, char *ip_out, size_t ip_sz, int *port_out)
+    __attribute__((weak));
+extern void rdmaMgnDurableMark(int lo, int hi) __attribute__((weak));
+static ShardGroupNode *redirectHintNode(ShardGroup *sg, unsigned int slot)
+{
+    if (rdmaRedirectHintFor == NULL || sg == NULL || sg->nodes == NULL) return NULL;
+    char ip[64]; int port = 0;
+    if (!rdmaRedirectHintFor((int) slot, ip, sizeof(ip), &port)) return NULL;
+    for (unsigned int i = 0; i < sg->nodes_num; i++) {
+        if ((int) sg->nodes[i].addr.port == port && strcmp(sg->nodes[i].addr.host, ip) == 0)
+            return &sg->nodes[i];
+    }
+    return NULL;
+}
+
 static RRStatus validateRaftRedisCommandArray(RedisRaftCtx *rr, RedisModuleCtx *reply_ctx,
                                               RaftRedisCommandArray *cmds, unsigned int slot)
 {
@@ -229,8 +248,19 @@ static RRStatus validateRaftRedisCommandArray(RedisRaftCtx *rr, RedisModuleCtx *
 
     if (!sg->local) {
         if (reply_ctx) {
-            sg->next_redir = (sg->next_redir + 1) % sg->nodes_num;
-            replyRedirect(reply_ctx, slot, &sg->nodes[sg->next_redir].addr);
+            /* A write in the migration window goes to the recipient LEADER the
+             * donor is shipping to, not round-robin over its nodes (a follower
+             * only proxies it, and a client pinned to a follower hangs when that
+             * follower dies). Anything else keeps the round-robin redirect. */
+            ShardGroupNode *hn = NULL;
+            if (is_write && rr->sharding_info->write_redirect_slots_map[slot] == sg)
+                hn = redirectHintNode(sg, slot);
+            if (hn != NULL) {
+                replyRedirect(reply_ctx, slot, &hn->addr);
+            } else {
+                sg->next_redir = (sg->next_redir + 1) % sg->nodes_num;
+                replyRedirect(reply_ctx, slot, &sg->nodes[sg->next_redir].addr);
+            }
         }
 
         return RR_ERROR;
@@ -869,6 +899,11 @@ static int raftSendRequestVote(raft_server_t *raft, void *user_data,
 #define MGN_SEEN_MAX 256
 static struct { raft_node_id_t node; long long sess; } g_mgn_seen[MGN_SEEN_MAX];
 static int g_mgn_seen_next = 0, g_mgn_seen_n = 0;
+/* (node, session) whose CHAIN-ACK was refused (the leader had no such session yet,
+ * e.g. a stale report right after a promotion): retry no earlier than retry_ms. */
+#define MGN_RETRY_MAX 64
+static struct { raft_node_id_t node; long long sess; long long retry_ms; } g_mgn_retry[MGN_RETRY_MAX];
+static int g_mgn_retry_next = 0;
 
 static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const char *status)
 {
@@ -885,15 +920,32 @@ static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const cha
             if (g_mgn_seen[i].node == node_id && g_mgn_seen[i].sess == sess) { seen = 1; break; }
         }
         if (seen) continue;
+        long long now_ms = RedisModule_Milliseconds();
+        int backoff = 0;
+        for (int i = 0; i < MGN_RETRY_MAX; i++) {
+            if (g_mgn_retry[i].node == node_id && g_mgn_retry[i].sess == sess &&
+                g_mgn_retry[i].retry_ms > now_ms) { backoff = 1; break; }
+        }
+        if (backoff) continue;
+
+        RedisModuleCallReply *rep = RedisModule_Call(rr->ctx, "RDMA", "cll", "CHAIN-ACK", sess, len);
+        int accepted = rep && RedisModule_CallReplyType(rep) != REDISMODULE_REPLY_ERROR;
+        if (rep) RedisModule_FreeCallReply(rep);
+        if (!accepted) {
+            /* No such session on this leader (yet): do NOT mark it seen, or the
+             * genuine report for a later chain with the same id would be dropped. */
+            g_mgn_retry[g_mgn_retry_next].node = node_id;
+            g_mgn_retry[g_mgn_retry_next].sess = sess;
+            g_mgn_retry[g_mgn_retry_next].retry_ms = now_ms + 200;
+            g_mgn_retry_next = (g_mgn_retry_next + 1) % MGN_RETRY_MAX;
+            continue;
+        }
         g_mgn_seen[g_mgn_seen_next].node = node_id;
         g_mgn_seen[g_mgn_seen_next].sess = sess;
         g_mgn_seen_next = (g_mgn_seen_next + 1) % MGN_SEEN_MAX;
         if (g_mgn_seen_n < MGN_SEEN_MAX) g_mgn_seen_n++;
-
         LOG_NOTICE("AqRaft AE-piggyback: node %d holds migration sess=%lld len=%lld -> CHAIN-ACK",
                    node_id, sess, len);
-        RedisModuleCallReply *rep = RedisModule_Call(rr->ctx, "RDMA", "cll", "CHAIN-ACK", sess, len);
-        if (rep) RedisModule_FreeCallReply(rep);
     }
 }
 
@@ -1275,6 +1327,14 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                     mgnMarkDone(_sess);
                 else if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE)
                     mgnMarkDone(_rkey);
+                /* Every replica records which slots are committed durable, so a
+                 * promoted follower can answer MGN-RESUME-STATUS from the log. */
+                if (entry->type == RAFT_LOGTYPE_MGN_INDX_UPD && rdmaMgnDurableMark != NULL) {
+                    int _lo = -1, _hi = -1;
+                    const char *_sp = strstr(_pl, "slots=");
+                    if (_sp && sscanf(_sp, "slots=%d-%d", &_lo, &_hi) == 2 && _lo >= 0 && _hi >= _lo)
+                        rdmaMgnDurableMark(_lo, _hi);
+                }
             }
             if (req) {
                 RaftReqFree(req);
@@ -1473,9 +1533,14 @@ static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_stat
                     /* Reverse loopback into cluster_rdma (separate translation unit, shared
                      * only via RESP): drive the actual resume. */
                     const char *_role = (g_mgn_role[_i] == 'r') ? "recipient" : "donor";
+                    /* term=N lets cluster_rdma do promotion-wide work (the held-block
+                     * merge) once per promotion instead of once per session. */
+                    char _pl[320];
+                    snprintf(_pl, sizeof(_pl), "%.207s term=%ld", g_mgn_payload[_i],
+                             (long) raft_get_current_term(raft));
                     RedisModuleCallReply *_rep = RedisModule_Call(redis_raft.ctx, "RDMA", "cclc",
                                                     "MGN-RECOVER", _role, (long long) g_mgn_active[_i],
-                                                    g_mgn_payload[_i]);
+                                                    _pl);
                     if (_rep) RedisModule_FreeCallReply(_rep);
                 }
             }
@@ -2641,7 +2706,10 @@ int redisraftSlotMigStateOverride(int slot, char *peer_out, size_t peer_out_sz)
      * that's always sg4's initial leader (redis3:8000). If sg4 has a
      * leader election mid-migration, --raft.follower-proxy yes on the
      * sg4 nodes silently bridges the request to the current leader. */
-    NodeAddr addr = wsg->nodes[0].addr;
+    /* Prefer the recipient leader the donor is shipping to (it follows a
+     * re-home after a recipient-leader crash); fall back to the first node. */
+    ShardGroupNode *hn = redirectHintNode(wsg, (unsigned int) slot);
+    NodeAddr addr = hn ? hn->addr : wsg->nodes[0].addr;
     if (peer_out && peer_out_sz > 0) {
         snprintf(peer_out, peer_out_sz, "%s:%u", addr.host,
                  (unsigned) addr.port);

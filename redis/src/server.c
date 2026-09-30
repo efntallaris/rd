@@ -3276,6 +3276,7 @@ void InitServerLast(void) {
     recipientBackpatchThreadStart();
     rdmaSrcPreregStart();
     rdmaLandingPreregStart();
+    rdmaFollowerPreregStart();
     /* AqRaft: arm the cluster-independent per-slot rwlock array before any
      * backpatch worker can drain a shadow into the live keyspace. No-op unless
      * --rdma-merge-background is set. Must run post-fork (same rationale as the
