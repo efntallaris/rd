@@ -707,6 +707,12 @@ public class RedisClient extends DB {
       r.ok = true;
       return r;
     } catch (JedisConnectionException ce) {
+      /* A read timeout leaves this GET's reply in flight on the socket. If the
+       * connection stayed in conns, the NEXT command on it (often a SET) would
+       * read this GET's slot-meta array as its own reply -> ClassCastException
+       * in Jedis, which killed the worker thread (S2). Drop the socket; Jedis
+       * reconnects on the next use, so no stale reply can reach another command. */
+      dropConn(j);
       return r;
     } catch (redis.clients.jedis.exceptions.JedisMovedDataException mv) {
       // Donor told us this slot moved. Treat it as if the donor returned
@@ -731,9 +737,16 @@ public class RedisClient extends DB {
       }
       return r;
     } catch (JedisException je) {
+      dropConn(j);   /* same reason: the reply stream may be out of step */
       return r;
     }
     }
+  }
+
+  /** Close a connection whose reply stream may be out of step with its
+   *  requests. The Jedis object stays usable: it reconnects on the next command. */
+  private static void dropConn(Jedis j) {
+    try { j.disconnect(); } catch (Exception ignore) { }
   }
 
   /** Update the slot cache from a successful GET reply's metadata. When the
@@ -922,6 +935,13 @@ public class RedisClient extends DB {
            * gets reset. Evict + re-resolve outside the synchronized block. */
           connDropped = true;
           badHp = hp;
+        } catch (ClassCastException cce) {
+          /* Reply of the wrong type: this connection's reply stream is out of
+           * step (a late reply from an earlier command). Drop it and retry the
+           * same owner on a fresh socket instead of letting the exception kill
+           * the worker thread. */
+          dropConn(j);
+          continue;
         } catch (redis.clients.jedis.exceptions.JedisDataException de) {
           /* Transient redisraft errors during the migration window:
            *   - "TIMEOUT no reply from leader": leader saturated (deep dip)
