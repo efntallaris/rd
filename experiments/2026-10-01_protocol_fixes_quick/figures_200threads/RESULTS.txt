@@ -1,0 +1,37 @@
+HEALTHY: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/HEALTHY_qyes_20261002_043404
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75037 5e44f83f0e41, redis4 n=75037 5e44f83f0e41, redis5 n=75037 5e44f83f0e41)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 142K before -> 180K after (+26%)   migration 7.0s
+S1: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S1_qyes_20261002_043921
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis4:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  2 live replicas identical (redis4 n=75045 5fb3d6e1c3fe, redis5 n=75045 5fb3d6e1c3fe)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 144K before -> 177K after (+23%)   migration 13.0s
+S2: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S2_qyes_20261002_044436
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75041 e7c8ea273319, redis4 n=75041 e7c8ea273319, redis5 n=75041 e7c8ea273319)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 146K before -> 183K after (+25%)   migration 11.0s
+S3: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S3_qyes_20261002_044943
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75043 6516ece03ecf, redis4 n=75043 6516ece03ecf, redis5 n=75043 6516ece03ecf)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 138K before -> 171K after (+24%)   migration 6.0s
+S4: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S4_qyes_20261002_045503
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  2 live replicas identical (redis3 n=75039 02dc382291ce, redis5 n=75039 02dc382291ce)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 145K before -> 179K after (+24%)   migration 9.0s
+S5: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S5_qyes_20261002_050014
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75045 c5555c98ff37, redis4 n=75045 c5555c98ff37, redis5 n=75045 c5555c98ff37)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 138K before -> 177K after (+28%)   migration 6.0s
+ALLDONE

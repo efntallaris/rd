@@ -1045,10 +1045,24 @@ void bgMergeInit(void) {
 
 /* Mark/unmark a slot as background-merging. Release order so a main-thread
  * accessor that observes active==1 also sees the lock as usable. */
+static _Atomic unsigned char g_bgm_slot_touched[CLUSTER_SLOTS];
+
 void bgMergeSlotSetActive(int slot, int active) {
     if (slot < 0 || slot >= CLUSTER_SLOTS) return;
+    if (active) atomic_store_explicit(&g_bgm_slot_touched[slot], 1, memory_order_release);
     atomic_store_explicit(&g_bgm_slot_active[slot],
                           (unsigned char)(active ? 1 : 0), memory_order_release);
+}
+
+/* True iff a background merge has ever written this slot's dict on this node.
+ * A dict position (link) or a "key absent" answer obtained by a main-thread
+ * lookup of such a slot may be out of date by the time it is used: the merge
+ * can insert keys, and resize the table, between the lookup and the insert,
+ * and it may have finished (slot no longer "importing") in between. db.c
+ * re-validates before inserting whenever this is set. */
+int clusterSlotMergeTouched(int slot) {
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return 0;
+    return atomic_load_explicit(&g_bgm_slot_touched[slot], memory_order_acquire);
 }
 
 /* True iff this slot is a background-merge target right now (redisraft path). */

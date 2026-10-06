@@ -1,0 +1,25 @@
+HEALTHY: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/HEALTHY_qyes_20261002_040846
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  5 live replicas identical (redis3 n=75045 730baa60c9c9, redis4 n=75045 730baa60c9c9, redis5 n=75045 730baa60c9c9, ycsb1 n=75045 730baa60c9c9,
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 144K before -> 180K after (+25%)   migration 6.0s
+S6: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S6_qyes_20261002_041511
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  4 live replicas identical (redis3 n=75041 8e31b9d38440, redis4 n=75041 8e31b9d38440, ycsb1 n=75041 8e31b9d38440, ycsb0 n=75041 8e31b9d38440)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 146K before -> 176K after (+21%)   migration 7.0s
+S7: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S7_qyes_20261002_042135
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis5:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  4 live replicas identical (redis4 n=75047 977938dfeaab, redis5 n=75047 977938dfeaab, ycsb1 n=75047 977938dfeaab, ycsb0 n=75047 977938dfeaab)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 140K before -> 161K after (+15%)   migration 24.0s
+S7: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S7_qyes_20261002_042752
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis4:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  4 live replicas identical (redis4 n=75049 1f4bd9a5386f, redis5 n=75049 1f4bd9a5386f, ycsb1 n=75049 1f4bd9a5386f, ycsb0 n=75049 1f4bd9a5386f)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 139K before -> 170K after (+23%)   migration 23.0s
+ALLDONE

@@ -1,0 +1,45 @@
+---
+# 3 -> 6 scale-out, before the workload starts: write the topology file the
+# driver (scaleout_pairs.py) and postcheck.py read, then set each donor's RDMA
+# port + write-flip spec and warm both sides of every donor -> recipient pair
+# (RDMA MIGRATE-WARM on the donor leaders, RDMA CHAIN-WARM on the recipient
+# leaders). Same reason as reshard_prewarm.yml: the registrations dent client
+# throughput, so they happen before the measured window.
+#
+# -e scaleout_warm_skip=sg1,...: donors NOT to warm. Default: none. (In the
+# single-recipient reshard the orchestrator's own group is never warmed because
+# warming it broke its WRITE_FLIP; here no donor is an orchestrator.)
+- name: "Scale-out pairs: topology file + pre-warm"
+  hosts: redis_masters[0]
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: "Write the topology file"
+      copy:
+        dest: "{{ scaleout_topology_file | default('/tmp/aq_scaleout_topology.json') }}"
+        content: "{{ {'slots_per_source': scaleout_slots_per_source | int, 'groups': redisraft_shardgroups} | to_nice_json }}"
+        mode: "0644"
+
+    - name: "Show the plan"
+      command: >
+        python3 {{ main_dir }}/ansible/scaleout_pairs.py plan
+        {{ scaleout_topology_file | default('/tmp/aq_scaleout_topology.json') }}
+        --rounds {{ n_rounds | default(1) }}
+      register: scaleout_plan
+      changed_when: false
+
+    - debug:
+        msg: "{{ scaleout_plan.stdout_lines }}"
+
+    - name: "RDMA ports + write-flip spec on the donors, MIGRATE-WARM, CHAIN-WARM"
+      command: >
+        python3 {{ main_dir }}/ansible/scaleout_pairs.py prepare
+        {{ scaleout_topology_file | default('/tmp/aq_scaleout_topology.json') }}
+        --cli {{ redis_bin_dir }}/redis-cli
+        --rounds {{ n_rounds | default(1) }}
+        --warm-skip "{{ scaleout_warm_skip | default('') }}"
+      register: scaleout_prepare
+      changed_when: false
+
+    - debug:
+        msg: "{{ scaleout_prepare.stdout_lines }}"

@@ -1,4 +1,4 @@
-port {{ master_port }}
+port {{ redis_port | default(master_port) }}
 cluster-enabled yes
 daemonize yes
 maxclients 100000
@@ -8,9 +8,9 @@ bind 0.0.0.0
 protected-mode no
 appendonly no
 dir {{ redis_data_dir }}
-dbfilename {{ inventory_hostname }}.rdb
-cluster-config-file nodes-{{ inventory_hostname }}-{{ master_port }}.conf
-logfile {{ redis_log_dir }}/{{ inventory_hostname }}__
+dbfilename {{ inventory_hostname }}{{ '_' ~ redis_port if redis_port is defined else '' }}.rdb
+cluster-config-file nodes-{{ inventory_hostname }}-{{ redis_port | default(master_port) }}.conf
+logfile {{ redis_log_dir }}/{{ inventory_hostname }}__{{ redis_port | default('') }}
 {% if redis_variant | default('custom') == 'custom' %}
 # Aqueduct fork: dbAdd populates r_allocator (slot-keyed memory pool with
 # pre-registered RDMA MRs) implicitly — the legacy cluster-rdma-allocator-shadow

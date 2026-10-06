@@ -1,0 +1,400 @@
+#!/usr/bin/env python3
+"""Migration phase Gantt with the recipient BACKPATCH broken into its sub-phases:
+MERGE (pool workers) / CHAIN-FWD (RDMA replicate to followers) / COMMIT (raft).
+X=time(s), Y=phase lanes, bars=donor sessions sg<donor>.<round>."""
+import re, sys
+from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+
+expdir = Path(sys.argv[1]); out = Path(sys.argv[2])
+DONORS = [("sg1", "redis0", "sg1"), ("sg2", "redis1", "sg2"), ("sg3", "redis2", "sg3")]
+TS = re.compile(r"(\d{2}):(\d{2}):(\d{2})\.(\d+)")
+def secs(line):
+    m = TS.search(line); h, mi, s, ms = map(int, m.groups())
+    return h*3600 + mi*60 + s + ms/1000.0
+
+# ---- donor phases (PREP / REGISTERING / FLIPPING / TRANSFER) ----------------
+def parse_donor(path):
+    sessions, cur = [], None
+    for ln in path.read_text(errors="ignore").splitlines():
+        if "state=PREP" in ln:
+            if cur: sessions.append(cur)
+            cur = {"PREP": [secs(ln), None]}
+        elif cur is None: continue
+        elif "state=REGISTERING" in ln:
+            cur["PREP"][1] = secs(ln); cur["REGISTERING"] = [secs(ln), None]
+        elif "state=FLIPPING" in ln:
+            t = secs(ln); prev = "REGISTERING" if "REGISTERING" in cur else "PREP"
+            cur[prev][1] = t; cur["FLIPPING"] = [t, None]
+        elif "state=TRANSFER" in ln:
+            t = secs(ln); cur["FLIPPING"][1] = t; cur["TRANSFER"] = [t, None]
+        elif "state=BACKPATCH" in ln:
+            cur["TRANSFER"][1] = secs(ln)
+        elif "DONE n_slots" in ln:
+            cur["_done"] = secs(ln); sessions.append(cur); cur = None
+    if cur: sessions.append(cur)
+    return sessions
+
+rows = []
+for sg, host, suf in DONORS:
+    p = expdir / "logs" / host / "tmp" / "redis_logs" / f"{host}_{suf}.log"
+    if not p.exists(): continue
+    for ri, s in enumerate(parse_donor(p), 1):
+        rows.append([sg, ri, s])
+rows.sort(key=lambda r: r[2]["PREP"][0])      # time order == recipient session order
+
+# ---- recipient sub-phases (time-ordered, zipped to donor sessions) ---------
+rlog = (expdir / "logs" / "redis3" / "tmp" / "redis_logs" / "redis3_sg4.log").read_text(errors="ignore").splitlines()
+def times(pred):
+    return [secs(l) for l in rlog if pred(l)]
+bp_init = times(lambda l: "DONE-SLOTS-INIT: batch" in l and "total_slots" in l)
+# First migrated data actually LANDS when the donor's first RDMA chunk completes
+# (DONE-SLOTS-CHUNK seq=0) — NOT at DONE-SLOTS-INIT, which only arms the pipeline
+# before any bytes exist. BACKPATCH cannot begin merging before this point.
+first_chunk = times(lambda l: "DONE-SLOTS-CHUNK" in l and " seq=0 " in l)
+mg_done = times(lambda l: "backpatch-merge: batch DONE" in l)
+# The leader's merge really ends at the background merge's "merge_done" line; "batch
+# DONE" only means every chunk has been staged. Use merge_done when the log has it.
+mg_real = times(lambda l: "bg-merge: session" in l and "merge_done" in l)
+# First follower ack per chain session = the batch is on a majority (leader + 1 of 2).
+_first_ack = {}
+for l in rlog:
+    m = (re.search(r"CHAIN-ACK: sess=(\d+) .*\(count=(\d+)\)", l) or
+         re.search(r"CHAIN: sess=(\d+) follower at position \d+ holds the batch .*, (\d+) distinct", l))
+    if m and m.group(1) not in _first_ack:
+        _first_ack[m.group(1)] = secs(l)
+maj_ack = sorted(_first_ack.values())
+ch_wrote = times(lambda l: "CHAIN: sess=" in l and " wrote " in l and " bytes" in l)
+# The recipient's commit point: INDX_UPD is its closing entry now (RECP_TXN_DONE
+# is no longer logged); older logs still carry RECP_TXN_DONE.
+commit  = times(lambda l: "RECP_TXN_DONE logged" in l)
+if not commit:
+    commit = times(lambda l: "INDX_UPD logged" in l)
+# The REAL chain-replication start: when the forwarder posts its first RDMA WRITE
+# to F1 (after F1's pool is ready + a snapshot is captured). This is the accurate
+# anchor — NOT "chain established", which logs only when the establish THREAD
+# finishes (after the slow downstream follower's CHAIN-PREP) and is unrelated to
+# when the leader->F1 forward actually begins. The first-post times already
+# reflect the single-wire serialization (a session waits for g_chain_forward_mu).
+ch_firstpost = times(lambda l: "forward FIRST-POST" in l)
+# Per-round chain wire-up time (fallback only, for logs without FIRST-POST).
+estab = times(lambda l: "chain established: sess=" in l and "sess=9000" not in l)
+# sessions that took the cold ibv_reg_mr fallback (time-ordered)
+cold = times(lambda l: "src pool not pre-registered" in l)
+# CHAIN TAIL = "all nodes have the data". The leader logs one CHAIN-ACK per
+# follower per group; with n_followers replicas in the chain, every
+# n_followers-th ack (count % nf == 0) is the TAIL (F2) confirming the group has
+# reached the LAST replica — the earlier (odd) acks are just F1. DONE COMMIT
+# (raft) fires on the F1 ack, so the tail ack lands ~one hop later. These tail
+# acks, in file order, line up 1:1 with the time-ordered rows.
+_nf = 2
+for _l in rlog:
+    _m = re.search(r"n_followers=(\d+)", _l)
+    if _m: _nf = int(_m.group(1))
+# Newer logs: "CHAIN: sess=N follower at position P holds the batch (..., K distinct
+# followers so far)" — the K-th distinct follower; K == n_followers is the tail.
+_ackc = re.compile(r"(?:CHAIN-ACK: sess=\d+ .*\(count=(\d+)\)|"
+                   r"CHAIN: sess=\d+ follower at position \d+ holds the batch .*, (\d+) distinct)")
+def _acknum(l):
+    m = _ackc.search(l); return int(m.group(1) or m.group(2)) if m else None
+tail_ack = [secs(l) for l in rlog
+            if (_c := _acknum(l)) is not None and _nf and _c % _nf == 0]
+# Pipelined run? Then the forward overlaps transfer/merge (per-slot) instead of
+# running as a serial tail after merge_done.
+PIPELINED = any("pipelined per-slot)" in l for l in rlog)
+
+# ---- totals: how much data we actually move -------------------------------
+# Each session's leader->F1 chain write logs "wrote <N> bytes (... <M> x 2 MiB
+# WRs)". Sum N for total bytes; M is the 2-MiB block count (fall back to
+# ceil(N / 2 MiB) for the pipelined line, which omits the WR count). One such
+# line per session, so this is the whole migration's transferred volume.
+import math
+_BLK = 2 * 1024 * 1024
+_by_re = re.compile(r"wrote (\d+) bytes")
+_wr_re = re.compile(r"(\d+) . 2 MiB WRs")
+total_bytes = total_blocks = 0
+for l in rlog:
+    if "CHAIN: sess=" not in l or " wrote " not in l or " bytes" not in l:
+        continue
+    mb = _by_re.search(l)
+    if not mb: continue
+    nb = int(mb.group(1)); total_bytes += nb
+    mw = _wr_re.search(l)
+    total_blocks += int(mw.group(1)) if mw else math.ceil(nb / _BLK)
+total_gib = total_bytes / (1024.0 ** 3)
+
+prev_chain_end = 0.0   # leader->F1 wire is one QP, serialized across sessions
+for i, r in enumerate(rows):
+    if i < len(bp_init):
+        ri = r[1]
+        # BACKPATCH: first chunk landed -> merge done (the real data-movement span).
+        m_start = first_chunk[i] if i < len(first_chunk) else bp_init[i]
+        merge_end = mg_real[i] if i < len(mg_real) else (mg_done[i] if i < len(mg_done) else None)
+        if merge_end is not None:
+            r[2]["MERGE"] = [m_start, merge_end]
+        # CHAIN start = the REAL forward first-post (accurate; already reflects the
+        # single-wire serialization). Fall back to the old estab/merge anchors only
+        # for logs that predate the FIRST-POST marker.
+        if i < len(ch_firstpost):
+            c_start = ch_firstpost[i]
+        elif PIPELINED:
+            wire = estab[ri-1] if 0 <= ri-1 < len(estab) else m_start
+            c_start = max(max(wire, m_start), prev_chain_end)
+        else:
+            c_start = max(mg_done[i], prev_chain_end) if i < len(mg_done) else prev_chain_end
+        # Some sessions may not have a matching chain-"wrote" line (e.g. xsession
+        # coalescing or a missing log line). Render the CHAIN/COMMIT/TAIL bars only
+        # when the data exists, so the timeline still draws instead of crashing.
+        if i < len(ch_wrote):
+            r[2]["CHAIN"]    = [c_start, ch_wrote[i]]
+            prev_chain_end   = max(prev_chain_end, ch_wrote[i])
+            if i < len(maj_ack):
+                r[2]["ACK"] = [c_start, maj_ack[i]]
+            if i < len(commit):
+                # DONE COMMIT = the commit itself: from the moment it is allowed (majority
+                # ack AND leader merge done) to RECP_TXN_DONE. Usually a few ms.
+                ready = max(maj_ack[i] if i < len(maj_ack) else ch_wrote[i],
+                            merge_end if merge_end is not None else ch_wrote[i])
+                r[2]["COMMIT"] = [min(ready, commit[i]), commit[i]]
+            if i < len(tail_ack):
+                r[2]["CHAINTAIL"] = [ch_wrote[i], tail_ack[i]]
+        if i < len(mg_done) and i < len(commit):
+            r[2]["_cold"] = any(abs(c - bp_init[i]) < (mg_done[i]-bp_init[i]+1.5) and bp_init[i] <= c <= commit[i] for c in cold)
+
+t0 = min(s["PREP"][0] for _,_,s in rows)
+flip0 = min((s["FLIPPING"][0] for sg,_,s in rows if sg=="sg1"), default=t0)
+# X-axis extent + migration-window end must span EVERY phase bar, not just
+# COMMIT/CHAINTAIL. When the chain forward under-runs (fewer chain-"wrote"/ack
+# lines than sessions, e.g. raft backstops some followers), COMMIT exists for
+# only a few sessions; sizing off it alone collapses the figure and clips the
+# later TRANSFER/MERGE bars. Scan all [start,end] phase entries instead.
+_all_ends = [v[1] for _,_,s in rows for k, v in s.items()
+             if isinstance(v, list) and len(v) == 2 and v[1] is not None]
+done_last = max(_all_ends) if _all_ends else t0
+# Migration window end = last raft COMMIT (RECP_TXN_DONE). `commit` holds ALL of
+# them (one per session), unlike the per-row COMMIT phase which is tied to the
+# sparse chain-"wrote" lines. With async-apply the MERGE/index-update drain
+# continues AFTER commit, so the x-axis (done_last) extends past mig_end — that's
+# expected, and keeps those late bars visible instead of clipped.
+# Migration window end = the last donor's TXN_DONE (the donor closes its session
+# once the recipient reports done); falls back to the last RECP_TXN_DONE.
+_txn_done = []
+for _sg, _host, _suf in DONORS:
+    _p = expdir / "logs" / _host / "tmp" / "redis_logs" / f"{_host}_{_suf}.log"
+    if _p.exists():
+        _txn_done += [secs(l) for l in _p.read_text(errors="ignore").splitlines()
+                      if "RAFT.MGN-LOG TXN_DONE logged" in l]
+mig_end = max(_txn_done) if _txn_done else (max(commit) if commit else
+          max([s[k][1] for _,_,s in rows for k in ("MERGE","TRANSFER") if k in s]))
+
+PHASES = ["PREP","REGISTERING","FLIPPING","TRANSFER","MERGE","CHAIN","ACK","CHAINTAIL","COMMIT"]
+LANE_Y = {ph: i for i, ph in enumerate(reversed(PHASES))}
+LABEL = {"PREP":"CONNECT","REGISTERING":"REGISTER",
+         "FLIPPING":"CH_OWNSHIP","TRANSFER":"TRANSFER",
+         "MERGE":"LEADER MERGE","CHAIN":"CHAIN-REPLICATION",
+         "ACK":"MAJORITY ACK\n(first follower)",
+         "CHAINTAIL":"ALL REPLICAS\n(tail hop F1$\\rightarrow$F2)","COMMIT":"DONE COMMIT"}
+
+import matplotlib.patheffects as pe
+from matplotlib.patches import FancyBboxPatch
+plt.rcParams.update({"font.family": "serif",
+                     "font.serif": ["cmr10", "CMU Serif", "Computer Modern Roman", "DejaVu Serif"],
+                     "mathtext.fontset": "cm", "axes.formatter.use_mathtext": True,
+                     "axes.unicode_minus": False, "axes.edgecolor": "#444",
+                     "svg.fonttype": "none"})
+# Grayscale palette: one shade PER DONOR so each donor's flow (donor lanes ->
+# recipient lanes) carries the same color and is traceable end to end. The round
+# (1/2) is shown in the in-bar "sg.round" label, not in the color.
+SG_GRAY = {"sg1": "#333333", "sg2": "#777777", "sg3": "#bbbbbb"}
+SG_TXT  = {"sg1": "white",   "sg2": "white",   "sg3": "#1a1a1a"}
+COLD_EC = "#000000"
+N = len(PHASES); span = (done_last - t0)
+# Wide-and-short, thin bars, tight rows (reference proportions).
+FIG_W, FIG_H = 14.0, 4.4
+fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
+fig.patch.set_facecolor("white"); ax.set_facecolor("white")
+BAR_H = 0.62
+xmax = span + 0.45; xmin = -0.25
+
+# donor / recipient divider + side labels (clean, on white)
+div = (LANE_Y["TRANSFER"] + LANE_Y["MERGE"]) / 2.0
+ax.axhline(div, color="#dcdcdc", lw=1.0, zorder=1)
+ax.text(xmin+0.16, (LANE_Y["TRANSFER"]+LANE_Y["PREP"])/2, "DONOR", rotation=90,
+        ha="center", va="center", fontsize=8.5, color="#8a8a8a")
+ax.text(xmin+0.16, (LANE_Y["COMMIT"]+LANE_Y["MERGE"])/2, "RECIPIENT", rotation=90,
+        ha="center", va="center", fontsize=8.5, color="#8a8a8a")
+
+# --- migration window edges + span arrow with the migration time
+for x in (flip0-t0, mig_end-t0):
+    ax.axvline(x, color="#bbb", ls=(0,(4,3)), lw=1.0, zorder=2)
+_yarr = N - 0.34
+ax.annotate("", xy=(mig_end-t0, _yarr), xytext=(flip0-t0, _yarr),
+            arrowprops=dict(arrowstyle="<->", color="#444", lw=1.2), zorder=6)
+ax.text((flip0-t0+mig_end-t0)/2, _yarr+0.05,
+        f"migration time = {mig_end-flip0:.2f} s", ha="center", va="bottom",
+        fontsize=10, color="#222", zorder=6)
+
+# --- per-chunk start times, PER PHASE: transfer (DONE-SLOTS-CHUNK landing),
+# backpatch (PERCHUNK BACKPATCH), chain (PERCHUNK CHAIN). Keyed (sg, round, seq).
+PORT_SG = {"08000": "sg1", "08001": "sg2", "08002": "sg3"}
+_tr_re = re.compile(r"DONE-SLOTS-CHUNK: from AQRAFT_(\d+)_\S* mig_id=(\d+) seq=(\d+)")
+_bp_re = re.compile(r"PERCHUNK BACKPATCH sess=(\d+) seq=(\d+)")
+_ch_re = re.compile(r"PERCHUNK CHAIN sess=(\d+) slot0=(-?\d+) seq=(\d+)")
+def _slot_sg(s0): return "sg1" if s0 < 5461 else ("sg2" if s0 < 10922 else "sg3")
+tr_ck = {}   # (sg, round, seq) -> transfer landing time
+ch_ck = {}   # (sg, round, seq) -> chain start time
+bp_raw = []  # (round, seq, time) — donor inferred by nearest transfer landing
+for l in rlog:
+    m = _tr_re.search(l)
+    if m:
+        sg = PORT_SG.get(m.group(1))
+        if sg: tr_ck[(sg, int(m.group(2)), int(m.group(3)))] = secs(l)
+        continue
+    m = _ch_re.search(l)
+    if m:
+        ch_ck[(_slot_sg(int(m.group(2))), int(m.group(1)), int(m.group(3)))] = secs(l)
+        continue
+    m = _bp_re.search(l)
+    if m: bp_raw.append((int(m.group(1)), int(m.group(2)), secs(l)))
+# backpatch log lacks the donor → match each to the sg with the nearest transfer landing
+bp_ck = {}
+for (rd, seq, t) in bp_raw:
+    best, bd = None, 1e9
+    for sg in ("sg1", "sg2", "sg3"):
+        tt = tr_ck.get((sg, rd, seq))
+        if tt is not None and abs(t - tt) < bd: bd, best = abs(t - tt), sg
+    if best: bp_ck[(best, rd, seq)] = t
+PHASE_CK = {"TRANSFER": tr_ck, "MERGE": bp_ck, "CHAIN": ch_ck}
+
+# --- bars (sharp) + labels
+# A lane whose consecutive sessions overlap in time (e.g. a session's tail ack lands
+# after the next session's forward starts) draws its bars in two half-height
+# sub-lanes, alternating, so a later bar never hides an earlier one.
+_overlap = {}
+for ph in PHASES:
+    spans = [s[ph] for _, _, s in rows if ph in s and s[ph][1] is not None]
+    _overlap[ph] = any(spans[k][0] < spans[k-1][1] - 1e-6 for k in range(1, len(spans)))
+for idx, (sg, ri, s) in enumerate(rows):
+    for ph in PHASES:
+        if ph not in s or s[ph][1] is None: continue
+        a, b = s[ph]; y = LANE_Y[ph]; w = b-a
+        # Every bar has the same height; lanes with overlapping sessions offset
+        # alternate sessions into two sub-lanes instead of stacking them.
+        bar_h = BAR_H * 0.48
+        if _overlap.get(ph):
+            y = y + (BAR_H * 0.26 if idx % 2 == 0 else -BAR_H * 0.26)
+        is_cold = (ph == "CHAIN" and s.get("_cold"))
+        ec = COLD_EC if is_cold else "white"
+        # min rendered width so sub-pixel phases (FLIPPING ~12ms, DONE COMMIT
+        # ~4ms) stay visible; the in/over-bar label always shows the TRUE ms.
+        draw_w = w if w >= 0.05 else 0.05
+        ax.barh(y, draw_w, left=a-t0, height=bar_h, color=SG_GRAY[sg],
+                edgecolor=ec, linewidth=2.4 if is_cold else 0.8, zorder=4)
+        # CONNECT (PREP) / REGISTER (REGISTERING) bars are left unlabelled.
+        if ph in ("PREP", "REGISTERING"):
+            continue
+        dlabel = f"{w:.2f}s" if w >= 1 else f"{w*1000:.0f}ms"
+        txtcol = SG_TXT[sg]
+        if w > 0.30:
+            ax.text((a-t0)+w/2, y, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="center",
+                    fontsize=6, color=txtcol, zorder=6, fontweight="bold")
+        elif w > 0.05:
+            ax.text((a-t0)+w/2, y+bar_h/2+0.04, f"{sg[-1]}.{ri} {dlabel}", ha="center", va="bottom",
+                    fontsize=6, color="#777", zorder=6, rotation=90)
+
+# --- per-chunk start ticks, drawn in EACH phase's OWN lane at that phase's
+# per-chunk start time (transfer landing / backpatch start / chain start). They
+# line up vertically across the three lanes because the per-chunk data shows the
+# three coincide within ~1 ms — each chunk is backpatched + forwarded the instant
+# it lands.
+_nck = 0
+for sg, ri, s in rows:
+    # grey ticks only on the INDEX-UPDATE / CHAIN lanes (per-chunk processing START).
+    # The TRANSFER lane uses the green transfer-START markers instead.
+    for ph in ("MERGE", "CHAIN"):
+        if ph not in s or s[ph][1] is None: continue
+        y = LANE_Y[ph]; ckmap = PHASE_CK[ph]
+        seqs = []
+        seq = 0
+        while (sg, ri, seq) in ckmap:
+            seqs.append(seq); seq += 1
+        # taller, higher-contrast ticks on INDEX UPDATE so the per-chunk starts
+        # read clearly even over the navy round-1 bars (overhang onto white bg).
+        over = 0.06 if ph == "MERGE" else 0.0
+        lw   = 1.0  if ph == "MERGE" else 0.7
+        col  = "#3a3a3a" if ph == "MERGE" else "#6a6a6a"
+        for seq in seqs:
+            t = ckmap[(sg, ri, seq)]
+            ax.plot([t-t0, t-t0], [y-BAR_H/2-over, y+BAR_H/2+over], ls=(0, (1, 1.2)),
+                    color=col, lw=lw, alpha=0.95, zorder=6)
+            _nck += 1
+
+# --- transfer START per chunk (dark marker): the donor streams continuously, so chunk
+# N starts the instant chunk N-1 lands; chunk 0 starts at the session transfer
+# begin (TRANSFER bar's left edge). The gap from a green tick to the next grey
+# tick on the TRANSFER lane is that chunk's ~127 ms wire time.
+y = LANE_Y["TRANSFER"]; _nst = 0; _GRN = "#111111"
+for sg, ri, s in rows:
+    if "TRANSFER" not in s or s["TRANSFER"][1] is None: continue
+    seq = 0
+    while (sg, ri, seq) in tr_ck:
+        start = s["TRANSFER"][0] if seq == 0 else tr_ck[(sg, ri, seq-1)]
+        x = start - t0
+        # solid dark line, taller than the bar, with a down-triangle cap on top —
+        # makes each chunk's transfer START pop out from the grey landing ticks.
+        ax.plot([x, x], [y-BAR_H/2, y+BAR_H/2+0.10], ls="-",
+                color=_GRN, lw=1.4, alpha=0.95, zorder=8, solid_capstyle="butt")
+        ax.plot([x], [y+BAR_H/2+0.10], marker="v", color=_GRN, markersize=4.5,
+                zorder=9, clip_on=False)
+        _nst += 1; seq += 1
+_leg_handles = None
+if _nck:
+    from matplotlib.lines import Line2D
+    _leg_handles = [
+        Line2D([0], [0], color=_GRN, lw=1.5, marker="v", markersize=7,
+               label="transfer START"),
+        Line2D([0], [0], color="#6a6a6a", lw=1.1, ls=(0, (1, 1.2)),
+               label="group transferred  (index-update start, chain replication for this group start)"),
+    ]
+
+# panel label, top-left (echoes the reference's "0.1 MOp/s" style)
+_wl = "workloadb" if "workloadb" in str(expdir) else "workloada"
+ax.text(0.0, 1.02, _wl, transform=ax.transAxes, ha="left", va="bottom",
+        fontsize=11, fontweight="bold", color="#222")
+ax.text(1.0, 1.02,
+        f"transferred: {total_blocks:,} blocks ({total_gib:.2f} GiB)",
+        transform=ax.transAxes, ha="right", va="bottom",
+        fontsize=10, color="#222")
+
+ax.set_yticks(list(LANE_Y.values()))
+ax.set_yticklabels([LABEL[ph] for ph in reversed(PHASES)], fontsize=9.5)
+ax.tick_params(axis="y", length=0)
+ax.tick_params(axis="x", length=3, color="#bbb")
+ax.set_xlabel("Time (seconds)", fontsize=10, labelpad=2)
+ax.tick_params(axis="x", pad=2)
+ax.set_xlim(xmin, xmax); ax.set_ylim(-0.30, N-0.30)
+ax.set_xticks(range(0, int(span)+1))
+ax.grid(axis="x", ls=":", color="#d2d2d2", lw=0.8, zorder=0)
+ax.set_axisbelow(True)
+for sp in ("top","right","left"): ax.spines[sp].set_visible(False)
+ax.spines["bottom"].set_color("#bbb")
+
+# Full-width legend across the bottom, below the x-axis label.
+if _leg_handles is not None:
+    fig.legend(handles=_leg_handles, loc="lower center", ncol=2,
+               bbox_to_anchor=(0.5, 0.005), frameon=False, fontsize=8.5,
+               handlelength=2.6, columnspacing=3.0, handletextpad=0.6)
+
+# Fixed margins (no tight-bbox crop) so the saved image keeps the golden-ratio canvas.
+fig.subplots_adjust(left=0.135, right=0.99, top=0.90, bottom=0.20)
+fig.savefig(out, dpi=140, facecolor="white")
+# raster outputs report pixel dims; vector formats (pdf/svg) just confirm the write.
+if str(out).lower().endswith((".png", ".jpg", ".jpeg")):
+    import PIL.Image as _I; _w,_h = _I.open(out).size
+    print(f"wrote {out}  ({_w}x{_h}, ratio={_w/_h:.3f})")
+else:
+    print(f"wrote {out}")
+print(f"totals: {total_blocks:,} blocks, {total_gib:.2f} GiB ({total_bytes:,} bytes)")

@@ -4412,6 +4412,11 @@ int processCommand(client *c) {
 
     /* only run command filter if not reprocessing command */
     if (!client_reprocessing_command) {
+        /* AqRaft: before RedisRaft turns this into a log entry. */
+        if (rdmaRejectUnmergedRmw(c)) {
+            rejectCommandFormat(c, "-TRYAGAIN key's migrated value not merged on this node yet");
+            return C_OK;
+        }
         moduleCallCommandFilters(c);
         reqresAppendRequest(c);
     }

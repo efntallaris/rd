@@ -434,6 +434,16 @@ static void handleShardGroupResponse(redisAsyncContext *c, void *r, void *privda
     Connection *conn = (Connection *) privdata;
     ShardGroup *sg = ConnGetPrivateData(conn);
 
+    /* The shardgroup this connection belonged to is gone: ShardGroupTerm flags
+     * the connection for termination and the ShardGroup is freed right after
+     * (a NARROW replacing the recipient's entry does this once per round), but
+     * a reply to a GET already in flight still arrives here. sg dangles
+     * (SIGSEGV in compareShardGroups, 2026-10-03); the connection is reaped
+     * on the next idle pass. */
+    if (conn->flags & CONN_TERMINATING) {
+        return;
+    }
+
     if (!reply) {
         LOG_WARNING("RAFT.SHARDGROUP GET failed: connection dropped.");
     } else if (reply->type == REDIS_REPLY_ERROR) {

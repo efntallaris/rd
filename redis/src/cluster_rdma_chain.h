@@ -57,6 +57,9 @@ void rdmaInvMarkReceived(long long sess, int slot);
 void rdmaInvMarkMerged(long long sess, int slot);
 void rdmaInvMarkMergedBySlot(int slot);   /* follower path: no sess in the work item */
 void rdmaInvMarkExecuted(long long sess);
+int  rdmaInvSlotFullyMerged(int slot);
+void rdmaSlotRegGenBump(const int *slots, int n);
+unsigned int rdmaSlotRegGen(int slot);   /* recipient: a donor registered these slots */   /* every session that delivered the slot here has merged it */
 int  rdmaInvSlotsInRange(long long sess, int kind /*0=received,1=merged*/,
                          int lo, int hi, long long *out, int cap);
 int  rdmaInvSummary(long long sess, long long *n_received, long long *n_merged,
@@ -92,6 +95,11 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
                                   void *landing_buf,
                                   char *errbuf, size_t errbuf_len);
 
+/* 1 if the peer behind ctx answers a PING within rdma-peer-probe-ms (see
+ * cluster_rdma_chain.c); leaves ctx with reply timeout `restore`. */
+struct redisContext;
+int rdmaPeerAnswers(struct redisContext *ctx, struct timeval restore);
+
 /* rdmaLeaderChainForwardPipelined: like ForwardPerSlot but RDMA-forwards each
  * 2 MiB block as soon as snapshot_ready[idx] is set by the backpatch worker,
  * overlapping the recipient->F1 write with the ongoing transfer + merge
@@ -102,6 +110,7 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                                     void *landing_buf,
                                     const _Atomic unsigned char *snapshot_ready,
                                     const int *chunk_slots, _Atomic uint64_t *ch_chunk_logged,
+                                    void (*blk_done)(void *ctx, int idx), void *blk_ctx,
                                     char *errbuf, size_t errbuf_len);
 
 /* AqRaft zero-copy chain forward (implemented in cluster_rdma.c): register every
@@ -114,6 +123,24 @@ void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm);
 /* rdmaLeaderChainAckCount: number of CHAIN-ACK messages received from the
  * tail for this session. Returns -1 if no chain state for sess. */
 long long rdmaLeaderChainAckCount(long long src_mig_id);
+
+/* Durability gate inputs: a follower's report that it holds the session's batch
+ * (from the redisraft module, per AppendEntries reply), and the number of
+ * distinct followers that reported (-1 if no chain state). */
+int rdmaLeaderChainAckFrom(long long src_mig_id, long long length, int position);
+int rdmaLeaderChainAckedFollowers(long long src_mig_id);
+
+/* Leader-driven chain repair: re-issue the chain recipe with a new attempt
+ * number, holders first. *need_data = 1 means no reachable follower holds the
+ * batch and the caller must re-run rdmaLeaderChainForwardPerSlot (the chain's
+ * head is now a follower that lacks it and that the leader has claimed).
+ * Blocking TCP: never call on the main thread. See cluster_rdma_chain.c. */
+int rdmaLeaderChainRepair(long long src_mig_id, const int *slots, int n_slots,
+                          int *need_data, char *errbuf, size_t errbuf_len);
+
+/* After commit: have a holder serve the committed batch to the live followers
+ * that still lack it. Best effort, blocking: run it on its own thread. */
+int rdmaLeaderChainCatchUp(long long src_mig_id, int slot_lo, int slot_hi);
 
 /* AqRaft Patch 15: pre-register the leader's chain source pool so the first
  * rdmaLeaderChainForwardPerSlot call doesn't block the main thread on a 2.86
@@ -138,6 +165,9 @@ int rdmaApplySlotBlock(redisDb *db, int slot, const char *buf, size_t buf_size);
  * same as the leader. Precondition: the slot's landing-pool slice must
  * already be registered via r_allocator_register_existing_block.
  * Implemented in cluster_rdma.c. Returns staged key count. */
-int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot);
+int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot, const char *pool_lo, size_t pool_bytes);
+/* Same merge, drained on the calling (background) thread under the per-slot locks
+ * (rdma-merge-background). The slot must be marked active on the main thread first. */
+int rdmaFollowerMergeSlotBackground(redisDb *db, int slot, const char *pool_lo, size_t pool_bytes);
 
 #endif /* __CLUSTER_RDMA_CHAIN_H */

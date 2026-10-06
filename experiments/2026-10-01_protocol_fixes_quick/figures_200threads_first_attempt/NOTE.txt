@@ -1,0 +1,4 @@
+200 YCSB threads, quick data set (300k keys), 90 s workload, 20 s pre-migration pause.
+NOT valid for throughput-during-migration: the YCSB client took ~60 s to start issuing
+operations, so the migration (at ~25 s) ran with no YCSB load, and ycsb1 did 0 operations.
+Gantt charts and migration windows are valid. Runs: lin_healthy, crash_s4.

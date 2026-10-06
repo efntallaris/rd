@@ -26,6 +26,14 @@ SGS = [
 ]
 RECIPIENT = "sg4"
 
+# Test topologies with more recipient replicas: /tmp/aq_sg4_ips holds the
+# recipient group's member IPs, space separated (see inventory_5replica.ini).
+import os
+if os.path.exists("/tmp/aq_sg4_ips"):
+    _ips = open("/tmp/aq_sg4_ips").read().split()
+    if _ips:
+        SGS[-1] = ("sg4", 8000, _ips)
+
 def cli(ip, port, *args):
     return subprocess.run([CLI, "-h", ip, "-p", str(port)] + [str(a) for a in args],
                           capture_output=True, text=True, timeout=30).stdout

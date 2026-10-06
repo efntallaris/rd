@@ -1,0 +1,7 @@
+---
+# custom_procs_scaling: setup (build the aqueduct fork in place + YCSB), same
+# as custom_baseline.
+- import_playbook: ../../tasks/teardown/kill_all.yml
+- import_playbook: ../../tasks/teardown/clean_cluster.yml
+- import_playbook: ../../tasks/build/build_redis_custom.yml
+- import_playbook: ../../tasks/build/build_ycsb.yml

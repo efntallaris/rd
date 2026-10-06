@@ -103,6 +103,7 @@ static const CommandSpec commands[] = {
     {"raft.import",                 CMD_SPEC_DONT_INTERCEPT                      },
     {"raft.mgn-log",                CMD_SPEC_DONT_INTERCEPT                      },
     {"raft.mgn-received",           CMD_SPEC_DONT_INTERCEPT                      },
+    {"raft.mgn-session-open",       CMD_SPEC_DONT_INTERCEPT                      },
     {"rdma",                        CMD_SPEC_DONT_INTERCEPT                      },
     {"rdma|chain-init-qp",          CMD_SPEC_DONT_INTERCEPT                      },
     {"rdma|chain-prep",             CMD_SPEC_DONT_INTERCEPT                      },

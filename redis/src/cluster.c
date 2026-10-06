@@ -22,6 +22,7 @@
 #include "cluster.h"
 #include "cluster_asm.h"
 #include "cluster_slot_stats.h"
+#include "cluster_rdma_chain.h"   /* rdmaInvSlotFullyMerged (GET slot-meta) */
 
 #include <ctype.h>
 
@@ -1753,7 +1754,13 @@ void clusterCommandSlots(client * c) {
 void addReplyGetWithMeta(client *c, int slot, robj *value) {
     char peer[NET_HOST_PORT_STR_LEN];
     slotMigState s = slotMigStateGet(slot, peer, sizeof(peer));
-    addReplyArrayLen(c, 3);
+    /* 4th element (AqRaft): bit0 = this node has merged every migrated block of
+     * the slot, bit1 = the key is tombstoned here. Either way a nil from this
+     * node is final — the client must not fall back to the donor's frozen copy. */
+    long long flags = 0;
+    if (rdmaInvSlotFullyMerged(slot)) flags |= 1;
+    if (value == NULL && rdmaTombstoneHas(c->argv[1]->ptr)) flags |= 2;
+    addReplyArrayLen(c, 4);
     addReplyLongLong(c, (long long) s);
     if (peer[0] == '\0') {
         addReplyBulkCBuffer(c, "", 0);
@@ -1765,6 +1772,7 @@ void addReplyGetWithMeta(client *c, int slot, robj *value) {
     } else {
         addReplyBulk(c, value);
     }
+    addReplyLongLong(c, flags);
 }
 
 /* CLUSTER SLOTSTATE — bootstrap-time dump of every non-STABLE slot. Returned

@@ -1,0 +1,45 @@
+redisraft_shardgroups:
+- id: sg1
+  port: 8000
+  slot_config: 0:5460
+  nodes:
+  - host: redis0
+    raft_id: 1
+  - host: redis1
+    raft_id: 2
+  - host: redis2
+    raft_id: 3
+- id: sg2
+  port: 8001
+  slot_config: 5461:10921
+  nodes:
+  - host: redis1
+    raft_id: 1
+  - host: redis2
+    raft_id: 2
+  - host: redis0
+    raft_id: 3
+- id: sg3
+  port: 8002
+  slot_config: 10922:16383
+  nodes:
+  - host: redis2
+    raft_id: 1
+  - host: redis0
+    raft_id: 2
+  - host: redis1
+    raft_id: 3
+- id: sg4
+  port: 8000
+  slot_config: 0:16383
+  nodes:
+  - host: redis3
+    raft_id: 1
+  - host: redis4
+    raft_id: 2
+  - host: redis5
+    raft_id: 3
+  - host: ycsb1
+    raft_id: 4
+  - host: ycsb0
+    raft_id: 5

@@ -1,0 +1,37 @@
+# 3to4 big: result, migration window, client throughput (downtime.py)
+2026-10-06T12:32:21Z HEALTHY rc=0 PASS | linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0 | migration=PASS crashes=PASS replicas=PASS donors=PASS bulk=PASS  /tmp/lincheck/b
+2026-10-06T12:47:18Z S1 rc=0 PASS | linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0 | migration=PASS crashes=PASS replicas=PASS donors=PASS bulk=PASS  /tmp/lincheck/big2/3
+2026-10-06T13:04:07Z S2 rc=0 PASS | linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0 | migration=PASS crashes=PASS replicas=PASS donors=PASS bulk=PASS  /tmp/lincheck/big2/3
+2026-10-06T13:20:52Z S3 rc=0 PASS | linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0 | migration=PASS crashes=PASS replicas=PASS donors=PASS bulk=PASS  /tmp/lincheck/big2/3
+2026-10-06T13:35:51Z S4 rc=0 PASS | linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0 | migration=PASS crashes=PASS replicas=PASS donors=PASS bulk=PASS  /tmp/lincheck/big2/3
+2026-10-06T13:50:24Z S5 rc=0 PASS | linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0 | migration=PASS crashes=PASS replicas=PASS donors=PASS bulk=PASS  /tmp/lincheck/big2/3
+== HEALTHY window 3.52s 
+kills      : none (times are from the migration start)
+elections  : none
+ycsb       : 153k before; minimum 152k at +0 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:152k -1:145k +0:152k +1:155k +2:170k +3:172k +4:168k +5:168k +6:166k +7:166k +8:169k +9:167k +10:168k +11:168k +12:169k +13:170k +14:172k +15:171k
+== S1 window 6.63s 
+kills      : redis3 at +0.00
+elections  : sg4 -> redis4 at +0.46 s
+ycsb       : 151k before; minimum 0k at +2 s; 2 s below 10%, 2 s below 50%; back at 90% at +4 s
+ycsb/s     : -2:151k -1:151k +0:93k +1:1k +2:0k +3:76k +4:154k +5:171k +6:174k +7:175k +8:175k +9:173k +10:175k +11:175k +12:176k +13:176k +14:176k +15:177k
+== S2 window 6.53s 
+kills      : redis0 at +0.00
+elections  : sg1 -> redis1 at +0.35 s
+ycsb       : 151k before; minimum 17k at +0 s; 0 s below 10%, 2 s below 50%; back at 90% at +3 s
+ycsb/s     : -2:149k -1:144k +0:17k +1:27k +2:122k +3:152k +4:146k +5:166k +6:162k +7:161k +8:161k +9:163k +10:165k +11:164k +12:165k +13:165k +14:165k +15:166k
+== S3 window 3.64s 
+kills      : redis1 at +0.00
+elections  : none
+ycsb       : 147k before; minimum 135k at +0 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:147k -1:147k +0:135k +1:135k +2:171k +3:166k +4:164k +5:166k +6:166k +7:166k +8:167k +9:164k +10:166k +11:167k +12:166k +13:167k +14:167k +15:168k
+== S4 window 4.94s 
+kills      : redis4 at +0.00
+elections  : none
+ycsb       : 157k before; minimum 150k at +1 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:157k -1:156k +0:154k +1:150k +2:165k +3:177k +4:172k +5:168k +6:168k +7:168k +8:168k +9:168k +10:170k +11:169k +12:171k +13:172k +14:173k +15:172k
+== S5 window 7.07s 
+kills      : redis3 at +0.00, redis0 at +0.36
+elections  : sg4 -> redis4 at +0.47 s; sg1 -> redis2 at +0.69 s
+ycsb       : 152k before; minimum 1k at +1 s; 2 s below 10%, 3 s below 50%; back at 90% at +4 s
+ycsb/s     : -2:150k -1:150k +0:62k +1:1k +2:8k +3:96k +4:155k +5:154k +6:163k +7:166k +8:174k +9:171k +10:175k +11:177k +12:177k +13:173k +14:177k +15:178k

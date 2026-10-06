@@ -1,0 +1,17 @@
+# QUICK correctness-test workload (linearizability harness, ansible/lincheck/).
+# 300k keys (~100k per donor) loaded fresh (no 30M snapshot restore), 50/50,
+# 90 s run: one full migration + check in a few minutes. Use the 30M profile
+# (PROFILE=full) for the real measurement.
+recordcount=300000
+operationcount=50000000
+maxexecutiontime=90
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=zipfian

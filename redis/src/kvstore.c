@@ -103,6 +103,18 @@ static int getAndClearDictIndexFromCursor(kvstore *kvs, unsigned long long *curs
  * YCSB workload), so accepting transient staleness for migration's sake
  * is the right trade-off. Callers must invoke kvstoreFenwickRebuild()
  * once backpatch finishes if they need an accurate tree. */
+/* Rebuild the Fenwick tree from the current dict sizes. Caller holds shared_mu. */
+static void fenwickRebuildLocked(kvstore *kvs) {
+    fwTreeClear(kvs->dict_sizes);
+    for (int i = 0; i < kvs->num_dicts; i++) {
+        dict *d = kvs->dicts[i];
+        if (d) {
+            unsigned long sz = dictSize(d);
+            if (sz > 0) fwTreeUpdate(kvs->dict_sizes, i, (long long) sz);
+        }
+    }
+}
+
 static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
     dict *d = kvstoreGetDict(kvs, didx);
     size_t dsize = dictSize(d);
@@ -121,7 +133,15 @@ static void cumulativeKeyCountAdd(kvstore *kvs, int didx, long delta) {
     }
 
     pthread_mutex_lock(&kvs->shared_mu);
-    fwTreeUpdate(kvs->dict_sizes, didx, delta);
+    if (fwTreeTryUpdate(kvs->dict_sizes, didx, delta) != 0) {
+        /* The tree is behind the dicts: kvstoreFenwickRebuild runs on a worker
+         * thread after a migration batch while the main thread keeps deleting
+         * keys, and a delete that lands mid-rebuild is counted twice. Rebuild
+         * from the dict sizes instead of asserting (fwtree.c, ASSERTION FAILED
+         * on a promoted recipient leader, 2026-10-02). The size of the dict
+         * this delete came from is already the post-delete one. */
+        fenwickRebuildLocked(kvs);
+    }
     pthread_mutex_unlock(&kvs->shared_mu);
 }
 
@@ -138,14 +158,7 @@ void kvstoreSetDeferFenwickUpdates(kvstore *kvs, int on) {
 void kvstoreFenwickRebuild(kvstore *kvs) {
     if (kvs->num_dicts <= 1 || kvs->dict_sizes == NULL) return;
     pthread_mutex_lock(&kvs->shared_mu);
-    fwTreeClear(kvs->dict_sizes);
-    for (int i = 0; i < kvs->num_dicts; i++) {
-        dict *d = kvs->dicts[i];
-        if (d) {
-            unsigned long sz = dictSize(d);
-            if (sz > 0) fwTreeUpdate(kvs->dict_sizes, i, (long long) sz);
-        }
-    }
+    fenwickRebuildLocked(kvs);
     pthread_mutex_unlock(&kvs->shared_mu);
 }
 

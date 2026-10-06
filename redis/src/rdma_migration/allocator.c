@@ -635,6 +635,36 @@ void * r_allocator_alloc_new_empty_block(int slot)
  * block into the slot's list. The allocator does NOT take ownership of
  * block_ptr — the pool's lifetime is owned by the caller (today the pool
  * is leaked alongside the existing per-block leak at cluster_rdma.c). */
+/* AqRaft: register a landing block that ALREADY HOLDS a donor block's bytes
+ * (chain follower: the leader RDMA-wrote it before CHAIN-FORWARDED). Same
+ * bookkeeping as r_allocator_register_existing_block but WITHOUT
+ * init_bloc_layout's writes into the block: those stamp "one free 2 MiB
+ * segment" over the donor's first segment header, so the segment walker skips
+ * the whole block (follower stages ~0 keys: "NO valid kvobjs staged") and the
+ * donor's in-block freelist words stay unsanitized. The leader registers BEFORE
+ * the donor's RDMA-write lands, which is why only followers were affected. */
+void * r_allocator_register_filled_block(int slot, void *block_ptr)
+{
+    if (block_ptr == NULL) return NULL;
+    alloc_bloc_t *new_block = (alloc_bloc_t *) zmalloc(sizeof(alloc_bloc_t));
+    if (new_block == NULL) {
+        fprintf(stderr, "%s:%d %s() bookkeeping zmalloc failed\n", __FILE__, __LINE__, __func__);
+        return NULL;
+    }
+    new_block->block_start = (char *) block_ptr;
+    new_block->bytes_free = 0;                       /* donor data; never allocated from */
+    new_block->bytes_total_in_use = BLOCK_SIZE_BYTES;
+    new_block->next = NULL;
+    new_block->prev = NULL;
+    new_block->is_registered_existing = 1;           /* orphan, never coalesce, on free */
+    new_block->segments_free = 0;
+    new_block->segments_used = 0;
+    pthread_mutex_lock(&r_allocator.mutexes[slot]);
+    link_block_into_slot(slot, new_block);
+    pthread_mutex_unlock(&r_allocator.mutexes[slot]);
+    return block_ptr;
+}
+
 void * r_allocator_register_existing_block(int slot, void *block_ptr)
 {
     if (block_ptr == NULL) return NULL;

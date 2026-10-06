@@ -1,0 +1,26 @@
+---
+# custom_scaleout_3to6: per-workload run. Same steps as
+# custom_reshard_v2_orch_raft_chunked/workload_nround.yml, but the cluster grows
+# from 3 shardgroups to 6: each donor migrates to its own recipient group
+# (tasks/cluster/scaleout_pairs_*.yml) instead of all three to sg4.
+# Needs: -i inventory_scale3to6.ini -e @experiments/custom_scaleout_3to6/topology.yml
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+# -e dataset_snapshot=<name>: restore a saved 6-group dataset (dataset_create.yml
+# in this directory) instead of INIT + JOIN + LINK + YCSB load.
+- import_playbook: ../../tasks/dataset/restore_place.yml
+  when: dataset_snapshot | length > 0
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/dataset/restore_wait.yml
+  when: dataset_snapshot | length > 0
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+  when: dataset_snapshot | length == 0
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+  when: dataset_snapshot | length == 0
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/cluster/scaleout_pairs_prepare.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/cluster/pause_pre_reshard.yml
+- import_playbook: ../../tasks/cluster/scaleout_pairs_migrate.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

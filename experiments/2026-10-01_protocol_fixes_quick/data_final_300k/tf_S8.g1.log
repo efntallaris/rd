@@ -1,0 +1,21 @@
+[lin 10:44:07] scenario=S8 profile=quick workload=workloada_lin_quick_60s quorum_reads=yes out=/tmp/lincheck/runs/S8_qyes_20261002_104407
+[lin 10:48:23] run_crash_scenario rc=0 (playbook exited rc=0)
+[crash_inject 10:47:04] MARKER HIT (x1)  t_arm=1790938024.531310041
+[crash_inject 10:47:04] KILLED redis3 pid=3401258 (verified alive)  t_kill=1790938024.724908964
+[crash_inject 10:47:05] KILLED redis0 pid=2150062 (verified alive)  t_kill=1790938025.074838014
+	at java.base/java.net.Socket.connect(Socket.java:609)
+	at redis.clients.jedis.Connection.connect(Connection.java:184)
+	... 7 more
+skip line 169089: unexpected end of JSON input
+records=169088 keys=200
+ops: del/ok=16733 del/unknown=17 get/ok=75796 get/unknown=558 set/ok=75901 set/unknown=83
+linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+VERDICT: PASS
+[lin 10:48:35] lincheck rc=0
+POSTCHECK migration PASS  sg4 leader redis4:8000; all 3 ranges durable
+POSTCHECK crashes   PASS  none
+POSTCHECK replicas  PASS  2 live replicas identical (redis4 n=75045 f4d2ec2f8070, redis5 n=75045 f4d2ec2f8070)
+POSTCHECK donors    PASS  0-1364: 2 live replicas agree (24970 keys); 5461-6825: 3 live replicas agree (25060 keys); 10922-12286: 3 live replicas agree (25012 keys)
+POSTCHECK bulk      PASS  74880 donor YCSB keys checked, 0 missing
+POSTCHECK VERDICT: PASS
+[lin 10:49:20] OVERALL: PASS (lincheck rc=0, postcheck rc=0)

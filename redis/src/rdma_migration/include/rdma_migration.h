@@ -133,6 +133,11 @@ struct rdma_cm_id *rdmamig_client_cm_id(rdmamig_client *c);
 int rdmamig_client_post_write(rdmamig_buffer *b, char *local_addr,
                               uint64_t remote_addr, uint32_t remote_key,
                               size_t len);
+/* Post on client c's QP using buffer b's lkey (b may be registered through
+ * another cm_id on the same PD). */
+int rdmamig_client_post_write_via(rdmamig_client *c, rdmamig_buffer *b,
+                                  char *local_addr, uint64_t remote_addr,
+                                  uint32_t remote_key, size_t len);
 
 /* Block until the next send completion arrives. Returns the number of
  * completions polled (normally 1) or a negative value on QP error. */

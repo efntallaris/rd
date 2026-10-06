@@ -53,6 +53,7 @@ import redis.clients.jedis.exceptions.JedisException;
 import redis.clients.jedis.exceptions.JedisConnectionException;
 import redis.clients.util.JedisClusterCRC16;
 import redis.clients.util.SafeEncoder;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -256,6 +257,17 @@ public class RedisClient extends DB {
                 }
                 for (int s = startSlot; s <= endSlot && s < 16384; s++) {
                   HostAndPort boot = SHARED_BOOT_OWNER[s];
+                  /* A donor reporting ANOTHER DONOR node as owner is a leader change
+                   * inside the donor group, not a migration: the slot has not moved to
+                   * the recipient. Collapsing on it made the new donor leader pass for
+                   * the recipient, and reads returned its frozen copy until NARROW.
+                   * Follow the donor leg instead, and only on the new leader's own
+                   * word (another group's view of this range can be stale). */
+                  if (boot != null && !owner.equals(boot) && targetIsDonor
+                      && DONOR_HOSTS.contains(owner.getHost())) {
+                    if (owner.equals(target) && !endpointDead(owner)) SHARED_BOOT_OWNER[s] = owner;
+                    continue;
+                  }
                   if (boot != null && !owner.equals(boot) && targetIsDonor) {
                     /* AqRaft fix: never DOWNGRADE the write target from a recipient
                      * (sg4) to a donor. Reads learn the true recipient leader from
@@ -376,6 +388,36 @@ public class RedisClient extends DB {
    *  with the donor read whenever the cached slot state is non-STABLE. */
   private ExecutorService peerProbeExec;
 
+  // ---- linearizability-history support (LinHistoryClient) ----
+  /** Outcome of the last op on this instance, as seen by the client.
+   *  FAIL = the server definitely did not execute it (safe to count as
+   *  never-happened); UNKNOWN = it may or may not have taken effect (timeout,
+   *  connection drop mid-command, reply out of step). */
+  public enum Outcome { OK, FAIL, UNKNOWN }
+
+  /** redis.retry.ambiguous (default true = YCSB behavior). When false,
+   *  execForSlot only retries errors that prove the command was not executed
+   *  (MOVED, ASK, TRYAGAIN, CLUSTERDOWN, LOADING, NOTLEADER, connect failure)
+   *  and returns UNKNOWN on the first ambiguous one. Retrying a write that may
+   *  already have committed can re-apply it later, which a linearizability
+   *  checker reports as a violation the server never made. */
+  private boolean retryAmbiguous = true;
+  private Outcome lastOutcome = Outcome.OK;
+
+  public Outcome lastOutcome() {
+    return lastOutcome;
+  }
+
+  /** Value + outcome of one client-level op. value == null with OK = absent. */
+  public static final class OpResult {
+    public final Outcome outcome;
+    public final String value;
+    OpResult(Outcome outcome, String value) {
+      this.outcome = outcome;
+      this.value = value;
+    }
+  }
+
   public void init() throws DBException {
     Properties props = getProperties();
     int port;
@@ -392,13 +434,22 @@ public class RedisClient extends DB {
       timeoutMs = Integer.parseInt(redisTimeout);
     }
     seedHostPort = new HostAndPort(host, port);
+    retryAmbiguous = Boolean.parseBoolean(props.getProperty("redis.retry.ambiguous", "true"));
 
     boolean clusterEnabled = Boolean.parseBoolean(props.getProperty(CLUSTER_PROPERTY));
     if (clusterEnabled) {
       Set<HostAndPort> seeds = new HashSet<>();
       seeds.add(seedHostPort);
       // JedisCluster drives writes (workload-load inserts). Reads bypass it.
-      jedisWrites = new JedisCluster(seeds);
+      // JMX off for its connection pools: every YCSB thread builds its own
+      // JedisCluster (one pool per cluster node), and commons-pool2 registers
+      // each pool as an MBean under a name it finds by trying "pool", "pool1",
+      // "pool2", ... behind one global lock. With 200 threads that is ~2,000
+      // pools and a quadratic number of attempts: the threads queue on the MBean
+      // server for 60-100 s before the first operation.
+      GenericObjectPoolConfig poolCfg = new GenericObjectPoolConfig();
+      poolCfg.setJmxEnabled(false);
+      jedisWrites = new JedisCluster(seeds, poolCfg);
       bootstrapDoubleReadState();
     } else {
       Jedis j = (timeoutMs != null) ? new Jedis(host, port, timeoutMs) : new Jedis(host, port);
@@ -518,6 +569,25 @@ public class RedisClient extends DB {
       if (p != null) pollMs = Integer.parseInt(p.trim());
     } catch (Exception ignore) { /* keep default */ }
     startSlotPollerOnce(seedHostPort, timeoutMs, pollMs);
+
+    /* redis.preconnect=ip:port,ip:port,...: open this thread's connection to nodes
+     * it will be redirected to later (the scale-out's recipient replicas). Without
+     * it every worker thread connects to a recipient leader at the moment that
+     * leader first serves traffic; the leader accepts 400 connections before it
+     * answers anything, and all threads queue behind that (a ~25% dip for 0.2 s
+     * at the first round of the busiest recipient, 2026-10-05). Use the IPs the
+     * servers put in their MOVED replies, or the connection is not reused. */
+    String pre = getProperties().getProperty("redis.preconnect");
+    if (pre != null && conns != null) {
+      for (String e : pre.split(",")) {
+        e = e.trim();
+        int c = e.lastIndexOf(':');
+        if (c <= 0) continue;
+        try {
+          getOrOpen(new HostAndPort(e.substring(0, c), Integer.parseInt(e.substring(c + 1))));
+        } catch (Exception ignore) { /* not up (yet): connect lazily as before */ }
+      }
+    }
   }
 
   private synchronized Jedis getOrOpen(HostAndPort hp) {
@@ -555,56 +625,144 @@ public class RedisClient extends DB {
     }
   }
 
+  /* One CLUSTER SLOTS answer per probed node, shared by every worker thread of
+   * this JVM and reused for SLOT_VIEW_TTL_MS. Each thread has its own slotOwner[]
+   * and used to re-resolve every slot by itself, each time on a new connection:
+   * after a leader died, 400 threads x the ~2700 slots of its group, all asking
+   * the same nodes at once. Thread dumps taken 2.4-5.4 s after the kill (S5,
+   * 2026-10-04) showed 280-350 of 400 threads waiting for a CLUSTER SLOTS reply,
+   * and the clients stayed at zero for 4-5 s after the new leader was elected. */
+  private static final long SLOT_VIEW_TTL_MS = 100;
+  private static final class SlotView {
+    private long ts;
+    private int n = -1;            // -1: the node did not give a slot map
+    private int[] lo;
+    private int[] hi;
+    private HostAndPort[] owner;
+  }
+  private static final ConcurrentHashMap<HostAndPort, SlotView> SLOT_VIEWS = new ConcurrentHashMap<>();
+  private static final ConcurrentHashMap<HostAndPort, Object> SLOT_VIEW_LOCKS = new ConcurrentHashMap<>();
+
+  @SuppressWarnings("unchecked")
+  private static SlotView slotViewOf(HostAndPort probe, Integer soTimeoutMs) {
+    SlotView v = SLOT_VIEWS.get(probe);
+    if (v != null && System.currentTimeMillis() - v.ts <= SLOT_VIEW_TTL_MS) return v;
+    Object lk = SLOT_VIEW_LOCKS.computeIfAbsent(probe, k -> new Object());
+    synchronized (lk) {
+      v = SLOT_VIEWS.get(probe);
+      if (v != null && System.currentTimeMillis() - v.ts <= SLOT_VIEW_TTL_MS) return v;
+      v = new SlotView();
+      Jedis j = null;
+      try {
+        // Short CONNECT timeout so a dead endpoint fails in ms, not a full socket timeout.
+        j = probeJedis(probe, soTimeoutMs);
+        j.connect();
+        j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
+        Object reply = j.getClient().getOne();
+        if (reply instanceof List) {
+          List<Object> ranges = (List<Object>) reply;
+          int n = ranges.size();
+          v.lo = new int[n];
+          v.hi = new int[n];
+          v.owner = new HostAndPort[n];
+          for (int i = 0; i < n; i++) {
+            List<Object> range = (List<Object>) ranges.get(i);
+            v.lo[i] = (int) (long) (Long) range.get(0);
+            v.hi[i] = (int) (long) (Long) range.get(1);
+            List<Object> masterInfo = (List<Object>) range.get(2);
+            v.owner[i] = new HostAndPort(SafeEncoder.encode((byte[]) masterInfo.get(0)),
+                (int) (long) (Long) masterInfo.get(1));
+          }
+          v.n = n;
+        }
+      } catch (Exception ignore) {
+        // Couldn't reach it (dead / unreachable) — remember so peers skip it too.
+        markEndpointDead(probe);
+        v.n = -1;
+      } finally {
+        if (j != null) { try { j.close(); } catch (Exception ignore) { /* drain */ } }
+      }
+      v.ts = System.currentTimeMillis();
+      SLOT_VIEWS.put(probe, v);
+      return v;
+    }
+  }
+
   /** Re-resolve slot ownership via CLUSTER SLOTS on any reachable host.
    * Used after a JedisConnectionException — typically when the donor
    * relinquishes a slot via RAFT.SHARDGROUP NARROW and the pinned client
    * connection gets dropped. Updates slotOwner[slot] and returns the new
    * owner, or null if no reachable host returns a mapping for this slot. */
-  @SuppressWarnings("unchecked")
   private HostAndPort refreshSlotOwner(int slot) {
-    List<HostAndPort> probes = new ArrayList<>();
+    return refreshSlotOwner(slot, false);
+  }
+
+  /** movedByDonor: the donor itself just answered -MOVED for this slot, so a
+   *  recipient owner is expected.
+   *
+   *  A recipient group is configured for its whole final range before it has
+   *  received anything, and reports itself as the owner of all of it. When a
+   *  donor migrates in several rounds, most of that range is still served by the
+   *  donor. Taking the recipient's word after losing the donor leader sent reads
+   *  and writes of not-yet-migrated slots to the recipient (stale reads, S2).
+   *  So a recipient owner is accepted only if a DONOR node reports it, or the
+   *  slot is already known to be moving; donor nodes are asked first, and an
+   *  answer naming an endpoint known dead (a stale view of the crashed leader)
+   *  is skipped. With no acceptable answer the caller retries. */
+  @SuppressWarnings("unchecked")
+  private HostAndPort refreshSlotOwner(int slot, boolean movedByDonor) {
+    SlotEntry rse = (slotCache != null) ? slotCache[slot] : null;
+    boolean moving = movedByDonor || SHARED_COLLAPSED[slot] || SHARED_PEER[slot] != null
+        || (rse != null && rse.state != SLOT_STABLE);
+    List<HostAndPort> all = new ArrayList<>();
     // Probe live cluster members (replicas included via POLL_TARGETS) BEFORE the
     // seed — the seed is often the crashed donor master, and probing it first
     // wastes a full socket timeout per re-resolve. A promoted replica answers
     // CLUSTER SLOTS with the new ownership.
     for (HostAndPort hp : POLL_TARGETS) {
-      if (!probes.contains(hp)) probes.add(hp);
+      if (!all.contains(hp)) all.add(hp);
     }
     if (conns != null) {
       for (HostAndPort hp : conns.keySet()) {
-        if (!probes.contains(hp)) probes.add(hp);
+        if (!all.contains(hp)) all.add(hp);
       }
     }
-    if (!probes.contains(seedHostPort)) probes.add(seedHostPort);
+    if (!all.contains(seedHostPort)) all.add(seedHostPort);
+    List<HostAndPort> probes = new ArrayList<>();
+    for (HostAndPort hp : all) {
+      if (DONOR_HOSTS.contains(hp.getHost())) probes.add(hp);
+    }
+    for (HostAndPort hp : all) {
+      if (!DONOR_HOSTS.contains(hp.getHost())) probes.add(hp);
+    }
     for (HostAndPort probe : probes) {
+      boolean probeIsDonor = DONOR_HOSTS.contains(probe.getHost());
+      if (!probeIsDonor && !moving) continue;
       // AqRaft follower-crash fix: skip an endpoint we just found dead — otherwise
       // every worker re-resolving at once blocks on the same dead node's timeout.
       if (endpointDead(probe)) continue;
-      Jedis j = null;
-      try {
-        // Short CONNECT timeout so a dead endpoint fails in ms, not a full socket timeout.
-        j = probeJedis(probe, timeoutMs);
-        j.connect();
-        j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
-        Object reply = j.getClient().getOne();
-        if (!(reply instanceof List)) continue;
-        for (Object rangeObj : (List<Object>) reply) {
-          List<Object> range = (List<Object>) rangeObj;
-          long startSlot = (Long) range.get(0);
-          long endSlot   = (Long) range.get(1);
-          if (slot < startSlot || slot > endSlot) continue;
-          List<Object> masterInfo = (List<Object>) range.get(2);
-          String mh = SafeEncoder.encode((byte[]) masterInfo.get(0));
-          long   mp = (Long) masterInfo.get(1);
-          HostAndPort newOwner = new HostAndPort(mh, (int) mp);
-          if (slotOwner != null) slotOwner[slot] = newOwner;
-          return newOwner;
+      SlotView v = slotViewOf(probe, timeoutMs);
+      if (v.n < 0) continue;                          // unreachable, or not a slot map
+      for (int i = 0; i < v.n; i++) {
+        if (slot < v.lo[i] || slot > v.hi[i]) continue;
+        HostAndPort newOwner = v.owner[i];
+        if (endpointDead(newOwner)) break;            // stale view: ask the next node
+        if (!DONOR_HOSTS.contains(newOwner.getHost()) && !probeIsDonor && !moving) break;
+        if (slotOwner != null) {
+          /* The other slots of this range that still point at the same dead
+           * endpoint get the same answer from this same reply: move them now
+           * instead of one refresh (one CLUSTER SLOTS) per slot. Only when the
+           * per-slot rule above cannot differ between them. */
+          HostAndPort old = slotOwner[slot];
+          if (old != null && !old.equals(newOwner) && endpointDead(old)
+              && (probeIsDonor || DONOR_HOSTS.contains(newOwner.getHost()))) {
+            for (int s2 = v.lo[i]; s2 <= v.hi[i] && s2 < slotOwner.length; s2++) {
+              if (old.equals(slotOwner[s2])) slotOwner[s2] = newOwner;
+            }
+          }
+          slotOwner[slot] = newOwner;
         }
-      } catch (Exception ignore) {
-        // Couldn't reach it (dead / unreachable) — remember so peers skip it too.
-        markEndpointDead(probe);
-      } finally {
-        if (j != null) { try { j.close(); } catch (Exception ignore) { /* drain */ } }
+        return newOwner;
       }
     }
     return null;
@@ -653,12 +811,48 @@ public class RedisClient extends DB {
     HostAndPort peer; // null when STABLE
     String value;     // null when key missing
     boolean ok;       // false on connection / parse failure
+    long flags;       // AqRaft 4th slot-meta element: bit0 merged here, bit1 tombstoned here
+    boolean moved;    // the node answered -MOVED: `peer` is the target, `value` is NOT an answer
+
+    /** A nil from this node is final: it has merged the slot's migrated data,
+     *  or the key was deleted here. Only then may the client skip the donor. */
+    boolean authoritative() {
+      return (flags & 3) != 0;
+    }
   }
 
   /** Issue GET and parse either the slot-meta-wrapped array reply or a
    *  plain bulk reply (when slot_meta_reply is off on the server). */
-  @SuppressWarnings("unchecked")
   private GetReply sendGet(Jedis j, String key) {
+    GetReply r = sendGetOnce(j, key);
+    /* A -MOVED that stays on the same side is a leader change, not the slot
+     * moving away: a donor follower pointing at the new donor leader, or a
+     * recipient follower pointing at its leader. Follow it and return that
+     * node's answer. Only donor -> recipient (the slot narrowed) is left to the
+     * caller as a "moved" reply. Taking a donor -> donor -MOVED for NARROW made
+     * the new donor leader pass for the recipient: reads returned its frozen
+     * copy and writes were pinned to it (it redirects every write) until NARROW. */
+    Jedis cur = j;
+    for (int hop = 0; hop < 3 && r.ok && r.moved && r.peer != null; hop++) {
+      boolean fromDonor = DONOR_HOSTS.contains(cur.getClient().getHost());
+      boolean toDonor = DONOR_HOSTS.contains(r.peer.getHost());
+      if (fromDonor != toDonor) return r;
+      HostAndPort target = r.peer;
+      Jedis nj = getOrOpenSafe(target);
+      if (nj == null) { r.ok = false; return r; }
+      if (fromDonor && slotOwner != null) slotOwner[JedisClusterCRC16.getSlot(key)] = target;
+      cur = nj;
+      r = sendGetOnce(cur, key);
+    }
+    if (r.ok && r.moved && r.peer != null
+        && DONOR_HOSTS.contains(cur.getClient().getHost()) == DONOR_HOSTS.contains(r.peer.getHost())) {
+      r.ok = false;   // still being redirected within one side: no answer
+    }
+    return r;
+  }
+
+  @SuppressWarnings("unchecked")
+  private GetReply sendGetOnce(Jedis j, String key) {
     GetReply r = new GetReply();
     r.state = SLOT_STABLE;
     r.peer = null;
@@ -699,6 +893,9 @@ public class RedisClient extends DB {
           if (valueO instanceof byte[]) {
             r.value = new String((byte[]) valueO, StandardCharsets.UTF_8);
           }
+          if (tup.size() >= 4 && tup.get(3) instanceof Long) {
+            r.flags = (Long) tup.get(3);
+          }
           r.ok = true;
           return r;
         }
@@ -731,6 +928,7 @@ public class RedisClient extends DB {
         INSTR_DONOR_MOVED.incrementAndGet();
         r.state = SLOT_MIGRATED;
         r.peer  = target;
+        r.moved = true;
         try { getOrOpen(target); }
         catch (JedisConnectionException ce) { DEAD_HOSTS.add(target.getHost()); }
         r.ok    = true;
@@ -777,7 +975,7 @@ public class RedisClient extends DB {
        * means many more post-NARROW collapses, and a CLUSTER SLOTS per collapse
        * (1.8M of them) was tanking throughput. */
       HostAndPort leader = SHARED_PEER[slot];
-      if (leader == null) leader = refreshSlotOwner(slot);
+      if (leader == null) leader = refreshSlotOwner(slot, true);
       HostAndPort target = (leader != null) ? leader : r.peer;
       if (slotOwner != null) slotOwner[slot] = target;
       if (AQDBG.incrementAndGet() % 300000 == 0)
@@ -825,8 +1023,11 @@ public class RedisClient extends DB {
           System.err.println("[AQDBG-COLLAPSE] slot=" + slot + " slotOwner<-sharedPeer=" + SHARED_PEER[slot]);
       }
     }
+    followDonorLeaderChange(slot);
     HostAndPort hp = (slotOwner != null) ? slotOwner[slot] : seedHostPort;
     boolean ask = false;
+    lastOutcome = Outcome.OK;
+    boolean ambiguousSeen = false;   // a prior attempt may have taken effect
     /* The peer-probe thread (parallel-read path) may be using these same
      * Jedis instances. Synchronize per-connection so reply pipelining
      * doesn't interleave + corrupt Jedis's protocol parser. Loop bounded
@@ -846,6 +1047,7 @@ public class RedisClient extends DB {
     for (int attempt = 0; attempt < 1500; attempt++) {
       if (hp == null) hp = seedHostPort;
       boolean connDropped = false;
+      boolean ambiguous = false;
       HostAndPort badHp = null;
       Jedis j;
       /* getOrOpen does j.connect(), which can throw JedisConnectionException
@@ -858,6 +1060,7 @@ public class RedisClient extends DB {
         j = getOrOpen(hp);
       } catch (JedisConnectionException ce) {
         DEAD_HOSTS.add(hp.getHost());
+        markEndpointDead(hp);   // so another node's stale view naming it is not taken
         evictConn(hp);
         HostAndPort newOwner = refreshSlotOwner(slot);
         hp = (newOwner != null) ? newOwner : seedHostPort;
@@ -904,9 +1107,12 @@ public class RedisClient extends DB {
               + " collapsed=" + SHARED_COLLAPSED[slot] + " sharedPeer=" + SHARED_PEER[slot]
               + " slotOwner=" + (slotOwner==null?null:slotOwner[slot])
               + " movedTarget=" + mv.getTargetNode().getHost()+":"+mv.getTargetNode().getPort());
-          if (sharedLeader != null) {
+          /* A hint is only used if it can be the recipient leader: not the node
+           * that just sent this -MOVED, not a donor, not a host seen dead. */
+          final HostAndPort redirector = hp;
+          if (usableWriteHint(sharedLeader, redirector)) {
             hp = sharedLeader;                         // cross-thread leader hint
-          } else if (mse != null && mse.peer != null) {
+          } else if (mse != null && usableWriteHint(mse.peer, redirector)) {
             hp = mse.peer;                             // this thread's leader hint
           } else {
             hp = new HostAndPort(mv.getTargetNode().getHost(),
@@ -934,6 +1140,7 @@ public class RedisClient extends DB {
            * surrenders the slot to sg4 and the pinned client connection
            * gets reset. Evict + re-resolve outside the synchronized block. */
           connDropped = true;
+          ambiguous = true;   // the command may have reached the server
           badHp = hp;
         } catch (ClassCastException cce) {
           /* Reply of the wrong type: this connection's reply stream is out of
@@ -941,6 +1148,11 @@ public class RedisClient extends DB {
            * same owner on a fresh socket instead of letting the exception kill
            * the worker thread. */
           dropConn(j);
+          if (!retryAmbiguous) {
+            lastOutcome = Outcome.UNKNOWN;
+            return null;
+          }
+          ambiguousSeen = true;
           continue;
         } catch (redis.clients.jedis.exceptions.JedisDataException de) {
           /* Transient redisraft errors during the migration window:
@@ -956,6 +1168,18 @@ public class RedisClient extends DB {
            * (wrong type, syntax) are not expected on a pure SET/GET workload,
            * so retrying is safe here. */
           String msg = de.getMessage();
+          /* "TIMEOUT not committed yet" / "TIMEOUT no reply from leader": the
+           * entry may already be in the Raft log and commit later, so the write
+           * is ambiguous. The other errors are replied before the command is
+           * appended (NOTLEADER "Failed to proxy" = never forwarded). */
+          boolean definite = msg != null && (msg.contains("TRYAGAIN")
+              || msg.contains("CLUSTERDOWN") || msg.contains("LOADING")
+              || msg.contains("NOTLEADER"));
+          if (!definite && !retryAmbiguous) {
+            lastOutcome = Outcome.UNKNOWN;
+            return null;
+          }
+          if (!definite) ambiguousSeen = true;
           if (msg != null && (msg.contains("TIMEOUT") || msg.contains("TRYAGAIN")
               || msg.contains("CLUSTERDOWN") || msg.contains("LOADING")
               || msg.contains("NOTLEADER") || msg.contains("Failed to proxy")
@@ -971,12 +1195,18 @@ public class RedisClient extends DB {
             }
             /* keep hp, ask unchanged — retry the same leader */
           } else {
+            lastOutcome = ambiguousSeen ? Outcome.UNKNOWN : Outcome.FAIL;
             throw de;
           }
         }
       }
       if (connDropped) {
         evictConn(badHp);
+        if (ambiguous && !retryAmbiguous) {
+          lastOutcome = Outcome.UNKNOWN;
+          return null;
+        }
+        if (ambiguous) ambiguousSeen = true;
         HostAndPort newOwner = refreshSlotOwner(slot);
         hp = (newOwner != null) ? newOwner : seedHostPort;
         ask = false;
@@ -989,7 +1219,26 @@ public class RedisClient extends DB {
      * finalizes. */
     System.err.println("[AQRAFT] execForSlot exhausted retries for slot=" + slot
         + " (op counted as ERROR, thread continues)");
+    lastOutcome = ambiguousSeen ? Outcome.UNKNOWN : Outcome.FAIL;
     return null;
+  }
+
+  /** This slot's donor leg points at an endpoint that stopped answering, and the
+   *  poller has learned the donor group's new leader: follow it. Without this,
+   *  each thread found the new leader slot by slot (a failed connect, then a
+   *  CLUSTER SLOTS round trip), and reads of the slot failed until it did. */
+  private void followDonorLeaderChange(int slot) {
+    if (slotOwner == null) return;
+    HostAndPort cur = slotOwner[slot];
+    HostAndPort now = SHARED_BOOT_OWNER[slot];
+    if (cur == null || now == null || now.equals(cur)) return;
+    if (!DONOR_HOSTS.contains(cur.getHost())) return;
+    if (endpointDead(cur) && !endpointDead(now)) slotOwner[slot] = now;
+  }
+
+  private static boolean usableWriteHint(HostAndPort hint, HostAndPort redirector) {
+    return hint != null && !hint.equals(redirector)
+        && !DONOR_HOSTS.contains(hint.getHost()) && !DEAD_HOSTS.contains(hint.getHost());
   }
 
   private String setForSlot(String key, final String value) {
@@ -1031,14 +1280,26 @@ public class RedisClient extends DB {
       return Status.OK;
     }
 
+    OpResult r = readCore(key);
+    if (r.outcome != Outcome.OK || r.value == null) return Status.ERROR;
+    result.put(resultField, new StringByteIterator(r.value));
+    return Status.OK;
+  }
+
+  /** GET through the Aqueduct routing (collapse / stable / double-read paths).
+   *  OK+null means every leg the path consulted answered "no such key";
+   *  UNKNOWN means a consulted leg failed and no value was found. */
+  private OpResult readCore(String key) {
     int slot = JedisClusterCRC16.getSlot(key);
-    // AqRaft proactive collapse (readiness-safe): if the background poller has
-    // seen this slot narrow to the recipient, read the recipient FIRST —
-    // skipping the per-slot donor -MOVED rediscovery (the MOVED storm). But the
-    // poller flags on OWNERSHIP (CLUSTER SLOTS), which can lead readiness: if
-    // the recipient misses (collapse was premature, or the recipient hasn't
-    // finalized the slot yet), FALL BACK to the donor snapshot before failing —
-    // so proactive collapse can never fail a read the donor could still serve.
+    /* AqRaft read rule. The donor keeps a frozen copy of a migrated slot (writes
+     * flip to the recipient; EVICT is off), so a recipient nil may only be
+     * resolved from the donor when the recipient has NOT merged the slot and the
+     * key was NOT deleted there (GetReply.authoritative()). Falling back on any
+     * recipient miss returned deleted keys' old values, during the migration
+     * window and forever after NARROW. An unreachable recipient is UNKNOWN — the
+     * donor's copy could be stale. */
+    // AqRaft proactive collapse: the poller saw this slot narrow to the
+    // recipient, so read the recipient first (skips the donor -MOVED storm).
     if (SHARED_COLLAPSED[slot] && SHARED_PEER[slot] != null) {
       slotOwner[slot] = SHARED_PEER[slot];
       SlotEntry pc = slotCache[slot];
@@ -1050,52 +1311,46 @@ public class RedisClient extends DB {
       instrRecordLat(SHARED_PEER[slot], System.nanoTime() - tp);
       if (rr != null && rr.value != null) {
         INSTR_COLLAPSE.incrementAndGet();
-        result.put(resultField, new StringByteIterator(rr.value));
-        return Status.OK;
+        return new OpResult(Outcome.OK, rr.value);
       }
-      HostAndPort donor = SHARED_BOOT_OWNER[slot];
-      if (donor != null && !donor.equals(SHARED_PEER[slot])) {
-        Jedis dj = getOrOpenSafe(donor);
-        GetReply dr = (dj != null) ? sendGet(dj, key) : null;
-        if (dr != null && dr.value != null) {
-          result.put(resultField, new StringByteIterator(dr.value));
-          return Status.OK;
-        }
-      }
-      return Status.ERROR;
+      return resolveRecipientMiss(slot, key, rr, SHARED_PEER[slot]);
     }
+    followDonorLeaderChange(slot);
     SlotEntry s = slotCache[slot];
     instrMaybeLog();
 
     HostAndPort ownerHp = slotOwner[slot];
     final Jedis ownerJ = getOrOpenSafe(ownerHp);
 
-    // Stable-slot fast path: single donor read. May discover a state flip on
-    // the reply; if so, follow up with the freshly-learned peer.
+    // Stable-slot fast path: one read to the owner. If the owner is the donor
+    // and says the slot is migrating, the recipient must be asked too.
     if (s.state == SLOT_STABLE || s.peer == null) {
       INSTR_FAST.incrementAndGet();
       long t0 = System.nanoTime();
       GetReply ra = (ownerJ != null) ? sendGet(ownerJ, key) : null;
       instrRecordLat(ownerHp, System.nanoTime() - t0);
       if (ra != null) updateSlotCache(slot, ra);
-      if (ra != null && ra.value != null) {
-        result.put(resultField, new StringByteIterator(ra.value));
-        return Status.OK;
+      if (ra == null || !ra.ok) return new OpResult(Outcome.UNKNOWN, null);
+      boolean ownerIsDonor = ownerHp == null || DONOR_HOSTS.contains(ownerHp.getHost());
+      if (!ownerIsDonor) {
+        // Owner is the recipient (pinned after a write redirect).
+        if (ra.value != null) return new OpResult(Outcome.OK, ra.value);
+        return resolveRecipientMiss(slot, key, ra, ownerHp);
       }
-      if (ra != null && ra.state != SLOT_STABLE && ra.peer != null) {
+      if (ra.state != SLOT_STABLE && ra.peer != null) {
+        // Donor copy is frozen: the recipient's answer takes precedence.
         Jedis pj = getOrOpenSafe(ra.peer);
         GetReply rb = (pj != null) ? sendGet(pj, key) : null;
-        if (rb != null && rb.value != null) {
-          result.put(resultField, new StringByteIterator(rb.value));
-          return Status.OK;
-        }
+        if (rb == null || !rb.ok) return new OpResult(Outcome.UNKNOWN, null);
+        if (rb.value != null) return new OpResult(Outcome.OK, rb.value);
+        if (rb.authoritative()) return new OpResult(Outcome.OK, null);
       }
-      return Status.ERROR;
+      if (ra.moved) return new OpResult(Outcome.UNKNOWN, null);   // -MOVED carries no value
+      return new OpResult(Outcome.OK, ra.value);
     }
 
-    // Migration path: fan out donor + recipient GETs in parallel. Recipient
-    // wins when both have the key — the donor's copy is the older snapshot
-    // once ownership has flipped to the recipient.
+    // Migration path: donor + recipient GETs in parallel. The recipient's
+    // answer wins; the donor's frozen copy only fills a non-authoritative miss.
     INSTR_TWOSIDED.incrementAndGet();
     final HostAndPort peerHp = s.peer;
     if (peerHp != null) SHARED_PEER[slot] = peerHp;  // window leader → shared so writes route here
@@ -1130,15 +1385,25 @@ public class RedisClient extends DB {
     }
     if (ra != null) updateSlotCache(slot, ra);
 
-    if (rb != null && rb.value != null) {
-      result.put(resultField, new StringByteIterator(rb.value));
-      return Status.OK;
-    }
-    if (ra != null && ra.value != null) {
-      result.put(resultField, new StringByteIterator(ra.value));
-      return Status.OK;
-    }
-    return Status.ERROR;
+    if (rb == null || !rb.ok) return new OpResult(Outcome.UNKNOWN, null);
+    if (rb.value != null) return new OpResult(Outcome.OK, rb.value);
+    if (rb.authoritative()) return new OpResult(Outcome.OK, null);
+    if (ra == null || !ra.ok || ra.moved) return new OpResult(Outcome.UNKNOWN, null);
+    return new OpResult(Outcome.OK, ra.value);
+  }
+
+  /** The recipient answered `rr` with no value. Final if authoritative;
+   *  otherwise the key was never touched there since the flip, so the donor's
+   *  frozen copy (the bootstrap owner) is current. */
+  private OpResult resolveRecipientMiss(int slot, String key, GetReply rr, HostAndPort recipient) {
+    if (rr == null || !rr.ok || rr.moved) return new OpResult(Outcome.UNKNOWN, null);
+    if (rr.authoritative()) return new OpResult(Outcome.OK, null);
+    HostAndPort donor = SHARED_BOOT_OWNER[slot];
+    if (donor == null || donor.equals(recipient)) return new OpResult(Outcome.OK, null);
+    Jedis dj = getOrOpenSafe(donor);
+    GetReply dr = (dj != null) ? sendGet(dj, key) : null;
+    if (dr == null || !dr.ok || dr.moved) return new OpResult(Outcome.UNKNOWN, null);
+    return new OpResult(Outcome.OK, dr.value);
   }
 
   @Override
@@ -1178,6 +1443,48 @@ public class RedisClient extends DB {
     }
     String reply = setForSlot(key, concatFields(values));
     return (reply != null && reply.equals("OK")) ? Status.OK : Status.ERROR;
+  }
+
+  /** GET for LinHistoryClient: value (null = absent) + outcome. */
+  public OpResult getValue(String key) {
+    return readCore(key);
+  }
+
+  /** SET routed like update(); outcome distinguishes definite failure from
+   *  ambiguous (see redis.retry.ambiguous). */
+  public OpResult setValue(String key, String value) {
+    String reply;
+    try {
+      reply = setForSlot(key, value);
+    } catch (RuntimeException e) {
+      return new OpResult(lastOutcome == Outcome.FAIL ? Outcome.FAIL : Outcome.UNKNOWN, null);
+    }
+    if (reply != null && reply.equals("OK")) return new OpResult(Outcome.OK, null);
+    return new OpResult(lastOutcome == Outcome.OK ? Outcome.UNKNOWN : lastOutcome, null);
+  }
+
+  /** DEL of a single key (no index maintenance). */
+  public OpResult delValue(String key) {
+    Object r;
+    try {
+      r = execForSlot(key, j -> j.del(key));
+    } catch (RuntimeException e) {
+      return new OpResult(lastOutcome == Outcome.FAIL ? Outcome.FAIL : Outcome.UNKNOWN, null);
+    }
+    if (r instanceof Long) return new OpResult(Outcome.OK, String.valueOf(r));
+    return new OpResult(lastOutcome == Outcome.OK ? Outcome.UNKNOWN : lastOutcome, null);
+  }
+
+  /** INCR; value is the post-increment counter. */
+  public OpResult incrValue(String key) {
+    Object r;
+    try {
+      r = execForSlot(key, j -> j.incr(key));
+    } catch (RuntimeException e) {
+      return new OpResult(lastOutcome == Outcome.FAIL ? Outcome.FAIL : Outcome.UNKNOWN, null);
+    }
+    if (r instanceof Long) return new OpResult(Outcome.OK, String.valueOf(r));
+    return new OpResult(lastOutcome == Outcome.OK ? Outcome.UNKNOWN : lastOutcome, null);
   }
 
   @Override

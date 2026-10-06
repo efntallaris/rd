@@ -1,0 +1,24 @@
+HEALTHY: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/HEALTHY_qyes_20261002_123858
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75046 34908c1dfaa3, redis4 n=75046 34908c1dfaa3, redis5 n=75046 34908c1dfaa3)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 146K before -> 182K after (+25%)   migration 6.0s
+S1: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S1_qyes_20261002_125437
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis5:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  2 live replicas identical (redis4 n=75040 f8a1245e0869, redis5 n=75040 f8a1245e0869)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 147K before -> 185K after (+26%)   migration 11.0s
+S2: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S2_qyes_20261002_124929
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75051 b1624c3d572d, redis4 n=75051 b1624c3d572d, redis5 n=75051 b1624c3d572d)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 144K before -> 179K after (+24%)   migration 10.0s
+S8: OVERALL: PASS (lincheck rc=0, postcheck rc=0) | crash reports: none | /tmp/lincheck/runs/S8_qyes_20261002_124414
+   linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+   POSTCHECK migration PASS  sg4 leader redis4:8000; all 3 ranges durable
+   POSTCHECK replicas  PASS  2 live replicas identical (redis4 n=75040 d9cf55394f9c, redis5 n=75040 d9cf55394f9c)
+   pre-warm tasks: skipping: [redis0] => (item=sg1 warm @ rdma-port 17777) 
+   all clients running: 142K before -> 187K after (+32%)   migration 12.0s

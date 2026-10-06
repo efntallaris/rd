@@ -407,7 +407,7 @@ exit:
  *   TXN_START         - donor: migration session opened
  *   RECP_TXN_START    - recipient: PREP buffers ready
  *   INDX_UPD          - recipient: chain majority has the TRANSFER data
- *   RECP_TXN_DONE     - recipient: BACKPATCH + chain majority complete
+ *   RECP_TXN_DONE     - (no longer logged: INDX_UPD closes the recipient session)
  *   TXN_DONE          - donor: recipient acked done
  *
  * <payload> is an opaque bytestring; senders agree on a format per type
@@ -456,37 +456,96 @@ int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         memcpy(entry->data, payload, payload_len);
     }
 
-    int e = RedisRaftRecvEntry(rr, entry, NULL);
+    /* The caller is kept waiting until the entry has been committed and applied
+     * here (raftApplyLog replies OK). If the entry is dropped instead — this
+     * node lost leadership before it committed — the caller gets an error
+     * (entryFreeAttachedRaftReq), never OK: the migration protocol's decisions
+     * (INDX_UPD in particular) must not be acted on before they are durable. */
+    RaftReq *req = RaftReqInit(ctx, RR_GENERIC);
+    int e = RedisRaftRecvEntry(rr, entry, req);
     if (e != 0) {
-        replyRaftError(ctx, NULL, e);
+        replyRaftError(req->ctx, NULL, e);
+        RaftReqFree(req);
+    }
+    return REDISMODULE_OK;
+}
+
+/* RAFT.MGN-SESSION-OPEN <slot_lo> <slot_hi> <payload>
+ *
+ * Sent by a donor leader to the recipient leader BEFORE the donor redirects
+ * client writes for [lo,hi]. Opens the recipient's migration session for the
+ * range by appending MGN_RECP_TXN_START (<payload> is that entry's payload).
+ * Replies 1 once the entry has applied on this node (so it is committed and
+ * every write appended from now on is ordered after it), 0 while it is still
+ * committing; the donor repeats the call until it sees 1. The entry is appended
+ * at most once per second per range, so the repeats are cheap. */
+extern int rdmaTombstoneSessionIsOpen(int lo, int hi) __attribute__((weak));
+
+int cmdRaftMgnSessionOpen(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    RedisRaftCtx *rr = &redis_raft;
+    static long long last_lo = -1, last_hi = -1, last_ms = 0;
+
+    if (argc != 4) {
+        return RedisModule_WrongArity(ctx);
+    }
+    long long lo, hi;
+    if (RedisModule_StringToLongLong(argv[1], &lo) != REDISMODULE_OK ||
+        RedisModule_StringToLongLong(argv[2], &hi) != REDISMODULE_OK ||
+        lo < 0 || hi < lo) {
+        return RedisModule_ReplyWithError(ctx, "ERR bad slot range");
+    }
+    if (checkRaftState(rr, ctx) == RR_ERROR) {
         return REDISMODULE_OK;
     }
+    if (rdmaTombstoneSessionIsOpen == NULL) {
+        return RedisModule_ReplyWithError(ctx, "ERR migration sessions not supported by this server");
+    }
+    if (rdmaTombstoneSessionIsOpen((int) lo, (int) hi)) {
+        return RedisModule_ReplyWithLongLong(ctx, 1);
+    }
 
-    RedisModule_ReplyWithSimpleString(ctx, "OK");
-    return REDISMODULE_OK;
+    long long now_ms = RedisModule_Milliseconds();
+    if (lo != last_lo || hi != last_hi || now_ms - last_ms >= 1000) {
+        size_t payload_len;
+        const char *payload = RedisModule_StringPtrLen(argv[3], &payload_len);
+        raft_entry_t *entry = raft_entry_new(payload_len);
+        entry->type = RAFT_LOGTYPE_MGN_RECP_TXN_START;
+        if (payload_len > 0) {
+            memcpy(entry->data, payload, payload_len);
+        }
+        int e = RedisRaftRecvEntry(rr, entry, NULL);
+        if (e != 0) {
+            replyRaftError(ctx, NULL, e);
+            return REDISMODULE_OK;
+        }
+        last_lo = lo; last_hi = hi; last_ms = now_ms;
+    }
+    return RedisModule_ReplyWithLongLong(ctx, 0);
 }
 
 /* ---- AqRaft: migration buffer status piggybacked on AppendEntries ----------
  *
- * With --rdma-chain-ack-via-raft, a recipient follower does not send a TCP
- * CHAIN-ACK when a migrated batch lands in its landing pool. cluster_rdma
- * records it here instead (RAFT.MGN-RECEIVED <sess> <len>, main-thread
- * loopback), and the follower reports its recently received sessions as a 5th
- * element of every RAFT.AE reply ("sess:len,sess:len,..."). The leader turns
- * each newly reported (node, session) into the usual RDMA CHAIN-ACK, so the
- * durability gate (INDX_UPD only once a majority holds the batch) is unchanged;
- * only the transport moves onto the Raft replication channel. */
+ * When a migrated batch lands in a recipient follower's landing pool,
+ * cluster_rdma records it here (RAFT.MGN-RECEIVED <sess> <len> <position>,
+ * main-thread loopback; position = the follower's place in the chain), and the
+ * follower reports its recently received sessions as a 5th element of every
+ * RAFT.AE reply ("sess:len:pos,sess:len:pos,..."). The leader hands each newly
+ * reported (node, session) to cluster_rdma, which counts distinct followers for
+ * the durability gate (INDX_UPD only once a majority holds the batch). */
 #define MGN_RECV_MAX 16
 static long long g_mgn_recv_sess[MGN_RECV_MAX];
 static long long g_mgn_recv_len[MGN_RECV_MAX];
+static long long g_mgn_recv_pos[MGN_RECV_MAX];
 static int g_mgn_recv_n = 0, g_mgn_recv_next = 0;
 
 int cmdRaftMgnReceived(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
 {
-    long long sess, len;
-    if (argc != 3 ||
+    long long sess, len, pos;
+    if (argc != 4 ||
         RedisModule_StringToLongLong(argv[1], &sess) != REDISMODULE_OK ||
-        RedisModule_StringToLongLong(argv[2], &len) != REDISMODULE_OK) {
+        RedisModule_StringToLongLong(argv[2], &len) != REDISMODULE_OK ||
+        RedisModule_StringToLongLong(argv[3], &pos) != REDISMODULE_OK) {
         return RedisModule_WrongArity(ctx);
     }
     if (len < 0) {   /* forget: a new chain is being prepared for this session id */
@@ -496,6 +555,7 @@ int cmdRaftMgnReceived(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
                 int last = g_mgn_recv_n - 1;
                 g_mgn_recv_sess[i] = g_mgn_recv_sess[last];
                 g_mgn_recv_len[i] = g_mgn_recv_len[last];
+                g_mgn_recv_pos[i] = g_mgn_recv_pos[last];
                 g_mgn_recv_n--;
                 g_mgn_recv_next = g_mgn_recv_n % MGN_RECV_MAX;
                 break;
@@ -506,25 +566,28 @@ int cmdRaftMgnReceived(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
     for (int i = 0; i < g_mgn_recv_n; i++) {
         if (g_mgn_recv_sess[i] == sess) {
             g_mgn_recv_len[i] = len;
+            g_mgn_recv_pos[i] = pos;
             return RedisModule_ReplyWithSimpleString(ctx, "OK");
         }
     }
     g_mgn_recv_sess[g_mgn_recv_next] = sess;
     g_mgn_recv_len[g_mgn_recv_next] = len;
+    g_mgn_recv_pos[g_mgn_recv_next] = pos;
     g_mgn_recv_next = (g_mgn_recv_next + 1) % MGN_RECV_MAX;
     if (g_mgn_recv_n < MGN_RECV_MAX) g_mgn_recv_n++;
-    LOG_NOTICE("RAFT.MGN-RECEIVED: sess=%lld len=%lld (reported on AppendEntries replies)", sess, len);
+    LOG_NOTICE("RAFT.MGN-RECEIVED: sess=%lld len=%lld pos=%lld (reported on AppendEntries replies)",
+               sess, len, pos);
     return RedisModule_ReplyWithSimpleString(ctx, "OK");
 }
 
-/* "sess:len,..." for the RAFT.AE reply; empty string when nothing received. */
+/* "sess:len:pos,..." for the RAFT.AE reply; empty string when nothing received. */
 void MgnReceivedFormat(char *buf, size_t size)
 {
     size_t off = 0;
     buf[0] = '\0';
     for (int i = 0; i < g_mgn_recv_n && off < size; i++) {
-        int w = snprintf(buf + off, size - off, "%s%lld:%lld", i ? "," : "",
-                         g_mgn_recv_sess[i], g_mgn_recv_len[i]);
+        int w = snprintf(buf + off, size - off, "%s%lld:%lld:%lld", i ? "," : "",
+                         g_mgn_recv_sess[i], g_mgn_recv_len[i], g_mgn_recv_pos[i]);
         if (w < 0 || (size_t) w >= size - off) break;
         off += (size_t) w;
     }

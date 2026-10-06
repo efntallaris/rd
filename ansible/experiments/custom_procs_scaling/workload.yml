@@ -1,0 +1,31 @@
+---
+# Process-count scaling on fixed hardware: plain cluster (no Raft, no migrate,
+# no reshard) with {{ procs_per_host }} redis-server masters on each of
+# redis0/1/2. -e procs_per_host=1 -> 3 masters, -e procs_per_host=2 -> 6.
+# Assumes the fork binary and YCSB are already deployed (no build step).
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+
+- name: "Stage workload file on YCSB nodes"
+  hosts: ycsb_nodes
+  become: yes
+  tasks:
+    - name: Copy workload from the controller checkout
+      copy:
+        src: "{{ main_dir }}/ycsb_client/workloads/{{ redis_workload }}"
+        dest: "{{ redis_workload_path }}{{ redis_workload }}"
+        mode: "0644"
+
+    # run phase appends (>>): a file left by an aborted run would be mixed in.
+    - name: Remove stale YCSB run output
+      file:
+        path: "{{ ycsb_log_filename }}_{{ inventory_hostname }}"
+        state: absent
+
+- import_playbook: ../../tasks/cluster/start_redis_instances_multi.yml
+- import_playbook: ../../tasks/cluster/create_cluster_multi.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/monitor/start_monitoring.yml
+- import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
+- import_playbook: ../../tasks/ycsb/wait_ycsb.yml
+- import_playbook: ../../tasks/results/collect_results.yml

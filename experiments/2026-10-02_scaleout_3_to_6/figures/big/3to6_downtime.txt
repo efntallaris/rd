@@ -1,0 +1,232 @@
+################ HEALTHY
+kills      : none (times are from the migration start)
+elections  : none
+probe A sg1->sg4  longest gap without a successful op      48 ms | ops slower than 100 ms:    9 (slowest    555 ms) | not ok: none
+probe B sg2->sg5  longest gap without a successful op      41 ms | ops slower than 100 ms:   10 (slowest    415 ms) | not ok: none
+probe C sg3->sg6  longest gap without a successful op      65 ms | ops slower than 100 ms:   14 (slowest    479 ms) | not ok: none
+ycsb       : 151k before; minimum 138k at +1 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:151k -1:149k +0:146k +1:138k +2:165k +3:168k +4:186k +5:193k +6:208k +7:216k +8:231k +9:228k +10:245k +11:232k +12:247k +13:257k +14:260k +15:251k
+migration  : ends at +12.4 s
+transfers  :
+    +0.00 pair A id=1                   wait   -   setup  0.03 copy  0.38 commit  0.22  DONE
+    +0.65 pair B id=1                   wait  0.02 setup  0.03 copy  0.40 commit  0.25  DONE
+    +1.34 pair C id=1                   wait  0.01 setup  0.12 copy  0.34 commit  0.20  DONE
+    +2.03 pair A id=2                   wait  0.02 setup  0.03 copy  0.34 commit  0.30  DONE
+    +2.71 pair B id=2                   wait  0.01 setup  0.03 copy  0.41 commit  0.23  DONE
+    +3.40 pair C id=2                   wait  0.01 setup  0.03 copy  0.34 commit  0.30  DONE
+    +4.10 pair A id=3                   wait  0.03 setup  0.03 copy  0.34 commit  0.29  DONE
+    +4.76 pair B id=3                   wait  0.01 setup  0.03 copy  0.42 commit  0.26  DONE
+    +5.48 pair C id=3                   wait  0.01 setup  0.03 copy  0.34 commit  0.31  DONE
+    +6.18 pair A id=4                   wait  0.02 setup  0.03 copy  0.34 commit  0.31  DONE
+    +6.86 pair B id=4                   wait  0.01 setup  0.02 copy  0.39 commit  0.25  DONE
+    +7.53 pair C id=4                   wait  0.01 setup  0.03 copy  0.34 commit  0.34  DONE
+    +8.26 pair A id=5                   wait  0.02 setup  0.03 copy  0.34 commit  0.30  DONE
+    +8.93 pair B id=5                   wait  0.01 setup  0.02 copy  0.39 commit  0.26  DONE
+    +9.63 pair C id=5                   wait  0.02 setup  0.03 copy  0.34 commit  0.31  DONE
+   +10.32 pair A id=6                   wait  0.02 setup  0.03 copy  0.34 commit  0.32  DONE
+   +11.02 pair B id=6                   wait  0.01 setup  0.02 copy  0.41 commit  0.26  DONE
+   +11.72 pair C id=6                   wait  0.01 setup  0.03 copy  0.34 commit  0.32  DONE
+recovery   :
+################ S1
+kills      : redis3 at +0.00
+elections  : sg4 -> redis4 at +1.16 s
+probe A sg1->sg4  longest gap without a successful op      56 ms | ops slower than 100 ms:   10 (slowest    678 ms) | not ok: {'unknown': 88}
+probe B sg2->sg5  longest gap without a successful op      40 ms | ops slower than 100 ms:   12 (slowest    524 ms) | not ok: none
+probe C sg3->sg6  longest gap without a successful op      60 ms | ops slower than 100 ms:    6 (slowest    316 ms) | not ok: none
+ycsb       : 155k before; minimum 24k at +0 s; 0 s below 10%, 1 s below 50%; back at 90% at +2 s
+ycsb/s     : -2:157k -1:106k +0:24k +1:103k +2:168k +3:175k +4:182k +5:199k +6:208k +7:214k +8:227k +9:232k +10:243k +11:243k +12:238k +13:261k +14:268k +15:270k
+migration  : ends at +13.52 s
+transfers  :
+    -0.91 pair A id=1                   wait   -   setup  0.03 copy  0.35 commit  0.19  DONE
+    -0.32 pair B id=1                   wait  0.01 setup  0.03 copy  0.42 commit  0.23  DONE
+    +0.37 pair C id=1                   wait  0.01 setup  0.03 copy  0.35 commit  0.29  DONE
+    +1.55 pair A id=2                   wait  0.51 setup  0.53 copy  0.34 commit  0.41  DONE
+    +2.84 pair B id=2                   wait  0.01 setup  0.03 copy  0.39 commit  0.19  DONE
+    +3.46 pair C id=2                   wait  0.02 setup  0.03 copy  0.34 commit  0.29  DONE
+    +4.14 pair A id=3                   wait  0.02 setup  0.02 copy  0.49 commit  0.18  DONE
+    +4.85 pair B id=3                   wait  0.01 setup  0.03 copy  0.40 commit  0.19  DONE
+    +5.48 pair C id=3                   wait  0.01 setup  0.03 copy  0.34 commit  0.29  DONE
+    +6.16 pair A id=4                   wait  0.02 setup  0.60 copy  0.34 commit  0.21  DONE
+    +7.32 pair B id=4                   wait  0.01 setup  0.03 copy  0.38 commit  0.18  DONE
+    +7.93 pair C id=4                   wait  0.01 setup  0.03 copy  0.34 commit  0.31  DONE
+    +8.63 pair A id=5                   wait  0.02 setup  0.59 copy  0.34 commit  0.24  DONE
+    +9.81 pair B id=5                   wait  0.02 setup  0.03 copy  0.39 commit  0.21  DONE
+   +10.45 pair C id=5                   wait  0.02 setup  0.03 copy  0.34 commit  0.28  DONE
+   +11.12 pair A id=6                   wait  0.02 setup  0.53 copy  0.34 commit  0.23  DONE
+   +12.23 pair B id=6                   wait  0.01 setup  0.03 copy  0.38 commit  0.21  DONE
+   +12.87 pair C id=6                   wait  0.02 setup  0.03 copy  0.34 commit  0.28  DONE
+recovery   :
+    +2.08 sg4 on redis4: CHAIN: sess=700000000000000000 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +4.16 sg4 on redis4: CHAIN: sess=700000000000000001 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +6.76 sg4 on redis4: CHAIN: sess=700000000000000002 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +9.22 sg4 on redis4: CHAIN: sess=700000000000000003 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+   +11.65 sg4 on redis4: CHAIN: sess=700000000000000004 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+################ S2
+kills      : redis0 at +0.00
+elections  : sg1 -> redis1 at +1.30 s
+probe A sg1->sg4  longest gap without a successful op     644 ms | ops slower than 100 ms:   38 (slowest    556 ms) | not ok: {'unknown': 97}
+probe B sg2->sg5  longest gap without a successful op     511 ms | ops slower than 100 ms:   13 (slowest    623 ms) | not ok: none
+probe C sg3->sg6  longest gap without a successful op     491 ms | ops slower than 100 ms:    7 (slowest    365 ms) | not ok: none
+ycsb       : 151k before; minimum 12k at +0 s; 1 s below 10%, 2 s below 50%; back at 90% at +2 s
+ycsb/s     : -2:152k -1:146k +0:12k +1:58k +2:164k +3:169k +4:180k +5:191k +6:201k +7:196k +8:217k +9:225k +10:232k +11:201k +12:241k +13:275k +14:266k +15:262k
+migration  : ends at +12.67 s
+transfers  :
+    -0.84 pair A id=1                   wait   -   setup  0.03 copy  0.37 commit  0.23  DONE
+    -0.20 pair B id=1                   wait  0.01 setup  0.07 copy  0.38 commit  0.21  DONE
+    +0.48 pair C id=1                   wait  0.01 setup  0.02 copy  0.33 commit  0.34  DONE
+    +2.21 pair A id=1                   wait  1.03 setup  0.03 copy  0.41 commit  0.20  DONE
+    +2.87 pair B id=2                   wait  0.01 setup  0.03 copy  0.45 commit  0.18  DONE
+    +3.55 pair C id=2                   wait  0.02 setup  0.03 copy  0.34 commit  0.29  DONE
+    +4.23 pair A id=2                   wait  0.02 setup  0.02 copy  0.41 commit  0.22  DONE
+    +4.89 pair B id=3                   wait  0.02 setup  0.03 copy  0.46 commit  0.21  DONE
+    +5.61 pair C id=3                   wait  0.01 setup  0.03 copy  0.34 commit  0.31  DONE
+    +6.31 pair A id=3                   wait  0.03 setup  0.03 copy  0.40 commit  0.21  DONE
+    +6.96 pair B id=4                   wait  0.01 setup  0.03 copy  0.44 commit  0.25  DONE
+    +7.69 pair C id=4                   wait  0.01 setup  0.03 copy  0.34 commit  0.31  DONE
+    +8.39 pair A id=4                   wait  0.02 setup  0.03 copy  0.40 commit  0.21  DONE
+    +9.04 pair B id=5                   wait  0.01 setup  0.03 copy  0.42 commit  0.25  DONE
+    +9.75 pair C id=5                   wait  0.01 setup  0.03 copy  0.34 commit  0.31  DONE
+   +10.46 pair A id=5                   wait  0.02 setup  0.03 copy  0.53 commit  0.20  DONE
+   +11.23 pair B id=6                   wait  0.01 setup  0.03 copy  0.54 commit  0.16  DONE
+   +11.97 pair C id=6                   wait  0.01 setup  0.03 copy  0.34 commit  0.34  DONE
+recovery   :
+################ S3
+kills      : redis1 at +0.00
+elections  : none
+probe A sg1->sg4  longest gap without a successful op      43 ms | ops slower than 100 ms:   16 (slowest    525 ms) | not ok: none
+probe B sg2->sg5  longest gap without a successful op      43 ms | ops slower than 100 ms:   17 (slowest    570 ms) | not ok: none
+probe C sg3->sg6  longest gap without a successful op      42 ms | ops slower than 100 ms:    6 (slowest    146 ms) | not ok: none
+ycsb       : 153k before; minimum 118k at +0 s; 0 s below 10%, 0 s below 50%; back at 90% at +1 s
+ycsb/s     : -2:155k -1:147k +0:118k +1:158k +2:171k +3:185k +4:189k +5:199k +6:210k +7:227k +8:222k +9:229k +10:233k +11:256k +12:267k +13:264k +14:265k +15:266k
+migration  : ends at +11.65 s
+transfers  :
+    -0.76 pair A id=1                   wait   -   setup  0.03 copy  0.37 commit  0.20  DONE
+    -0.14 pair B id=1                   wait  0.01 setup  0.04 copy  0.59 commit  0.21  DONE
+    +0.71 pair C id=1                   wait  0.01 setup  0.04 copy  0.36 commit  0.26  DONE
+    +1.40 pair A id=2                   wait  0.03 setup  0.03 copy  0.34 commit  0.26  DONE
+    +2.04 pair B id=2                   wait  0.01 setup  0.03 copy  0.38 commit  0.30  DONE
+    +2.76 pair C id=2                   wait  0.02 setup  0.03 copy  0.34 commit  0.29  DONE
+    +3.44 pair A id=3                   wait  0.02 setup  0.02 copy  0.34 commit  0.30  DONE
+    +4.12 pair B id=3                   wait  0.02 setup  0.04 copy  0.37 commit  0.27  DONE
+    +4.80 pair C id=3                   wait  0.01 setup  0.03 copy  0.34 commit  0.33  DONE
+    +5.51 pair A id=4                   wait  0.02 setup  0.02 copy  0.34 commit  0.27  DONE
+    +6.16 pair B id=4                   wait  0.02 setup  0.04 copy  0.37 commit  0.30  DONE
+    +6.88 pair C id=4                   wait  0.02 setup  0.03 copy  0.34 commit  0.27  DONE
+    +7.54 pair A id=5                   wait  0.02 setup  0.03 copy  0.34 commit  0.31  DONE
+    +8.24 pair B id=5                   wait  0.02 setup  0.03 copy  0.37 commit  0.27  DONE
+    +8.92 pair C id=5                   wait  0.01 setup  0.03 copy  0.34 commit  0.31  DONE
+    +9.62 pair A id=6                   wait  0.02 setup  0.03 copy  0.34 commit  0.30  DONE
+   +10.30 pair B id=6                   wait  0.01 setup  0.03 copy  0.36 commit  0.29  DONE
+   +10.99 pair C id=6                   wait  0.01 setup  0.03 copy  0.34 commit  0.29  DONE
+recovery   :
+################ S4
+kills      : redis4 at +0.00
+elections  : none
+probe A sg1->sg4  longest gap without a successful op      58 ms | ops slower than 100 ms:    7 (slowest    545 ms) | not ok: none
+probe B sg2->sg5  longest gap without a successful op      42 ms | ops slower than 100 ms:   13 (slowest    478 ms) | not ok: none
+probe C sg3->sg6  longest gap without a successful op      57 ms | ops slower than 100 ms:   20 (slowest    574 ms) | not ok: none
+ycsb       : 147k before; minimum 140k at +0 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:149k -1:147k +0:140k +1:148k +2:168k +3:182k +4:187k +5:208k +6:218k +7:235k +8:221k +9:236k +10:233k +11:242k +12:259k +13:256k +14:256k +15:257k
+migration  : ends at +11.66 s
+transfers  :
+    -0.82 pair A id=1                   wait   -   setup  0.03 copy  0.35 commit  0.23  DONE
+    -0.19 pair B id=1                   wait  0.02 setup  0.03 copy  0.41 commit  0.18  DONE
+    +0.44 pair C id=1                   wait  0.01 setup  0.11 copy  0.34 commit  0.24  DONE
+    +1.15 pair A id=2                   wait  0.02 setup  0.03 copy  0.33 commit  0.85  DONE
+    +2.38 pair B id=2                   wait  0.02 setup  0.03 copy  0.40 commit  0.20  DONE
+    +3.02 pair C id=2                   wait  0.01 setup  0.02 copy  0.34 commit  0.28  DONE
+    +3.69 pair A id=3                   wait  0.03 setup  0.03 copy  0.34 commit  0.26  DONE
+    +4.34 pair B id=3                   wait  0.02 setup  0.03 copy  0.41 commit  0.20  DONE
+    +4.99 pair C id=3                   wait  0.01 setup  0.03 copy  0.34 commit  0.28  DONE
+    +5.66 pair A id=4                   wait  0.02 setup  0.03 copy  0.34 commit  0.30  DONE
+    +6.34 pair B id=4                   wait  0.01 setup  0.03 copy  0.39 commit  0.20  DONE
+    +6.97 pair C id=4                   wait  0.01 setup  0.03 copy  0.34 commit  0.32  DONE
+    +7.68 pair A id=5                   wait  0.02 setup  0.03 copy  0.34 commit  0.24  DONE
+    +8.30 pair B id=5                   wait  0.01 setup  0.03 copy  0.39 commit  0.22  DONE
+    +8.95 pair C id=5                   wait  0.01 setup  0.03 copy  0.34 commit  0.27  DONE
+    +9.60 pair A id=6                   wait  0.02 setup  0.02 copy  0.34 commit  0.30  DONE
+   +10.28 pair B id=6                   wait  0.02 setup  0.03 copy  0.48 commit  0.22  DONE
+   +11.02 pair C id=6                   wait  0.01 setup  0.03 copy  0.34 commit  0.27  DONE
+recovery   :
+    +1.72 sg4 on redis3: CHAIN: sess=700000000000000001 peer0 redis4:8000 PREP failed (CHAIN-PREP redis4:8000: Connection reset by peer) — excluding from chain (establish-time
+    +3.73 sg4 on redis3: CHAIN: sess=700000000000000002 peer0 redis4:8000 PREP failed (connect(redis4:8000) failed: (null)) — excluding from chain (establish-time death), surv
+    +5.69 sg4 on redis3: CHAIN: sess=700000000000000003 peer0 redis4:8000 PREP failed (connect(redis4:8000) failed: (null)) — excluding from chain (establish-time death), surv
+    +7.71 sg4 on redis3: CHAIN: sess=700000000000000004 peer0 redis4:8000 PREP failed (connect(redis4:8000) failed: (null)) — excluding from chain (establish-time death), surv
+    +9.63 sg4 on redis3: CHAIN: sess=700000000000000005 peer0 redis4:8000 PREP failed (connect(redis4:8000) failed: (null)) — excluding from chain (establish-time death), surv
+################ S8
+kills      : redis3 at +0.00, redis0 at +0.35
+elections  : sg4 -> redis5 at +1.31 s; sg1 -> redis1 at +1.60 s
+probe A sg1->sg4  longest gap without a successful op    1199 ms | ops slower than 100 ms:   54 (slowest    601 ms) | not ok: {'unknown': 132}
+probe B sg2->sg5  longest gap without a successful op     511 ms | ops slower than 100 ms:   13 (slowest    468 ms) | not ok: none
+probe C sg3->sg6  longest gap without a successful op     531 ms | ops slower than 100 ms:    5 (slowest    512 ms) | not ok: none
+ycsb       : 151k before; minimum 1k at +1 s; 1 s below 10%, 1 s below 50%; back at 90% at +15 s
+ycsb/s     : -2:149k -1:148k +0:99k +1:1k +2:87k +3:168k +4:167k +5:168k +6:165k +7:157k +8:175k +9:156k +10:174k +11:184k +12:150k +13:217k +14:109k +15:196k
+migration  : ends at +17.99 s
+transfers  :
+    -0.37 pair A id=1                   wait   -   setup  0.03 copy   -   commit   -    FAILED
+    +0.31 pair B id=1                   wait  0.01 setup  0.02 copy  0.37 commit  0.20  DONE
+    +0.91 pair C id=1                   wait  0.01 setup  0.02 copy  0.33 commit  0.34  DONE
+    +1.60 pair A id=800000000000000001  wait -0.01 setup   -   copy   -   commit   -    FAILED
+    +1.65 pair A id=800000000000000701  wait  0.04 setup  0.06 copy  0.43 commit  0.31  DONE
+    +6.67 pair A id=1                   wait  4.23 setup  0.03 copy  0.41 commit  0.15  DONE
+    +7.29 pair B id=2                   wait  0.02 setup  0.03 copy  0.41 commit  0.18  DONE
+    +7.93 pair C id=2                   wait  0.02 setup  0.03 copy  0.34 commit  0.31  DONE
+    +8.63 pair A id=2                   wait  0.03 setup  0.03 copy  0.40 commit  0.55  DONE
+    +9.63 pair B id=3                   wait  0.01 setup  0.03 copy  0.42 commit  0.16  DONE
+   +10.25 pair C id=3                   wait  0.02 setup  0.03 copy  0.34 commit  0.32  DONE
+   +10.97 pair A id=3                   wait  0.03 setup  0.03 copy  0.51 commit  0.53  DONE
+   +12.05 pair B id=4                   wait  0.01 setup  0.02 copy  0.42 commit  0.16  DONE
+   +12.66 pair C id=4                   wait  0.01 setup  0.03 copy  0.34 commit  0.33  DONE
+   +13.39 pair A id=4                   wait  0.02 setup  0.03 copy  0.37 commit  0.63  DONE
+   +14.43 pair B id=5                   wait  0.01 setup  0.02 copy  0.47 commit  0.16  DONE
+   +15.09 pair C id=5                   wait  0.01 setup  0.03 copy  0.34 commit  0.34  DONE
+   +15.82 pair A id=5                   wait  0.02 setup  0.02 copy  0.37 commit  0.39  DONE
+   +16.61 pair B id=6                   wait  0.01 setup  0.03 copy  0.48 commit  0.19  DONE
+   +17.32 pair C id=6                   wait  0.01 setup  0.03 copy  0.34 commit  0.30  DONE
+recovery   :
+    +1.31 sg4 on redis5: AqRaft MGN-RECOVER: role=recipient sess=700000000000000000 payload="register_id=open-1 slots=0-454 n=455 donor=redis0.entall-318211.streamstore-pg0.ut
+    +1.60 sg1 on redis1: AqRaft MGN-RECOVER: role=donor sess=1 payload="sess=1 slots=0-454 n=455 recipient=10.10.1.4:8000 term=3" — driving roll-forward resume
+    +1.60 sg1 on redis1: AqRaft S2 resume-plan: id=800000000000000001 sess=1 MGN-RESUME-STATUS 0-454 failed (Server closed the connection) — falling back to full re-ship
+    +1.62 sg1 on redis1: AqRaft MGN-RECOVER: role=donor sess=701 payload="sess=701 slots=0-454 n=455 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +1.65 sg1 on redis1: AqRaft S2 resume-plan: id=800000000000000701 sess=701 range=0-454 — recipient reports durable=0 pending=0 missing=455; skipping 0 already-landed slots
+    +1.71 sg4 on redis5: CHAIN: sess=700000000000000000 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +6.71 sg4 on redis5: CHAIN: sess=700000000000000001 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +8.66 sg4 on redis5: CHAIN: sess=700000000000000002 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+   +11.00 sg4 on redis5: CHAIN: sess=700000000000000003 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+   +13.41 sg4 on redis5: CHAIN: sess=700000000000000004 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+   +15.85 sg4 on redis5: CHAIN: sess=700000000000000005 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+################ S9
+kills      : redis4 at +0.00, redis0 at +0.35
+elections  : sg5 -> redis3 at +1.22 s; sg1 -> redis2 at +1.97 s
+probe A sg1->sg4  longest gap without a successful op    2299 ms | ops slower than 100 ms:   38 (slowest   2523 ms) | not ok: {'unknown': 130}
+probe B sg2->sg5  longest gap without a successful op    2039 ms | ops slower than 100 ms:   15 (slowest   1382 ms) | not ok: {'unknown': 2}
+probe C sg3->sg6  longest gap without a successful op    2063 ms | ops slower than 100 ms:   16 (slowest    426 ms) | not ok: none
+ycsb       : 150k before; minimum 0k at +1 s; 3 s below 10%, 4 s below 50%; back at 90% at +14 s
+ycsb/s     : -2:151k -1:112k +0:1k +1:0k +2:0k +3:52k +4:172k +5:164k +6:187k +7:121k +8:177k +9:217k +10:125k +11:228k +12:197k +13:130k +14:232k +15:190k
+migration  : ends at +18.1 s
+transfers  :
+    -0.25 pair A id=1                   wait   -   setup  0.03 copy  0.35 commit   -    no end (leader died / superseded)
+    +2.50 pair B id=1                   wait   -   setup  1.01 copy  0.34 commit  0.40  DONE
+    +4.27 pair C id=1                   wait  0.01 setup  0.12 copy  0.34 commit  0.19  DONE
+    +4.95 pair A id=1                   wait  0.03 setup  0.03 copy  0.34 commit  0.28  DONE
+    +5.62 pair B id=2                   wait  0.02 setup  0.05 copy  0.38 commit  0.57  DONE
+    +6.63 pair C id=2                   wait  0.01 setup  0.03 copy  0.34 commit  0.15  DONE
+    +7.18 pair A id=2                   wait  0.02 setup  0.02 copy  0.34 commit  0.34  DONE
+    +7.88 pair B id=3                   wait  0.01 setup  0.82 copy  0.43 commit  0.21  DONE
+    +9.36 pair C id=3                   wait  0.02 setup  0.03 copy  0.34 commit  0.15  DONE
+    +9.90 pair A id=3                   wait  0.02 setup  0.03 copy  0.34 commit  0.34  DONE
+   +10.61 pair B id=4                   wait  0.02 setup  0.83 copy  0.39 commit  0.23  DONE
+   +12.08 pair C id=4                   wait  0.01 setup  0.03 copy  0.34 commit  0.19  DONE
+   +12.65 pair A id=4                   wait  0.02 setup  0.02 copy  0.34 commit  0.28  DONE
+   +13.31 pair B id=5                   wait  0.02 setup  0.89 copy  0.39 commit  0.24  DONE
+   +14.84 pair C id=5                   wait  0.01 setup  0.03 copy  0.34 commit  0.22  DONE
+   +15.45 pair A id=5                   wait  0.02 setup  0.02 copy  0.34 commit  0.29  DONE
+   +16.12 pair B id=6                   wait  0.01 setup  0.77 copy  0.39 commit  0.23  DONE
+   +17.52 pair C id=6                   wait  0.01 setup  0.03 copy  0.34 commit  0.21  DONE
+recovery   :
+    +3.51 sg5 on redis3: CHAIN: sess=700000000000000000 peer0 redis4:8001 INIT-QP failed (connect(redis4:8001) failed: (null)) — excluding from chain (establish-time death), s
+    +5.67 sg5 on redis3: CHAIN: sess=700000000000000001 peer0 redis4:8001 INIT-QP failed (connect(redis4:8001) failed: (null)) — excluding from chain (establish-time death), s
+    +8.70 sg5 on redis3: CHAIN: sess=700000000000000002 peer0 redis4:8001 INIT-QP failed (connect(redis4:8001) failed: (null)) — excluding from chain (establish-time death), s
+   +11.44 sg5 on redis3: CHAIN: sess=700000000000000003 peer0 redis4:8001 INIT-QP failed (connect(redis4:8001) failed: (null)) — excluding from chain (establish-time death), s
+   +14.20 sg5 on redis3: CHAIN: sess=700000000000000004 peer0 redis4:8001 INIT-QP failed (connect(redis4:8001) failed: (null)) — excluding from chain (establish-time death), s
+   +16.89 sg5 on redis3: CHAIN: sess=700000000000000005 peer0 redis4:8001 INIT-QP failed (connect(redis4:8001) failed: (null)) — excluding from chain (establish-time death), s

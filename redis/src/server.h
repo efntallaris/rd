@@ -2188,6 +2188,9 @@ struct redisServer {
     int rdma_reshard_debug_bytes;
     int rdma_landing_barrier;   /* recipient landing barrier before backpatch apply (default on) */
     int rdma_merge_keys_per_tick; /* AqRaft: copy-out keys per mergeBackpatchTick (was #define 512). Higher drains the shadow->managed copy-out faster so every session finishes copying out, at the cost of longer main-thread stalls per tick. */
+    int rdma_warm_reg_batch;    /* AqRaft: MIGRATE-WARM registers live blocks in batches of N... */
+    int rdma_warm_reg_pause_us; /* ...pausing P us between batches (0/0 = no throttle). */
+    int rdma_chain_repair_timeout_ms; /* AqRaft: see rdma-chain-repair-timeout-ms. */
     int rdma_merge_background;  /* AqRaft: drain the shadow->live merge on the
                                    backpatch POOL WORKER threads (under real per-slot rwlocks)
                                    instead of on the main-thread mergeBackpatchTick. Default ON.
@@ -2225,6 +2228,13 @@ struct redisServer {
                                        Read once at initServer time; changing at
                                        runtime has no effect because the pool is
                                        constructed during recipientBackpatchThreadStart. */
+    int rdma_peer_probe_grace_ms;   /* Aqueduct: followers that answer within this many ms of the first one
+                                     * form the chain; -1 = contact them one by one as before. */
+    int rdma_chain_warm_on_promote; /* Aqueduct: a newly elected recipient leader with open rounds warms its chain. */
+    int rdma_peer_probe_ms;         /* Aqueduct: a peer that accepts a control connection must answer a PING
+                                     * within this many ms (two tries) or it is treated as dead; 0 = off. */
+    int rdma_fwd_slot_gate;         /* Aqueduct: merge a slot as soon as its block is on the chain head
+                                     * (not when the whole round is). Default on. */
     int rdma_chain_pipeline;        /* Aqueduct: recipient pipelines CHAIN-REPLICATION with
                                        the backpatch merge (forward each slot's snapshot to
                                        F1 as captured, vs one bulk forward at merge-done). */
@@ -2246,7 +2256,6 @@ struct redisServer {
                                        "faked durability" behaviour). Default off (honest). */
     sds rdma_src_prereg_bind;       /* AqRaft: local IP whose RDMA device the migration links use (keeper cm_id binds here); empty = first RDMA-capable address. */
     int rdma_indx_upd_after_merge;  /* AqRaft: log MGN_INDX_UPD only after the recipient leader's merge finishes (default on). */
-    int rdma_chain_ack_via_raft;    /* AqRaft: recipient followers report received migration batches on their Raft AppendEntries replies instead of a TCP CHAIN-ACK. */
     int rdma_landing_prereg_pools;  /* AqRaft recipient: landing-ring pools to register at startup (0 = lazily at the first REGISTER-BLOCK-SLOTS). */
     int rdma_landing_prereg_slots;  /* AqRaft recipient: slots per donor those pools are sized for. */
     int rdma_src_prereg_slots;      /* AqRaft: pre-register the donor source big-MR pool (this many 2 MiB blocks) at startup; 0 = register lazily at MIGRATE-WARM / REGISTERING. */

@@ -24,6 +24,11 @@ redis_data_dir: "{{ aq_disk }}/redis_data"
 local_log_dir: /users/entall/systat_logs
 ycsb_log_filename: /tmp/ycsb_output
 experimental_output_dir: /tmp/experiments
+# Do the reshard's RDMA warm-up (donor memory registration + recipient chain)
+# before the workload starts instead of ~3.5 s before the migration, where it
+# dents client throughput for ~2 s (see tasks/cluster/reshard_prewarm.yml).
+# -e rdma_prewarm_early=no puts it back right before the migration.
+rdma_prewarm_early: true
 
 # ─── Repo ───────────────────────────────────────────────────────────────────
 rd_repo: "https://github.com/efntallaris/rd.git"
@@ -114,3 +119,10 @@ redisraft_shardgroups:
         raft_id: 2
       - host: redis5
         raft_id: 3
+
+# Raft timing. RedisRaft randomizes the election timeout T into [T, 2T); the leader sends
+# heartbeats every request-timeout, which must stay well below T. RedisRaft's defaults
+# (1000 / 200 ms) made failure detection take 1.6-1.8 s. The Raft paper uses 150-300 ms;
+# 300 / 50 is its conservative end (detection ~0.35-0.65 s).
+raft_election_timeout: 300
+raft_request_timeout: 50

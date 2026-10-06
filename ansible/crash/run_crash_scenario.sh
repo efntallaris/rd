@@ -13,11 +13,16 @@
 # fires mid-migration off the Nth DONE-SLOTS-CHUNK / forward marker.
 #
 # Env passthrough: RESTART, POST_KILL_DELAY, MAX_WAIT (see crash_inject.sh).
+# Other topologies (e.g. experiments/custom_scaleout_3to6): SCENARIOS_ENV is the
+# scenario file to source, WORKLOAD_PLAYBOOK the playbook to run (path relative
+# to ansible/), RECIPIENT_LOGS the "host:sg" logs to fetch for the verdict
+# ("none": the playbook collects them itself), EXP_PREFIX a prefix for
+# experiment_name.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 SCENARIO="${1:-}"
-if [[ ! "$SCENARIO" =~ ^S[1-5]$ ]]; then
+if [[ ! "$SCENARIO" =~ ^S[1-9]$ ]]; then
   echo "usage: $0 <S1|S2|S3|S4|S5>" >&2; exit 1
 fi
 
@@ -25,11 +30,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ANSIBLE_DIR="$REPO_ROOT/ansible"
 RESULT_DIR="/tmp/crash_inject"
-EXP_NAME="crash_${SCENARIO,,}"
+EXP_NAME="${EXP_PREFIX:-}crash_${SCENARIO,,}"
 [ "${RDMA_NAIVE:-no}" = "yes" ] && EXP_NAME="${EXP_NAME}_naive"  # paper: naive durability baseline arm
 
 # shellcheck source=/dev/null
-source "$SCRIPT_DIR/scenarios.env"
+source "${SCENARIOS_ENV:-$SCRIPT_DIR/scenarios.env}"
 
 echo "=========================================================="
 echo " AqRaft crash scenario $SCENARIO  ($LABEL)"
@@ -43,6 +48,7 @@ mkdir -p "$RESULT_DIR"
 LABEL="$LABEL" ARM_HOST="$ARM_HOST" ARM_LOG="$ARM_LOG" \
   ARM_MARKER="$ARM_MARKER" ARM_COUNT="$ARM_COUNT" \
   TARGET_HOST="$TARGET_HOST" PIDFILE="$PIDFILE" \
+  TARGET_HOST2="${TARGET_HOST2:-}" PIDFILE2="${PIDFILE2:-}" PIDFILE_EXTRA="${PIDFILE_EXTRA:-}" \
   RESTART="${RESTART:-no}" POST_KILL_DELAY="${POST_KILL_DELAY:-0}" \
   MAX_WAIT="${MAX_WAIT:-1800}" RESULT_DIR="$RESULT_DIR" \
   bash "$SCRIPT_DIR/crash_inject.sh" &
@@ -53,8 +59,8 @@ echo "[run] crash_inject armed (pid=$INJ_PID); starting base reshard..."
 #    Only experiment_name changes vs the validated command.
 cd "$ANSIBLE_DIR"
 set +e
-sudo ansible-playbook -i inventory.ini \
-  experiments/custom_reshard_v2_orch_raft_chunked/workload_nround.yml \
+sudo ansible-playbook -i "${INVENTORY:-inventory.ini}" \
+  "${WORKLOAD_PLAYBOOK:-experiments/custom_reshard_v2_orch_raft_chunked/workload_nround.yml}" \
   -e redis_variant=custom -e n_rounds=1 \
   -e rdma_migration_peer_stagger_ms=0 \
   -e ycsb_slotpoll_ms=100 -e ycsb_threads_run="${YCSB_THREADS:-50}" -e rdma_chain_pipeline=yes -e rdma_chain_xsession=yes \
@@ -78,12 +84,14 @@ fi
 # 2b. The base collect_results skips the sg4 followers redis4/redis5 — grab
 #     their logs into the experiment dir (dead node's log is frozen; the
 #     survivor's is live) so the verdict + posterity have them.
-for h in redis3 redis4 redis5; do  # redis3 added: base collection left a STALE leader log (false PASS 2026-07-08)
+for hs in ${RECIPIENT_LOGS:-redis3:sg4 redis4:sg4 redis5:sg4}; do  # redis3 added: base collection left a STALE leader log (false PASS 2026-07-08)
+  [ "$hs" = none ] && continue
+  h=${hs%%:*}; g=${hs##*:}
   d="/tmp/experiments/$EXP_NAME/logs/$h/tmp/redis_logs"
   sudo mkdir -p "$d" 2>/dev/null || true
   sudo ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 "$h" \
-    "cat /tmp/redis_logs/${h}_sg4.log 2>/dev/null" 2>/dev/null \
-    | sudo tee "$d/${h}_sg4.log" >/dev/null 2>&1 || true
+    "cat /tmp/redis_logs/${h}_${g}.log 2>/dev/null" 2>/dev/null \
+    | sudo tee "$d/${h}_${g}.log" >/dev/null 2>&1 || true
 done
 
 # 3. Verdict.

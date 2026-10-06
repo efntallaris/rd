@@ -126,6 +126,23 @@ static int mgnRedisAeAttach(aeEventLoop *loop, redisAsyncContext *ac) {
     return C_OK;
 }
 
+
+/* AqRaft: canonical recipient address for donor links. The outbound-link cache is
+ * keyed by "host:port" text, and callers name the same recipient differently: the
+ * orchestrator and warm-up use "redis3", a re-home uses the short host name, the
+ * playbook re-drive uses "10.10.1.4". Different text opened a second link to the
+ * same node, which could not adopt the startup source pool (claimed by the first
+ * link) or reuse its registrations, and registered a new 5.7 GB pool (1.6-4.4 s).
+ * Resolve the short name (an FQDN's domain stripped: it resolves to the control
+ * network) to its IPv4 address, so every caller finds the same link and new links
+ * connect over the experiment network. Falls back to the given text. */
+static int redirHintResolve(const char *host, char *ip_out, size_t ip_sz);
+static const char *rdmaLinkHostCanon(const char *host, char *buf, size_t sz) {
+    if (host == NULL) return host;
+    if (redirHintResolve(host, buf, sz) == 0) return buf;
+    return host;
+}
+
 /* ---- Migration protocol log (RAFT.MGN-LOG) ------------------------------- */
 
 /* Async send target — lazy-initialized loopback connection to our own
@@ -180,6 +197,7 @@ static int mgnAsyncEnsure(const char *type) {
     return 1;
 }
 
+__attribute__((unused))
 static void rdmaMgnLogAsync(const char *type, const char *payload) {
     if (!mgnAsyncEnsure(type)) return;
     int ret = redisAsyncCommand(mgn_async_ctx, mgnAsyncReplyCb,
@@ -191,14 +209,14 @@ static void rdmaMgnLogAsync(const char *type, const char *payload) {
     }
 }
 
-/* AqRaft (--rdma-chain-ack-via-raft): record, in the local RedisRaft module, that
- * a migration batch landed in this follower's pool. RedisRaft then reports it on
+/* AqRaft: record, in the local RedisRaft module, that a migration batch landed in
+ * this follower's pool (position = this follower's CHAIN-WIRE position). RedisRaft then reports it on
  * this node's AppendEntries replies. Main thread only (same async loopback as
  * rdmaMgnLogAsync). */
-void rdmaMgnReceivedAsync(long long sess, long long len) {
+void rdmaMgnReceivedAsync(long long sess, long long len, int position) {
     if (!mgnAsyncEnsure("RECEIVED")) return;
     if (redisAsyncCommand(mgn_async_ctx, mgnAsyncReplyCb, zstrdup("RECEIVED"),
-                          "RAFT.MGN-RECEIVED %lld %lld", sess, len) != REDIS_OK) {
+                          "RAFT.MGN-RECEIVED %lld %lld %d", sess, len, position) != REDIS_OK) {
         serverLog(LL_WARNING, "RAFT.MGN-RECEIVED sess=%lld: redisAsyncCommand failed", sess);
     }
 }
@@ -208,21 +226,30 @@ void rdmaMgnReceivedAsync(long long sess, long long len) {
  * (recipient side) at phase boundaries, so all replicas in the local replica
  * group durably record the session's progress.
  *
+ * Returns 0 once the entry is COMMITTED and applied on this node, -1 otherwise
+ * (not leader, lost leadership before commit, timeout): the caller must not act
+ * on an entry that returned -1.
+ *
  * Sync hiredis to 127.0.0.1:<this server's port> — same pattern the existing
  * RDMA control RPCs already use. Safe from worker threads; NOT safe from the
  * main Redis thread (would deadlock — main thread is the one that processes
  * RAFT.MGN-LOG). The two main-thread sites (mergeBackpatchTick INDX_UPD /
  * RECP_TXN_DONE) need a different mechanism — out of scope for 1c.1. */
-static void rdmaMgnLogSync(const char *type, const char *payload) {
+static int rdmaMgnLogSync(const char *type, const char *payload) {
     redisContext *ctx = redisConnect("127.0.0.1", server.port);
     if (ctx == NULL || ctx->err) {
         serverLog(LL_WARNING,
             "RAFT.MGN-LOG %s: redisConnect(127.0.0.1:%d) failed: %s",
             type, server.port, ctx ? ctx->errstr : "(null ctx)");
         if (ctx) redisFree(ctx);
-        return;
+        return -1;
     }
+    /* RAFT.MGN-LOG replies once the entry is committed and applied on this
+     * node. Bound the wait: a leader that lost its majority never commits. */
+    struct timeval tv = { 10, 0 };
+    redisSetTimeout(ctx, tv);
 
+    int rc = -1;
     redisReply *r = redisCommand(ctx, "RAFT.MGN-LOG %s %s", type, payload);
     if (r == NULL) {
         serverLog(LL_WARNING,
@@ -235,12 +262,25 @@ static void rdmaMgnLogSync(const char *type, const char *payload) {
                r->len == 2 && memcmp(r->str, "OK", 2) == 0) {
         serverLog(LL_NOTICE,
             "RAFT.MGN-LOG %s logged: %s", type, payload);
+        rc = 0;
     } else {
         serverLog(LL_WARNING,
             "RAFT.MGN-LOG %s: unexpected reply (type=%d)", type, r->type);
     }
     if (r) freeReplyObject(r);
     redisFree(ctx);
+    return rc;
+}
+
+/* rdmaMgnLogSync, retried a few times: for entries whose caller cannot simply
+ * give up (the entry records something that already happened). Returns 0 once
+ * the entry is committed, -1 if every try failed. */
+static int rdmaMgnLogSyncRetry(const char *type, const char *payload, int tries) {
+    for (int i = 0; i < tries; i++) {
+        if (rdmaMgnLogSync(type, payload) == 0) return 0;
+        if (i + 1 < tries) usleep(200000);
+    }
+    return -1;
 }
 
 /* AqRaft per-donor JIT WRITE_FLIP. Issued by the migration worker right after
@@ -292,6 +332,53 @@ static int rdmaWriteFlipSync(int lo, int hi) {
     }
     if (r) freeReplyObject(r);
     redisFree(ctx);
+    sdsfree(cmd);
+    return rc;
+}
+
+static void rdmaMigrationParseSlotRange(const char *spec, int *out_lo, int *out_hi);
+
+/* AqRaft donor-side ownership handover. Issued by the migration worker right
+ * after its MGN_TXN_DONE commits (the recipient holds the range durably: merged,
+ * on a majority, MGN_INDX_UPD committed), so the donor stops serving [lo,hi] and
+ * redirects clients to the recipient group at once. Before this the handover was
+ * issued by the experiment's playbook after ALL donors finished, 0.7-3 s later,
+ * and clients kept double-reading through the donors until then. Same command
+ * the playbook used:
+ *   RAFT.SHARDGROUP NARROW <hi+1>:<own_hi> <dbid> 1 3 <lo> <hi> 1 0 <node_argv>
+ * with the recipient spec from rdma-writeflip-spec. Assumes the migrated range is
+ * the low end of this group's range (as the playbook did). Worker thread only.
+ * A repeat for the same range (resumed session, playbook) is a no-op in effect. */
+static int rdmaNarrowSync(int lo, int hi) {
+    sds spec = server.rdma_writeflip_spec;
+    if (spec == NULL || sdslen(spec) == 0 || lo < 0 || hi < lo) return 0;
+    const char *sp = strchr(spec, ' ');
+    if (sp == NULL) return -1;
+    int own_lo = -1, own_hi = -1;
+    rdmaMigrationParseSlotRange(server.rdma_migration_redisraft_slots, &own_lo, &own_hi);
+    if (own_hi < 0 || hi >= own_hi) {
+        serverLog(LL_WARNING, "NARROW(donor) %d:%d: cannot derive the remaining local range "
+                  "(own range %d:%d) — leaving the handover to the operator", lo, hi, own_lo, own_hi);
+        return -1;
+    }
+    sds cmd = sdscatprintf(sdsempty(),
+        "RAFT.SHARDGROUP NARROW %d:%d %.*s 1 3 %d %d 1 0 %s",
+        hi + 1, own_hi, (int) (sp - spec), spec, lo, hi, sp + 1);
+    int rc = -1;
+    for (int attempt = 0; attempt < 3 && rc != 0; attempt++) {
+        redisContext *ctx = redisConnect("127.0.0.1", server.port);
+        if (ctx == NULL || ctx->err) { if (ctx) redisFree(ctx); usleep(50000); continue; }
+        redisReply *r = redisCommand(ctx, cmd);   /* no '%' in cmd: see rdmaWriteFlipSync */
+        if (r != NULL && r->type != REDIS_REPLY_ERROR) rc = 0;
+        else serverLog(LL_WARNING, "NARROW(donor) %d:%d attempt %d failed: %s", lo, hi, attempt + 1,
+                       r ? r->str : ctx->errstr);
+        if (r) freeReplyObject(r);
+        redisFree(ctx);
+        if (rc != 0) usleep(50000);
+    }
+    if (rc == 0)
+        serverLog(LL_NOTICE, "NARROW(donor) applied: slots %d:%d handed to the recipient group "
+                  "(right after MGN_TXN_DONE); local now %d:%d", lo, hi, hi + 1, own_hi);
     sdsfree(cmd);
     return rc;
 }
@@ -439,6 +526,215 @@ typedef struct {
     size_t   crc_bytes;  /* data bytes checksummed (header-skipped) */
 } applySlotCtx;
 
+/* AqRaft recipient tombstones, scoped to the migration session.
+ *
+ * A slot is "in session" from the apply of MGN_RECP_TXN_START covering it until
+ * its MGN_RECP_TXN_DONE has applied AND this node has merged the slot's blocks.
+ * Both entries reach every recipient replica through the Raft log, so every
+ * replica (incl. one promoted later) opens and closes the window at the same
+ * log position. While a slot is in session every key deleted in it is
+ * remembered; deletes reach all replicas through the log too, so they hold the
+ * same set. Merges check it under the slot write lock (see dbGenericDelete), so
+ * a DEL is either seen by the merge or deletes what it installed. Without this a
+ * DEL that lands before the slot's merge — or before a recovery re-ship/re-merge —
+ * is undone by the donor's copy.
+ *
+ * The slot's tombstones are dropped when the session closes here: no merge of
+ * the slot can happen again once RECP_TXN_DONE is committed and the local merge
+ * is done. A replica that never receives the slot's blocks keeps them (safe). */
+#define TOMB_SLOT_NONE    0   /* no session: deletes are not recorded */
+#define TOMB_SLOT_ACTIVE  1   /* RECP_TXN_START applied, no RECP_TXN_DONE yet */
+#define TOMB_SLOT_CLOSING 2   /* RECP_TXN_DONE applied, local merge still pending */
+static dict           *g_tombstones = NULL;
+static pthread_mutex_t g_tombstones_mu = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic long    g_tombstones_n = 0;
+static _Atomic unsigned char g_tomb_slot[CLUSTER_SLOTS];
+static _Atomic int     g_tomb_slots_in_session = 0;
+/* Tombstones currently held per slot. The merge checks every key it installs;
+ * with one global count it took g_tombstones_mu for each of them as soon as any
+ * key anywhere had been deleted (17 of 64 sampled pool-worker stacks in
+ * rdmaTombstoneHas). A slot with no tombstone needs no lookup. Read and written
+ * under the slot's write lock like the set itself. */
+static _Atomic int     g_tomb_cnt[CLUSTER_SLOTS];
+static dictType tombstoneDictType = {
+    .hashFunction  = dictSdsHash,
+    .keyCompare    = dictSdsKeyCompare,
+    .keyDestructor = dictSdsDestructor,
+};
+
+void rdmaTombstoneAdd(sds key) {
+    if (atomic_load_explicit(&g_tomb_slots_in_session, memory_order_relaxed) == 0) return;
+    int slot = keyHashSlot(key, sdslen(key));
+    pthread_mutex_lock(&g_tombstones_mu);
+    /* Checked under the mutex: the session close clears the slot under it too,
+     * so no tombstone is added after the slot's set was dropped. */
+    if (atomic_load(&g_tomb_slot[slot]) != TOMB_SLOT_NONE) {
+        if (g_tombstones == NULL) g_tombstones = dictCreate(&tombstoneDictType);
+        if (dictFind(g_tombstones, key) == NULL) {
+            dictAdd(g_tombstones, sdsdup(key), NULL);
+            atomic_fetch_add_explicit(&g_tombstones_n, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&g_tomb_cnt[slot], 1, memory_order_relaxed);
+        }
+    }
+    pthread_mutex_unlock(&g_tombstones_mu);
+}
+
+int rdmaTombstoneHas(sds key) {
+    if (atomic_load_explicit(&g_tombstones_n, memory_order_relaxed) == 0) return 0;
+    pthread_mutex_lock(&g_tombstones_mu);
+    int has = (g_tombstones != NULL && dictFind(g_tombstones, key) != NULL);
+    pthread_mutex_unlock(&g_tombstones_mu);
+    return has;
+}
+
+/* Close the session of every CLOSING slot in [lo,hi] that this node has fully
+ * merged: drop the slot's tombstones and stop recording deletes for it. */
+static void tombstoneGcRange(int lo, int hi) {
+    unsigned char *drop = NULL;
+    int n_slots = 0;
+    long dropped = 0;
+    pthread_mutex_lock(&g_tombstones_mu);
+    for (int s = lo; s <= hi; s++) {
+        if (atomic_load(&g_tomb_slot[s]) != TOMB_SLOT_CLOSING) continue;
+        if (!rdmaInvSlotFullyMerged(s)) continue;
+        if (drop == NULL) drop = zcalloc(CLUSTER_SLOTS);
+        drop[s] = 1;
+        n_slots++;
+        atomic_store(&g_tomb_slot[s], TOMB_SLOT_NONE);
+        atomic_fetch_sub_explicit(&g_tomb_slots_in_session, 1, memory_order_relaxed);
+    }
+    if (drop != NULL && g_tombstones != NULL) {
+        dictIterator *di = dictGetSafeIterator(g_tombstones);
+        dictEntry *de;
+        while ((de = dictNext(di)) != NULL) {
+            sds k = dictGetKey(de);
+            int ks = keyHashSlot(k, sdslen(k));
+            if (!drop[ks]) continue;
+            atomic_store_explicit(&g_tomb_cnt[ks], 0, memory_order_relaxed);
+            dictDelete(g_tombstones, k);
+            dropped++;
+        }
+        dictReleaseIterator(di);
+        atomic_fetch_sub_explicit(&g_tombstones_n, dropped, memory_order_relaxed);
+    }
+    pthread_mutex_unlock(&g_tombstones_mu);
+    if (drop != NULL) {
+        zfree(drop);
+        /* A follower closes slot by slot as its merge finishes: keep that quiet. */
+        serverLog((lo == hi && dropped == 0) ? LL_VERBOSE : LL_NOTICE,
+                  "AqRaft tombstones: session closed for %d slots in %d-%d, "
+                  "dropped %ld tombstones", n_slots, lo, hi, dropped);
+    }
+}
+
+/* MGN_RECP_TXN_START applied for slots [lo,hi]. The redisraft module calls this
+ * and rdmaTombstoneSessionDone from its apply path (weak symbols). */
+void rdmaTombstoneSessionStart(int lo, int hi) {
+    if (lo < 0) lo = 0;
+    if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
+    pthread_mutex_lock(&g_tombstones_mu);
+    for (int s = lo; s <= hi; s++) {
+        if (atomic_exchange(&g_tomb_slot[s], TOMB_SLOT_ACTIVE) == TOMB_SLOT_NONE)
+            atomic_fetch_add_explicit(&g_tomb_slots_in_session, 1, memory_order_relaxed);
+    }
+    pthread_mutex_unlock(&g_tombstones_mu);
+}
+
+/* 1 iff every slot of [lo,hi] is in an open session (RECP_TXN_START applied and
+ * not closed) on this node. Called by the redisraft module (weak symbol). */
+int rdmaTombstoneSessionIsOpen(int lo, int hi) {
+    if (lo < 0 || hi >= CLUSTER_SLOTS || hi < lo) return 0;
+    for (int s = lo; s <= hi; s++)
+        if (atomic_load(&g_tomb_slot[s]) != TOMB_SLOT_ACTIVE) return 0;
+    return 1;
+}
+
+/* MGN_RECP_TXN_DONE applied for slots [lo,hi]. */
+void rdmaTombstoneSessionDone(int lo, int hi) {
+    if (lo < 0) lo = 0;
+    if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
+    pthread_mutex_lock(&g_tombstones_mu);
+    for (int s = lo; s <= hi; s++) {
+        unsigned char active = TOMB_SLOT_ACTIVE;
+        atomic_compare_exchange_strong(&g_tomb_slot[s], &active, TOMB_SLOT_CLOSING);
+    }
+    pthread_mutex_unlock(&g_tombstones_mu);
+    tombstoneGcRange(lo, hi);
+}
+
+/* This node finished merging `slot` (call after the inventory's merged mark). */
+static void rdmaTombstoneSlotMerged(int slot) {
+    if (atomic_load(&g_tomb_slot[slot]) == TOMB_SLOT_CLOSING) tombstoneGcRange(slot, slot);
+}
+
+/* AqRaft recipient admission, for slots in a migration session. A DEL or read-modify-write
+ * whose answer depends on the key's CURRENT value can't be decided here while the
+ * donor's copy may still arrive: the key is absent, not tombstoned, and this node
+ * has not merged the slot. Executing it would act on "absent" (DEL replies 0, INCR
+ * starts from 0) although the donor's value is the current one. Reply TRYAGAIN
+ * (the client retries; it is never appended to the log), until the slot is merged
+ * here. Checked on the raw client request, before RedisRaft appends it, so it is
+ * a leader-local admission decision and the log stays deterministic. Plain SET
+ * needs no gate (overwrite; don't-clobber keeps it). Reads are resolved by the
+ * client from the GET slot-meta flags. */
+static int rdmaKeyNeedsDonor(client *c, robj *key) {
+    int slot = keyHashSlot(key->ptr, sdslen(key->ptr));
+    if (atomic_load(&g_tomb_slot[slot]) == TOMB_SLOT_NONE) return 0;   /* not in session */
+    if (rdmaInvSlotFullyMerged(slot)) return 0;
+    if (rdmaTombstoneHas(key->ptr)) return 0;
+    return lookupKeyReadWithFlags(c->db, key, LOOKUP_NOEFFECTS) == NULL;
+}
+
+int rdmaRejectUnmergedRmw(client *c) {
+    if (atomic_load_explicit(&g_tomb_slots_in_session, memory_order_relaxed) == 0) return 0;
+    if (c->argc < 2) return 0;
+    const char *name = c->argv[0]->ptr;
+    int first = 1, last = 1, step = 1;   /* key argv positions */
+    if (!strcasecmp(name, "del") || !strcasecmp(name, "unlink")) {
+        last = c->argc - 1;
+    } else if (!strcasecmp(name, "set")) {
+        /* Only the conditional / value-returning forms depend on the old value. */
+        int rmw = 0;
+        for (int j = 3; j < c->argc; j++) {
+            const char *o = c->argv[j]->ptr;
+            if (!strcasecmp(o, "nx") || !strcasecmp(o, "xx") || !strcasecmp(o, "get") ||
+                !strcasecmp(o, "keepttl") || !strcasecmp(o, "ifeq")) rmw = 1;
+        }
+        if (!rmw) return 0;
+    } else if (!(!strcasecmp(name, "incr") || !strcasecmp(name, "decr") ||
+                 !strcasecmp(name, "incrby") || !strcasecmp(name, "decrby") ||
+                 !strcasecmp(name, "incrbyfloat") || !strcasecmp(name, "append") ||
+                 !strcasecmp(name, "getdel") || !strcasecmp(name, "getset") ||
+                 !strcasecmp(name, "getex") || !strcasecmp(name, "setnx") ||
+                 !strcasecmp(name, "setrange") || !strcasecmp(name, "expire") ||
+                 !strcasecmp(name, "pexpire") || !strcasecmp(name, "expireat") ||
+                 !strcasecmp(name, "pexpireat") || !strcasecmp(name, "persist"))) {
+        return 0;
+    }
+    for (int j = first; j <= last && j < c->argc; j += step) {
+        if (rdmaKeyNeedsDonor(c, c->argv[j])) return 1;   /* caller replies TRYAGAIN */
+    }
+    return 0;
+}
+
+/* Merge-time check: key already live (don't-clobber) or deleted here (tombstone). */
+static int rdmaMergeSkipKey(redisDb *db, int slot, sds k) {
+    if (kvstoreDictFind(db->keys, slot, k) != NULL) return 1;
+    /* The slot's session is closed on this node: it has already merged the slot
+     * and no longer records deletes for it. A merge that still arrives now is a
+     * leftover of an earlier delivery of the same range (a batch this node
+     * received as leader, was deposed before merging, and then merged at its
+     * next promotion). Installing from it would bring back keys deleted since
+     * the close (lin violation in S1: DEL, three nil reads, then the donor's old
+     * value again). Nothing in it is missing here, so skip it all. */
+    if (slot >= 0 && slot < CLUSTER_SLOTS &&
+        atomic_load(&g_tomb_slot[slot]) == TOMB_SLOT_NONE &&
+        rdmaInvSlotFullyMerged(slot)) return 1;
+    if (slot >= 0 && slot < CLUSTER_SLOTS &&
+        atomic_load_explicit(&g_tomb_cnt[slot], memory_order_relaxed) == 0) return 0;
+    return rdmaTombstoneHas(k);
+}
+
 static void applySlotCb(void *seg_payload, size_t seg_payload_size, void *user) {
     applySlotCtx *c = (applySlotCtx *) user;
     kvobj *kv = (kvobj *) seg_payload;
@@ -461,6 +757,22 @@ static void applySlotCb(void *seg_payload, size_t seg_payload_size, void *user) 
      * validation below catches the rest. */
     if (kv->iskvobj != 1 || kv->encoding != OBJ_ENCODING_R_ALLOCATOR) {
         c->skipped_invalid++;
+        return;
+    }
+    /* AqRaft: skip DEAD kvobjs. Freeing an R_ALLOCATOR kvobj that lives in a
+     * registered (foreign) block only orphans its segment — the header keeps
+     * iskvobj=1/encoding=R_ALLOCATOR and the segment stays marked used, with
+     * refcount dropped to 0. Donor keys live in such blocks (snapshot restore,
+     * earlier migrations), so every overwrite/DEL on the donor leaves the old
+     * version in the shipped block. Adopting it installs a stale value (or, if
+     * it is walked before the live copy, dictAddOrFind keeps it instead of the
+     * live one) and a later overwrite panics: illegal decrRefCount refcount 0. */
+    if (kv->refcount <= 0) {
+        static _Atomic long long dead_skipped = 0;
+        long long n = atomic_fetch_add_explicit(&dead_skipped, 1, memory_order_relaxed) + 1;
+        if ((n & 0x1FFFF) == 1)
+            serverLog(LL_NOTICE, "RDMA walk: skipped dead (refcount<=0) kvobj #%lld (slot=%d)",
+                      n, c->slot);
         return;
     }
     unsigned val_off = R_ALLOC_GET_OFFSET(kv);
@@ -511,6 +823,7 @@ static void applySlotCb(void *seg_payload, size_t seg_payload_size, void *user) 
         c->installed++;
     } else {
         dictEntry *existing = NULL;
+        if (rdmaTombstoneHas(kvobjGetKey(kv))) return;  /* deleted here */
         dictEntry *added = kvstoreDictAddRaw(c->db->keys, c->slot, kv, &existing);
         if (added != NULL) {
             c->installed++;
@@ -832,17 +1145,42 @@ static void *registerWorkerThread(void *arg);
  * cron catches up. All three transition sites run on the main event loop, so the
  * edge test is race-free. No-op unless server.rdma_merge_background. */
 static void recipientBackpatchInProgressAdd(int delta) {
+    /* Also called from the follower's apply thread (rdmaMergeResizeHold), so the
+     * count and the 0<->1 edge are taken under a mutex. */
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&mu);
     if (delta > 0) {
         int prev; atomicGet(server.recipient_backpatch_in_progress, prev);
         atomicIncr(server.recipient_backpatch_in_progress, 1);
         if (server.rdma_merge_background && prev == 0)
             dictSetResizeEnabled(DICT_RESIZE_FORBID);
+        /* Key-count (Fenwick) updates stay deferred for as long as any batch is
+         * between its registration and its merge_done. They used to be switched
+         * back on by chainForwardWorker, i.e. when the round's copy ended -- which,
+         * since the forward gate, is exactly when its merge STARTS: every merged
+         * key then took kvs->shared_mu and the pool workers queued on it (41 of 64
+         * sampled worker stacks in cumulativeKeyCountAdd, 30M run, 2026-10-04). */
+        if (prev == 0) kvstoreSetDeferFenwickUpdates(server.db[0].keys, 1);
     } else {
         atomicDecr(server.recipient_backpatch_in_progress, 1);
         int now; atomicGet(server.recipient_backpatch_in_progress, now);
         if (server.rdma_merge_background && now == 0)
             dictSetResizeEnabled(DICT_RESIZE_ENABLE);
+        if (now == 0) {
+            kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
+            kvstoreFenwickRebuild(server.db[0].keys);
+        }
     }
+    pthread_mutex_unlock(&mu);
+}
+
+/* The same hold for the FOLLOWER's background merge (chainApplyWorker ->
+ * rdmaFollowerMergeSlotBackground). It mutates slot dicts off the main thread
+ * exactly like the leader's pool workers, but ran without the resize forbid:
+ * the main thread could expand/rehash a slot's dict while the merge thread
+ * expanded it (dict.c:1801 'dictIsRehashing(d)' assert on an sg4 follower). */
+void rdmaMergeResizeHold(int delta) {
+    recipientBackpatchInProgressAdd(delta);
 }
 
 void rdmaRegisterBlockSlotsCommand(client *c) {
@@ -1616,6 +1954,30 @@ typedef struct backpatchBatch {
      * THIS (not on landing_va, which finalize frees), so the refcount can never
      * underflow on alloc failure or leak after an inline finalize. */
     int                  landing_fwd_counted;
+    /* AqRaft forward gate: the zero-copy forward RDMA-reads the landing blocks,
+     * but FillShadow rewrites their segment headers and the adopt-in-place merge
+     * makes their kvobjs live (a client overwrite / DEL then decrRefCounts them in
+     * place). So no FillShadow/merge may touch a session's landing blocks until
+     * EVERY forward of it (incl. a re-form re-forward) is over: otherwise the
+     * followers receive corrupted blocks (illegal decrRefCount on a refcount-0
+     * kvobj, "NO valid kvobjs staged", missing keys). fwd_final is set (under
+     * backpatch_work_mu) where the forward consumer drops its landing hold; work
+     * items reaching FillShadow before that wait in fwd_held. */
+    int                  fwd_final;
+    list                *fwd_held;    /* backpatchSlotWork* parked by the gate */
+    /* Per-slot gate (2026-10-05): the gate used to open only when the whole round
+     * had been forwarded, so the leader's merge started where the replication to
+     * the follower ended (0.5 s per round, 30M). A block the head holds is not read
+     * again by this forward, so its slot can be merged at once: fwd_blk_done[i] is
+     * set when block i's write to the head completed, fwd_slot_ok[slot] when all
+     * blocks of the slot have. Both under backpatch_work_mu. If the forward then
+     * FAILS (the head died), the re-forward to the next follower reads blocks that
+     * are being merged: the forwarder first opens the whole gate and waits for
+     * merge_done, as chainRepairWorker does ("readable before the merge starts or
+     * after it finished, never during"). */
+    unsigned char       *fwd_blk_done;
+    unsigned char       *fwd_slot_ok;
+    int                  fwd_released;
     /* AqRaft zero-copy chain forward refcount: number of live consumers of this
      * session's landing ring buffer — the local merge (+1) and the chain forward
      * (+1, only when a chain is configured). The ring slot is returned to
@@ -1678,6 +2040,14 @@ typedef struct backpatchBatch {
      * {mergeBackpatchTick @ merge_done, backpatchFinalize} runs last. This CAS
      * guard ensures exactly one of them performs the release. */
     _Atomic int          landing_pool_released;
+    /* Chain repair (chainPendingTick): how many followers held the batch when
+     * the count last grew, and when; a repair runs when it stalls short of a
+     * majority. repair_running keeps the batch (and landing_va) alive while a
+     * repair thread uses it. */
+    int                  repair_last_have;
+    long long            repair_progress_ms;
+    int                  repair_count;
+    _Atomic int          repair_running;
 } backpatchBatch;
 
 /* chain-pipeline: spawn the pipelined forwarder for a batch (defined far below,
@@ -1688,6 +2058,19 @@ static void rdmaSpawnPipelineForward(backpatchBatch *b);
  * near backpatchPoolWorkerMain). Called from rdmaDoneSlotsChunkCommand at
  * chunk-arrival so the forwarder can post without waiting on the pool workers. */
 static void captureSlotSnapshot(backpatchBatch *b, int slot);
+/* Set around a capture made on the MAIN thread (rdmaDoneSlotsChunkCommand): no
+ * landing barrier there. The barrier checksums each block at least twice; with
+ * full 2 MiB blocks (30M keys, ~1800 per slot) that is ~0.7 ms per slot, 244 ms
+ * for a 342-slot chunk, twelve times per 3 -> 4 migration, with the recipient
+ * leader's event loop stopped: the fault-free run fell from ~142k to ~18k ops/s
+ * (2026-10-04; it was ~150k -> ~135k on 2026-10-01). The barrier was added to
+ * this capture on 2026-10-02 as a guard while chasing S9; the cause there was
+ * the CQ completion accounting. The donor sends DONE-SLOTS-CHUNK only after its
+ * RDMA writes are acknowledged, and the local merge keeps its own barrier
+ * (FillShadow, off the main thread). */
+static __thread int capture_no_barrier = 0;
+static int  batchPoolRange(backpatchBatch *b, char **base, size_t *bytes);
+static int  landingBlocksInRange(int slot, const char *base, size_t bytes, void **out, int max);
 
 #define BACKPATCH_RING_CAPACITY 64u
 
@@ -1921,6 +2304,10 @@ void rdmaDoneSlotsCommand(client *c) {
     b->chain_forwarded = 0;
     b->chain_acked = 0;
     b->chain_baseline_ack_count = 0;
+    b->repair_last_have = 0;
+    b->repair_progress_ms = 0;
+    b->repair_count = 0;
+    atomic_store(&b->repair_running, 0);
     /* AqRaft 3-flag DONE + parallel chain spawn — see backpatchBatch struct. */
     atomic_store_explicit(&b->merge_done, 0, memory_order_relaxed);
     atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
@@ -1965,6 +2352,9 @@ void rdmaDoneSlotsCommand(client *c) {
         }
     }
     b->landing_fwd_counted = (chain_cfg && b->landing_va != NULL) ? 1 : 0;
+    b->fwd_final = 0;
+    b->fwd_held = NULL;
+    b->fwd_released = 0; b->fwd_blk_done = NULL; b->fwd_slot_ok = NULL;
     atomic_store_explicit(&b->landing_consumers, 1 + b->landing_fwd_counted,
                           memory_order_relaxed);
 
@@ -2052,9 +2442,7 @@ void rdmaDoneSlotsCommand(client *c) {
          * rdmaRegisterBlockSlotsCommand (moved out of RECV-FLIP for early-FLIP). */
         if (atomic_exchange(&b->bp_inprog_released, 1) == 0)
             recipientBackpatchInProgressAdd(-1);   /* restore dict resize on 1->0 (bg-merge); exactly-once */
-        /* Re-enable + rebuild the Fenwick tree we let go stale during backpatch. */
-        kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
-        kvstoreFenwickRebuild(server.db[0].keys);
+        /* The Fenwick tree is re-enabled + rebuilt by recipientBackpatchInProgressAdd. */
         /* Note: recipient's slot meta is already STABLE (set in RECV-FLIP).
          * The MIGRATING→STABLE transition here was tried but caused
          * concurrent-mutation issues with main-thread Path B; reverted. */
@@ -2079,7 +2467,11 @@ void rdmaDoneSlotsCommand(client *c) {
  * the donor's BACKPATCH-STATUS poll sees "running" immediately after INIT.
  * The pool worker that decrements remaining → 0 (cluster_rdma.c around :1258)
  * transitions to BACKPATCH_DONE and runs the existing dispose path. */
+static void xferGateActivity(void);   /* recipient transfer gate (defined below) */
+static void xferGateRelease(void);
+
 void rdmaDoneSlotsInitCommand(client *c) {
+    xferGateActivity();   /* the active transfer is alive (transfer gate idle check) */
     if (c->argc != 5) {
         addReplyError(c, "DONE-SLOTS-INIT: expected <src_node_id> <src_mig_id> <total_slots>");
         return;
@@ -2134,6 +2526,10 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->chain_forwarded = 0;
     b->chain_acked = 0;
     b->chain_baseline_ack_count = 0;
+    b->repair_last_have = 0;
+    b->repair_progress_ms = 0;
+    b->repair_count = 0;
+    atomic_store(&b->repair_running, 0);
     /* AqRaft 3-flag DONE + parallel chain spawn — see backpatchBatch struct. */
     atomic_store_explicit(&b->merge_done, 0, memory_order_relaxed);
     atomic_store_explicit(&b->indx_applied, 0, memory_order_relaxed);
@@ -2177,6 +2573,14 @@ void rdmaDoneSlotsInitCommand(client *c) {
             b->snapshot_ready = zcalloc((size_t) b->total_blocks * sizeof(_Atomic uint8_t));
     }
     b->landing_fwd_counted = (chain_cfg && b->landing_va != NULL) ? 1 : 0;
+    b->fwd_final = 0;
+    b->fwd_held = NULL;
+    b->fwd_released = 0;
+    b->fwd_blk_done = NULL; b->fwd_slot_ok = NULL;
+    if (b->landing_fwd_counted && b->snapshot_ready != NULL && server.rdma_fwd_slot_gate) {
+        b->fwd_blk_done = zcalloc((size_t) b->total_blocks);
+        b->fwd_slot_ok = zcalloc(CLUSTER_SLOTS);
+    }
     atomic_store_explicit(&b->landing_consumers, 1 + b->landing_fwd_counted,
                           memory_order_relaxed);
 
@@ -2251,6 +2655,7 @@ void rdmaDoneSlotsInitCommand(client *c) {
  * from the existing single-batch flow). chunk_seq is currently advisory (for
  * logs/debugging); ordering is not enforced. */
 void rdmaDoneSlotsChunkCommand(client *c) {
+    xferGateActivity();   /* the active transfer is alive (transfer gate idle check) */
     if (c->argc < 6) {
         addReplyError(c, "DONE-SLOTS-CHUNK: expected <src_node_id> <src_mig_id> <chunk_seq> <slot> [<slot> ...]");
         return;
@@ -2330,7 +2735,16 @@ void rdmaDoneSlotsChunkCommand(client *c) {
              * capture can find its positions. slot_pos_base>=0 → already appended
              * (defensive against a slot arriving in two chunks). */
             if (b->slot_pos_base[s] >= 0) continue;
-            int nb = r_allocator_get_landing_blocks_for_slot(s, NULL, 0);
+            /* Count only THIS batch's blocks: after a crash a resumed session's
+             * slot also has the crashed session's stale landing blocks (another
+             * pool). Counting those reserved phantom positions; the capture then
+             * filled them with a duplicate that overwrote the NEXT slot's position
+             * (positions are contiguous), so followers got a neighbour's block
+             * and missed this slot's keys (S2: sg4 leader-only keys). */
+            char *pbase = NULL; size_t pbytes = 0;
+            int nb = batchPoolRange(b, &pbase, &pbytes)
+                   ? landingBlocksInRange(s, pbase, pbytes, NULL, 0)
+                   : r_allocator_get_landing_blocks_for_slot(s, NULL, 0);
             if (nb < 1) nb = 1;
             b->slot_pos_base[s] = b->covered_slot_count;
             b->slot_pos_nb[s]   = 0;
@@ -2375,7 +2789,9 @@ void rdmaDoneSlotsChunkCommand(client *c) {
      * could FillShadow the slot and overwrite the block before we capture it. */
     if (b->landing_va != NULL) {
         for (int j = 0; j < n_slots; j++) {
+            capture_no_barrier = 1;   /* main thread: see capture_no_barrier */
             captureSlotSnapshot(b, items[j]->slot);
+            capture_no_barrier = 0;
             items[j]->captured = 1;
         }
     }
@@ -2460,8 +2876,31 @@ static void initMigrationShadowDictType(void) {
  * fresh `shadow` dict that the main thread later merges into the live
  * kvstore. No per-key sdsnewlen + r_allocator_insert_kvobj — the kvobjs
  * are reused in place inside the registered block. */
+/* Set around a fill that must skip the landing barrier (promotion merge). */
+static __thread int fill_shadow_no_barrier = 0;
+
+/* LANDING BARRIER: spin until the blocks' content stops changing (two reads
+ * 50us apart agree), bounded to 200 rounds (~10 ms). DONE-SLOTS-CHUNK arrives on
+ * the TCP control channel and can overtake the donor's RDMA WRITE still landing
+ * in our memory. Returns the number of rounds, 200 = did not settle. */
+static int rdmaLandingSettle(void *const *blocks, int n_blocks) {
+    uint64_t prev = 0;
+    int it;
+    for (it = 0; it < 200; it++) {
+        rdmaSegCrcCtx cc = { 0, 0, 0 };
+        for (int b = 0; b < n_blocks; b++)
+            if (blocks[b])
+                r_allocator_walk_used_segments((char *) blocks[b], rdmaSegCrcCb, &cc);
+        if (it > 0 && cc.crc == prev) break;
+        prev = cc.crc;
+        usleep(50);
+    }
+    return it;
+}
+
 static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
-                                         int *out_total, int *out_skipped)
+                                         int *out_total, int *out_skipped,
+                                         const char *pool_lo, size_t pool_bytes)
 {
     UNUSED(db);
     if (out_total)   *out_total = 0;
@@ -2480,12 +2919,38 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
      * same mutex internally — safe because it is recursive. */
     r_allocator_lock_slot(slot);
 
-    int n_blocks = 0;
-    char **block_buffers = r_allocator_get_block_buffers_for_slot(slot, &n_blocks);
-    if (block_buffers == NULL || n_blocks == 0) {
-        if (block_buffers) zfree(block_buffers);
+    /* AqRaft: walk ONLY the slot's landing (registered-existing) blocks — the
+     * donor's shipped data. The slot's block list also holds ordinary allocator
+     * blocks with kvobjs that post-FLIP client writes (raft-applied SETs) created
+     * here; staging those LIVE objects is wrong: if the key is DELeted/overwritten
+     * before the merge, the merge finds it absent and installs the FREED segment
+     * (freelist words over its header -> "illegal decrRefCount ... refcount 0"
+     * on the next write, or a deleted key resurrected). Sanitizing such a block
+     * would also mark its free segments used. */
+    /* With pool_lo set, only the blocks inside that pool: one batch's merge must
+     * not sanitize/adopt another batch's landing blocks (e.g. a resumed
+     * session's, not yet forwarded) — the same isolation the chain capture uses. */
+    int n_blocks = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
+    if (n_blocks <= 0) {
         r_allocator_unlock_slot(slot);
         return NULL;
+    }
+    char **block_buffers = zmalloc((size_t) n_blocks * sizeof(char *));
+    int got = r_allocator_get_landing_blocks_for_slot(slot, (void **) block_buffers, n_blocks);
+    if (got < n_blocks) n_blocks = got;   /* returns the total; never index past the array */
+    if (pool_lo != NULL) {
+        int keep = 0;
+        for (int i = 0; i < n_blocks; i++) {
+            const char *bb = block_buffers[i];
+            if (bb >= pool_lo && bb + RDMAMIG_BLOCK_SIZE_BYTES <= pool_lo + pool_bytes)
+                block_buffers[keep++] = block_buffers[i];
+        }
+        n_blocks = keep;
+        if (n_blocks == 0) {
+            zfree(block_buffers);
+            r_allocator_unlock_slot(slot);
+            return NULL;
+        }
     }
 
     /* LANDING BARRIER (correctness fix). DONE-SLOTS-CHUNK arrives over a SEPARATE
@@ -2496,7 +2961,7 @@ static dict *rdmaBackpatchSlotFillShadow(redisDb *db, int slot,
      * this TCP-triggered read on the recipient. Spin until the block content
      * stops changing (two reads 50us apart agree) before applying, so we never
      * install a half-landed block. Bounded (<=10ms) so it can never hang. */
-    if (server.rdma_landing_barrier) {
+    if (server.rdma_landing_barrier && !fill_shadow_no_barrier) {
         uint64_t prev = 0;
         int it;
         for (it = 0; it < 200; it++) {
@@ -2640,6 +3105,40 @@ static void *backpatchPoolFreeWorker(void *arg) {
 static void                  *g_lp_pool[N_LANDING_POOLS]  = {0};
 static size_t                 g_lp_bytes[N_LANDING_POOLS] = {0};
 static struct rdmamig_buffer *g_lp_buf[N_LANDING_POOLS]   = {0};
+
+/* AqRaft: the [base, base+bytes) range of batch b's own landing pool, so per-batch
+ * steps only touch this batch's blocks (a slot can also hold another session's
+ * landing blocks after a crash/resume). 0 if unknown (legacy: no filter). */
+static int batchPoolRange(backpatchBatch *b, char **base, size_t *bytes) {
+    if (b == NULL || b->landing_pool_buf == NULL) return 0;
+    for (int z = 0; z < N_LANDING_POOLS; z++) {
+        if (g_lp_buf[z] == b->landing_pool_buf && g_lp_pool[z] != NULL) {
+            *base = (char *) g_lp_pool[z]; *bytes = g_lp_bytes[z];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Landing blocks of `slot` inside [base, base+bytes); returns the count, fills
+ * out[0..max-1] (oldest->newest). */
+static int landingBlocksInRange(int slot, const char *base, size_t bytes, void **out, int max) {
+    int total = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
+    if (total <= 0) return 0;
+    void **all = zmalloc((size_t) total * sizeof(void *));
+    int got = r_allocator_get_landing_blocks_for_slot(slot, all, total);
+    if (got > total) got = total;
+    int n = 0;
+    for (int i = 0; i < got; i++) {
+        const char *bb = all[i];
+        if (bb >= base && bb + RDMAMIG_BLOCK_SIZE_BYTES <= base + bytes) {
+            if (out != NULL && n < max) out[n] = all[i];
+            n++;
+        }
+    }
+    zfree(all);
+    return n;
+}
 static void                  *g_lp_pd[N_LANDING_POOLS]    = {0};
 static int                    g_lp_free[N_LANDING_POOLS]  = {1, 1, 1, 1, 1, 1, 1, 1};
 static int                    g_lp_next = 0;     /* round-robin cursor (xsession) */
@@ -2678,6 +3177,17 @@ static struct rdma_cm_id     *g_lp_fwd_cm[N_LANDING_POOLS]  = {0};
  * slots not yet created (registerWorkerThread mmaps them lazily; the forwarder's
  * rdmaLandingFwdBufFor lazy-ensures any slot created after this runs). Safe to
  * call off-main (it's an ibv_reg_mr). */
+/* Landing pools retired by adopt-in-place (see landingConsumerDone), remembered
+ * so a chain repair can still RDMA-read them: buffer handle -> mapping, plus a
+ * lazily registered twin MR for the follower link in use. Guarded by g_lp_mu. */
+#define N_RETIRED_LANDING_POOLS 32
+static struct rdmamig_buffer *g_lpr_buf[N_RETIRED_LANDING_POOLS];
+static void                  *g_lpr_pool[N_RETIRED_LANDING_POOLS];
+static size_t                 g_lpr_bytes[N_RETIRED_LANDING_POOLS];
+static struct rdmamig_buffer *g_lpr_fwd_buf[N_RETIRED_LANDING_POOLS];
+static struct rdma_cm_id     *g_lpr_fwd_cm[N_RETIRED_LANDING_POOLS];
+static int                    g_lpr_next = 0;
+
 void rdmaEnsureLandingFwdReg(struct rdma_cm_id *f1_cm) {
     if (f1_cm == NULL) return;
     pthread_mutex_lock(&g_lp_mu);
@@ -2705,6 +3215,7 @@ void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm) {
     if (landing_buf == NULL || f1_cm == NULL) return NULL;
     pthread_mutex_lock(&g_lp_mu);
     void *out = NULL;
+    int found = 0;
     for (int i = 0; i < N_LANDING_POOLS; i++) {
         if (g_lp_buf[i] != (struct rdmamig_buffer *) landing_buf) continue;
         if (g_lp_fwd_buf[i] == NULL || g_lp_fwd_cm[i] != f1_cm) {
@@ -2713,6 +3224,19 @@ void *rdmaLandingFwdBufFor(void *landing_buf, struct rdma_cm_id *f1_cm) {
             if (fb != NULL) { g_lp_fwd_buf[i] = fb; g_lp_fwd_cm[i] = f1_cm; }
         }
         out = g_lp_fwd_buf[i];
+        found = 1;
+        break;
+    }
+    /* A retired pool (now live keyspace storage) is still a valid source for a
+     * chain repair: its mapping stays, only the ring slot was given up. */
+    for (int i = 0; !found && i < N_RETIRED_LANDING_POOLS; i++) {
+        if (g_lpr_buf[i] != (struct rdmamig_buffer *) landing_buf) continue;
+        if (g_lpr_fwd_buf[i] == NULL || g_lpr_fwd_cm[i] != f1_cm) {
+            struct rdmamig_buffer *fb =
+                rdmamig_buffer_create_qp_pd(f1_cm, (char *) g_lpr_pool[i], g_lpr_bytes[i], 0);
+            if (fb != NULL) { g_lpr_fwd_buf[i] = fb; g_lpr_fwd_cm[i] = f1_cm; }
+        }
+        out = (g_lpr_fwd_cm[i] == f1_cm) ? g_lpr_fwd_buf[i] : NULL;
         break;
     }
     pthread_mutex_unlock(&g_lp_mu);
@@ -2745,6 +3269,70 @@ static void backpatchReleaseLandingPool(backpatchBatch *b) {
  * forwarder reads the landing buffer directly, so releasing on merge_done alone
  * (the old behavior) would be a use-after-free. Always-on (not xsession-gated):
  * the ring claim now also respects g_lp_free unconditionally. */
+/* AqRaft forward gate (see backpatchBatch.fwd_final): every forward of this
+ * session's landing blocks is over — let FillShadow/merge touch them, and
+ * re-enqueue the work items that reached the gate early. Call where the forward
+ * consumer drops its landing hold, BEFORE landingConsumerDone. */
+static void chainFwdGateOpen(backpatchBatch *b) {
+    pthread_mutex_lock(&backpatch_work_mu);
+    b->fwd_final = 1;
+    int n = 0;
+    if (b->fwd_held != NULL) {
+        listIter li; listNode *ln; listRewind(b->fwd_held, &li);
+        while ((ln = listNext(&li)) != NULL) {
+            listAddNodeTail(backpatch_work_queue, listNodeValue(ln));
+            n++;
+        }
+        listRelease(b->fwd_held);   /* frees nodes only; items now on the work queue */
+        b->fwd_held = NULL;
+        if (n > 0) pthread_cond_broadcast(&backpatch_work_cv);
+    }
+    pthread_mutex_unlock(&backpatch_work_mu);
+    serverLog(LL_NOTICE, "CHAIN: sess=%lld forward gate open (%d held merge items released, "
+              "%d slots released earlier, as their blocks reached the head)",
+              b->src_mig_id, n, b->fwd_released);
+}
+
+/* Per-slot forward gate: block `idx` of this session is held by the chain head.
+ * Called by the pipelined forwarder for every completed write, in its thread. */
+static void chainFwdBlockDone(void *ctx, int idx) {
+    backpatchBatch *b = ctx;
+    if (b->fwd_blk_done == NULL || idx < 0 || idx >= b->total_blocks) return;
+    /* a slot with several blocks has its id repeated at consecutive positions */
+    pthread_mutex_lock(&b->covered_mu);
+    int cnt = b->covered_slot_count;
+    int slot = (idx < cnt && b->covered_slots != NULL) ? b->covered_slots[idx] : -1;
+    int lo = idx, hi = idx;
+    if (slot >= 0) {
+        while (lo > 0 && b->covered_slots[lo - 1] == slot) lo--;
+        while (hi + 1 < cnt && b->covered_slots[hi + 1] == slot) hi++;
+    }
+    pthread_mutex_unlock(&b->covered_mu);
+    if (slot < 0 || slot >= CLUSTER_SLOTS) return;
+    pthread_mutex_lock(&backpatch_work_mu);
+    if (b->fwd_final || b->fwd_slot_ok == NULL) { pthread_mutex_unlock(&backpatch_work_mu); return; }
+    b->fwd_blk_done[idx] = 1;
+    int all = 1;
+    for (int i = lo; i <= hi; i++) if (!b->fwd_blk_done[i]) { all = 0; break; }
+    if (all && !b->fwd_slot_ok[slot]) {
+        b->fwd_slot_ok[slot] = 1;
+        b->fwd_released++;
+        if (b->fwd_held != NULL) {
+            listIter li; listNode *ln; listRewind(b->fwd_held, &li);
+            int moved = 0;
+            while ((ln = listNext(&li)) != NULL) {
+                backpatchSlotWork *w = listNodeValue(ln);
+                if (w->slot != slot) continue;
+                listAddNodeTail(backpatch_work_queue, w);
+                listDelNode(b->fwd_held, ln);
+                moved++;
+            }
+            if (moved > 0) pthread_cond_signal(&backpatch_work_cv);
+        }
+    }
+    pthread_mutex_unlock(&backpatch_work_mu);
+}
+
 static void landingConsumerDone(backpatchBatch *b) {
     if (b->landing_pool_buf == NULL) return;
     int prev = atomic_fetch_sub_explicit(&b->landing_consumers, 1,
@@ -2758,6 +3346,13 @@ static void landingConsumerDone(backpatchBatch *b) {
              * registerWorkerThread mmaps a FRESH pool next round; the retired
              * pool's mmap + MR stay resident (the keyspace references them).
              * g_lp_free=1 lets the slot be re-created on demand. */
+            {
+                int r = g_lpr_next++ % N_RETIRED_LANDING_POOLS;
+                g_lpr_buf[r] = g_lp_buf[i];  g_lpr_pool[r] = g_lp_pool[i];
+                g_lpr_bytes[r] = g_lp_bytes[i];
+                /* keep the twin already registered for the chain head, if any */
+                g_lpr_fwd_buf[r] = g_lp_fwd_buf[i]; g_lpr_fwd_cm[r] = g_lp_fwd_cm[i];
+            }
             g_lp_pool[i] = NULL; g_lp_buf[i] = NULL; g_lp_pd[i] = NULL;
             g_lp_bytes[i] = 0;   g_lp_free[i] = 1;
             g_lp_fwd_buf[i] = NULL; g_lp_fwd_cm[i] = NULL;  /* stale twin MR */
@@ -2766,6 +3361,39 @@ static void landingConsumerDone(backpatchBatch *b) {
     }
     pthread_cond_broadcast(&g_lp_cv);
     pthread_mutex_unlock(&g_lp_mu);
+}
+
+static void armChainPendingTimer(void);
+
+typedef struct { long long sess; int lo, hi; backpatchBatch *b; } chainCatchUpJob;
+static void *chainRepairWorker(void *arg);
+static _Atomic int g_raft_is_leader;   /* defined below (rdmaRaftLeaderState) */
+static void *chainCatchUpWorker(void *arg) {
+    chainCatchUpJob *cj = arg;
+    int lacking = rdmaLeaderChainCatchUp(cj->sess, cj->lo, cj->hi);
+    /* A live follower still lacks the committed batch and no other follower
+     * could serve it (the one that held it is dead: a 3-replica group that lost
+     * the middle of its chain). The leader is then the only source: re-send the
+     * blocks itself, as the pre-commit repair does. Without this the follower
+     * kept lacking the round, and when it was elected later the group served a
+     * keyspace without it (S6: sg6 lost its chain's middle node, redis4 became
+     * leader 2 minutes later lacking round 1).
+     * The lacking follower may still be claimed by the sender that died while
+     * writing it (a claim expires after CHAIN_CLAIM_EXPIRE_MS, 30 s), so try
+     * again a few times, ~15 s apart. */
+    for (int t = 0; t < 6 && lacking > 0 && cj->b != NULL &&
+                    atomic_load(&g_raft_is_leader) != 0; t++) {
+        if (atomic_exchange_explicit(&cj->b->repair_running, 1, memory_order_acq_rel) == 0) {
+            serverLog(LL_NOTICE, "CHAIN catch-up: sess=%lld slots=%d-%d — no follower can serve "
+                      "the %d lacking one(s); the leader re-sends the batch (try %d)",
+                      cj->sess, cj->lo, cj->hi, lacking, t + 1);
+            (void) chainRepairWorker(cj->b);   /* clears repair_running */
+        }
+        sleep(12);
+        lacking = rdmaLeaderChainCatchUp(cj->sess, cj->lo, cj->hi);   /* re-probe */
+    }
+    zfree(cj);
+    return NULL;
 }
 
 static void backpatchFinalize(backpatchBatch *b) {
@@ -2789,11 +3417,22 @@ static void backpatchFinalize(backpatchBatch *b) {
      * fallback (chainPendingTick worker-spawn failure), where SYNC would
      * deadlock the event loop on its own RAFT.MGN-LOG. */
     int off_main = !pthread_equal(pthread_self(), server.main_thread_id);
+    if (!off_main) {
+        /* Never finalize on the main thread: MGN_INDX_UPD must be COMMITTED
+         * before the donor is told "done", and waiting for a commit here would
+         * deadlock the event loop that commits it. Hand the batch back to
+         * chainPendingTick, which finalizes on a worker thread. */
+        b->chain_acked = 1;
+        pthread_mutex_lock(&backpatch_chain_pending_mu);
+        chainPendingAddLocked(b);
+        pthread_mutex_unlock(&backpatch_chain_pending_mu);
+        armChainPendingTimer();
+        return;
+    }
 
-    /* AqRaft B#1: the recipient's session identity across markers is inconsistent
-     * (RECP_TXN_START carries register_id; src_mig_id collides at 1 across donors).
-     * The slot RANGE is unique per donor session, so stamp slots=lo-hi on INDX_UPD
-     * and RECP_TXN_DONE too — the recipient become-leader hook keys recovery on it. */
+    /* The slot RANGE is unique per donor session (session ids collide across
+     * donors), so MGN_INDX_UPD carries slots=lo-hi: every replica keys the
+     * session close, the durable-slot map and the tombstone window on it. */
     int _slot_lo = CLUSTER_SLOTS, _slot_hi = -1;
     if (b->covered_slots != NULL) {
         for (int _s = 0; _s < b->n_slots; _s++) {
@@ -2804,30 +3443,38 @@ static void backpatchFinalize(backpatchBatch *b) {
     }
 
     {
+        /* MGN_INDX_UPD is the recipient's closing entry (there is no separate
+         * RECP_TXN_DONE): a majority holds the range and this leader's index
+         * update is done. indx_applied — which lets BACKPATCH-STATUS answer
+         * "done", so the donor drops its copy — is set only once the entry is
+         * committed. If it cannot be committed (this node is no longer the
+         * leader), the batch stays un-finalized: the donor never sees "done"
+         * from us and re-homes to the new leader. */
         char mgn_payload[192];
         snprintf(mgn_payload, sizeof(mgn_payload),
-                 "sess=%lld slots=%d-%d n_slots=%d applied=%lld",
+                 "sess=%lld slots=%d-%d n_slots=%d applied=%lld clobber_skipped=%lld",
                  b->src_mig_id, _slot_lo, _slot_hi, b->n_slots,
-                 (long long) atomic_load(&b->applied));
-        if (off_main) rdmaMgnLogSync("INDX_UPD", mgn_payload);
-        else          rdmaMgnLogAsync("INDX_UPD", mgn_payload);
-        /* AqRaft 3-flag DONE: this is condition (3) — MGN_INDX_UPD is now in
-         * the recipient's local raft log (the async send returned). The
-         * reply / commit completes within the typical raft round-trip
-         * (~tens of ms on a 3-node group); BACKPATCH-STATUS will return
-         * "done" the next time it's polled, since chain_acked (1) and
-         * merge_done (2) are also set by the time we reach this finalize. */
-        atomic_store_explicit(&b->indx_applied, 1, memory_order_release);
-    }
-    {
-        char mgn_payload[192];
-        snprintf(mgn_payload, sizeof(mgn_payload),
-                 "sess=%lld slots=%d-%d applied=%lld clobber_skipped=%lld",
-                 b->src_mig_id, _slot_lo, _slot_hi,
                  (long long) atomic_load(&b->applied),
                  (long long) atomic_load(&b->clobber_skipped));
-        if (off_main) rdmaMgnLogSync("RECP_TXN_DONE", mgn_payload);
-        else          rdmaMgnLogAsync("RECP_TXN_DONE", mgn_payload);
+        if (rdmaMgnLogSyncRetry("INDX_UPD", mgn_payload, 3) != 0) {
+            serverLog(LL_WARNING,
+                "backpatchFinalize sess=%lld slots=%d-%d: MGN_INDX_UPD could NOT be "
+                "committed — batch left un-finalized, donor is not told done",
+                b->src_mig_id, _slot_lo, _slot_hi);
+            return;
+        }
+        atomic_store_explicit(&b->indx_applied, 1, memory_order_release);
+
+        /* The range is durable. Followers the chain had to route around still
+         * lack it: bring the live ones up to date in the background. */
+        if (server.rdma_chain_followers != NULL && sdslen(server.rdma_chain_followers) > 0 &&
+            _slot_hi >= _slot_lo) {
+            chainCatchUpJob *cj = zmalloc(sizeof(*cj));
+            cj->sess = b->chain_sess; cj->lo = _slot_lo; cj->hi = _slot_hi; cj->b = b;
+            pthread_t ctid;
+            if (pthread_create(&ctid, NULL, chainCatchUpWorker, cj) == 0) pthread_detach(ctid);
+            else zfree(cj);
+        }
     }
     long long t1 = ustime();
     size_t pool_size = b->donor_snapshot_pool_bytes;
@@ -2860,10 +3507,22 @@ static void backpatchFinalize(backpatchBatch *b) {
         b->snapshot_ready = NULL;
         zfree(sr);
     }
+    if (b->fwd_slot_ok != NULL) {
+        pthread_mutex_lock(&backpatch_work_mu);
+        void *a1 = b->fwd_slot_ok, *a2 = b->fwd_blk_done;
+        b->fwd_slot_ok = NULL; b->fwd_blk_done = NULL;
+        pthread_mutex_unlock(&backpatch_work_mu);
+        zfree(a1); zfree(a2);
+    }
     /* AqRaft zero-copy chain forward: free the per-slot landing-VA array (small —
      * just pointers; the pages they referenced belong to the ring buffer and are
      * recycled by the refcount, not here). The forward consumer has finished. */
-    if (b->landing_va != NULL) {
+    /* With chain followers configured the array is kept (it is reclaimed with the
+     * batch): the post-commit catch-up may need the leader to re-send this batch
+     * to a live follower that lacks it, and without the array that re-send failed
+     * with "leader no longer has the landing blocks". */
+    if (b->landing_va != NULL &&
+        (server.rdma_chain_followers == NULL || sdslen(server.rdma_chain_followers) == 0)) {
         void *lv = b->landing_va;
         b->landing_va = NULL;
         zfree(lv);
@@ -2934,10 +3593,8 @@ static void *chainForwardWorker(void *arg) {
     chainForwardJob *job = arg;
     backpatchBatch *b = job->batch;
 
-    /* (C) Defer Fenwick rebuild: kvstoreFenwickRebuild takes kvs->shared_mu
-     * so it's thread-safe vs main-thread reads. Run it off-main. */
-    kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
-    kvstoreFenwickRebuild(server.db[0].keys);
+    /* The Fenwick tree stays deferred until the merge is done: see
+     * recipientBackpatchInProgressAdd. */
 
     serverLog(LL_NOTICE,
         "RDMA backpatch-merge: batch DONE from %.*s mig_id=%lld "
@@ -2998,8 +3655,10 @@ static void *chainForwardWorker(void *arg) {
          * finalize below, to avoid a use-after-free of b. Only in NON-pipelined
          * mode is this worker the forward consumer (pipelined:
          * chainPipelineForwardWorker is). */
-        if (!server.rdma_chain_pipeline && b->landing_fwd_counted)
+        if (!server.rdma_chain_pipeline && b->landing_fwd_counted) {
+            chainFwdGateOpen(b);
             landingConsumerDone(b);
+        }
         if (frc == C_OK) {
             b->chain_forwarded = 1;
             pthread_mutex_lock(&backpatch_chain_pending_mu);
@@ -3024,8 +3683,10 @@ static void *chainForwardWorker(void *arg) {
          * In NON-pipelined mode this worker is the forward consumer, so drop its
          * hold now, BEFORE finalize disposes b. In pipelined mode the dedicated
          * chainPipelineForwardWorker owns the decrement — don't double-count. */
-        if (!server.rdma_chain_pipeline && b->landing_fwd_counted)
+        if (!server.rdma_chain_pipeline && b->landing_fwd_counted) {
+            chainFwdGateOpen(b);
             landingConsumerDone(b);
+        }
         /* AqRaft 3-flag DONE: with no chain configured, MGN_INDX_UPD raft
          * replication is the sole durability path. Set chain_acked=1 so the
          * BACKPATCH-STATUS handler doesn't gate on a chain that doesn't exist. */
@@ -3064,6 +3725,7 @@ static void *chainPipelineForwardWorker(void *arg) {
                   b->chain_sess, b->covered_slots, b->total_blocks,
                   b->landing_va, b->landing_pool_buf,
                   b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
+                  chainFwdBlockDone, b,
                   errbuf, sizeof(errbuf));
     /* AqRaft #4 Part B: if the forward to the head (F1) failed, F1 is dead.
      * Re-form the chain to the surviving follower and re-forward BEFORE dropping
@@ -3092,12 +3754,35 @@ static void *chainPipelineForwardWorker(void *arg) {
             "CHAIN: sess=%lld pipelined forward failed (%s) — attempting chain "
             "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
         char rfe[256] = {0};
-        if (rdmaLeaderChainDropDeadHead(b->chain_sess, rfe, sizeof(rfe)) == C_OK) {
+        /* Per-slot gate: slots whose block reached the dead head are being merged.
+         * The re-forward must not read a block in the middle of its merge, so let
+         * the whole round merge first (see fwd_blk_done). */
+        int merge_ok = 1;
+        if (b->fwd_blk_done != NULL) {
+            pthread_mutex_lock(&backpatch_work_mu);
+            int rel = b->fwd_released;
+            pthread_mutex_unlock(&backpatch_work_mu);
+            if (rel > 0) {
+                chainFwdGateOpen(b);
+                long long t0 = mstime();
+                while (!atomic_load_explicit(&b->merge_done, memory_order_acquire) &&
+                       mstime() - t0 < 60000) usleep(2000);
+                merge_ok = atomic_load_explicit(&b->merge_done, memory_order_acquire) != 0;
+                serverLog(merge_ok ? LL_NOTICE : LL_WARNING,
+                    "CHAIN: sess=%lld re-forward after a failed forward: %d slots were already "
+                    "merging; waited %lld ms for the merge (%s)", b->src_mig_id, rel,
+                    mstime() - t0, merge_ok ? "done" : "NOT done, not re-forwarding");
+            }
+        }
+        if (!merge_ok) {
+            /* leave the batch un-finalized (fail loud) */
+        } else if (rdmaLeaderChainDropDeadHead(b->chain_sess, rfe, sizeof(rfe)) == C_OK) {
             char fe2[256] = {0};
             frc = rdmaLeaderChainForwardPipelined(
                       b->chain_sess, b->covered_slots, b->total_blocks,
                       b->landing_va, b->landing_pool_buf,
                       b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
+                      NULL, NULL,
                       fe2, sizeof(fe2));
             if (frc == C_OK)
                 serverLog(LL_NOTICE,
@@ -3119,7 +3804,10 @@ static void *chainPipelineForwardWorker(void *arg) {
     /* All RDMA-reads of the landing buffer are done (success OR give-up) — drop
      * the chain-forward consumer's hold BEFORE adding to pending, to avoid a
      * use-after-free of b once chainPendingTick can dispose it. */
-    if (b->landing_fwd_counted) landingConsumerDone(b);
+    if (b->landing_fwd_counted) {
+        chainFwdGateOpen(b);
+        landingConsumerDone(b);
+    }
     if (frc == C_OK) {
         b->chain_forwarded = 1;
         pthread_mutex_lock(&backpatch_chain_pending_mu);
@@ -3153,7 +3841,10 @@ static void rdmaSpawnPipelineForward(backpatchBatch *b) {
         atomic_store_explicit(&b->pipeline_spawn_initiated, 0, memory_order_release);
         /* The chain-forward consumer was counted at init but the forwarder won't
          * run → release its hold so the ring slot isn't pinned forever. */
-        if (b->landing_fwd_counted) landingConsumerDone(b);
+        if (b->landing_fwd_counted) {
+            chainFwdGateOpen(b);
+            landingConsumerDone(b);
+        }
         return;
     }
     pthread_detach(tid);
@@ -3181,6 +3872,9 @@ static void chainPendingEnqueue(backpatchBatch *b) {
 }
 
 static void spawnChainForwardWorker(backpatchBatch *b) {
+    /* Every slot of this batch has landed and been applied: the next queued
+     * donor may start its transfer (see the transfer gate). */
+    xferGateRelease();
     int chain_configured = (server.rdma_chain_followers != NULL &&
                             sdslen(server.rdma_chain_followers) > 0);
     long long ack_count = chain_configured
@@ -3212,8 +3906,6 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
             b->src_mig_id);
         if (job->slots_copy) zfree(job->slots_copy);
         zfree(job);
-        kvstoreSetDeferFenwickUpdates(server.db[0].keys, 0);
-        kvstoreFenwickRebuild(server.db[0].keys);
         b->chain_acked = 1;
         if (server.rdma_indx_upd_after_merge &&
             !atomic_load_explicit(&b->merge_done, memory_order_acquire))
@@ -3223,6 +3915,82 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
     } else {
         pthread_detach(tid);
     }
+}
+
+/* Chain repair, leader side (see "Chain recipes" in cluster_rdma_chain.c). One
+ * detached thread per repair: the probes and the hand-off are blocking TCP, and
+ * a leader-as-source repair is a full RDMA forward. */
+static void *chainRepairWorker(void *arg) {
+    backpatchBatch *b = arg;
+    char errbuf[256] = {0};
+    pthread_mutex_lock(&b->covered_mu);
+    int n = b->covered_slot_count;
+    int *slots = (n > 0 && b->covered_slots != NULL) ? zmalloc((size_t) n * sizeof(int)) : NULL;
+    if (slots != NULL) memcpy(slots, b->covered_slots, (size_t) n * sizeof(int));
+    pthread_mutex_unlock(&b->covered_mu);
+
+    int need_data = 0;
+    int rc = (slots != NULL)
+        ? rdmaLeaderChainRepair(b->chain_sess, slots, n, &need_data, errbuf, sizeof(errbuf))
+        : C_ERR;
+    if (rc == C_OK && need_data) {
+        /* No follower holds the batch: the leader is the source again. Its
+         * landing blocks are readable before its own merge starts or after it
+         * finished, never during; by now the merge has started, so wait for it. */
+        long long t0 = mstime();
+        while (!atomic_load_explicit(&b->merge_done, memory_order_acquire) &&
+               mstime() - t0 < 60000) usleep(5000);
+        if (!atomic_load_explicit(&b->merge_done, memory_order_acquire)) {
+            rc = C_ERR;
+            snprintf(errbuf, sizeof(errbuf), "leader merge not finished after 60 s");
+        } else if (b->landing_va == NULL || b->landing_pool_buf == NULL) {
+            rc = C_ERR;
+            snprintf(errbuf, sizeof(errbuf), "leader no longer has the landing blocks");
+        } else {
+            rc = rdmaLeaderChainForwardPerSlot(b->chain_sess, slots, n, b->landing_va,
+                                               b->landing_pool_buf, errbuf, sizeof(errbuf));
+        }
+    }
+    if (rc == C_OK)
+        serverLog(LL_NOTICE, "CHAIN repair: sess=%lld repair #%d issued (%s)", b->src_mig_id,
+                  b->repair_count, need_data ? "leader re-sent the blocks" : "recipe to a holder");
+    else
+        serverLog(LL_WARNING, "CHAIN repair: sess=%lld repair #%d could not be issued (%s) — "
+                  "will retry; MGN_INDX_UPD stays unlogged until a real majority holds "
+                  "the batch", b->src_mig_id, b->repair_count,
+                  errbuf[0] ? errbuf : "no slots");
+    if (slots) zfree(slots);
+    atomic_store_explicit(&b->repair_running, 0, memory_order_release);
+    return NULL;
+}
+
+/* Whether this node is its shard group's Raft leader: -1 unknown (no RedisRaft),
+ * 0 no, 1 yes. Set by the redisraft module on every role change (weak symbol).
+ * A node that was the recipient leader and has been deposed must stop driving
+ * the migration: no chain repairs, no closing of sessions, and it must tell the
+ * donor so (BACKPATCH-STATUS) instead of answering "running" for a minute. */
+static _Atomic int g_raft_is_leader = -1;
+void rdmaRaftLeaderState(int is_leader) {
+    atomic_store(&g_raft_is_leader, is_leader ? 1 : 0);
+}
+static int rdmaNotRaftLeader(void) { return atomic_load(&g_raft_is_leader) == 0; }
+
+/* Followers that must hold a batch, besides the leader, for a majority of the
+ * shard group. The group is the leader plus the CONFIGURED followers
+ * (rdma-chain-followers), not the followers still alive in the chain: dropping a
+ * dead follower must not lower the bar. floor(N/2) for a group of N. */
+static int chainFollowersForMajority(void) {
+    int n_followers = 0;
+    if (server.rdma_chain_followers != NULL) {
+        const char *p = server.rdma_chain_followers;
+        while (*p) {
+            while (*p == ' ') p++;
+            if (*p == '\0') break;
+            n_followers++;
+            while (*p && *p != ' ') p++;
+        }
+    }
+    return (n_followers + 1) / 2;
 }
 
 /* Main thread: poll the per-batch chain-ack state. For each pending batch:
@@ -3251,8 +4019,36 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
     listRewind(backpatch_chain_pending, &li);
     while ((ln = listNext(&li)) != NULL) {
         backpatchBatch *b = listNodeValue(ln);
-        long long count = rdmaLeaderChainAckCount(b->chain_sess);
-        int acked = (count > b->chain_baseline_ack_count);
+        /* Durable = a majority of the 2f+1 group holds the batch: the leader
+         * plus f DISTINCT followers that reported it. */
+        int have = rdmaLeaderChainAckedFollowers(b->chain_sess);
+        int need = chainFollowersForMajority();
+        int acked = (have >= need);
+        /* Chain repair: the batch was forwarded, but the followers holding it
+         * are short of a majority and no new one has reported for a while (the
+         * recipe token was lost, or could not get past a failed follower).
+         * Re-issue the recipe off the main thread. This only costs liveness:
+         * the gate below still needs real reports. */
+        if (!acked && !b->chain_acked && have >= 0 && server.rdma_chain_repair_timeout_ms > 0 &&
+            !rdmaNotRaftLeader()) {
+            long long now_ms = mstime();
+            if (b->repair_progress_ms == 0 || have > b->repair_last_have) {
+                b->repair_last_have = have;
+                b->repair_progress_ms = now_ms;
+            } else if (now_ms - b->repair_progress_ms >= server.rdma_chain_repair_timeout_ms &&
+                       atomic_exchange(&b->repair_running, 1) == 0) {
+                b->repair_progress_ms = now_ms;
+                b->repair_count++;
+                serverLog(LL_WARNING,
+                    "CHAIN: sess=%lld held by the leader + %d followers (need %d), no new "
+                    "follower for %d ms — repairing the chain (repair #%d)",
+                    b->src_mig_id, have, need, server.rdma_chain_repair_timeout_ms,
+                    b->repair_count);
+                pthread_t rtid;
+                if (pthread_create(&rtid, NULL, chainRepairWorker, b) == 0) pthread_detach(rtid);
+                else atomic_store(&b->repair_running, 0);
+            }
+        }
         /* EXPERIMENT (paper naive baseline): if rdma-naive-durability is set,
          * fire MGN_INDX_UPD on the 5s deadline even WITHOUT a real ack — the
          * pre-Part-A "faked durability" behaviour. Off by default (honest). */
@@ -3280,9 +4076,9 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
         if (b->chain_acked) acked = 1;
         if (acked || naive_fire) {
             if (acked && !b->chain_acked) serverLog(LL_NOTICE,
-                "CHAIN: sess=%lld chain-ack observed (count %lld > base %lld) — "
+                "CHAIN: sess=%lld held by the leader + %d followers (need %d) — "
                 "real live-majority durability",
-                b->src_mig_id, count, b->chain_baseline_ack_count);
+                b->src_mig_id, have, need);
             b->chain_acked = 1;
             /* AqRaft (--rdma-indx-upd-after-merge, default on): MGN_INDX_UPD is
              * logged only once the recipient leader's own merge has finished, so
@@ -3301,6 +4097,8 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
                 }
                 continue;
             }
+            if (atomic_load_explicit(&b->repair_running, memory_order_acquire))
+                continue;   /* a repair thread still uses the batch; next tick */
             listAddNodeTail(ready, b);
             listDelNode(backpatch_chain_pending, ln);
         }
@@ -3319,9 +4117,12 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
         backpatchBatch *b = (backpatchBatch *) listNodeValue(ln);
         pthread_t tid;
         if (pthread_create(&tid, NULL, backpatchFinalizeWorker, b) != 0) {
-            /* Thread spawn failed — fall back to inline finalize so the
-             * batch doesn't leak its 2.86 GB pool. */
-            backpatchFinalize(b);
+            /* Thread spawn failed: put the batch back and try again next tick
+             * (the finalize waits for a Raft commit, so it cannot run here). */
+            pthread_mutex_lock(&backpatch_chain_pending_mu);
+            chainPendingAddLocked(b);
+            pthread_mutex_unlock(&backpatch_chain_pending_mu);
+            remaining++;
         } else {
             pthread_detach(tid);
         }
@@ -3356,7 +4157,7 @@ static void armMergeTimer(void) {
  * freed at dictRelease (live wins — a client write landed during the
  * window). When the head item is exhausted, free its shadow, mark the slot
  * applied on the batch counter, and drop the item from the queue. */
-static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *clientData) {
+static int mergeBackpatchTickOne(struct aeEventLoop *el, long long id, void *clientData) {
     UNUSED(el); UNUSED(id); UNUSED(clientData);
 
     /* AqRaft Patch 24: timing probe to measure how long each main-thread
@@ -3414,7 +4215,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
              * managed block). The landing pool is kept registered and retired as
              * permanent live storage, so the keyspace references it directly.
              * Runs on the main thread, throttled by MERGE_KEYS_PER_TICK. */
-            if (kvstoreDictFind(w->db->keys, w->slot, k) != NULL) {
+            if (rdmaMergeSkipKey(w->db, w->slot, k)) {
                 /* DON'T-CLOBBER: a post-FLIP client write already populated this
                  * key. Skip WITHOUT building a copy — checking existence first
                  * avoids creating a managed kvobj we'd then have to free (the
@@ -3458,6 +4259,7 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
          * session is resolved from the received bit. */
         if (b != NULL) rdmaInvMarkMerged(b->src_mig_id, w->slot);
         else           rdmaInvMarkMergedBySlot(w->slot);
+        rdmaTombstoneSlotMerged(w->slot);
         /* AqRaft Patch 29: recipient FOLLOWERS enqueue merge work with
          * batch == NULL (rdmaFollowerEnqueueSlotMerge). They reuse this same
          * main-thread shadow->live drain, but must NOT run the leader-only
@@ -3592,6 +4394,22 @@ static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *client
     return MERGE_TICK_DELAY_MS;
 }
 
+/* One timer tick. mergeBackpatchTickOne handles at most one work item (one
+ * slot), so a round of 455 slots took 455 ticks, ~0.47 s of wall time for
+ * ~0.5 ms of work (with the background merge the item is already merged and
+ * only the bookkeeping is left), and MGN_INDX_UPD -- hence the donor's
+ * TXN_DONE -- waited for all of it: 8 of the 20 s of a 3 -> 6 scale-out
+ * (2026-10-03). Keep taking items for up to MERGE_TICK_BUDGET_US per tick. */
+#define MERGE_TICK_BUDGET_US 250
+static int mergeBackpatchTick(struct aeEventLoop *el, long long id, void *clientData) {
+    long long t0 = ustime();
+    int rc;
+    do {
+        rc = mergeBackpatchTickOne(el, id, clientData);
+    } while (rc != AE_NOMORE && ustime() - t0 < MERGE_TICK_BUDGET_US);
+    return rc;
+}
+
 /* AqRaft --rdma-merge-background: drain a worker-built SHADOW dict directly into
  * the live keyspace ON THE POOL WORKER THREAD, under the cluster-independent
  * per-slot rwlock (real under redisraft, where clusterSlot* no-op). Mirrors
@@ -3629,8 +4447,8 @@ static int bgMergeDrainShadowLocked(redisDb *db, int slot, dict *shadow, int *ou
          * block into it, matching mergeBackpatchTick's semantics. */
         clusterSlotLockWriteNoTopology(slot);
         cluster_slot_lock_held_by_thread++;
-        if (kvstoreDictFind(db->keys, slot, k) != NULL) {
-            skipped++;                                   /* don't-clobber: client write wins */
+        if (rdmaMergeSkipKey(db, slot, k)) {
+            skipped++;                                   /* don't-clobber / tombstone: client write wins */
         } else {
             dictEntry *ex = NULL;
             kvstoreDictAddRaw(db->keys, slot, src, &ex); /* adopt-in-place, no memcpy */
@@ -3701,6 +4519,16 @@ static void captureSlotSnapshot(backpatchBatch *b, int slot) {
             }
             int off = (ni > nb) ? (ni - nb) : 0;   /* newest nb in-pool blocks */
             int lim = (ni - off < nb) ? (ni - off) : nb;
+            /* The chain forward RDMA-reads these blocks straight from landing
+             * memory as soon as they are marked ready. Wait for them to settle
+             * first, as the local merge does (FillShadow): a block forwarded
+             * half-landed reached the followers torn, they skipped its entries as
+             * invalid, and their keyspace lacked keys the leader had (S9). */
+            if (server.rdma_landing_barrier && !capture_no_barrier && lim > 0 &&
+                rdmaLandingSettle(blks + off, lim) >= 200)
+                serverLog(LL_WARNING,
+                    "CHAIN capture: slot=%d landing did not stabilize within barrier (forwarding anyway)",
+                    slot);
             if (ni != fetched)
                 serverLog(LL_WARNING,
                     "CHAIN capture: slot=%d sess=%lld pool-filter fetched=%d "
@@ -3807,6 +4635,20 @@ static void *backpatchPoolWorkerMain(void *arg) {
         }
 
     do_fillshadow:;
+        /* AqRaft forward gate: don't rewrite/adopt landing blocks the chain
+         * forward may still RDMA-read. Park until chainFwdGateOpen re-enqueues. */
+        if (w->batch->landing_fwd_counted) {
+            pthread_mutex_lock(&backpatch_work_mu);
+            if (!w->batch->fwd_final &&
+                !(w->batch->fwd_slot_ok != NULL && w->slot >= 0 && w->slot < CLUSTER_SLOTS &&
+                  w->batch->fwd_slot_ok[w->slot])) {
+                if (w->batch->fwd_held == NULL) w->batch->fwd_held = listCreate();
+                listAddNodeTail(w->batch->fwd_held, w);
+                pthread_mutex_unlock(&backpatch_work_mu);
+                continue;                              /* w now owned by fwd_held */
+            }
+            pthread_mutex_unlock(&backpatch_work_mu);
+        }
         /* Double-buffer backpatch (option 3): the worker fills a SHADOW
          * dict for this slot (no live keyspace access, no locks). When the
          * shadow is full, hand it off to the main thread via the merge
@@ -3814,7 +4656,10 @@ static void *backpatchPoolWorkerMain(void *arg) {
          * one that updates batch->idx/applied/remaining and signals DONE,
          * because the slot isn't truly "applied" until live has the data. */
         int total = 0, skipped = 0;
-        dict *shadow = rdmaBackpatchSlotFillShadow(w->db, w->slot, &total, &skipped);
+        char *wpool = NULL; size_t wbytes = 0;
+        int wfilter = batchPoolRange(w->batch, &wpool, &wbytes);
+        dict *shadow = rdmaBackpatchSlotFillShadow(w->db, w->slot, &total, &skipped,
+                                                   wfilter ? wpool : NULL, wbytes);
         if (skipped > 0) {
             serverLog(LL_WARNING,
                 "RDMA backpatch-shadow: slot=%d skipped %d staged entries "
@@ -3897,9 +4742,45 @@ static void *backpatchPoolWorkerMain(void *arg) {
  * r_allocator_get_block_buffers_for_slot. Returns the number of staged keys,
  * or 0 if the slot had no blocks. Safe to call from a worker thread OR the
  * main thread (it only appends + writes the wake pipe). */
-int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot) {
+/* AqRaft: follower merge OFF the main thread (server.rdma_merge_background), the
+ * way the leader's pool workers do it: build the shadow and drain it into the
+ * live keyspace here, under the per-slot rwlocks (bgMergeDrainShadowLocked, which
+ * also honours don't-clobber + tombstones). The slot must already be marked
+ * active ON THE MAIN THREAD (rdmaChainForwardedCommand) so main-thread accessors
+ * of the slot take the lock; cleared here once the slot is merged. The main-thread
+ * mergeBackpatchTick drain made followers spend ~20% of their main thread for
+ * ~30 s after a 30M migration, delaying their AppendEntries replies (leader
+ * replication round-trip 0.3 -> 1.5 ms, write latency up on the migrated slots).
+ * Returns the number of keys staged. Call only from a background thread. */
+int rdmaFollowerMergeSlotBackground(redisDb *db, int slot, const char *pool_lo, size_t pool_bytes) {
+    int total = 0, skipped_invalid = 0, skipped = 0;
+    dict *shadow = rdmaBackpatchSlotFillShadow(db, slot, &total, &skipped_invalid, pool_lo, pool_bytes);
+    if (skipped_invalid > 0)
+        serverLog(LL_WARNING,
+            "RDMA follower-merge: slot=%d skipped %d staged entries "
+            "(donor block misclassification)", slot, skipped_invalid);
+    long long t0 = ustime();
+    int moved = (shadow != NULL) ? bgMergeDrainShadowLocked(db, slot, shadow, &skipped) : 0;
+    bgMergeSlotSetActive(slot, 0);
+    if (shadow != NULL) rdmaInvMarkMergedBySlot(slot);   /* apply-then-mark */
+    if (shadow != NULL) rdmaTombstoneSlotMerged(slot);
+    atomic_fetch_add_explicit(&g_bgm_cpu_us, ustime() - t0, memory_order_relaxed);
+    atomic_fetch_add_explicit(&g_bgm_moved,   moved,   memory_order_relaxed);
+    atomic_fetch_add_explicit(&g_bgm_skipped, skipped, memory_order_relaxed);
+    return total;
+}
+
+int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot, const char *pool_lo, size_t pool_bytes) {
     int total = 0, skipped = 0;
-    dict *shadow = rdmaBackpatchSlotFillShadow(db, slot, &total, &skipped);
+    /* pool_lo == NULL: the promotion merge of every held block (MGN-RECOVER on
+     * the main thread, inside raft_become_leader). Nothing writes those blocks
+     * any more (the old leader is gone, a donor only writes the leader), so the
+     * landing barrier is pointless there, and checksumming every held block at
+     * least twice kept a new recipient leader's main thread busy for over a
+     * second: it missed heartbeats and lost the leadership it had just won. */
+    fill_shadow_no_barrier = (pool_lo == NULL);
+    dict *shadow = rdmaBackpatchSlotFillShadow(db, slot, &total, &skipped, pool_lo, pool_bytes);
+    fill_shadow_no_barrier = 0;
     if (skipped > 0) {
         serverLog(LL_WARNING,
             "RDMA follower-merge: slot=%d skipped %d staged entries "
@@ -4143,8 +5024,86 @@ void recipientBackpatchThreadStop(void) {
  * Source-side rdmaRegisterResultCommand looks up the pending registration
  * by register_id, populates L->buffers[], and signals the source's worker
  * (which is condvar-waiting). */
+/* AqRaft recipient transfer gate: admit ONE incoming donor transfer at a time.
+ * Two or three donors RDMA-writing into this node at once overflowed its NIC
+ * receive buffer (rx_discards_phy, no ECN marking on this fabric), and RoCE
+ * go-back-N retransmits made each transfer 3-18x slower. Normal migrations are
+ * already sequential (the orchestrator dispatches one donor at a time); after a
+ * leader crash, independent actors (a resumed session, re-homed donors, playbook
+ * re-drives) start transfers together. The gate is taken when a registration is
+ * handled (REGISTER-BLOCK-SLOTS worker) and released when that batch's data has
+ * all landed (spawnChainForwardWorker: "batch DONE"), or when the registration
+ * fails. Waiters are served first-come-first-served; a waiting donor just waits
+ * longer for its REGISTER-RESULT (bounded at 120 s while this node answers). If
+ * the active transfer shows no chunk activity for XFER_GATE_IDLE_MS (its donor
+ * died mid-transfer), the next waiter takes over. */
+#define XFER_GATE_IDLE_MS 6000
+static pthread_mutex_t g_xfer_gate_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_xfer_gate_cv = PTHREAD_COND_INITIALIZER;
+static int g_xfer_gate_busy = 0;
+static unsigned long long g_xfer_gate_next_ticket = 0, g_xfer_gate_serving = 0;
+static _Atomic long long g_xfer_gate_activity_ms = 0;
+static int g_xfer_gate_holder_slot = -1;           /* first slot of the active transfer */
+static unsigned int g_xfer_gate_holder_gen = 0;    /* its registration generation */
+
+static void xferGateActivity(void) {
+    atomic_store(&g_xfer_gate_activity_ms, mstime());
+}
+
+static void xferGateAcquire(const char *who, int first_slot) {
+    long long t0 = mstime();
+    pthread_mutex_lock(&g_xfer_gate_mu);
+    unsigned long long ticket = g_xfer_gate_next_ticket++;
+    while (g_xfer_gate_busy || ticket != g_xfer_gate_serving) {
+        /* The holder's slots were registered again by a newer session (a resumed,
+         * re-homed or re-driven donor): the holder's donor is gone. Take over now
+         * rather than after the idle timeout. */
+        if (g_xfer_gate_busy && g_xfer_gate_holder_slot >= 0 &&
+            rdmaSlotRegGen(g_xfer_gate_holder_slot) != g_xfer_gate_holder_gen) {
+            serverLog(LL_NOTICE, "RDMA transfer gate: active transfer superseded (slot %d "
+                      "re-registered) — releasing it", g_xfer_gate_holder_slot);
+            g_xfer_gate_busy = 0;
+            continue;
+        }
+        if (g_xfer_gate_busy &&
+            mstime() - atomic_load(&g_xfer_gate_activity_ms) > XFER_GATE_IDLE_MS) {
+            serverLog(LL_WARNING, "RDMA transfer gate: active transfer idle for >%d ms "
+                      "(donor gone?) — releasing it", XFER_GATE_IDLE_MS);
+            g_xfer_gate_busy = 0;
+            continue;
+        }
+        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += 100 * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&g_xfer_gate_cv, &g_xfer_gate_mu, &ts);
+    }
+    g_xfer_gate_busy = 1;
+    g_xfer_gate_holder_slot = first_slot;
+    g_xfer_gate_holder_gen = rdmaSlotRegGen(first_slot);
+    g_xfer_gate_serving++;
+    pthread_cond_broadcast(&g_xfer_gate_cv);
+    pthread_mutex_unlock(&g_xfer_gate_mu);
+    xferGateActivity();
+    long long waited = mstime() - t0;
+    if (waited >= 5)
+        serverLog(LL_NOTICE, "RDMA transfer gate: %s admitted after waiting %lld ms for the "
+                  "previous transfer", who ? who : "?", waited);
+}
+
+static void xferGateRelease(void) {
+    pthread_mutex_lock(&g_xfer_gate_mu);
+    g_xfer_gate_busy = 0;
+    pthread_cond_broadcast(&g_xfer_gate_cv);
+    pthread_mutex_unlock(&g_xfer_gate_mu);
+}
+
 static void *registerWorkerThread(void *arg) {
     registerJob *job = arg;
+    /* These slots now belong to this incoming session: any older forwarder still
+     * waiting on them (a dead donor's session) is superseded. */
+    rdmaSlotRegGenBump(job->slot_ids, job->n_pairs);
+    /* One incoming transfer at a time (see the transfer gate above). */
+    xferGateAcquire(job->src_host, (job->n_pairs > 0) ? job->slot_ids[0] : -1);
 
     /* Aqueduct big-MR PREP: instead of one zmalloc + one ibv_reg_mr per
      * slot (N ioctls into /dev/infiniband/uverbs*), allocate ONE contiguous
@@ -4197,25 +5156,12 @@ static void *registerWorkerThread(void *arg) {
      * needs the full ring (>= n_rounds*n_donors) to avoid round-2 blocking on the
      * free-wait. */
     int n_pools = server.rdma_chain_xsession ? N_LANDING_POOLS : 1;
-    /* AqRaft crash-recovery right-sizing: a promoted leader's donor re-ship carries
-     * ONE session's slots and runs IN the post-promotion critical path — registering
-     * the whole xsession ring here costs ~1s ibv_reg_mr per pool (~7s). Detect the
-     * re-ship by the active recovery slot range (rdmaRecipientRecover) and register
-     * just ONE pool. n_pools=1 is the standard non-xsession mode (fully supported);
-     * the single pool is a normal ring buffer, so chain re-forward + adopt-in-place
-     * are unchanged. */
-    {
-        int first_slot = (job->n_pairs > 0) ? job->slot_ids[0] : -1;
-        int rlo = atomic_load(&g_recov_active_lo);
-        int rhi = atomic_load(&g_recov_active_hi);
-        if (first_slot >= 0 && rlo >= 0 && first_slot >= rlo && first_slot <= rhi) {
-            n_pools = 1;
-            serverLog(LL_NOTICE,
-                "RDMA REGISTER-BLOCK-SLOTS: recovery re-ship (slot %d in %d-%d) — "
-                "registering 1 landing pool, not the %d-pool xsession ring",
-                first_slot, rlo, rhi, server.rdma_chain_xsession ? N_LANDING_POOLS : 1);
-        }
-    }
+    /* (Removed: crash-recovery "right-sizing" forced n_pools = 1 for a re-ship,
+     * which restricted every recovering donor to landing-pool slot 0. With two
+     * donors re-shipping, the second waited for the first to release slot 0 and
+     * then re-registered it, while the pre-registered pools in slots 1-2 sat idle
+     * (S1 +2.8 s, S6 +4.2 s). The claim below already creates at most one pool,
+     * and only when no registered pool is free, so the ring never grows eagerly.) */
 
     /* Claim a USABLE free pool: created, on this PD and big enough. Only when none is
      * free, create ONE pool into an empty (or unusable) slot. Pools are neither
@@ -4331,6 +5277,8 @@ static void *registerWorkerThread(void *arg) {
     }
 
 deliver:
+    /* A failed registration starts no transfer: let the next donor in. */
+    if (job->has_error) xferGateRelease();
     {
         serverLog(LL_NOTICE,
             "RDMA REGISTER-RESULT: register_id=%s total_buffers=%d, dialing back to %s:%d",
@@ -4348,7 +5296,7 @@ deliver:
                      "register_id=%s slots=%d-%d n=%d donor=%s:%d",
                      job->register_id, first_slot, last_slot, job->n_pairs,
                      job->src_host, job->src_port);
-            rdmaMgnLogSync("RECP_TXN_START", mgn_payload);
+            (void) rdmaMgnLogSync("RECP_TXN_START", mgn_payload);   /* duplicate of the session-open entry */
         }
 
         redisContext *ctx = redisConnect(job->src_host, job->src_port);
@@ -4437,6 +5385,14 @@ void rdmaBackpatchStatusCommand(client *c) {
     sds src_id = c->argv[2]->ptr;
     if (sdslen(src_id) != CLUSTER_NAMELEN) {
         addReplyError(c, "src_node_id must be 40 chars");
+        return;
+    }
+
+    /* A deposed recipient leader cannot finish the batch (it cannot commit
+     * MGN_INDX_UPD). Say so, so the donor re-homes to the new leader now instead
+     * of polling a node that will answer "running" until its timeout. */
+    if (rdmaNotRaftLeader()) {
+        addReplyError(c, "NOTLEADER this node is no longer the recipient leader");
         return;
     }
 
@@ -4556,6 +5512,15 @@ void rdmaMgnDurableMark(int lo, int hi) {
     for (int s = lo; s <= hi; s++) __atomic_store_n(&g_durable_slot[s], 2, __ATOMIC_RELEASE);
 }
 
+/* Undo rdmaMgnAdoptingMark for slots that did not become durable. */
+static void rdmaMgnAdoptingClear(int lo, int hi) {
+    for (int s = lo; s <= hi && s < CLUSTER_SLOTS; s++) {
+        uint8_t one = 1;
+        if (s >= 0) __atomic_compare_exchange_n(&g_durable_slot[s], &one, 0, 0,
+                                                __ATOMIC_RELEASE, __ATOMIC_RELAXED);
+    }
+}
+
 static void rdmaMgnAdoptingMark(int lo, int hi) {
     for (int s = lo; s <= hi && s < CLUSTER_SLOTS; s++)
         if (s >= 0 && __atomic_load_n(&g_durable_slot[s], __ATOMIC_ACQUIRE) == 0)
@@ -4668,6 +5633,24 @@ static rdmaOutboundLink *rdmaOutboundLinkOpen(const char *host, int port) {
     /* 1. Plain-TCP redis client connection to the recipient (for INIT-SERVER
      *    and REGISTER-BLOCK-SLOTS round-trips). Blocking — the prep RPC is
      *    a synchronous operator call. */
+    /* The recipient may have just been killed: its listener then still accepts for
+     * a few seconds and INIT-SERVER would wait for the reset (S8: the new donor
+     * leader lost 2.1 s on the dead recipient leader's address before the new one
+     * was tried). Bound the connect and check that it answers first. */
+    if (server.rdma_peer_probe_ms > 0) {
+        struct timeval ctv = { 1, 0 }, none = { 0, 0 };
+        L->ctrl = NULL;
+        for (int probe = 0; probe < 2 && L->ctrl == NULL; probe++) {
+            redisContext *pc = redisConnectWithTimeout(host, port, ctv);
+            if (pc == NULL || pc->err) { L->ctrl = pc; break; }   /* reported below */
+            if (rdmaPeerAnswers(pc, none)) { L->ctrl = pc; break; }
+            redisFree(pc);
+        }
+        if (L->ctrl == NULL)
+            serverLog(LL_WARNING, "RDMA MIGRATE-PREP: %s:%d accepts connections but did not "
+                      "answer two PINGs within %d ms each -- treating it as dead", host, port,
+                      server.rdma_peer_probe_ms);
+    } else
     L->ctrl = redisConnect(host, port);
     if (L->ctrl == NULL || L->ctrl->err != 0) {
         serverLog(LL_WARNING, "RDMA MIGRATE-PREP: redisConnect(%s:%d) failed: %s",
@@ -4833,6 +5816,64 @@ static void blockMrTableDestroy(blockMrTable *t) {
     zfree(t);
 }
 
+/* AqRaft: one live-block MR table per process for every link on the device's
+ * shared PD. The table used to be per link, so a re-homed donor (new link to the
+ * new recipient leader) could not see the blocks MIGRATE-WARM registered on the
+ * old link and re-registered every block inside TRANSFER (inwindow_reg=1365).
+ * Registrations go through the startup keeper cm_id, which lives for the whole
+ * process and pins the shared PD. A link on another PD keeps a private table.
+ * Entries for a migration's slots are removed when it ends (blockMrForgetSlots,
+ * called while the slots are still pinned), so a block freed later cannot leave
+ * a stale registration behind. */
+static struct rdma_cm_id *rdmaPreregKeeper(void);
+static blockMrTable *g_shared_mr_tbl = NULL;
+static pthread_mutex_t g_shared_mr_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static blockMrTable *blockMrTableForLink(rdmaOutboundLink *L) {
+    if (L->block_mr_tbl != NULL) return L->block_mr_tbl;
+    struct rdma_cm_id *lc = rdmamig_client_cm_id(L->client);
+    struct rdma_cm_id *keeper = rdmaPreregKeeper();
+    if (keeper != NULL && lc != NULL && rdmamig_cm_pd(keeper) == rdmamig_cm_pd(lc)) {
+        pthread_mutex_lock(&g_shared_mr_mu);
+        if (g_shared_mr_tbl == NULL) g_shared_mr_tbl = blockMrTableCreate(keeper);
+        pthread_mutex_unlock(&g_shared_mr_mu);
+        L->block_mr_tbl = g_shared_mr_tbl;
+        L->block_mr_shared = 1;
+    } else {
+        L->block_mr_tbl = blockMrTableCreate(lc);
+        L->block_mr_shared = 0;
+    }
+    return L->block_mr_tbl;
+}
+
+/* Drop the shared table's registrations for these slots' current blocks. Call
+ * while the slots are still pinned (no block of theirs can have been freed). */
+static void blockMrForgetSlots(const int *slots, int n) {
+    blockMrTable *t = g_shared_mr_tbl;
+    if (t == NULL || slots == NULL) return;
+    long long forgotten = 0;
+    for (int i = 0; i < n; i++) {
+        int slot = slots[i];
+        if (slot < 0 || slot >= CLUSTER_SLOTS) continue;
+        r_allocator_lock_slot(slot);
+        int nb = 0;
+        char **blks = r_allocator_get_block_buffers_for_slot(slot, &nb);
+        r_allocator_unlock_slot(slot);
+        if (blks == NULL) continue;
+        for (int k = 0; k < nb; k++) {
+            if (blks[k] == NULL) continue;
+            pthread_mutex_lock(&t->mu);
+            rdmamig_buffer *b = dictFetchValue(t->map, blks[k]);
+            if (b != NULL) dictDelete(t->map, blks[k]);
+            pthread_mutex_unlock(&t->mu);
+            if (b != NULL) { rdmamig_buffer_dereg(b); forgotten++; }
+        }
+        zfree(blks);
+    }
+    if (forgotten && n > 1)   /* per-slot calls (warmUnpinOne) stay quiet */
+        serverLog(LL_NOTICE, "RDMA block-MR: dropped %lld live-block registrations", forgotten);
+}
+
 /* Dict valDestructor — invoked by dictRelease/dictDelete on the
  * server.rdma_outbound_links dict. */
 void rdmaOutboundLinkFree(void *v) {
@@ -4846,7 +5887,7 @@ void rdmaOutboundLinkFree(void *v) {
     for (int s = 0; s < CLUSTER_SLOTS; s++) {
         if (L->block_buffers[s]) zfree(L->block_buffers[s]);
     }
-    if (L->block_mr_tbl) blockMrTableDestroy(L->block_mr_tbl);
+    if (L->block_mr_tbl && !L->block_mr_shared) blockMrTableDestroy(L->block_mr_tbl);
     pthread_mutex_destroy(&L->mu);
     if (L->addr)   sdsfree(L->addr);
     zfree(L);
@@ -4890,6 +5931,8 @@ void rdmaMigratePrepCommand(client *c) {
 
     /* Cache lookup. The dict key is owned by the dict; if we dictAdd we hand
      * ownership over, otherwise we sdsfree below. */
+    char canon_host_buf[64];
+    host = rdmaLinkHostCanon(host, canon_host_buf, sizeof(canon_host_buf));
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
     int newly = 0;
@@ -5004,6 +6047,8 @@ void rdmaReshardCommand(client *c) {
     }
 
     /* Look up the outbound link cached by a prior MIGRATE-PREP. */
+    char canon_host_buf[64];
+    host = rdmaLinkHostCanon(host, canon_host_buf, sizeof(canon_host_buf));
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
     sdsfree(key);
@@ -5202,6 +6247,8 @@ void rdmaReshardTransferCommand(client *c) {
 
     if (rdmaMigrationGuard(c) != C_OK) return;
 
+    char canon_host_buf[64];
+    host = rdmaLinkHostCanon(host, canon_host_buf, sizeof(canon_host_buf));
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
     sdsfree(key);
@@ -5331,6 +6378,8 @@ void rdmaReshardFlipCommand(client *c) {
         return;
     }
 
+    char canon_host_buf[64];
+    host = rdmaLinkHostCanon(host, canon_host_buf, sizeof(canon_host_buf));
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
     sdsfree(key);
@@ -5461,7 +6510,7 @@ void rdmaReshardFlipCommand(client *c) {
             server.cluster->migrating_slots_to[slot] = recipient_node;
         }
         flipped++;
-        serverLog(LL_NOTICE,
+        serverLog(LL_VERBOSE,
             "RDMA RESHARD-FLIP: slot=%d ownership flipped to %s "
             "(%s)",
             slot, recipient_id,
@@ -5587,7 +6636,7 @@ void rdmaReshardRecvFlipCommand(client *c) {
 
         flipped++;
 
-        serverLog(LL_NOTICE,
+        serverLog(LL_VERBOSE,   /* one line per slot on the main thread: see the summary below */
             "RDMA RESHARD-RECV-FLIP: slot=%d imported from %s, ownership claimed%s",
             slot, src_id_str,
             aqraft_recipient ? " (AqRaft recipient: raft.slot-config owns it)"
@@ -6034,6 +7083,8 @@ static struct rdma_cm_id *g_src_prereg_keeper = NULL;
 static void *g_src_prereg_pool = NULL;
 static size_t g_src_prereg_bytes = 0;
 static struct rdmamig_buffer *g_src_prereg_parent = NULL;
+/* The link that currently holds the startup pool (SRC_PREREG_CLAIMED). */
+static rdmaOutboundLink *g_src_prereg_owner = NULL;
 
 #define LP_PREREG_BUCKET 512   /* must equal LP_BLOCK_BUCKET in registerWorkerThread */
 
@@ -6181,7 +7232,32 @@ static int rdmaSrcPreregAdopt(rdmaOutboundLink *L, int n_slots) {
         serverLog(LL_WARNING, "RDMA SRC-PREREG: startup pool not ready yet; registering lazily");
         return 0;
     }
-    if (st == SRC_PREREG_CLAIMED) return 0;   /* another link owns it */
+    if (st == SRC_PREREG_CLAIMED) {
+        /* Another link owns it. A donor migrates to one recipient group at a
+         * time, so a migration on a NEW link (the group's leader changed between
+         * two rounds) means the owner is the link to the previous leader. Left
+         * there, every remaining round mmapped and registered a pool of its own
+         * inside the round, after the writes of its slots had been redirected:
+         * 0.5-1.0 s per round (3 -> 6 S1/S9, 2026-10-04). Take the pool over if
+         * the owner is idle (TRANSFER and REGISTER hold its mutex). */
+        rdmaOutboundLink *o = g_src_prereg_owner;
+        if (o == NULL || o == L || pthread_mutex_trylock(&o->mu) != 0) return 0;
+        int mine = (g_src_prereg_pool != NULL && o->src_mr_pool == g_src_prereg_pool);
+        if (mine) {
+            o->src_mr_pool = NULL;
+            o->src_mr_pool_bytes = 0;
+            o->src_mr_parent = NULL;
+            o->src_mr_used_blocks = 0;
+            memset(o->source_buffers, 0, sizeof(o->source_buffers));
+            if (o->prepared_slot) memset(o->prepared_slot, 0, CLUSTER_SLOTS);
+            g_src_prereg_owner = NULL;
+            atomic_store(&g_src_prereg_state, SRC_PREREG_READY);
+            serverLog(LL_NOTICE, "RDMA SRC-PREREG: startup source pool taken over from the idle link "
+                      "to %s", o->addr ? o->addr : "?");
+        }
+        pthread_mutex_unlock(&o->mu);
+        if (!mine) return 0;
+    }
     size_t need = (size_t) n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
     void *link_pd = rdmamig_cm_pd(rdmamig_client_cm_id(L->client));
     if (link_pd != rdmamig_cm_pd(g_src_prereg_keeper) || need > g_src_prereg_bytes) {
@@ -6197,6 +7273,7 @@ static int rdmaSrcPreregAdopt(rdmaOutboundLink *L, int n_slots) {
     L->src_mr_pool_bytes  = g_src_prereg_bytes;
     L->src_mr_parent      = g_src_prereg_parent;
     L->src_mr_used_blocks = 0;
+    g_src_prereg_owner    = L;
     serverLog(LL_NOTICE, "RDMA RESHARD: adopted startup-registered source pool base=%p "
               "bytes=%zu blocks=%zu (skipped mmap + ibv_reg_mr) [AqRaft SRC-PREREG]",
               g_src_prereg_pool, g_src_prereg_bytes,
@@ -6329,7 +7406,10 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
      * is only consumed by clusterLookupNode/clusterAddSlot which we skip
      * when server.cluster is NULL on the donor. The recipient itself doesn't
      * inspect this id either (RESHARD-RECV-FLIP only validates length). */
-    redisReply *r = redisCommand(L->ctrl, "CLUSTER MYID");
+    /* AqRaft (server.cluster == NULL): no probe. The reply is always an error
+     * there and the placeholder below is used, but the round trip cost ~20 ms of
+     * every round's setup, after the round's writes had been redirected. */
+    redisReply *r = (server.cluster != NULL) ? redisCommand(L->ctrl, "CLUSTER MYID") : NULL;
     char recipient_id[CLUSTER_NAMELEN + 1];
     int recipient_id_synthesized = 0;
     if (r != NULL && r->type == REDIS_REPLY_STRING &&
@@ -6344,8 +7424,8 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
                  "AQRECP_%s", "ppppppppppppppppppppppppppppppppp");
         recipient_id[CLUSTER_NAMELEN] = '\0';
         recipient_id_synthesized = 1;
-        serverLog(LL_NOTICE,
-            "FLIP: CLUSTER MYID unsupported on AqRaft recipient — using placeholder id");
+        serverLog(LL_VERBOSE,
+            "FLIP: AqRaft recipient — using placeholder id (no CLUSTER MYID probe)");
     } else {
         const char *why = r == NULL ? "hiredis_null"
                         : r->type == REDIS_REPLY_ERROR ? "redis_error"
@@ -6425,12 +7505,18 @@ static int rdmaReshardFlipHelper(rdmaOutboundLink *L,
             clusterAddSlot(recipient_node, slot);
             server.cluster->migrating_slots_to[slot] = recipient_node;
         }
-        serverLog(LL_NOTICE,
+        /* One line per slot at NOTICE was written under the topology write lock:
+         * with 1365 slots the donor's event loop waited 60-80 ms behind this loop
+         * at the start of every round (in AqRaft mode it does nothing else). */
+        serverLog(LL_VERBOSE,
             "RDMA MIGRATE worker: slot=%d ownership flipped to %s%s",
             slot, recipient_id,
             server.cluster != NULL ? "" : " (AqRaft: legacy cluster tables skipped)");
     }
     clusterTopoUnlock();
+    serverLog(LL_NOTICE, "RDMA MIGRATE worker: ownership of %d slots (%d-%d) flipped to %s%s",
+              n_slots, n_slots > 0 ? chosen[0] : -1, n_slots > 0 ? chosen[n_slots - 1] : -1, recipient_id,
+              server.cluster != NULL ? "" : " (AqRaft: legacy cluster tables skipped)");
 
     pthread_mutex_unlock(&L->mu);
     return 0;
@@ -6534,6 +7620,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
 
     size_t total_bytes = 0;
     int errs = 0;
+    int errs_at_chunk = 0;   /* errs when the current chunk started */
     /* AqRaft: number of RDMA WRs posted to the QP but not yet reaped from the
      * send CQ. With pipelining we post up to a chunk's worth of WRs before
      * reaping them as a batch — keeping writes in flight instead of stalling
@@ -6546,9 +7633,12 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
      * created + populated it; if warm didn't run we create it here and every
      * block registers in-window, which shows up as a large inwindow_reg).
      * L->mu is held for the whole function, so this is race-free. */
-    if (L->block_mr_tbl == NULL)
-        L->block_mr_tbl = blockMrTableCreate(rdmamig_client_cm_id(L->client));
+    blockMrTableForLink(L);
     long long reg0 = blockMrTableRegCount(L->block_mr_tbl);   /* verification snapshot */
+    /* Per-chunk timing: where each chunk's wall time goes (block registration,
+     * waiting for RDMA completions, the rest = posting + CHUNK RPC). */
+    long long c_t0 = ustime(), c_reg_us = 0, c_reap_us = 0;
+    long long c_regs0 = reg0;
     for (int i = 0; i < n_slots; i++) {
         int slot = chosen[i];
 
@@ -6572,8 +7662,10 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 if (donor_blocks[k] == NULL) continue;
                 uint64_t rptr; uint32_t rkey;
                 rdmaTransferRemoteBlock(L, slot, k, &rptr, &rkey);
+                long long _rg = ustime();
                 rdmamig_buffer *mr = blockMrTableGetOrRegister(
                     L->block_mr_tbl, donor_blocks[k], RDMAMIG_BLOCK_SIZE_BYTES);
+                c_reg_us += ustime() - _rg;
                 if (mr == NULL) {
                     errs++;
                     serverLog(LL_WARNING,
@@ -6581,9 +7673,11 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                         slot, k);
                     continue;
                 }
-                int rc = rdmamig_client_post_write(mr, donor_blocks[k],
-                                                   rptr, rkey,
-                                                   RDMAMIG_BLOCK_SIZE_BYTES);
+                /* Post on THIS link's QP: with the process-wide MR table the
+                 * block may be registered through the keeper cm_id (no QP). */
+                int rc = rdmamig_client_post_write_via(L->client, mr, donor_blocks[k],
+                                                       rptr, rkey,
+                                                       RDMAMIG_BLOCK_SIZE_BYTES);
                 if (rc != 0) {
                     errs++;
                     serverLog(LL_WARNING,
@@ -6598,6 +7692,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                  * completes in order, so draining confirms these writes landed;
                  * the slot-aligned CHUNK RPC still fires at the slot boundary. */
                 if (inflight >= RDMA_TRANSFER_WR_CAP) {
+                    long long _rp = ustime();
                     int reaped = 0;
                     while (reaped < inflight) {
                         struct ibv_wc wc[64];
@@ -6607,6 +7702,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                         reaped += n;
                     }
                     inflight = 0;
+                    c_reap_us += ustime() - _rp;
                 }
             }
             if (server.rdma_reshard_debug_bytes) {
@@ -6654,6 +7750,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
          * while we transfer the next, preserving "data landed before CHUNK". */
         int is_last_slot = (i + 1 == n_slots);
         if (is_last_slot || chunk_used >= K) {
+            long long _rp = ustime();
             int reaped = 0;
             while (reaped < inflight) {
                 struct ibv_wc wc[64];
@@ -6669,8 +7766,29 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 reaped += n;
             }
             inflight = 0;
+            c_reap_us += ustime() - _rp;
+            {
+                long long regs_now = blockMrTableRegCount(L->block_mr_tbl);
+                serverLog(LL_NOTICE,
+                    "RDMA MIGRATE worker: TRANSFER chunk seq=%d slots=%d wall=%lldms "
+                    "reg=%lldms (%lld new MRs) reap=%lldms other=%lldms",
+                    chunk_seq, chunk_used, (ustime() - c_t0) / 1000, c_reg_us / 1000,
+                    regs_now - c_regs0, c_reap_us / 1000,
+                    (ustime() - c_t0 - c_reg_us - c_reap_us) / 1000);
+                c_t0 = ustime(); c_reg_us = 0; c_reap_us = 0; c_regs0 = regs_now;
+            }
 
-            if (overlap && chunk_used > 0) {
+            /* Never announce a chunk in which a write failed: the recipient would
+             * merge blocks that never arrived and report the slots durable, so the
+             * re-drive (which trusts MGN-RESUME-STATUS) would not re-ship them and
+             * the keys would be lost. Left unannounced, they stay missing on the
+             * recipient and the re-drive re-ships them over a new link. */
+            if (overlap && chunk_used > 0 && errs != errs_at_chunk) {
+                serverLog(LL_WARNING,
+                    "RDMA MIGRATE worker: not sending DONE-SLOTS-CHUNK seq=%d: %d write(s) "
+                    "failed in it (slots stay missing on the recipient)",
+                    chunk_seq, errs - errs_at_chunk);
+            } else if (overlap && chunk_used > 0) {
                 int chunk_argc = 5 + chunk_used;
                 const char **cargv = zmalloc((size_t) chunk_argc * sizeof(*cargv));
                 size_t *cargvlen = zmalloc((size_t) chunk_argc * sizeof(*cargvlen));
@@ -6710,6 +7828,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 zfree(cargv); zfree(cargvlen); zfree(cnumbuf);
             }
             chunk_used = 0;   /* reset moved OUT of the overlap-only block (slot-keyed) */
+            errs_at_chunk = errs;
         }
     }
 
@@ -6792,6 +7911,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
             blockMrTableRegCount(L->block_mr_tbl) - reg0);
     }
 
+    if (errs > 0) L->broken = 1;   /* the QP is in the error state for good */
     pthread_mutex_unlock(&L->mu);
 
     if (errs > 0 || chunk_errs > 0) {
@@ -6940,6 +8060,9 @@ static int warmUnpinOne(int slot, long long older_than_ms) {
     r_allocator_lock_slot(slot);
     if (g_warm_pinned[slot] &&
         (older_than_ms < 0 || mstime() - g_warm_pin_ms[slot] > older_than_ms)) {
+        /* Drop its registrations while still pinned: no block of this slot can
+         * have been freed yet, and none may be freed with a registration left. */
+        blockMrForgetSlots(&slot, 1);
         r_allocator_pin_slot(slot, 0);
         g_warm_pinned[slot] = 0;
         released = 1;
@@ -7069,6 +8192,7 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
                                      int start_delay_ms, const char **err_out,
                                      const int *want_slots, long long resume_of_sess);
 static int donorRehomeLookup(int slot_lo, char *host_out, int host_len, int *port_out);
+static unsigned donorRehomeSeq(int slot_lo);
 
 /* AqRaft S2 query-first resume. Before a newly-elected donor leader re-ships a
  * crashed session, ask the recipient leader (RDMA MGN-RESUME-STATUS) which of the
@@ -7163,6 +8287,68 @@ static int donorResumePlan(rdmaMigration *mig) {
     return 0;
 }
 
+/* Open the recipient's migration session for this migration's slot range and
+ * wait until its MGN_RECP_TXN_START has applied on the recipient leader. Must
+ * run BEFORE the donor redirects writes (WRITE_FLIP): the recipient keeps delete
+ * tombstones, and gates read-modify-writes, only for slots in an open session,
+ * so every redirected write has to be ordered after that entry in its log. The
+ * payload has the fields of the RECP_TXN_START that PREP logs later (which is
+ * then a no-op), so a recipient leader promoted in between recovers from it.
+ * Returns 0 on success, -1 with *err_out set. */
+static int rdmaSessionOpenHelper(rdmaMigration *mig, sds *err_out) {
+    int lo = mig->chosen[0], hi = mig->chosen[0];
+    for (int i = 1; i < mig->n_slots; i++) {
+        if (mig->chosen[i] < lo) lo = mig->chosen[i];
+        if (mig->chosen[i] > hi) hi = mig->chosen[i];
+    }
+    /* Same call-back host the PREP path advertises (see rdmaMigratePrepHelper). */
+    char host_buf[256];
+    const char *host;
+    if (server.cluster && server.cluster->myself && server.cluster->myself->ip[0]) {
+        host = server.cluster->myself->ip;
+    } else if (gethostname(host_buf, sizeof(host_buf)) == 0) {
+        host_buf[sizeof(host_buf) - 1] = '\0';
+        host = host_buf;
+    } else {
+        host = "127.0.0.1";
+    }
+    char payload[400];
+    snprintf(payload, sizeof(payload), "register_id=open-%lld slots=%d-%d n=%d donor=%s:%d",
+             mig->id, lo, hi, mig->n_slots, host, (int) server.port);
+
+    const long long wait_ms = 10000;
+    long long t0 = mstime();
+    for (;;) {
+        pthread_mutex_lock(&mig->L->mu);
+        redisReply *r = redisCommand(mig->L->ctrl, "RAFT.MGN-SESSION-OPEN %d %d %s",
+                                     lo, hi, payload);
+        pthread_mutex_unlock(&mig->L->mu);
+        if (r == NULL || r->type != REDIS_REPLY_INTEGER) {
+            if (err_out) *err_out = sdscatfmt(sdsempty(),
+                "session open on recipient %s failed: %s", mig->addr,
+                r == NULL ? mig->L->ctrl->errstr
+                          : (r->type == REDIS_REPLY_ERROR ? r->str : "bad reply"));
+            if (r) freeReplyObject(r);
+            return -1;
+        }
+        int open = (r->integer == 1);
+        freeReplyObject(r);
+        if (open) break;
+        if (mstime() - t0 >= wait_ms) {
+            if (err_out) *err_out = sdscatfmt(sdsempty(),
+                "session open on recipient %s: MGN_RECP_TXN_START not applied after %Ims",
+                mig->addr, wait_ms);
+            return -1;
+        }
+        usleep(2000);
+    }
+    serverLog(LL_NOTICE,
+        "RDMA MIGRATE worker: id=%lld recipient session open for slots=%d-%d "
+        "(MGN_RECP_TXN_START applied on %s, %lld ms)",
+        mig->id, lo, hi, mig->addr, mstime() - t0);
+    return 0;
+}
+
 /* B#1 donor re-home. The recipient leader this worker was shipping to died
  * (detected during TRANSFER or BACKPATCH). Wait for its elected successor to
  * record where the range should go (DONOR-REHOME, pushed by the new leader's
@@ -7186,6 +8372,24 @@ static int donorRehomeReship(rdmaMigration *mig, const char *phase) {
         usleep(100000);
     }
     if (!got_rehome) return 0;
+    /* The link to the dead recipient is never used again. If it holds the
+     * startup-registered source pool, hand the pool back so the re-ship's new
+     * link adopts it instead of registering a new pool (~3.6 s of REGISTERING).
+     * Link teardown never frees the pool. */
+    if (mig->L != NULL) {
+        pthread_mutex_lock(&mig->L->mu);
+        if (g_src_prereg_pool != NULL && mig->L->src_mr_pool == g_src_prereg_pool) {
+            mig->L->src_mr_pool = NULL;
+            mig->L->src_mr_pool_bytes = 0;
+            mig->L->src_mr_parent = NULL;
+            mig->L->src_mr_used_blocks = 0;
+            g_src_prereg_owner = NULL;
+            atomic_store(&g_src_prereg_state, SRC_PREREG_READY);
+            serverLog(LL_NOTICE, "AqRaft B#1 donor re-home: startup source pool released "
+                      "from the link to the dead recipient for the re-ship to adopt");
+        }
+        pthread_mutex_unlock(&mig->L->mu);
+    }
     const char *rerr = NULL;
     long long saved_next = server.rdma_migration_next_id;
     server.rdma_migration_next_id = 800000000000000000LL + (slot_lo > 0 ? slot_lo : 1);
@@ -7239,13 +8443,18 @@ static void *migrationWorker(void *arg) {
         nanosleep(&ts, NULL);
     }
 
+    /* The session's full range, before a resume plan trims mig->chosen. */
+    int sess_lo = (mig->n_slots > 0) ? mig->chosen[0] : -1;
+    int sess_hi = (mig->n_slots > 0) ? mig->chosen[mig->n_slots - 1] : -1;
+
     /* AqRaft S2 query-first resume: ask the recipient what already landed before
      * re-shipping. If the whole crashed session is already durable there, there
      * is nothing to transfer — just close the original session. */
     if (mig->resume_of_sess > 0 && donorResumePlan(mig)) {
         char mgn_payload[64];
         snprintf(mgn_payload, sizeof(mgn_payload), "sess=%lld", mig->resume_of_sess);
-        rdmaMgnLogSync("TXN_DONE", mgn_payload);
+        (void) rdmaMgnLogSyncRetry("TXN_DONE", mgn_payload, 3);
+        (void) rdmaNarrowSync(sess_lo, sess_hi);
         pthread_mutex_lock(&mig->mu);
         mig->state = RDMA_MIG_DONE;
         mig->t_ended = time(NULL);
@@ -7268,17 +8477,54 @@ static void *migrationWorker(void *arg) {
         snprintf(mgn_payload, sizeof(mgn_payload),
                  "sess=%lld slots=%d-%d n=%d recipient=%s",
                  mig->id, first_slot, last_slot, mig->n_slots, mig->addr);
-        rdmaMgnLogSync("TXN_START", mgn_payload);
+        if (rdmaMgnLogSyncRetry("TXN_START", mgn_payload, 3) != 0) {
+            migFail(mig, sdsnew("MGN_TXN_START could not be committed (not the donor leader?)"));
+            return NULL;
+        }
     }
 
+    /* Open the recipient's session BEFORE redirecting writes to it, so no
+     * redirected write precedes MGN_RECP_TXN_START in the recipient's log.
+     * (RedisRaft recipients only: without it there is no log and no session.) */
+    if (mig->n_slots > 0 && server.rdma_migration_redisraft_mode &&
+        rdmaSessionOpenHelper(mig, &err) != 0) {
+        migFail(mig, err);
+        return NULL;
+    }
+    if (server.rdma_writeflip_spec == NULL || sdslen(server.rdma_writeflip_spec) == 0)
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: id=%lld rdma-writeflip-spec is unset — if writes were "
+            "redirected up-front, deletes that reached the recipient before this session "
+            "opened are not tombstoned", mig->id);
+
     /* AqRaft per-donor JIT WRITE_FLIP: flip THIS donor's slots to write-redirect
-     * NOW (right after MGN_TXN_START), so each donor enters the redirect/two-
-     * sided state exactly when its migration starts — not all donors up-front.
+     * NOW (after MGN_TXN_START and the recipient's session open), so each donor
+     * enters the redirect/two-sided state exactly when its migration starts — not
+     * all donors up-front. Still before PREP, so the donor's block lists no longer
+     * change while the recipient sizes its landing buffers.
      * No-op when rdma-writeflip-spec is unset (ansible up-front path). */
     if (mig->n_slots > 0 &&
         rdmaWriteFlipSync(mig->chosen[0], mig->chosen[mig->n_slots - 1]) < 0) {
         migFail(mig, sdsnew("per-donor WRITE_FLIP (post-TXN_START) failed"));
         return NULL;
+    }
+
+    mig->rehome_seq = (mig->n_slots > 0) ? donorRehomeSeq(mig->chosen[0]) : 0;
+
+    /* Register the source pool BEFORE asking the recipient for landing buffers.
+     * The recipient admits one incoming transfer at a time from the moment it
+     * answers PREP; a donor that then spent seconds on its own ibv_reg_mr (a
+     * re-ship to a new recipient leader has no pre-warmed link) held that slot
+     * idle, the recipient gave it to the next donor, and both transferred at
+     * once: NIC overflow, transfers ~5x slower, Raft heartbeats lost and the new
+     * leader deposed. Registered here, the transfer starts right after PREP. */
+    if (!rdmaLinkSlotsPrepared(mig->L, mig->chosen, mig->n_slots)) {
+        migSetState(mig, RDMA_MIG_REGISTERING);
+        int pre = 0;
+        if (rdmaReshardRegisterHelper(mig->L, mig->chosen, mig->n_slots, &pre, &err) != 0) {
+            migFail(mig, err);
+            return NULL;
+        }
     }
 
     /* PREP: register recipient landing buffers for the chosen slots. */
@@ -7358,18 +8604,6 @@ static void *migrationWorker(void *arg) {
      * comes from the dispatching client; cluster mode is single-DB). */
     if (rdmaReshardTransferHelper(mig->L, &server.db[0], mig->chosen, mig->n_slots,
                               mig->id, &err) != 0) {
-        /* S1: the recipient leader died mid-TRANSFER (the slots are already
-         * flipped to sg4, so failing strands them until the playbook re-drives).
-         * If the recipient no longer answers, re-home to its successor exactly as
-         * the BACKPATCH path does. A live recipient that returned errors still
-         * fails as before. */
-        if (!rdmaRecipientAlive(mig->addr)) {
-            serverLog(LL_WARNING,
-                "AqRaft B#1 donor: id=%lld TRANSFER failed (%s) and recipient %s is not "
-                "answering — waiting for its successor to re-home this range",
-                mig->id, err ? err : "?", mig->addr);
-            if (donorRehomeReship(mig, "transfer")) { if (err) sdsfree(err); return NULL; }
-        }
         migFail(mig, err);
         return NULL;
     }
@@ -7413,7 +8647,20 @@ static void *migrationWorker(void *arg) {
             migNotifyOrchestratorIfAny(mig, "CHAIN_DURABLE", (long long) mig->n_slots);
             chain_durable_sent = 1;
         }
+        int odd_err_logged = 0;
         while (polls < max_polls && !done) {
+            /* A new recipient leader announced itself for this range after this
+             * worker started: the node we are polling was deposed and cannot
+             * finish the batch, whatever it answers. Re-home now rather than at
+             * the 60 s timeout. */
+            if (polls % 10 == 0 && mig->n_slots > 0 &&
+                donorRehomeSeq(mig->chosen[0]) != mig->rehome_seq) {
+                serverLog(LL_WARNING,
+                    "AqRaft donor: a new recipient leader was announced for slots from %d "
+                    "(id=%lld, shipping to %s) — driving re-home",
+                    mig->chosen[0], mig->id, mig->addr);
+                break;
+            }
             pthread_mutex_lock(&mig->L->mu);
             redisReply *r = redisCommand(mig->L->ctrl,
                 "RDMA BACKPATCH-STATUS %s %lld", src_id, mig->id);
@@ -7439,7 +8686,22 @@ static void *migrationWorker(void *arg) {
                 continue;
             }
             conn_fail_streak = 0;   /* got a reply — recipient alive */
+            if (r->type == REDIS_REPLY_ERROR && r->str != NULL &&
+                strncmp(r->str, "NOTLEADER", 9) == 0) {
+                /* The recipient leader was deposed (it is alive, but it cannot
+                 * finish the batch): same as a dead recipient — re-home. */
+                serverLog(LL_WARNING,
+                    "AqRaft donor: recipient %s is no longer its group's leader "
+                    "(id=%lld) — driving re-home", mig->addr, mig->id);
+                freeReplyObject(r);
+                break;
+            }
             if (r->type == REDIS_REPLY_ERROR) {
+                if (!odd_err_logged && polls >= 100) {
+                    odd_err_logged = 1;
+                    serverLog(LL_WARNING, "AqRaft donor: BACKPATCH-STATUS for id=%lld still "
+                        "answers an error after 1 s: %s", mig->id, r->str ? r->str : "(null)");
+                }
                 /* Recipient says no such batch (yet) — early poll race; retry. */
                 freeReplyObject(r);
                 usleep(10000);
@@ -7479,13 +8741,13 @@ static void *migrationWorker(void *arg) {
                     char mgn_payload[64];
                     snprintf(mgn_payload, sizeof(mgn_payload),
                              "sess=%lld", mig->id);
-                    rdmaMgnLogSync("TXN_DONE", mgn_payload);
+                    (void) rdmaMgnLogSyncRetry("TXN_DONE", mgn_payload, 3);
                     /* S2 resume: the crashed session it replaced is now complete
                      * too — close it so a later promotion doesn't resume it again. */
                     if (mig->resume_of_sess > 0) {
                         snprintf(mgn_payload, sizeof(mgn_payload),
                                  "sess=%lld", mig->resume_of_sess);
-                        rdmaMgnLogSync("TXN_DONE", mgn_payload);
+                        (void) rdmaMgnLogSyncRetry("TXN_DONE", mgn_payload, 3);
                     }
                 }
                 else if (state_str && strcmp(state_str, "failed") == 0) {
@@ -7544,6 +8806,8 @@ static void *migrationWorker(void *arg) {
      * identified — likely a routing interaction post-FLIP+post-cleanup
      * that causes redis3's main thread to fall behind on cluster
      * heartbeats. Keep migrating_slots_to[] set for now. */
+
+    (void) rdmaNarrowSync(sess_lo, sess_hi);
 
     pthread_mutex_lock(&mig->mu);
     mig->state = RDMA_MIG_DONE;
@@ -7639,8 +8903,44 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
         server.rdma_reshard_migrated += n_slots;   /* advance offset for the next round */
     }
 
+    char canon_host_buf[64];
+    host = rdmaLinkHostCanon(host, canon_host_buf, sizeof(canon_host_buf));
     sds key = sdscatfmt(sdsempty(), "%s:%i", host, port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
+    if (L != NULL && L->broken) {
+        /* A previous migration's RDMA write on this link failed, so its QP is in
+         * the error state and every later write would be flushed: every later
+         * round to this recipient failed the same way. Open a new link. The old
+         * object is left allocated (a finished worker may still point at it),
+         * only dropped from the cache; the startup source pool it adopted is
+         * handed back so the new link adopts it instead of registering another. */
+        pthread_mutex_lock(&L->mu);
+        if (g_src_prereg_pool != NULL && L->src_mr_pool == g_src_prereg_pool) {
+            L->src_mr_pool = NULL;
+            L->src_mr_pool_bytes = 0;
+            L->src_mr_parent = NULL;
+            L->src_mr_used_blocks = 0;
+            memset(L->source_buffers, 0, sizeof(L->source_buffers));
+            atomic_store(&g_src_prereg_state, SRC_PREREG_READY);
+        }
+        pthread_mutex_unlock(&L->mu);
+        serverLog(LL_WARNING, "RDMA MIGRATE: outbound link to %s:%d had a failed RDMA write; "
+                  "opening a new one", host, port);
+        rdmaOutboundLink *NL = rdmaOutboundLinkOpen(host, port);
+        if (NL == NULL) {
+            sdsfree(key);
+            zfree(chosen);
+            if (orch_endpoint) sdsfree(orch_endpoint);
+            *err_out = "could not re-establish outbound RDMA link (see server log)";
+            return -1;
+        }
+        /* Swap the new link into the cache entry in place: the entry keeps its
+         * key, and the old link is not freed (a finished worker may still hold
+         * it). Deleting the entry instead crashed in the dict's free path. */
+        dictEntry *bde = dictFind(server.rdma_outbound_links, key);
+        if (bde) dictSetVal(server.rdma_outbound_links, bde, NL);
+        L = NL;   /* falls through to the "already cached" branch: key not inserted */
+    }
     if (L == NULL) {
         L = rdmaOutboundLinkOpen(host, port);
         if (L == NULL) {
@@ -7653,6 +8953,33 @@ static long long startLocalMigration(const char *host, int port, int n_slots,
         dictAdd(server.rdma_outbound_links, key, L);
     } else {
         sdsfree(key);
+    }
+
+    /* A resumed session goes to the recipient group's CURRENT leader. If the
+     * startup-registered source pool is still held by a link to a previous leader
+     * (it adopted the pool at warm-up, then that leader died), take it back so
+     * this link adopts it. Otherwise the re-ship mmaps and registers a new pool,
+     * which stalls this donor for 1.5-4 s in the middle of the recovery. */
+    if (resume_of_sess > 0 && g_src_prereg_pool != NULL) {
+        dictIterator *di = dictGetIterator(server.rdma_outbound_links);
+        dictEntry *de;
+        while ((de = dictNext(di)) != NULL) {
+            rdmaOutboundLink *Lo = dictGetVal(de);
+            if (Lo == NULL || Lo == L) continue;
+            pthread_mutex_lock(&Lo->mu);
+            if (Lo->src_mr_pool == g_src_prereg_pool) {
+                Lo->src_mr_pool = NULL;
+                Lo->src_mr_pool_bytes = 0;
+                Lo->src_mr_parent = NULL;
+                Lo->src_mr_used_blocks = 0;
+                memset(Lo->source_buffers, 0, sizeof(Lo->source_buffers));
+                atomic_store(&g_src_prereg_state, SRC_PREREG_READY);
+                serverLog(LL_NOTICE, "AqRaft resume: startup source pool taken back from the "
+                          "link to a previous recipient leader for the re-ship to %s:%d", host, port);
+            }
+            pthread_mutex_unlock(&Lo->mu);
+        }
+        dictReleaseIterator(di);
     }
 
     rdmaMigration *mig = zcalloc(sizeof(*mig));
@@ -8353,10 +9680,7 @@ static void *warmRegisterThread(void *arg) {
             wa->L->prepared_slot[wa->chosen[i]] = 1;
         /* Zero-copy: create the live-block MR side table (against this link's
          * client cm_id — the QP TRANSFER posts on). */
-        if (wa->L->block_mr_tbl == NULL)
-            wa->L->block_mr_tbl =
-                blockMrTableCreate(rdmamig_client_cm_id(wa->L->client));
-        struct blockMrTable *tbl = wa->L->block_mr_tbl;
+        struct blockMrTable *tbl = blockMrTableForLink(wa->L);
         pthread_mutex_unlock(&wa->L->mu);
 
         /* Pre-register every migrated slot's live r_allocator blocks so TRANSFER
@@ -8377,6 +9701,12 @@ static void *warmRegisterThread(void *arg) {
          * migration that ships the slot ends (warmPinSlot / warmUnpinSlots). */
         warmUnpinStale();
         long long live_blocks = 0, registered_blocks = 0;
+        /* Optional throttle (rdma-warm-reg-batch / -pause-us): registering ~2.9 GB of
+         * live blocks back to back dented the donor's client throughput for ~1-2 s
+         * right before the migration even though it runs off the main thread. */
+        int thr_batch = server.rdma_warm_reg_batch, thr_pause = server.rdma_warm_reg_pause_us;
+        long long since_pause = 0;
+        long long t_warm0 = ustime();
         for (int i = 0; i < wa->n_slots; i++) {
             int slot = wa->chosen[i];
             r_allocator_lock_slot(slot);
@@ -8391,6 +9721,10 @@ static void *warmRegisterThread(void *arg) {
                     if (blockMrTableGetOrRegister(tbl, blks[k],
                                                   RDMAMIG_BLOCK_SIZE_BYTES) != NULL)
                         registered_blocks++;
+                    if (thr_batch > 0 && thr_pause > 0 && ++since_pause >= thr_batch) {
+                        usleep((useconds_t) thr_pause);
+                        since_pause = 0;
+                    }
                 }
                 zfree(blks);
             }
@@ -8398,8 +9732,9 @@ static void *warmRegisterThread(void *arg) {
         serverLog(LL_NOTICE,
             "RDMA MIGRATE-WARM(async): registered=%d n_slots=%d — %d slots flagged "
             "prepared (REGISTERING will be skipped in-window); zero-copy MR table "
-            "%lld/%lld live blocks registered",
-            registered, wa->n_slots, wa->n_slots, registered_blocks, live_blocks);
+            "%lld/%lld live blocks registered in %lld ms (throttle batch=%d pause=%dus)",
+            registered, wa->n_slots, wa->n_slots, registered_blocks, live_blocks,
+            (ustime() - t_warm0) / 1000, thr_batch, thr_pause);
     } else {
         serverLog(LL_WARNING,
             "RDMA MIGRATE-WARM(async): source register failed: %s "
@@ -8434,7 +9769,7 @@ static void *warmRegisterThread(void *arg) {
  * on its backpatch-status timeout (by which the new leader is stable), re-ships to
  * the recorded endpoint instead of failing. Keyed by the session's first slot. */
 #define DONOR_REHOME_MAX 16
-static struct { int slot_lo; char host[128]; int port; } g_donor_rehome[DONOR_REHOME_MAX];
+static struct { int slot_lo; char host[128]; int port; unsigned seq; } g_donor_rehome[DONOR_REHOME_MAX];
 static pthread_mutex_t g_donor_rehome_mu = PTHREAD_MUTEX_INITIALIZER;
 
 void rdmaMgnDonorRehomeCommand(client *c) {
@@ -8453,6 +9788,11 @@ void rdmaMgnDonorRehomeCommand(client *c) {
     if (idx < 0)
         for (int i = 0; i < DONOR_REHOME_MAX; i++) if (g_donor_rehome[i].host[0] == 0) { idx = i; break; }
     if (idx >= 0) {
+        /* A different endpoint than the one on record is a new leader: workers
+         * shipping to the previous one watch seq and re-home at once. */
+        if (g_donor_rehome[idx].host[0] == 0 || g_donor_rehome[idx].port != (int) port ||
+            strcmp(g_donor_rehome[idx].host, host) != 0)
+            g_donor_rehome[idx].seq++;
         g_donor_rehome[idx].slot_lo = (int) slot_lo;
         snprintf(g_donor_rehome[idx].host, sizeof(g_donor_rehome[idx].host), "%s", host);
         g_donor_rehome[idx].port = (int) port;
@@ -8475,6 +9815,15 @@ static int donorRehomeLookup(int slot_lo, char *host_out, int host_len, int *por
         }
     pthread_mutex_unlock(&g_donor_rehome_mu);
     return found;
+}
+
+static unsigned donorRehomeSeq(int slot_lo) {
+    unsigned seq = 0;
+    pthread_mutex_lock(&g_donor_rehome_mu);
+    for (int i = 0; i < DONOR_REHOME_MAX; i++)
+        if (g_donor_rehome[i].host[0] && g_donor_rehome[i].slot_lo == slot_lo) { seq = g_donor_rehome[i].seq; break; }
+    pthread_mutex_unlock(&g_donor_rehome_mu);
+    return seq;
 }
 
 /* AqRaft B#1 — recipient-leader crash recovery (Increment 1: execute held merges).
@@ -8511,6 +9860,201 @@ static void mergeQueueDrainSync(long long sess) {
               "in %lld ms (%d ticks)", sess, (ustime() - t0) / 1000, ticks);
 }
 
+/* This node's externally reachable name, as the other replicas know it (the
+ * short host name: it resolves to the experiment network, see below). */
+static void rdmaSelfShortHost(char *buf, size_t len) {
+    if (server.cluster && server.cluster->myself && server.cluster->myself->ip[0]) {
+        snprintf(buf, len, "%s", server.cluster->myself->ip);
+    } else if (gethostname(buf, len) == 0) {
+        buf[len - 1] = '\0';
+        char *dot = strchr(buf, '.');
+        if (dot) *dot = '\0';
+    } else {
+        snprintf(buf, len, "127.0.0.1");
+    }
+}
+
+/* Recipient-leader recovery of ONE in-flight session, off the main thread.
+ *
+ * A newly elected leader may close the session itself — commit MGN_INDX_UPD
+ * with no donor re-ship — if it and enough other replicas for a majority hold
+ * the whole range (the durability rule was met although the old leader died
+ * before logging it). If this node lacks the range but another replica holds
+ * it, it first FETCHES it from that replica: the holder serves the batch down a
+ * recipe (this node first, then the other replicas that lack it), exactly like
+ * a chain repair. If nobody holds it, nothing is done here: the donor still
+ * has its copy and re-ships.
+ *
+ * While this runs the range is reported "pending" to the donor
+ * (rdmaMgnAdoptingMark), so it waits instead of re-shipping; the mark is
+ * cleared if the range cannot be closed here. */
+#define RECOVER_MAX_PEERS 16
+typedef struct {
+    long long sess;
+    int lo, hi;
+    int mine_full;                         /* this node held every slot at promotion */
+    int npeers;
+    char phost[RECOVER_MAX_PEERS][128];
+    int  pport[RECOVER_MAX_PEERS];
+    unsigned char pfull[RECOVER_MAX_PEERS]; /* 1 = holds the whole range, 2 = reachable, lacks it */
+    char dhost[256]; int dport; int nslots; /* the session's donor (from the TXN_START payload) */
+} recipientRecoverJob;
+
+/* Tell the session's donor where the recipient leader is now, so its in-flight
+ * (or resumed) migration for this range re-homes here. Short timeouts: the
+ * donor leader may be gone too. */
+static void recoverPushRehome(recipientRecoverJob *j) {
+    if (j->dhost[0] == '\0' || j->dport <= 0 || j->nslots <= 0) {
+        serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — no donor in the "
+                  "TXN_START payload; donor re-home not sent", j->sess);
+        return;
+    }
+    char self[256];
+    rdmaSelfShortHost(self, sizeof(self));
+    struct timeval tv = { 1, 0 };
+    redisContext *ctx = redisConnectWithTimeout(j->dhost, j->dport, tv);
+    if (ctx == NULL || ctx->err) {
+        serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — connect to donor %s:%d "
+                  "failed: %s", j->sess, j->dhost, j->dport, ctx ? ctx->errstr : "(null)");
+        if (ctx) redisFree(ctx);
+        return;
+    }
+    redisSetTimeout(ctx, tv);
+    redisReply *rep = redisCommand(ctx, "RDMA MGN-DONOR-REHOME %d %s %d",
+                                   j->lo, self, (int) server.port);
+    serverLog(rep ? LL_NOTICE : LL_WARNING,
+        "AqRaft recipient-recover: sess=%lld — told donor %s:%d the recipient leader for "
+        "slots=%d-%d is now %s:%d%s", j->sess, j->dhost, j->dport, j->lo, j->hi, self,
+        (int) server.port, rep ? "" : " (no reply)");
+    if (rep) freeReplyObject(rep);
+    redisFree(ctx);
+}
+
+static int recoverRangeMergedHere(int lo, int hi) {
+    for (int s = lo; s <= hi; s++) if (!rdmaInvSlotFullyMerged(s)) return 0;
+    return 1;
+}
+
+/* How many of the job's peers hold the whole range right now. */
+static int recoverCountPeersFull(recipientRecoverJob *j) {
+    int nrange = j->hi - j->lo + 1, full = 0;
+    for (int i = 0; i < j->npeers; i++) {
+        struct timeval tv = { 0, 500000 };
+        redisContext *pc = redisConnectWithTimeout(j->phost[i], j->pport[i], tv);
+        if (pc == NULL || pc->err) { if (pc) redisFree(pc); j->pfull[i] = 0; continue; }
+        redisSetTimeout(pc, tv);
+        redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d", j->sess, j->lo, j->hi);
+        if (rep && rep->type == REDIS_REPLY_ARRAY) {
+            j->pfull[i] = ((int) rep->elements == nrange) ? 1 : 2;
+            if (j->pfull[i] == 1) full++;
+        } else j->pfull[i] = 0;
+        if (rep) freeReplyObject(rep);
+        redisFree(pc);
+    }
+    return full;
+}
+
+static void *recipientRecoverWorker(void *arg) {
+    recipientRecoverJob *j = arg;
+    int nrange = j->hi - j->lo + 1;
+    int need = (j->npeers + 1) / 2;   /* peers besides me for a majority of npeers+1 */
+    int have_me = j->mine_full;
+    /* Every call to another node happens HERE, never on the main thread: a
+     * leader whose event loop waits on a peer stops sending heartbeats, loses
+     * its leadership, and two replicas promoted in turn can end up each waiting
+     * for the other's event loop forever (seen with a 5-replica group). */
+    int peers_full = recoverCountPeersFull(j);
+    serverLog(LL_NOTICE,
+        "AqRaft recipient-recover: sess=%lld range=%d-%d — I %s the range, %d/%d peers "
+        "hold all of it", j->sess, j->lo, j->hi, have_me ? "hold" : "lack", peers_full,
+        j->npeers);
+    recoverPushRehome(j);
+    if (!have_me && peers_full == 0) {
+        /* Nobody holds the range: the donor re-ships it. */
+        rdmaMgnAdoptingClear(j->lo, j->hi);
+        zfree(j);
+        return NULL;
+    }
+
+    /* FETCH: ask a holder to serve the batch to me and to the replicas that
+     * lack it. Up to 3 tries, another holder each time. */
+    char self[256];
+    rdmaSelfShortHost(self, sizeof(self));
+    for (int attempt = 1; !have_me && attempt <= 3 && peers_full > 0 && !rdmaNotRaftLeader(); attempt++) {
+        int h = -1, seen = 0;
+        for (int i = 0; i < j->npeers; i++)
+            if (j->pfull[i] == 1 && seen++ == (attempt - 1) % peers_full) { h = i; break; }
+        if (h < 0) break;
+        sds cmd = sdscatprintf(sdsempty(), "RDMA CHAIN-STATUS %lld %d %d SEND %d %s %d",
+                               j->sess, j->lo, j->hi, 1000 + attempt, self, (int) server.port);
+        for (int i = 0; i < j->npeers; i++)
+            if (j->pfull[i] == 2) cmd = sdscatprintf(cmd, " %s %d", j->phost[i], j->pport[i]);
+        struct timeval tv = { 2, 0 };
+        redisContext *pc = redisConnectWithTimeout(j->phost[h], j->pport[h], tv);
+        redisReply *rep = NULL;
+        if (pc != NULL && !pc->err) {
+            redisSetTimeout(pc, tv);
+            rep = redisCommand(pc, cmd);   /* no '%' in cmd: hiredis splits it into args */
+        }
+        int asked = (rep != NULL && rep->type != REDIS_REPLY_ERROR);
+        serverLog(asked ? LL_NOTICE : LL_WARNING,
+            "AqRaft recipient-recover: sess=%lld range=%d-%d — %s holder %s:%d to send the "
+            "range here (try %d)%s%s", j->sess, j->lo, j->hi, asked ? "asked" : "could not ask",
+            j->phost[h], j->pport[h], attempt,
+            (rep && rep->type == REDIS_REPLY_ERROR) ? ": " : "",
+            (rep && rep->type == REDIS_REPLY_ERROR) ? rep->str : "");
+        if (rep) freeReplyObject(rep);
+        if (pc) redisFree(pc);
+        sdsfree(cmd);
+        if (asked) {
+            long long t0 = mstime();
+            while (mstime() - t0 < 20000 && !(have_me = recoverRangeMergedHere(j->lo, j->hi)))
+                usleep(50000);
+            if (have_me)
+                serverLog(LL_NOTICE, "AqRaft recipient-recover: sess=%lld range=%d-%d fetched "
+                          "from %s:%d and merged here in %lld ms", j->sess, j->lo, j->hi,
+                          j->phost[h], j->pport[h], mstime() - t0);
+        }
+        if (!have_me) peers_full = recoverCountPeersFull(j);
+    }
+
+    /* The holder also served the other lacking replicas: give them a moment
+     * if the majority is not there yet. */
+    if (have_me) {
+        long long t0 = mstime();
+        peers_full = recoverCountPeersFull(j);
+        while (peers_full < need && mstime() - t0 < 20000) {
+            usleep(200000);
+            peers_full = recoverCountPeersFull(j);
+        }
+    }
+
+    int closed = 0;
+    if (rdmaNotRaftLeader()) {
+        serverLog(LL_NOTICE, "AqRaft recipient-recover: sess=%lld range=%d-%d — no longer "
+                  "the leader, leaving the session to the new one", j->sess, j->lo, j->hi);
+    } else if (have_me && j->npeers > 0 && peers_full >= need) {
+        char pl[256];
+        snprintf(pl, sizeof(pl), "sess=%lld slots=%d-%d n_slots=%d applied=0 adopted=1",
+                 j->sess, j->lo, j->hi, nrange);
+        closed = (rdmaMgnLogSyncRetry("INDX_UPD", pl, 3) == 0);
+    }
+    if (closed) {
+        serverLog(LL_NOTICE,
+            "AqRaft recipient-recover: sess=%lld range=%d-%d held by me + %d/%d peers "
+            "(majority) — INDX_UPD committed here, donor will not re-ship",
+            j->sess, j->lo, j->hi, peers_full, j->npeers);
+    } else {
+        rdmaMgnAdoptingClear(j->lo, j->hi);
+        serverLog(LL_NOTICE,
+            "AqRaft recipient-recover: sess=%lld range=%d-%d not closed here (me=%d, peers "
+            "holding all=%d, need %d) — donor re-ships", j->sess, j->lo, j->hi, have_me,
+            peers_full, need);
+    }
+    zfree(j);
+    return NULL;
+}
+
 static void rdmaRecipientRecover(long long sess, const char *payload) {
     redisDb *db = &server.db[0];
     unsigned long long db_before = dbSize(db);
@@ -8526,17 +10070,42 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
     if (tp) term = strtoll(tp + 5, NULL, 10);
     if (term < 0 || term != merged_term) {
         long long t0 = ustime();
+        int already_merged = 0;
         for (int slot = 0; slot < CLUSTER_SLOTS; slot++) {
             int nb = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
             if (nb > 0) {
+                /* Skip slots this node already merged as a follower (every session
+                 * that delivered them here has its merged bit): re-merging them
+                 * rebuilt shadows for ~2.5M keys only to skip every one (~4 s of
+                 * blocked main thread on promotion). Anything not fully merged is
+                 * still merged here, before the new leader serves. */
+                if (rdmaInvSlotFullyMerged(slot)) { already_merged++; continue; }
                 slots_with_blocks++;
-                staged += rdmaFollowerEnqueueSlotMerge(db, slot);
+                staged += rdmaFollowerEnqueueSlotMerge(db, slot, NULL, 0);   /* promotion: all held blocks */
             }
         }
         serverLog(LL_NOTICE, "AqRaft B#1 recipient-recover: sess=%lld — held-block merge "
-                  "staged in %lld ms (term=%lld)", sess, (ustime() - t0) / 1000, term);
+                  "staged in %lld ms (term=%lld; %d slots to merge, %d already merged as follower)",
+                  sess, (ustime() - t0) / 1000, term, slots_with_blocks, already_merged);
         mergeQueueDrainSync(sess);
         merged_term = term;
+        /* A new leader has no connections to its followers and has not registered
+         * its landing memory for them: the first re-sent round paid for both while
+         * its replication waited (0.30 s of ibv_reg_mr after the chain was up, S1
+         * 2026-10-05). Start both now, off the main thread, under a warm-up session
+         * of its own; the round's chain then reuses the connections. */
+        if (server.rdma_chain_warm_on_promote && term >= 0 && server.rdma_chain_followers != NULL &&
+            sdslen(server.rdma_chain_followers) > 0) {
+            const char *np = payload ? strstr(payload, " n=") : NULL;
+            long long n = np ? strtoll(np + 3, NULL, 10) : 0;
+            if (n > 0 && n <= CLUSTER_SLOTS) {
+                rdmaChainSpawnEstablish(900000000000000001LL + term,
+                                        n * (long long) RDMAMIG_BLOCK_SIZE_BYTES,
+                                        server.rdma_chain_followers);
+                serverLog(LL_NOTICE, "AqRaft recipient-recover: term=%lld -- chain warm-up started "
+                          "(connections to the followers + landing registration, %lld slots)", term, n);
+            }
+        }
     } else {
         serverLog(LL_NOTICE, "AqRaft B#1 recipient-recover: sess=%lld — held blocks already "
                   "merged this term (%lld); skipping the re-merge", sess, term);
@@ -8547,199 +10116,64 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
         "(follower-merge drains async -> adopting held blocks into live keyspace)",
         sess, payload ? payload : "", slots_with_blocks, staged, db_before);
 
-    /* B#1 peer-pull increment 2: for this session's slot range, find the slots this
-     * newly-promoted leader LACKS, and ask each surviving sg4 peer (RDMA
-     * CHAIN-STATUS) which of those it holds — building the missing-slot -> holder
-     * coverage. The committed-INDX_UPD durability invariant guarantees a live
-     * majority holds every committed slot, so a survivor covers the gap; a later
-     * step forwards it inward. Slots no peer holds fall back to donor re-ship. */
-    {
-        int slot_lo = -1, slot_hi = -1;
-        const char *sp2 = payload ? strstr(payload, "slots=") : NULL;
-        if (sp2) sscanf(sp2, "slots=%d-%d", &slot_lo, &slot_hi);
-        if (slot_lo >= 0 && slot_hi >= slot_lo && slot_hi < CLUSTER_SLOTS) {
-            int nrange = slot_hi - slot_lo + 1;
-            unsigned char *lack = zcalloc((size_t) nrange);   /* 1 = I lack this slot */
-            int gaps = 0;
-            for (int slot = slot_lo; slot <= slot_hi; slot++)
-                if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) == 0) {
-                    lack[slot - slot_lo] = 1; gaps++;
-                }
-            int covered = 0;
-            if (gaps > 0 && server.rdma_chain_followers != NULL &&
-                sdslen(server.rdma_chain_followers) > 0) {
-                int npeers = 0;
-                sds *peers = sdssplitlen(server.rdma_chain_followers,
-                                         sdslen(server.rdma_chain_followers), " ", 1, &npeers);
-                for (int pi = 0; pi < npeers && covered < gaps; pi++) {
-                    char phost[128]; int pport = 0;
-                    if (sscanf(peers[pi], "%127[^:]:%d", phost, &pport) != 2 || pport <= 0)
-                        continue;
-                    redisContext *pc = redisConnect(phost, pport);
-                    if (pc == NULL || pc->err) { if (pc) redisFree(pc); continue; }
-                    redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d",
-                                                   sess, slot_lo, slot_hi);
-                    if (rep != NULL && rep->type == REDIS_REPLY_ARRAY) {
-                        for (size_t k = 0; k < rep->elements; k++) {
-                            long long hs = rep->element[k]->integer;
-                            if (hs >= slot_lo && hs <= slot_hi && lack[hs - slot_lo] == 1) {
-                                lack[hs - slot_lo] = 2;   /* covered by a peer */
-                                covered++;
-                            }
-                        }
-                        serverLog(LL_NOTICE,
-                            "AqRaft B#1 peer-pull: sess=%lld peer %s:%d holds %zu slots "
-                            "in range", sess, phost, pport, rep->elements);
-                    }
-                    if (rep) freeReplyObject(rep);
-                    redisFree(pc);
-                }
-                if (peers) sdsfreesplitres(peers, npeers);
-            }
-            serverLog(LL_NOTICE,
-                "AqRaft B#1 peer-pull: sess=%lld range=%d-%d I-lack=%d peer-covered=%d "
-                "donor-fallback=%d (increment 2: gap+holder map; forward is next)",
-                sess, slot_lo, slot_hi, gaps, covered, gaps - covered);
-            zfree(lack);
-        }
+    /* The rest of the recovery talks to other nodes (which replicas hold the
+     * range, fetch it if this node lacks it, close the session if a majority
+     * holds it, tell the donor where the leader is now): all of it runs in
+     * recipientRecoverWorker. Nothing below blocks the event loop. */
+    int alo = -1, ahi = -1;
+    const char *asp = payload ? strstr(payload, "slots=") : NULL;
+    if (asp) sscanf(asp, "slots=%d-%d", &alo, &ahi);
+    if (alo < 0 || ahi < alo || ahi >= CLUSTER_SLOTS) {
+        serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — no slot range in the "
+                  "payload; nothing to recover", sess);
+        return;
     }
-
-    /* B#1 adopt the held copy. If this node holds every slot of the session's
-     * range and enough surviving peers do too to make a majority, the batch met
-     * the durability rule (bytes on a majority) even though the old leader died
-     * before logging INDX_UPD. Its held blocks were merged above, so this node
-     * logs INDX_UPD + RECP_TXN_DONE itself instead of having the donor re-ship.
-     * The slots are reported "pending" until the INDX_UPD applies (then durable),
-     * so the donor's re-home asks MGN-RESUME-STATUS, waits, and closes its
-     * session without sending anything. Peers are asked directly (CHAIN-STATUS):
-     * a follower registers a batch's blocks only once the whole batch landed, so
-     * "holds every slot" means it holds the complete batch. */
-    {
-        int alo = -1, ahi = -1;
-        const char *asp = payload ? strstr(payload, "slots=") : NULL;
-        if (asp) sscanf(asp, "slots=%d-%d", &alo, &ahi);
-        if (alo >= 0 && ahi >= alo && ahi < CLUSTER_SLOTS) {
-            int nrange = ahi - alo + 1, mine = 0;
-            for (int slot = alo; slot <= ahi; slot++)
-                if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0) mine++;
-            int npeers = 0, peers_full = 0;
-            sds *peers = NULL;
-            if (mine == nrange && server.rdma_chain_followers &&
-                sdslen(server.rdma_chain_followers) > 0) {
-                peers = sdssplitlen(server.rdma_chain_followers,
-                                    sdslen(server.rdma_chain_followers), " ", 1, &npeers);
-                for (int pi = 0; pi < npeers; pi++) {
-                    char phost[128]; int pport = 0;
-                    if (sscanf(peers[pi], "%127[^:]:%d", phost, &pport) != 2 || pport <= 0) continue;
-                    struct timeval tv = { 0, 500000 };
-                    redisContext *pc = redisConnectWithTimeout(phost, pport, tv);
-                    if (pc == NULL || pc->err) { if (pc) redisFree(pc); continue; }
-                    redisSetTimeout(pc, tv);
-                    redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d", sess, alo, ahi);
-                    if (rep && rep->type == REDIS_REPLY_ARRAY && (int) rep->elements == nrange)
-                        peers_full++;
-                    serverLog(LL_NOTICE, "AqRaft B#1 adopt: sess=%lld peer %s:%d holds %d/%d slots of %d-%d",
-                              sess, phost, pport,
-                              (rep && rep->type == REDIS_REPLY_ARRAY) ? (int) rep->elements : -1,
-                              nrange, alo, ahi);
-                    if (rep) freeReplyObject(rep);
-                    redisFree(pc);
-                }
-                if (peers) sdsfreesplitres(peers, npeers);
-            }
-            int need = (npeers + 1) / 2;   /* peers needed besides me for a majority of npeers+1 */
-            if (mine == nrange && npeers > 0 && peers_full >= need) {
-                char pl[256];
-                rdmaMgnAdoptingMark(alo, ahi);
-                snprintf(pl, sizeof(pl), "sess=%lld slots=%d-%d n_slots=%d applied=0 adopted=1",
-                         sess, alo, ahi, nrange);
-                rdmaMgnLogAsync("INDX_UPD", pl);
-                snprintf(pl, sizeof(pl), "sess=%lld slots=%d-%d applied=0 clobber_skipped=0 adopted=1",
-                         sess, alo, ahi);
-                rdmaMgnLogAsync("RECP_TXN_DONE", pl);
-                serverLog(LL_NOTICE,
-                    "AqRaft B#1 adopt: sess=%lld range=%d-%d held by me + %d/%d peers (majority) "
-                    "— adopting the held copy: INDX_UPD + RECP_TXN_DONE logged, donor will not re-ship",
-                    sess, alo, ahi, peers_full, npeers);
-            } else {
-                serverLog(LL_NOTICE,
-                    "AqRaft B#1 adopt: sess=%lld range=%d-%d not adoptable (mine=%d/%d, peers "
-                    "holding all=%d, need %d) — donor re-ships", sess, alo, ahi, mine, nrange,
-                    peers_full, need);
-            }
-        }
-    }
-
-    /* B#1 donor hand-off: the survivors hold only a fraction of the session (chain
-     * replication lags the leader's merge), but the DONOR is alive and still holds
-     * the full slot range (it never evicted — the migration failed). Ask that donor
-     * to RE-SHIP the range to THIS node (the new sg4 leader) by reusing the S2 donor
-     * re-dispatch: send it MGN-RECOVER donor with recipient=<me>. The donor's
-     * startLocalMigration re-runs the migration; this node's normal recipient path
-     * (REGISTER-BLOCK-SLOTS -> merge -> INDX_UPD) adopts it. Recovery slot state is
-     * idempotent (don't-clobber), so re-shipping what the survivors already have is
-     * safe. */
-    char dhost[256]; dhost[0] = '\0'; int dport = 0, nslots = 0, slot_lo = -1, slot_hi = -1;
+    int nrange = ahi - alo + 1, mine = 0;
+    for (int slot = alo; slot <= ahi; slot++)
+        if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0) mine++;
+    recipientRecoverJob *job = zcalloc(sizeof(*job));
+    job->sess = sess; job->lo = alo; job->hi = ahi;
+    job->mine_full = (mine == nrange);
     const char *dp = payload ? strstr(payload, "donor=") : NULL;
     const char *np = payload ? strstr(payload, "n=") : NULL;
-    const char *sp = payload ? strstr(payload, "slots=") : NULL;
-    if (dp) sscanf(dp, "donor=%255[^: ]:%d", dhost, &dport);
-    if (np) sscanf(np, "n=%d", &nslots);
-    if (sp) sscanf(sp, "slots=%d-%d", &slot_lo, &slot_hi);
-    if (dhost[0] == '\0' || dport <= 0 || nslots <= 0) {
-        serverLog(LL_WARNING,
-            "AqRaft B#1 recipient-recover: sess=%lld — could not parse donor/n from "
-            "payload; donor re-ship not triggered", sess);
-        return;
+    if (dp) sscanf(dp, "donor=%255[^: ]:%d", job->dhost, &job->dport);
+    if (np) sscanf(np, "n=%d", &job->nslots);
+    if (server.rdma_chain_followers && sdslen(server.rdma_chain_followers) > 0) {
+        int npl = 0;
+        sds *peers = sdssplitlen(server.rdma_chain_followers,
+                                 sdslen(server.rdma_chain_followers), " ", 1, &npl);
+        for (int pi = 0; pi < npl && job->npeers < RECOVER_MAX_PEERS; pi++) {
+            char phost[128]; int pport = 0;
+            if (sscanf(peers[pi], "%127[^:]:%d", phost, &pport) != 2 || pport <= 0) continue;
+            snprintf(job->phost[job->npeers], sizeof(job->phost[0]), "%s", phost);
+            job->pport[job->npeers] = pport;
+            job->npeers++;
+        }
+        if (peers) sdsfreesplitres(peers, npl);
     }
-    /* This node's externally-reachable endpoint (what the donor should dial). */
-    char self_buf[256]; const char *self_host;
-    if (server.cluster && server.cluster->myself && server.cluster->myself->ip[0])
-        self_host = server.cluster->myself->ip;
-    else if (gethostname(self_buf, sizeof(self_buf)) == 0) {
-        self_buf[sizeof(self_buf) - 1] = '\0'; self_host = self_buf;
-    } else self_host = "127.0.0.1";
-    int self_port = (int) server.port;
 
-    /* AqRaft crash-recovery right-sizing: publish this session's slot range so the
+    /* AqRaft crash-recovery right-sizing: publish this session's slot range so an
      * incoming donor re-ship's registerWorkerThread registers ONE landing pool,
-     * not the full xsession ring (~7s of in-window ibv_reg_mr on the promoted
-     * leader). See g_recov_active_lo/hi. */
-    if (slot_lo >= 0 && slot_hi >= slot_lo) {
-        atomic_store(&g_recov_active_lo, slot_lo);
-        atomic_store(&g_recov_active_hi, slot_hi);
-        serverLog(LL_NOTICE,
-            "AqRaft B#1 recipient-recover: sess=%lld — recovery landing-pool range "
-            "armed slots=%d-%d (re-ship registers 1 pool, not the xsession ring)",
-            sess, slot_lo, slot_hi);
-    }
+     * not the full xsession ring. See g_recov_active_lo/hi. */
+    atomic_store(&g_recov_active_lo, alo);
+    atomic_store(&g_recov_active_hi, ahi);
 
+    /* "Pending" to the donor until the worker has decided: it then waits for our
+     * answer instead of re-shipping a range we may be about to close. */
+    rdmaMgnAdoptingMark(alo, ahi);
     serverLog(LL_NOTICE,
-        "AqRaft B#1 recipient-recover: sess=%lld — asking donor %s:%d to RE-SHIP "
-        "slots=%d-%d (n=%d) to new leader %s:%d",
-        sess, dhost, dport, slot_lo, slot_hi, nslots, self_host, self_port);
-
-    redisContext *ctx = redisConnect(dhost, dport);
-    if (ctx == NULL || ctx->err) {
-        serverLog(LL_WARNING,
-            "AqRaft B#1 recipient-recover: sess=%lld — connect to donor %s:%d failed: %s",
-            sess, dhost, dport, ctx ? ctx->errstr : "(null)");
-        if (ctx) redisFree(ctx);
-        return;
+        "AqRaft recipient-recover: sess=%lld range=%d-%d — I hold %d/%d slots; probing "
+        "%d peers and the donor off the main thread", sess, alo, ahi, mine, nrange,
+        job->npeers);
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, recipientRecoverWorker, job) == 0) {
+        pthread_detach(tid);
+    } else {
+        rdmaMgnAdoptingClear(alo, ahi);
+        zfree(job);
+        serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — could not start the "
+                  "recovery thread; the donor's own timeout drives the re-ship", sess);
     }
-    redisReply *rep = redisCommand(ctx, "RDMA MGN-DONOR-REHOME %d %s %d",
-                                   slot_lo, self_host, self_port);
-    if (rep == NULL)
-        serverLog(LL_WARNING,
-            "AqRaft B#1 recipient-recover: sess=%lld — MGN-DONOR-REHOME got no reply (%s)",
-            sess, ctx->errstr);
-    else {
-        serverLog(LL_NOTICE,
-            "AqRaft B#1 recipient-recover: sess=%lld — donor re-ship requested (reply type=%d)",
-            sess, rep->type);
-        freeReplyObject(rep);
-    }
-    redisFree(ctx);
 }
 
 /* AqRaft roll-forward recovery entry point (reverse loopback). The redisraft
@@ -8911,6 +10345,8 @@ void rdmaMigrateWarmCommand(client *c) {
     }
 
     /* 1. Open / reuse the outbound link (state-free transport setup). */
+    char canon_host_buf[64];
+    recipient_host = rdmaLinkHostCanon(recipient_host, canon_host_buf, sizeof(canon_host_buf));
     sds key = sdscatfmt(sdsempty(), "%s:%i", recipient_host, recipient_port);
     rdmaOutboundLink *L = dictFetchValue(server.rdma_outbound_links, key);
     int newly = 0;

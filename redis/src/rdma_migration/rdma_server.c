@@ -122,6 +122,12 @@ static void *listen_thread_main(void *data) {
      * MRs. */
     while (1) {
         if (rdma_get_request(s->listen_id, &s->id) != 0) {
+            /* A signal delivered to this thread (the Redis watchdog's SIGALRM, a
+             * crash-report dump) interrupts the call. Leaving the loop on that
+             * left the listener bound but never accepting again: the next
+             * leader's chain connect to this node hung and its sessions could
+             * not be replicated. */
+            if (errno == EINTR) continue;
             RMIG_LOG(RDMAMIG_LOG_WARNING,
                      "rdma_server: rdma_get_request: %s — exiting accept loop",
                      strerror(errno));

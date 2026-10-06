@@ -1,0 +1,19 @@
+# Process-count scaling (experiments/2026-10-01_procs_3_vs_6): 3 vs 6 masters.
+# - 5,000,000 records, 50/50 read/update, same mix as workloada.
+# - UNIFORM so every master gets an equal share of the load (zipfian would
+#   pin the result to whichever master owns the hottest keys).
+# - time-bounded: 180 s; the operation cap is well above what 180 s reaches.
+
+recordcount=5000000
+operationcount=200000000
+maxexecutiontime=180
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=uniform

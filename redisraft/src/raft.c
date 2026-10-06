@@ -204,6 +204,8 @@ static ShardGroup *getSlotShardGroup(RedisRaftCtx *rr, unsigned int slot, bool a
 extern int rdmaRedirectHintFor(int slot, char *ip_out, size_t ip_sz, int *port_out)
     __attribute__((weak));
 extern void rdmaMgnDurableMark(int lo, int hi) __attribute__((weak));
+extern void rdmaTombstoneSessionStart(int lo, int hi) __attribute__((weak));
+extern void rdmaTombstoneSessionDone(int lo, int hi) __attribute__((weak));
 static ShardGroupNode *redirectHintNode(ShardGroup *sg, unsigned int slot)
 {
     if (rdmaRedirectHintFor == NULL || sg == NULL || sg->nodes == NULL) return NULL;
@@ -894,8 +896,11 @@ static int raftSendRequestVote(raft_server_t *raft, void *user_data,
 
 /* ------------------------------------ AppendEntries ------------------------------------ */
 
-/* AqRaft: (node, session) pairs already turned into a CHAIN-ACK, so each
- * follower is counted once per session no matter how many AE replies repeat it. */
+/* AqRaft: (node, session) pairs already handed to cluster_rdma, so each report is
+ * delivered once per session no matter how many AE replies repeat it. */
+extern int rdmaLeaderChainAckFrom(long long sess, long long length, int position)
+    __attribute__((weak));
+extern void rdmaRaftLeaderState(int is_leader) __attribute__((weak));
 #define MGN_SEEN_MAX 256
 static struct { raft_node_id_t node; long long sess; } g_mgn_seen[MGN_SEEN_MAX];
 static int g_mgn_seen_next = 0, g_mgn_seen_n = 0;
@@ -907,11 +912,12 @@ static int g_mgn_retry_next = 0;
 
 static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const char *status)
 {
+    (void) rr;
     const char *p = status;
     while (*p) {
-        long long sess = 0, len = 0;
+        long long sess = 0, len = 0, pos = 0;
         int used = 0;
-        if (sscanf(p, "%lld:%lld%n", &sess, &len, &used) != 2 || used <= 0) break;
+        if (sscanf(p, "%lld:%lld:%lld%n", &sess, &len, &pos, &used) != 3 || used <= 0) break;
         p += used;
         if (*p == ',') p++;
 
@@ -928,9 +934,10 @@ static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const cha
         }
         if (backoff) continue;
 
-        RedisModuleCallReply *rep = RedisModule_Call(rr->ctx, "RDMA", "cll", "CHAIN-ACK", sess, len);
-        int accepted = rep && RedisModule_CallReplyType(rep) != REDISMODULE_REPLY_ERROR;
-        if (rep) RedisModule_FreeCallReply(rep);
+        /* 0 == C_OK. The follower says which chain position it is, so the leader
+         * counts distinct followers. */
+        int accepted = rdmaLeaderChainAckFrom != NULL &&
+                       rdmaLeaderChainAckFrom(sess, len, (int) pos) == 0;
         if (!accepted) {
             /* No such session on this leader (yet): do NOT mark it seen, or the
              * genuine report for a later chain with the same id would be dropped. */
@@ -944,8 +951,8 @@ static void mgnPiggybackAcks(RedisRaftCtx *rr, raft_node_id_t node_id, const cha
         g_mgn_seen[g_mgn_seen_next].sess = sess;
         g_mgn_seen_next = (g_mgn_seen_next + 1) % MGN_SEEN_MAX;
         if (g_mgn_seen_n < MGN_SEEN_MAX) g_mgn_seen_n++;
-        LOG_NOTICE("AqRaft AE-piggyback: node %d holds migration sess=%lld len=%lld -> CHAIN-ACK",
-                   node_id, sess, len);
+        LOG_NOTICE("AqRaft AE-piggyback: node %d (chain position %lld) holds migration sess=%lld len=%lld",
+                   node_id, pos, sess, len);
     }
 }
 
@@ -1325,7 +1332,12 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                     mgnMarkActive(_rkey, _pl, 'r');
                 else if (entry->type == RAFT_LOGTYPE_MGN_TXN_DONE)
                     mgnMarkDone(_sess);
-                else if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE)
+                /* INDX_UPD closes the recipient's session: a majority holds the
+                 * range and the leader's index update is done, so a leader
+                 * promoted later has nothing to resume. (RECP_TXN_DONE is no
+                 * longer logged; still honoured if found in an old log.) */
+                else if (entry->type == RAFT_LOGTYPE_MGN_INDX_UPD ||
+                         entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE)
                     mgnMarkDone(_rkey);
                 /* Every replica records which slots are committed durable, so a
                  * promoted follower can answer MGN-RESUME-STATUS from the log. */
@@ -1335,8 +1347,25 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                     if (_sp && sscanf(_sp, "slots=%d-%d", &_lo, &_hi) == 2 && _lo >= 0 && _hi >= _lo)
                         rdmaMgnDurableMark(_lo, _hi);
                 }
+                /* Recipient tombstones are kept for a slot range from its
+                 * RECP_TXN_START until its INDX_UPD, on every replica. */
+                if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START ||
+                    entry->type == RAFT_LOGTYPE_MGN_INDX_UPD ||
+                    entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE) {
+                    int _lo = -1, _hi = -1;
+                    const char *_sp = strstr(_pl, "slots=");
+                    if (_sp && sscanf(_sp, "slots=%d-%d", &_lo, &_hi) == 2 && _lo >= 0 && _hi >= _lo) {
+                        if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START) {
+                            if (rdmaTombstoneSessionStart != NULL) rdmaTombstoneSessionStart(_lo, _hi);
+                        } else if (rdmaTombstoneSessionDone != NULL) {
+                            rdmaTombstoneSessionDone(_lo, _hi);
+                        }
+                    }
+                }
             }
             if (req) {
+                /* RAFT.MGN-LOG waits for this: committed and applied here. */
+                RedisModule_ReplyWithSimpleString(req->ctx, "OK");
                 RaftReqFree(req);
             }
             break;
@@ -1506,6 +1535,9 @@ static void killPubsubClients()
 
 static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_state_e state)
 {
+    /* The migration core must know when this node stops being the leader. */
+    if (rdmaRaftLeaderState != NULL) rdmaRaftLeaderState(state == RAFT_STATE_LEADER);
+
     switch (state) {
         case RAFT_STATE_FOLLOWER:
             LOG_NOTICE("State change: Node is now a follower, term %ld",
@@ -2340,10 +2372,42 @@ void narrowLocalAndAddExternal(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *r
         si->stable_slots_map[j] = local_sg;
     }
 
-    /* Idempotent re-narrow: if ext_sg id already present, replace it. */
+    /* Re-narrow: if ext_sg id is already present, replace it. A donor that
+     * migrates in several rounds narrows once per round, each time naming only
+     * that round's range, so the entry being replaced still owns the earlier
+     * rounds' slots. Carry those ranges over to the new entry and drop every
+     * slot-map pointer to the old one before freeing it: left in place they
+     * dangled (use-after-free in validateRaftRedisCommandArray on the next
+     * command for an earlier round's slot) and the earlier slots lost their
+     * owner. */
+    bool renarrow = false;
     {
         ShardGroup *existing = GetShardGroupById(rr, ext_sg->id);
         if (existing != NULL) {
+            renarrow = true;
+            for (unsigned int i = 0; i < existing->slot_ranges_num; i++) {
+                ShardGroupSlotRange *r = &existing->slot_ranges[i];
+                bool overlap = (r->start_slot <= (unsigned int) hi && (unsigned int) lo <= r->end_slot);
+                for (unsigned int k = 0; !overlap && k < ext_sg->slot_ranges_num; k++) {
+                    overlap = (r->start_slot <= ext_sg->slot_ranges[k].end_slot &&
+                               ext_sg->slot_ranges[k].start_slot <= r->end_slot);
+                }
+                if (overlap) {
+                    continue; /* the new entry (or the narrowed local range) covers it */
+                }
+                ext_sg->slot_ranges = RedisModule_Realloc(
+                    ext_sg->slot_ranges,
+                    sizeof(ShardGroupSlotRange) * (ext_sg->slot_ranges_num + 1));
+                ext_sg->slot_ranges[ext_sg->slot_ranges_num] = *r;
+                ext_sg->slot_ranges[ext_sg->slot_ranges_num].type = SLOTRANGE_TYPE_STABLE;
+                ext_sg->slot_ranges_num++;
+            }
+            for (unsigned int j = 0; j <= REDIS_RAFT_HASH_MAX_SLOT; j++) {
+                if (si->stable_slots_map[j] == existing) si->stable_slots_map[j] = NULL;
+                if (si->migrating_slots_map[j] == existing) si->migrating_slots_map[j] = NULL;
+                if (si->importing_slots_map[j] == existing) si->importing_slots_map[j] = NULL;
+                if (si->write_redirect_slots_map[j] == existing) si->write_redirect_slots_map[j] = NULL;
+            }
             RedisModule_DictDelC(si->shard_group_map, existing->id,
                                  strlen(existing->id), NULL);
             si->shard_groups_num--;
@@ -2351,7 +2415,8 @@ void narrowLocalAndAddExternal(RedisRaftCtx *rr, raft_entry_t *entry, RaftReq *r
         }
     }
     if (ShardingInfoAddShardGroup(rr, ext_sg) != RR_OK) {
-        LOG_WARNING("NARROW: ShardingInfoAddShardGroup(ext) failed");
+        LOG_WARNING("NARROW: ShardingInfoAddShardGroup(ext) failed%s",
+                    renarrow ? " (re-narrow)" : "");
         /* ext_sg already freed by ShardingInfoAddShardGroup on failure. */
         goto fail;
     }

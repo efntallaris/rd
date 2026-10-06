@@ -1,0 +1,111 @@
+# 3 -> 6 shardgroup scale-out topology. Pass with: -e @experiments/custom_scaleout_3to6/topology.yml
+# (overrides redisraft_shardgroups from group_vars/all.yml).
+#
+# Donors sg1/sg2/sg3 on redis0/1/2 (unchanged). Recipients sg4/sg5/sg6 on
+# redis3/4/5, leaders spread like the donors'. Each donor hands the lower half
+# of its range to ITS OWN recipient:
+#   sg1 (redis0:8000)  0-2729        -> sg4 (redis3:8000)
+#   sg2 (redis1:8001)  5461-8190     -> sg5 (redis4:8001)
+#   sg3 (redis2:8002)  10922-13651   -> sg6 (redis5:8002)
+#
+# role:      donor | recipient (without it, only the id 'sg4' is a recipient).
+# recipient: the group a donor migrates to.
+# rdma_port: --rdma-migration-port of every instance of the group. A donor's
+#            recipient binds this port for it, and a chain follower listens on
+#            rdma_port + 1000. The three recipient groups share hosts, so each
+#            needs its own; a pair uses the same number on both sides.
+# Every recipient is its own RedisRaft cluster (not LINKed). Its slot_config is
+# exactly the range it will receive, NOT the full slot space sg4 has in the
+# single-recipient setup: the client re-resolves a slot's owner from any node's
+# CLUSTER SLOTS, and with three groups each claiming 0:16383 it took sg4 for the
+# owner of sg5's and sg6's slots (stale reads, 2026-10-02). The final map is
+# pushed to all six leaders after the migration.
+scaleout_slots_per_source: 2730
+
+# Raft timing for this topology (group_vars/all.yml uses 300 / 50 ms). While the
+# three pairs transfer, the leaders' AppendEntries round-trips repeatedly hit
+# ~230 ms (a TCP retransmission) and peak at 650-850 ms; even a fault-free run
+# shows 400-800 ms peaks. With three live replicas a leader survives that, but
+# after a host crash every recipient group has two, and with a 300 ms election
+# timeout each round start deposed the leaders (terms up to 8 in one S6 run),
+# which is where the remaining stale reads came from. 1000 / 100 ms is
+# RedisRaft's default; failure detection takes ~1-2 s instead of 0.35-0.65 s.
+raft_election_timeout: 1000
+raft_request_timeout: 100
+
+redisraft_shardgroups:
+  - id: sg1
+    role: donor
+    recipient: sg4
+    port: 8000
+    rdma_port: 17777
+    slot_config: "0:5460"
+    nodes:
+      - host: redis0
+        raft_id: 1
+      - host: redis1
+        raft_id: 2
+      - host: redis2
+        raft_id: 3
+  - id: sg2
+    role: donor
+    recipient: sg5
+    port: 8001
+    rdma_port: 17778
+    slot_config: "5461:10921"
+    nodes:
+      - host: redis1
+        raft_id: 1
+      - host: redis2
+        raft_id: 2
+      - host: redis0
+        raft_id: 3
+  - id: sg3
+    role: donor
+    recipient: sg6
+    port: 8002
+    rdma_port: 17779
+    slot_config: "10922:16383"
+    nodes:
+      - host: redis2
+        raft_id: 1
+      - host: redis0
+        raft_id: 2
+      - host: redis1
+        raft_id: 3
+  - id: sg4
+    role: recipient
+    port: 8000
+    rdma_port: 17777
+    slot_config: "0:2729"
+    nodes:
+      - host: redis3
+        raft_id: 1
+      - host: redis4
+        raft_id: 2
+      - host: redis5
+        raft_id: 3
+  - id: sg5
+    role: recipient
+    port: 8001
+    rdma_port: 17778
+    slot_config: "5461:8190"
+    nodes:
+      - host: redis4
+        raft_id: 1
+      - host: redis5
+        raft_id: 2
+      - host: redis3
+        raft_id: 3
+  - id: sg6
+    role: recipient
+    port: 8002
+    rdma_port: 17779
+    slot_config: "10922:13651"
+    nodes:
+      - host: redis5
+        raft_id: 1
+      - host: redis3
+        raft_id: 2
+      - host: redis4
+        raft_id: 3

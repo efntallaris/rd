@@ -64,6 +64,21 @@ performance vs. vanilla.
 The primary aqueduct experiment — fork redis with concurrent reshard,
 async YCSB. Equivalent to the legacy `experiment.yml`.
 
+### `custom_procs_scaling`
+Aqueduct fork as a plain cluster on redis0/1/2, run twice: 1 redis-server per
+host (3 masters) and 2 per host (6 masters, ports 8000 + 8001), via
+`-e procs_per_host=N`. No Raft, no reshard. `SKIP_BUILD=1` skips the
+wipe-and-rebuild in setup/teardown. Results:
+`/tmp/experiments/custom_procs_scaling_{3,6}procs_<workload>/`; compare them
+with `experiments/tools/compare_runs.py`.
+
+### `custom_scaleout_3to6`
+Scale from 3 shardgroups to 6 with the AqRaft migration: three new replicated
+groups on redis3/4/5, each donor migrating half its range to its own recipient
+(sg1→sg4, sg2→sg5, sg3→sg6), with crash scenarios S1–S9. Runs through the
+lincheck harness: `./experiments/custom_scaleout_3to6/run_scenario.sh HEALTHY`.
+Procedure, scenarios and open points: `experiments/custom_scaleout_3to6/README.md`.
+
 ## tasks/
 
 Shared task playbooks, grouped by concern:

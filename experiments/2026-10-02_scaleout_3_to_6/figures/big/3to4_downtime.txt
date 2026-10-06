@@ -1,0 +1,136 @@
+################ HEALTHY
+kills      : none (times are from the migration start)
+elections  : none
+probe A sg1->sg4  longest gap without a successful op      41 ms | ops slower than 100 ms:   31 (slowest   1410 ms) | not ok: none
+probe B sg2->sg4  longest gap without a successful op      28 ms | ops slower than 100 ms:   10 (slowest    720 ms) | not ok: none
+probe C sg3->sg4  longest gap without a successful op      26 ms | ops slower than 100 ms:    6 (slowest    838 ms) | not ok: none
+ycsb       : 147k before; minimum 143k at +3 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:146k -1:130k +0:151k +1:156k +2:149k +3:143k +4:163k +5:164k +6:163k +7:164k +8:163k +9:163k +10:167k +11:166k +12:166k +13:166k +14:166k +15:166k
+migration  : ends at +3.9 s
+transfers  :
+    +0.00 pair A id=1                   wait   -   setup  0.09 copy  1.06 commit  0.42  DONE
+    +1.16 pair B id=1                   wait -0.41 setup  0.05 copy  1.15 commit  0.46  DONE
+    +2.38 pair C id=1                   wait -0.44 setup  0.06 copy  1.01 commit  0.45  DONE
+recovery   :
+################ S1
+kills      : redis3 at +0.00
+elections  : sg4 -> redis5 at +0.34 s
+probe A sg1->sg4  longest gap without a successful op    2171 ms | ops slower than 100 ms:   34 (slowest    641 ms) | not ok: {'unknown': 177}
+probe B sg2->sg4  longest gap without a successful op    1743 ms | ops slower than 100 ms:    9 (slowest    944 ms) | not ok: {'unknown': 5}
+probe C sg3->sg4  longest gap without a successful op    1723 ms | ops slower than 100 ms:   10 (slowest    745 ms) | not ok: {'unknown': 17}
+ycsb       : 152k before; minimum 0k at +1 s; 1 s below 10%, 3 s below 50%; back at 90% at +4 s
+ycsb/s     : -2:145k -1:112k +0:33k +1:0k +2:45k +3:136k +4:158k +5:154k +6:146k +7:155k +8:160k +9:166k +10:173k +11:173k +12:175k +13:173k +14:172k +15:171k
+migration  : ends at +10.45 s
+transfers  :
+    -0.96 pair A id=1                   wait   -   setup  0.11 copy   -   commit   -    FAILED
+    +0.54 pair B id=1                   wait  0.01 setup   -   copy   -   commit   -    FAILED
+    +0.65 pair C id=1                   wait  0.11 setup   -   copy   -   commit   -    FAILED
+    +2.80 pair A id=800000000000000701  wait  2.14 setup  0.21 copy  1.01 commit  0.69  DONE
+    +5.85 pair B id=800000000000000702  wait  1.15 setup  0.06 copy  1.28 commit  0.44  DONE
+    +8.90 pair C id=800000000000000703  wait  1.28 setup  0.06 copy  1.01 commit  0.48  DONE
+recovery   :
+    +0.34 sg4 on redis5: AqRaft MGN-RECOVER: role=recipient sess=700000000000000000 payload="register_id=open-1 slots=0-1364 n=1365 donor=redis0.entall-318211.streamstore-pg0.
+    +2.78 sg1 on redis0: AqRaft MGN-RECOVER: role=donor sess=701 payload="sess=701 slots=0-1364 n=1365 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +2.80 sg1 on redis0: AqRaft S2 resume-plan: id=800000000000000701 sess=701 range=0-1364 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slo
+    +3.00 sg4 on redis5: CHAIN: sess=700000000000000000 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +5.83 sg2 on redis1: AqRaft MGN-RECOVER: role=donor sess=702 payload="sess=702 slots=5461-6825 n=1365 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +5.85 sg2 on redis1: AqRaft S2 resume-plan: id=800000000000000702 sess=702 range=5461-6825 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed 
+    +5.91 sg4 on redis5: CHAIN: sess=700000000000000001 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +8.88 sg3 on redis2: AqRaft MGN-RECOVER: role=donor sess=703 payload="sess=703 slots=10922-12286 n=1365 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +8.91 sg3 on redis2: AqRaft S2 resume-plan: id=800000000000000703 sess=703 range=10922-12286 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-lande
+    +8.97 sg4 on redis5: CHAIN: sess=700000000000000002 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+################ S2
+kills      : redis0 at +0.00
+elections  : sg1 -> redis2 at +0.50 s
+probe A sg1->sg4  longest gap without a successful op      74 ms | ops slower than 100 ms:   36 (slowest   2327 ms) | not ok: {'unknown': 10}
+probe B sg2->sg4  longest gap without a successful op      58 ms | ops slower than 100 ms:   12 (slowest   1323 ms) | not ok: none
+probe C sg3->sg4  longest gap without a successful op      48 ms | ops slower than 100 ms:   16 (slowest    768 ms) | not ok: none
+ycsb       : 152k before; minimum 77k at +0 s; 0 s below 10%, 0 s below 50%; back at 90% at +2 s
+ycsb/s     : -2:151k -1:127k +0:77k +1:118k +2:156k +3:157k +4:171k +5:146k +6:161k +7:144k +8:160k +9:164k +10:158k +11:147k +12:156k +13:157k +14:158k +15:159k
+migration  : ends at +7.41 s
+transfers  :
+    -0.86 pair A id=1                   wait   -   setup  0.11 copy   -   commit   -    no end (leader died / superseded)
+    +0.52 pair A id=800000000000000001  wait   -   setup  0.06 copy  1.03 commit  0.37  DONE
+    +1.84 pair B id=800000000000000702  wait -0.14 setup  0.07 copy  1.19 commit  0.45  DONE
+    +4.88 pair C id=800000000000000703  wait  1.33 setup  1.00 copy  1.01 commit  0.52  DONE
+recovery   :
+    +0.50 sg1 on redis2: AqRaft MGN-RECOVER: role=donor sess=1 payload="sess=1 slots=0-1364 n=1365 recipient=10.10.1.4:8000 term=5" — driving roll-forward resume
+    +0.52 sg1 on redis2: AqRaft S2 resume-plan: id=800000000000000001 sess=1 range=0-1364 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slots
+    +1.84 sg2 on redis1: AqRaft MGN-RECOVER: role=donor sess=702 payload="sess=702 slots=5461-6825 n=1365 recipient=10.10.1.4:8000" — driving roll-forward resume
+    +1.84 sg2 on redis1: AqRaft S2 resume-plan: id=800000000000000702 sess=702 range=5461-6825 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed 
+    +4.88 sg3 on redis2: AqRaft MGN-RECOVER: role=donor sess=703 payload="sess=703 slots=10922-12286 n=1365 recipient=10.10.1.4:8000" — driving roll-forward resume
+    +4.88 sg3 on redis2: AqRaft S2 resume-plan: id=800000000000000703 sess=703 range=10922-12286 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-lande
+################ S3
+kills      : redis1 at +0.00
+elections  : none
+probe A sg1->sg4  longest gap without a successful op      69 ms | ops slower than 100 ms:   39 (slowest   1251 ms) | not ok: none
+probe B sg2->sg4  longest gap without a successful op      48 ms | ops slower than 100 ms:   11 (slowest   1447 ms) | not ok: none
+probe C sg3->sg4  longest gap without a successful op      24 ms | ops slower than 100 ms:    7 (slowest    585 ms) | not ok: none
+ycsb       : 155k before; minimum 134k at +2 s; 0 s below 10%, 0 s below 50%; back at 90% at +3 s
+ycsb/s     : -2:155k -1:135k +0:141k +1:138k +2:134k +3:157k +4:167k +5:166k +6:168k +7:169k +8:167k +9:166k +10:171k +11:171k +12:169k +13:170k +14:169k +15:168k
+migration  : ends at +3.21 s
+transfers  :
+    -0.92 pair A id=1                   wait   -   setup  0.11 copy  1.05 commit  0.40  DONE
+    +0.26 pair B id=1                   wait -0.39 setup  0.06 copy  1.35 commit  0.44  DONE
+    +1.68 pair C id=1                   wait -0.43 setup  0.08 copy  1.01 commit  0.44  DONE
+recovery   :
+################ S4
+kills      : redis4 at +0.00
+elections  : none
+probe A sg1->sg4  longest gap without a successful op      38 ms | ops slower than 100 ms:   26 (slowest    627 ms) | not ok: none
+probe B sg2->sg4  longest gap without a successful op      30 ms | ops slower than 100 ms:   13 (slowest    816 ms) | not ok: none
+probe C sg3->sg4  longest gap without a successful op      35 ms | ops slower than 100 ms:    8 (slowest    457 ms) | not ok: none
+ycsb       : 153k before; minimum 148k at +0 s; 0 s below 10%, 0 s below 50%; back at 90% at +0 s
+ycsb/s     : -2:145k -1:145k +0:148k +1:154k +2:173k +3:165k +4:163k +5:162k +6:164k +7:171k +8:172k +9:172k +10:171k +11:171k +12:172k +13:172k +14:173k +15:175k
+migration  : ends at +6.08 s
+transfers  :
+    -0.77 pair A id=1                   wait   -   setup  0.13 copy  1.06 commit  3.71  DONE
+    +0.43 pair B id=1                   wait -3.70 setup  0.05 copy  1.20 commit  3.38  DONE
+    +1.69 pair C id=1                   wait -3.37 setup  0.05 copy  1.01 commit  3.33  DONE
+recovery   :
+    +2.62 sg4 on redis3: CHAIN: sess=1 pipelined forward failed (CHAIN-FORWARDED failed: Connection reset by peer) — attempting chain RE-FORM (never faking durability)
+    +2.62 sg4 on redis3: CHAIN: sess=700000000000000000 RE-FORM — dropped dead head redis4:8000, promoted redis5:8000 to direct successor (leader will re-forward straight to i
+    +2.62 sg4 on redis3: CHAIN: sess=700000000000000001 peer0 redis4:8000 PREP failed (CHAIN-PREP redis4:8000: Connection reset by peer) — excluding from chain (establish-time
+    +2.62 sg4 on redis3: CHAIN: sess=700000000000000002 peer0 redis4:8000 PREP failed (CHAIN-PREP redis4:8000: Connection reset by peer) — excluding from chain (establish-time
+################ S5
+kills      : redis0 at +0.00
+elections  : sg1 -> redis2 at +0.57 s
+probe A sg1->sg4  longest gap without a successful op      45 ms | ops slower than 100 ms:   29 (slowest    488 ms) | not ok: none
+probe B sg2->sg4  longest gap without a successful op      49 ms | ops slower than 100 ms:   11 (slowest    950 ms) | not ok: none
+probe C sg3->sg4  longest gap without a successful op      40 ms | ops slower than 100 ms:   14 (slowest    910 ms) | not ok: none
+ycsb       : 148k before; minimum 61k at +0 s; 0 s below 10%, 1 s below 50%; back at 90% at +1 s
+ycsb/s     : -2:148k -1:120k +0:61k +1:164k +2:160k +3:154k +4:164k +5:166k +6:165k +7:163k +8:164k +9:163k +10:163k +11:164k +12:164k +13:164k +14:166k +15:167k
+migration  : ends at +3.44 s
+transfers  :
+    -2.37 pair A id=1                   wait   -   setup  0.11 copy  1.07 commit  0.41  DONE
+    -1.18 pair B id=1                   wait -0.40 setup  0.04 copy  1.17 commit  0.68  DONE
+    +1.91 pair C id=800000000000000703  wait  1.19 setup  0.06 copy  1.01 commit  0.46  DONE
+recovery   :
+    +1.91 sg3 on redis2: AqRaft MGN-RECOVER: role=donor sess=703 payload="sess=703 slots=10922-12286 n=1365 recipient=10.10.1.4:8000" — driving roll-forward resume
+    +1.91 sg3 on redis2: AqRaft S2 resume-plan: id=800000000000000703 sess=703 range=10922-12286 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-lande
+################ S8
+kills      : redis3 at +0.00, redis0 at +0.34
+elections  : sg4 -> redis5 at +0.40 s; sg1 -> redis2 at +0.72 s
+probe A sg1->sg4  longest gap without a successful op    2558 ms | ops slower than 100 ms:   32 (slowest   1580 ms) | not ok: {'unknown': 131}
+probe B sg2->sg4  longest gap without a successful op    1803 ms | ops slower than 100 ms:    4 (slowest    496 ms) | not ok: {'unknown': 13}
+probe C sg3->sg4  longest gap without a successful op    1763 ms | ops slower than 100 ms:   14 (slowest   1070 ms) | not ok: {'unknown': 20}
+ycsb       : 150k before; minimum 0k at +2 s; 2 s below 10%, 3 s below 50%; back at 90% at +8 s
+ycsb/s     : -2:150k -1:150k +0:95k +1:1k +2:0k +3:40k +4:154k +5:145k +6:137k +7:134k +8:144k +9:149k +10:158k +11:153k +12:172k +13:173k +14:171k +15:171k
+migration  : ends at +10.53 s
+transfers  :
+    -0.33 pair A id=1                   wait   -   setup  0.10 copy   -   commit   -    no end (leader died / superseded)
+    +2.89 pair A id=800000000000000701  wait   -   setup  0.10 copy  1.02 commit  0.64  DONE
+    +5.95 pair B id=800000000000000702  wait  1.30 setup  0.06 copy  1.35 commit  0.42  DONE
+    +9.00 pair C id=800000000000000703  wait  1.22 setup  0.06 copy  1.01 commit  0.45  DONE
+recovery   :
+    +0.40 sg4 on redis5: AqRaft MGN-RECOVER: role=recipient sess=700000000000000000 payload="register_id=open-1 slots=0-1364 n=1365 donor=redis0.entall-318211.streamstore-pg0.
+    +0.72 sg1 on redis2: AqRaft MGN-RECOVER: role=donor sess=1 payload="sess=1 slots=0-1364 n=1365 recipient=10.10.1.4:8000 term=5" — driving roll-forward resume
+    +2.80 sg1 on redis2: AqRaft MGN-RECOVER: role=donor sess=701 payload="sess=701 slots=0-1364 n=1365 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +2.89 sg1 on redis2: AqRaft S2 resume-plan: id=800000000000000701 sess=701 range=0-1364 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slo
+    +2.99 sg4 on redis5: CHAIN: sess=700000000000000000 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +5.93 sg2 on redis1: AqRaft MGN-RECOVER: role=donor sess=702 payload="sess=702 slots=5461-6825 n=1365 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +5.95 sg2 on redis1: AqRaft S2 resume-plan: id=800000000000000702 sess=702 range=5461-6825 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed 
+    +6.01 sg4 on redis5: CHAIN: sess=700000000000000001 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s
+    +8.99 sg3 on redis2: AqRaft MGN-RECOVER: role=donor sess=703 payload="sess=703 slots=10922-12286 n=1365 recipient=10.10.1.6:8000" — driving roll-forward resume
+    +9.01 sg3 on redis2: AqRaft S2 resume-plan: id=800000000000000703 sess=703 range=10922-12286 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-lande
+    +9.07 sg4 on redis5: CHAIN: sess=700000000000000002 peer0 redis3:8000 INIT-QP failed (connect(redis3:8000) failed: (null)) — excluding from chain (establish-time death), s

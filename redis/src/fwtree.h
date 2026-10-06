@@ -56,6 +56,10 @@ unsigned long long fwTreePrefixSum(fenwickTree *ft, int idx);
 
 void fwTreeUpdate(fenwickTree *ft, int idx, long long delta);
 
+/* Like fwTreeUpdate, but a decrement that would take any node below zero is
+ * not applied at all: returns -1 and leaves the tree unchanged (0 on success). */
+int fwTreeTryUpdate(fenwickTree *ft, int idx, long long delta);
+
 int fwTreeFindIndex(fenwickTree *ft, unsigned long long target);
 
 int fwTreeFindFirstNonEmpty(fenwickTree *ft);

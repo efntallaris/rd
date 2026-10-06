@@ -121,6 +121,17 @@ int fwTreeFindNextNonEmpty(fenwickTree *ft, int idx) {
     return (next_sum <= ft->total) ? fwTreeFindIndex(ft, next_sum) : -1;
 }
 
+int fwTreeTryUpdate(fenwickTree *ft, int idx, long long delta) {
+    if (!ft || idx < 0 || idx >= ft->size) return 0;
+    if (delta < 0) {
+        for (int i = idx + 1; i <= ft->size; i += (i & -i))
+            if (ft->tree[i] < (unsigned long long)(-delta)) return -1;
+        if (ft->total < (unsigned long long)(-delta)) return -1;
+    }
+    fwTreeUpdate(ft, idx, delta);
+    return 0;
+}
+
 /* Clear all values in the tree */
 void fwTreeClear(fenwickTree *ft) {
     debugAssert(ft);

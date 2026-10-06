@@ -1,0 +1,14 @@
+---
+# Build a reusable post-load dataset snapshot for the 6-group topology (the
+# single-recipient snapshots, e.g. ws30m, have no sg5/sg6 and cannot be used):
+#   sudo ansible-playbook -i inventory_scale3to6.ini \
+#     experiments/custom_scaleout_3to6/dataset_create.yml \
+#     -e @experiments/custom_scaleout_3to6/topology.yml \
+#     -e redis_variant=custom -e redis_workload=workloada_prod_30m_run3min \
+#     -e dataset_snapshot=ws30m_3to6  [same rdma_* -e flags as the runs]
+- import_playbook: ../../tasks/teardown/kill_processes.yml
+- import_playbook: ../../tasks/teardown/clean_runtime.yml
+- import_playbook: ../../tasks/cluster/start_redisraft_instances.yml
+- import_playbook: ../../tasks/cluster/init_redisraft_shardgroups.yml
+- import_playbook: ../../tasks/ycsb/load_ycsb.yml
+- import_playbook: ../../tasks/dataset/save_snapshot.yml

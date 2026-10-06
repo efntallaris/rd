@@ -74,6 +74,8 @@ void * r_allocator_alloc_new_empty_block(int slot);
  *
  * Returns block_ptr on success, NULL on internal bookkeeping failure. */
 void * r_allocator_register_existing_block(int slot, void *block_ptr);
+/* Same bookkeeping, but for a block that already holds donor bytes: no layout writes. */
+void * r_allocator_register_filled_block(int slot, void *block_ptr);
 
 /* AqRaft pool-reuse: unlink all foreign landing-pool blocks
  * (is_registered_existing) from a slot's list and free only their bookkeeping

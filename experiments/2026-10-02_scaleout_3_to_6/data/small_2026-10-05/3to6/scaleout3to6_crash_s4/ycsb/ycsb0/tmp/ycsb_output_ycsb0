@@ -1,0 +1,835 @@
+/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada_lin_quick_uniform -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -p redis.slotpoll.ms=100 -p redis.preconnect=10.10.1.4:8000,10.10.1.5:8000,10.10.1.6:8000,10.10.1.4:8001,10.10.1.5:8001,10.10.1.6:8001,10.10.1.4:8002,10.10.1.5:8002,10.10.1.6:8002 -threads 400
+Command line: -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada_lin_quick_uniform -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -p redis.slotpoll.ms=100 -p redis.preconnect=10.10.1.4:8000,10.10.1.5:8000,10.10.1.6:8000,10.10.1.4:8001,10.10.1.5:8001,10.10.1.6:8001,10.10.1.4:8002,10.10.1.5:8002,10.10.1.6:8002 -threads 400
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+Maximum execution time specified as: 90 secs
+2026-10-05 16:33:58:295 0 sec: 0 operations; est completion in 0 second 
+2026-10-05 16:33:58:295 0 sec: 0 operations; est completion in 0 second 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-10-05 16:33:59:303 1 sec: 0 operations; est completion in 106751991167300 days 15 hours [READ AverageLatency(us)=11291.63] [UPDATE AverageLatency(us)=28100.54] 
+2026-10-05 16:33:59:303 1 sec: 0 operations; est completion in 106751991167300 days 15 hours [READ AverageLatency(us)=11291.63] [UPDATE AverageLatency(us)=28100.54] 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+[AQRAFT-INSTR] t=1791218039764 fast=2 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-10-05 16:34:00:210 2 sec: 11538 operations; 12721.06 current ops/sec; est completion in 2 hours 24 minutes [READ AverageLatency(us)=3387.36] [UPDATE AverageLatency(us)=3410.87] 
+2026-10-05 16:34:00:210 2 sec: 11538 operations; 12721.06 current ops/sec; est completion in 2 hours 24 minutes [READ AverageLatency(us)=3387.36] [UPDATE AverageLatency(us)=3410.87] 
+2026-10-05 16:34:01:210 3 sec: 113636 operations; 102098 current ops/sec; est completion in 21 minutes [READ AverageLatency(us)=3865.82] [UPDATE AverageLatency(us)=3952.73] 
+2026-10-05 16:34:01:210 3 sec: 113636 operations; 102098 current ops/sec; est completion in 21 minutes [READ AverageLatency(us)=3865.82] [UPDATE AverageLatency(us)=3952.73] 
+2026-10-05 16:34:02:210 4 sec: 193219 operations; 79583 current ops/sec; est completion in 17 minutes [READ AverageLatency(us)=4963.72] [UPDATE AverageLatency(us)=5093.46] 
+2026-10-05 16:34:02:210 4 sec: 193219 operations; 79583 current ops/sec; est completion in 17 minutes [READ AverageLatency(us)=4963.72] [UPDATE AverageLatency(us)=5093.46] 
+[AQRAFT-INSTR] t=1791218042764 fast=119432 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-05 16:34:03:210 5 sec: 273175 operations; 79956 current ops/sec; est completion in 15 minutes [READ AverageLatency(us)=4916.38] [UPDATE AverageLatency(us)=5071.65] 
+2026-10-05 16:34:03:210 5 sec: 273175 operations; 79956 current ops/sec; est completion in 15 minutes [READ AverageLatency(us)=4916.38] [UPDATE AverageLatency(us)=5071.65] 
+2026-10-05 16:34:04:210 6 sec: 349371 operations; 76196 current ops/sec; est completion in 14 minutes [READ AverageLatency(us)=5169.87] [UPDATE AverageLatency(us)=5287.27] 
+2026-10-05 16:34:04:210 6 sec: 349371 operations; 76196 current ops/sec; est completion in 14 minutes [READ AverageLatency(us)=5169.87] [UPDATE AverageLatency(us)=5287.27] 
+2026-10-05 16:34:05:210 7 sec: 425660 operations; 76289 current ops/sec; est completion in 13 minutes [READ AverageLatency(us)=5180.52] [UPDATE AverageLatency(us)=5348.79] 
+2026-10-05 16:34:05:210 7 sec: 425660 operations; 76289 current ops/sec; est completion in 13 minutes [READ AverageLatency(us)=5180.52] [UPDATE AverageLatency(us)=5348.79] 
+[AQRAFT-INSTR] t=1791218045764 fast=234507 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-05 16:34:06:210 8 sec: 504038 operations; 78378 current ops/sec; est completion in 13 minutes [READ AverageLatency(us)=5035.95] [UPDATE AverageLatency(us)=5155.34] 
+2026-10-05 16:34:06:210 8 sec: 504038 operations; 78378 current ops/sec; est completion in 13 minutes [READ AverageLatency(us)=5035.95] [UPDATE AverageLatency(us)=5155.34] 
+2026-10-05 16:34:07:210 9 sec: 582145 operations; 78107 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5062.71] [UPDATE AverageLatency(us)=5182.94] 
+2026-10-05 16:34:07:210 9 sec: 582145 operations; 78107 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5062.71] [UPDATE AverageLatency(us)=5182.94] 
+2026-10-05 16:34:08:210 10 sec: 660128 operations; 77983 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5053.24] [UPDATE AverageLatency(us)=5195.18] 
+2026-10-05 16:34:08:210 10 sec: 660128 operations; 77983 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5053.24] [UPDATE AverageLatency(us)=5195.18] 
+[AQRAFT-INSTR] t=1791218048764 fast=351506 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-05 16:34:09:210 11 sec: 738513 operations; 78385 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5035.7] [UPDATE AverageLatency(us)=5172.37] 
+2026-10-05 16:34:09:210 11 sec: 738513 operations; 78385 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5035.7] [UPDATE AverageLatency(us)=5172.37] 
+2026-10-05 16:34:10:210 12 sec: 815662 operations; 77149 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5100.03] [UPDATE AverageLatency(us)=5258.5] 
+2026-10-05 16:34:10:210 12 sec: 815662 operations; 77149 current ops/sec; est completion in 12 minutes [READ AverageLatency(us)=5100.03] [UPDATE AverageLatency(us)=5258.5] 
+2026-10-05 16:34:11:210 13 sec: 894283 operations; 78621 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5007.86] [UPDATE AverageLatency(us)=5165.17] 
+2026-10-05 16:34:11:210 13 sec: 894283 operations; 78621 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5007.86] [UPDATE AverageLatency(us)=5165.17] 
+[AQRAFT-INSTR] t=1791218051764 fast=468896 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-05 16:34:12:210 14 sec: 971870 operations; 77587 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5085.2] [UPDATE AverageLatency(us)=5214.02] 
+2026-10-05 16:34:12:210 14 sec: 971870 operations; 77587 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5085.2] [UPDATE AverageLatency(us)=5214.02] 
+2026-10-05 16:34:13:210 15 sec: 1051167 operations; 79297 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4975.19] [UPDATE AverageLatency(us)=5112.3] 
+2026-10-05 16:34:13:210 15 sec: 1051167 operations; 79297 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4975.19] [UPDATE AverageLatency(us)=5112.3] 
+2026-10-05 16:34:14:210 16 sec: 1130112 operations; 78945 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5002.1] [UPDATE AverageLatency(us)=5118.64] 
+2026-10-05 16:34:14:210 16 sec: 1130112 operations; 78945 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5002.1] [UPDATE AverageLatency(us)=5118.64] 
+[AQRAFT-INSTR] t=1791218054764 fast=586366 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-05 16:34:15:210 17 sec: 1209060 operations; 78948 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4990.6] [UPDATE AverageLatency(us)=5152.11] 
+2026-10-05 16:34:15:210 17 sec: 1209060 operations; 78948 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4990.6] [UPDATE AverageLatency(us)=5152.11] 
+2026-10-05 16:34:16:210 18 sec: 1285929 operations; 76869 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5109.73] [UPDATE AverageLatency(us)=5286.38] 
+2026-10-05 16:34:16:210 18 sec: 1285929 operations; 76869 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5109.73] [UPDATE AverageLatency(us)=5286.38] 
+2026-10-05 16:34:17:210 19 sec: 1363527 operations; 77598 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5068.53] [UPDATE AverageLatency(us)=5239.05] 
+2026-10-05 16:34:17:210 19 sec: 1363527 operations; 77598 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5068.53] [UPDATE AverageLatency(us)=5239.05] 
+[AQRAFT-INSTR] t=1791218057764 fast=702222 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-05 16:34:18:210 20 sec: 1438516 operations; 74989 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5250.42] [UPDATE AverageLatency(us)=5405.29] 
+2026-10-05 16:34:18:210 20 sec: 1438516 operations; 74989 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5250.42] [UPDATE AverageLatency(us)=5405.29] 
+2026-10-05 16:34:19:210 21 sec: 1514828 operations; 76312 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5177.21] [UPDATE AverageLatency(us)=5275.43] 
+2026-10-05 16:34:19:210 21 sec: 1514828 operations; 76312 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5177.21] [UPDATE AverageLatency(us)=5275.43] 
+2026-10-05 16:34:20:210 22 sec: 1590949 operations; 76121 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5251.67] [UPDATE AverageLatency(us)=5285.23] 
+2026-10-05 16:34:20:210 22 sec: 1590949 operations; 76121 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=5251.67] [UPDATE AverageLatency(us)=5285.23] 
+[AQRAFT-INSTR] t=1791218060764 fast=814119 twoSided=4 collapse=4022 donorMoved=730 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=3 || 2sidedPeerLeg: 10.10.1.6:8002=3 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=156 10.10.1.5:8001=46 10.10.1.6:8002=1110 10.10.1.4:8002=142 10.10.1.4:8000=426
+2026-10-05 16:34:21:210 23 sec: 1673146 operations; 82197 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4784.66] [UPDATE AverageLatency(us)=4937.65] 
+2026-10-05 16:34:21:210 23 sec: 1673146 operations; 82197 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4784.66] [UPDATE AverageLatency(us)=4937.65] 
+2026-10-05 16:34:22:210 24 sec: 1754865 operations; 81719 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4886.89] [UPDATE AverageLatency(us)=4901.13] 
+2026-10-05 16:34:22:210 24 sec: 1754865 operations; 81719 current ops/sec; est completion in 11 minutes [READ AverageLatency(us)=4886.89] [UPDATE AverageLatency(us)=4901.13] 
+2026-10-05 16:34:23:210 25 sec: 1848820 operations; 93955 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=4227.76] [UPDATE AverageLatency(us)=4279.58] 
+2026-10-05 16:34:23:210 25 sec: 1848820 operations; 93955 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=4227.76] [UPDATE AverageLatency(us)=4279.58] 
+[AQRAFT-INSTR] t=1791218063764 fast=924817 twoSided=6 collapse=22488 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=174 10.10.1.6:8002=1610 10.10.1.4:8002=311 10.10.1.4:8000=969
+2026-10-05 16:34:24:210 26 sec: 1935411 operations; 86591 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=4591.35] [UPDATE AverageLatency(us)=4648.76] 
+2026-10-05 16:34:24:210 26 sec: 1935411 operations; 86591 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=4591.35] [UPDATE AverageLatency(us)=4648.76] 
+2026-10-05 16:34:25:210 27 sec: 2041407 operations; 105996 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3741.66] [UPDATE AverageLatency(us)=3800.02] 
+2026-10-05 16:34:25:210 27 sec: 2041407 operations; 105996 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3741.66] [UPDATE AverageLatency(us)=3800.02] 
+2026-10-05 16:34:26:210 28 sec: 2143646 operations; 102239 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3945.06] [UPDATE AverageLatency(us)=3875.99] 
+2026-10-05 16:34:26:210 28 sec: 2143646 operations; 102239 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3945.06] [UPDATE AverageLatency(us)=3875.99] 
+[AQRAFT-INSTR] t=1791218066764 fast=1035594 twoSided=6 collapse=65267 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=242 10.10.1.6:8002=1788 10.10.1.4:8002=311 10.10.1.4:8000=1099
+2026-10-05 16:34:27:210 29 sec: 2261786 operations; 118140 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3345.4] [UPDATE AverageLatency(us)=3417.47] 
+2026-10-05 16:34:27:210 29 sec: 2261786 operations; 118140 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3345.4] [UPDATE AverageLatency(us)=3417.47] 
+2026-10-05 16:34:28:210 30 sec: 2383557 operations; 121771 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3275.83] [UPDATE AverageLatency(us)=3265.24] 
+2026-10-05 16:34:28:210 30 sec: 2383557 operations; 121771 current ops/sec; est completion in 10 minutes [READ AverageLatency(us)=3275.83] [UPDATE AverageLatency(us)=3265.24] 
+2026-10-05 16:34:29:210 31 sec: 2519957 operations; 136400 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=2907.59] [UPDATE AverageLatency(us)=2973.63] 
+2026-10-05 16:34:29:210 31 sec: 2519957 operations; 136400 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=2907.59] [UPDATE AverageLatency(us)=2973.63] 
+[AQRAFT-INSTR] t=1791218069764 fast=1147236 twoSided=6 collapse=143504 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:30:210 32 sec: 2651073 operations; 131116 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=3034.49] [UPDATE AverageLatency(us)=3056.83] 
+2026-10-05 16:34:30:210 32 sec: 2651073 operations; 131116 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=3034.49] [UPDATE AverageLatency(us)=3056.83] 
+2026-10-05 16:34:31:210 33 sec: 2800349 operations; 149276 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=2649.74] [UPDATE AverageLatency(us)=2716.05] 
+2026-10-05 16:34:31:210 33 sec: 2800349 operations; 149276 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=2649.74] [UPDATE AverageLatency(us)=2716.05] 
+2026-10-05 16:34:32:210 34 sec: 2952570 operations; 152221 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=2591.11] [UPDATE AverageLatency(us)=2662] 
+2026-10-05 16:34:32:210 34 sec: 2952570 operations; 152221 current ops/sec; est completion in 9 minutes [READ AverageLatency(us)=2591.11] [UPDATE AverageLatency(us)=2662] 
+[AQRAFT-INSTR] t=1791218072764 fast=1258249 twoSided=6 collapse=254808 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:33:210 35 sec: 3102389 operations; 149819 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2625.65] [UPDATE AverageLatency(us)=2707.16] 
+2026-10-05 16:34:33:210 35 sec: 3102389 operations; 149819 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2625.65] [UPDATE AverageLatency(us)=2707.16] 
+[AQDBG-COLLAPSE] slot=7205 slotOwner<-sharedPeer=10.10.1.5:8001
+2026-10-05 16:34:34:210 36 sec: 3256583 operations; 154194 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2553.58] [UPDATE AverageLatency(us)=2628.5] 
+2026-10-05 16:34:34:210 36 sec: 3256583 operations; 154194 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2553.58] [UPDATE AverageLatency(us)=2628.5] 
+2026-10-05 16:34:35:210 37 sec: 3406740 operations; 150157 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2625.05] [UPDATE AverageLatency(us)=2699.77] 
+2026-10-05 16:34:35:210 37 sec: 3406740 operations; 150157 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2625.05] [UPDATE AverageLatency(us)=2699.77] 
+[AQRAFT-INSTR] t=1791218075764 fast=1372072 twoSided=6 collapse=368051 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:36:210 38 sec: 3561432 operations; 154692 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2547.38] [UPDATE AverageLatency(us)=2620.51] 
+2026-10-05 16:34:36:210 38 sec: 3561432 operations; 154692 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2547.38] [UPDATE AverageLatency(us)=2620.51] 
+2026-10-05 16:34:37:210 39 sec: 3712959 operations; 151527 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2599.38] [UPDATE AverageLatency(us)=2674.97] 
+2026-10-05 16:34:37:210 39 sec: 3712959 operations; 151527 current ops/sec; est completion in 8 minutes [READ AverageLatency(us)=2599.38] [UPDATE AverageLatency(us)=2674.97] 
+2026-10-05 16:34:38:210 40 sec: 3867968 operations; 155009 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2545.17] [UPDATE AverageLatency(us)=2611.27] 
+2026-10-05 16:34:38:210 40 sec: 3867968 operations; 155009 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2545.17] [UPDATE AverageLatency(us)=2611.27] 
+[AQRAFT-INSTR] t=1791218078764 fast=1488301 twoSided=6 collapse=484634 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:39:210 41 sec: 4021266 operations; 153298 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2569.87] [UPDATE AverageLatency(us)=2645.1] 
+2026-10-05 16:34:39:210 41 sec: 4021266 operations; 153298 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2569.87] [UPDATE AverageLatency(us)=2645.1] 
+2026-10-05 16:34:40:210 42 sec: 4174559 operations; 153293 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2574.86] [UPDATE AverageLatency(us)=2639.17] 
+2026-10-05 16:34:40:210 42 sec: 4174559 operations; 153293 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2574.86] [UPDATE AverageLatency(us)=2639.17] 
+2026-10-05 16:34:41:210 43 sec: 4328641 operations; 154082 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2557.78] [UPDATE AverageLatency(us)=2627.21] 
+2026-10-05 16:34:41:210 43 sec: 4328641 operations; 154082 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2557.78] [UPDATE AverageLatency(us)=2627.21] 
+[AQDBG-COLLAPSE] slot=81 slotOwner<-sharedPeer=10.10.1.4:8000
+[AQRAFT-INSTR] t=1791218081764 fast=1601718 twoSided=6 collapse=598927 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:42:210 44 sec: 4477178 operations; 148537 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2653.58] [UPDATE AverageLatency(us)=2728.25] 
+2026-10-05 16:34:42:210 44 sec: 4477178 operations; 148537 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2653.58] [UPDATE AverageLatency(us)=2728.25] 
+2026-10-05 16:34:43:210 45 sec: 4628234 operations; 151056 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2604.25] [UPDATE AverageLatency(us)=2687.87] 
+2026-10-05 16:34:43:210 45 sec: 4628234 operations; 151056 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2604.25] [UPDATE AverageLatency(us)=2687.87] 
+2026-10-05 16:34:44:210 46 sec: 4778996 operations; 150762 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2605.69] [UPDATE AverageLatency(us)=2679.58] 
+2026-10-05 16:34:44:210 46 sec: 4778996 operations; 150762 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2605.69] [UPDATE AverageLatency(us)=2679.58] 
+[AQRAFT-INSTR] t=1791218084764 fast=1714921 twoSided=6 collapse=712077 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:45:210 47 sec: 4931538 operations; 152542 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2587.14] [UPDATE AverageLatency(us)=2668.99] 
+2026-10-05 16:34:45:210 47 sec: 4931538 operations; 152542 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2587.14] [UPDATE AverageLatency(us)=2668.99] 
+2026-10-05 16:34:46:210 48 sec: 5082871 operations; 151333 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2600.94] [UPDATE AverageLatency(us)=2681.79] 
+2026-10-05 16:34:46:210 48 sec: 5082871 operations; 151333 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2600.94] [UPDATE AverageLatency(us)=2681.79] 
+2026-10-05 16:34:47:210 49 sec: 5234467 operations; 151596 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2594.35] [UPDATE AverageLatency(us)=2677.01] 
+2026-10-05 16:34:47:210 49 sec: 5234467 operations; 151596 current ops/sec; est completion in 7 minutes [READ AverageLatency(us)=2594.35] [UPDATE AverageLatency(us)=2677.01] 
+[AQRAFT-INSTR] t=1791218087764 fast=1829102 twoSided=6 collapse=825855 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:48:210 50 sec: 5388263 operations; 153796 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2559.73] [UPDATE AverageLatency(us)=2638.14] 
+2026-10-05 16:34:48:210 50 sec: 5388263 operations; 153796 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2559.73] [UPDATE AverageLatency(us)=2638.14] 
+2026-10-05 16:34:49:210 51 sec: 5539218 operations; 150955 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2609.19] [UPDATE AverageLatency(us)=2686.86] 
+2026-10-05 16:34:49:210 51 sec: 5539218 operations; 150955 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2609.19] [UPDATE AverageLatency(us)=2686.86] 
+[AQDBG-COLLAPSE] slot=1400 slotOwner<-sharedPeer=10.10.1.4:8000
+2026-10-05 16:34:50:210 52 sec: 5683580 operations; 144362 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2728.73] [UPDATE AverageLatency(us)=2807.79] 
+2026-10-05 16:34:50:210 52 sec: 5683580 operations; 144362 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2728.73] [UPDATE AverageLatency(us)=2807.79] 
+[AQRAFT-INSTR] t=1791218090764 fast=1941129 twoSided=6 collapse=937401 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:51:210 53 sec: 5833411 operations; 149831 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2626.81] [UPDATE AverageLatency(us)=2709.03] 
+2026-10-05 16:34:51:210 53 sec: 5833411 operations; 149831 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2626.81] [UPDATE AverageLatency(us)=2709.03] 
+2026-10-05 16:34:52:210 54 sec: 5987707 operations; 154296 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2550.96] [UPDATE AverageLatency(us)=2629.88] 
+2026-10-05 16:34:52:210 54 sec: 5987707 operations; 154296 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2550.96] [UPDATE AverageLatency(us)=2629.88] 
+2026-10-05 16:34:53:210 55 sec: 6137908 operations; 150201 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2628.44] [UPDATE AverageLatency(us)=2690.36] 
+2026-10-05 16:34:53:210 55 sec: 6137908 operations; 150201 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2628.44] [UPDATE AverageLatency(us)=2690.36] 
+[AQRAFT-INSTR] t=1791218093764 fast=2054769 twoSided=6 collapse=1050796 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:54:210 56 sec: 6288943 operations; 151035 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2600.8] [UPDATE AverageLatency(us)=2691.69] 
+2026-10-05 16:34:54:210 56 sec: 6288943 operations; 151035 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2600.8] [UPDATE AverageLatency(us)=2691.69] 
+2026-10-05 16:34:55:210 57 sec: 6439888 operations; 150945 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2606.93] [UPDATE AverageLatency(us)=2689.89] 
+2026-10-05 16:34:55:210 57 sec: 6439888 operations; 150945 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2606.93] [UPDATE AverageLatency(us)=2689.89] 
+2026-10-05 16:34:56:210 58 sec: 6590899 operations; 151011 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2603.18] [UPDATE AverageLatency(us)=2688.99] 
+2026-10-05 16:34:56:210 58 sec: 6590899 operations; 151011 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2603.18] [UPDATE AverageLatency(us)=2688.99] 
+[AQRAFT-INSTR] t=1791218096764 fast=2168169 twoSided=6 collapse=1163796 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:34:57:210 59 sec: 6740166 operations; 149267 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2634.14] [UPDATE AverageLatency(us)=2723.29] 
+2026-10-05 16:34:57:210 59 sec: 6740166 operations; 149267 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2634.14] [UPDATE AverageLatency(us)=2723.29] 
+[AQDBG-COLLAPSE] slot=1257 slotOwner<-sharedPeer=10.10.1.4:8000
+2026-10-05 16:34:58:210 60 sec: 6895873 operations; 155707 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2529.76] [UPDATE AverageLatency(us)=2604.66] 
+2026-10-05 16:34:58:210 60 sec: 6895873 operations; 155707 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2529.76] [UPDATE AverageLatency(us)=2604.66] 
+2026-10-05 16:34:59:210 61 sec: 7046412 operations; 150539 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2617.16] [UPDATE AverageLatency(us)=2689.34] 
+2026-10-05 16:34:59:210 61 sec: 7046412 operations; 150539 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2617.16] [UPDATE AverageLatency(us)=2689.34] 
+[AQRAFT-INSTR] t=1791218099764 fast=2281593 twoSided=6 collapse=1276285 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:00:210 62 sec: 7193290 operations; 146878 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2686.37] [UPDATE AverageLatency(us)=2757.29] 
+2026-10-05 16:35:00:210 62 sec: 7193290 operations; 146878 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2686.37] [UPDATE AverageLatency(us)=2757.29] 
+2026-10-05 16:35:01:210 63 sec: 7339119 operations; 145829 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2704.37] [UPDATE AverageLatency(us)=2778.03] 
+2026-10-05 16:35:01:210 63 sec: 7339119 operations; 145829 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2704.37] [UPDATE AverageLatency(us)=2778.03] 
+2026-10-05 16:35:02:210 64 sec: 7492989 operations; 153870 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2554.12] [UPDATE AverageLatency(us)=2632.52] 
+2026-10-05 16:35:02:210 64 sec: 7492989 operations; 153870 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2554.12] [UPDATE AverageLatency(us)=2632.52] 
+[AQRAFT-INSTR] t=1791218102764 fast=2393084 twoSided=6 collapse=1387344 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:03:210 65 sec: 7628939 operations; 135950 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2891.77] [UPDATE AverageLatency(us)=2983.21] 
+2026-10-05 16:35:03:210 65 sec: 7628939 operations; 135950 current ops/sec; est completion in 6 minutes [READ AverageLatency(us)=2891.77] [UPDATE AverageLatency(us)=2983.21] 
+2026-10-05 16:35:04:210 66 sec: 7774143 operations; 145204 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2714.2] [UPDATE AverageLatency(us)=2806.24] 
+2026-10-05 16:35:04:210 66 sec: 7774143 operations; 145204 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2714.2] [UPDATE AverageLatency(us)=2806.24] 
+2026-10-05 16:35:05:210 67 sec: 7926288 operations; 152145 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2591.87] [UPDATE AverageLatency(us)=2658.86] 
+2026-10-05 16:35:05:210 67 sec: 7926288 operations; 152145 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2591.87] [UPDATE AverageLatency(us)=2658.86] 
+[AQDBG-COLLAPSE] slot=11693 slotOwner<-sharedPeer=10.10.1.6:8002
+[AQRAFT-INSTR] t=1791218105764 fast=2502280 twoSided=6 collapse=1497315 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:06:210 68 sec: 8073721 operations; 147433 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2670.6] [UPDATE AverageLatency(us)=2753.18] 
+2026-10-05 16:35:06:210 68 sec: 8073721 operations; 147433 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2670.6] [UPDATE AverageLatency(us)=2753.18] 
+2026-10-05 16:35:07:210 69 sec: 8216564 operations; 142843 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2760.26] [UPDATE AverageLatency(us)=2825.95] 
+2026-10-05 16:35:07:210 69 sec: 8216564 operations; 142843 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2760.26] [UPDATE AverageLatency(us)=2825.95] 
+2026-10-05 16:35:08:210 70 sec: 8352931 operations; 136367 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2901.42] [UPDATE AverageLatency(us)=2970.13] 
+2026-10-05 16:35:08:210 70 sec: 8352931 operations; 136367 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2901.42] [UPDATE AverageLatency(us)=2970.13] 
+[AQRAFT-INSTR] t=1791218108764 fast=2606830 twoSided=6 collapse=1602418 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:09:210 71 sec: 8493258 operations; 140327 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2818.16] [UPDATE AverageLatency(us)=2878.66] 
+2026-10-05 16:35:09:210 71 sec: 8493258 operations; 140327 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2818.16] [UPDATE AverageLatency(us)=2878.66] 
+2026-10-05 16:35:10:210 72 sec: 8645942 operations; 152684 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2583.92] [UPDATE AverageLatency(us)=2651.08] 
+2026-10-05 16:35:10:210 72 sec: 8645942 operations; 152684 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2583.92] [UPDATE AverageLatency(us)=2651.08] 
+2026-10-05 16:35:11:210 73 sec: 8797780 operations; 151838 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2595.79] [UPDATE AverageLatency(us)=2666.29] 
+2026-10-05 16:35:11:210 73 sec: 8797780 operations; 151838 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2595.79] [UPDATE AverageLatency(us)=2666.29] 
+[AQRAFT-INSTR] t=1791218111764 fast=2721405 twoSided=6 collapse=1716924 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:12:210 74 sec: 8947987 operations; 150207 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2613.88] [UPDATE AverageLatency(us)=2699.14] 
+2026-10-05 16:35:12:210 74 sec: 8947987 operations; 150207 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2613.88] [UPDATE AverageLatency(us)=2699.14] 
+2026-10-05 16:35:13:210 75 sec: 9096445 operations; 148458 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2657] [UPDATE AverageLatency(us)=2735.79] 
+2026-10-05 16:35:13:210 75 sec: 9096445 operations; 148458 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2657] [UPDATE AverageLatency(us)=2735.79] 
+[AQDBG-COLLAPSE] slot=7821 slotOwner<-sharedPeer=10.10.1.5:8001
+2026-10-05 16:35:14:210 76 sec: 9244894 operations; 148449 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2666.93] [UPDATE AverageLatency(us)=2718.15] 
+2026-10-05 16:35:14:210 76 sec: 9244894 operations; 148449 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2666.93] [UPDATE AverageLatency(us)=2718.15] 
+[AQRAFT-INSTR] t=1791218114764 fast=2833066 twoSided=6 collapse=1828791 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:15:210 77 sec: 9400728 operations; 155834 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2529.88] [UPDATE AverageLatency(us)=2599.6] 
+2026-10-05 16:35:15:210 77 sec: 9400728 operations; 155834 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2529.88] [UPDATE AverageLatency(us)=2599.6] 
+2026-10-05 16:35:16:210 78 sec: 9549594 operations; 148866 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2651.81] [UPDATE AverageLatency(us)=2719] 
+2026-10-05 16:35:16:210 78 sec: 9549594 operations; 148866 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2651.81] [UPDATE AverageLatency(us)=2719] 
+2026-10-05 16:35:17:210 79 sec: 9705429 operations; 155835 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2524.42] [UPDATE AverageLatency(us)=2605.14] 
+2026-10-05 16:35:17:210 79 sec: 9705429 operations; 155835 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2524.42] [UPDATE AverageLatency(us)=2605.14] 
+[AQRAFT-INSTR] t=1791218117764 fast=2948369 twoSided=6 collapse=1943227 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:18:210 80 sec: 9863101 operations; 157672 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2499.38] [UPDATE AverageLatency(us)=2568.76] 
+2026-10-05 16:35:18:210 80 sec: 9863101 operations; 157672 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2499.38] [UPDATE AverageLatency(us)=2568.76] 
+2026-10-05 16:35:19:210 81 sec: 10018682 operations; 155581 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2528.84] [UPDATE AverageLatency(us)=2609.36] 
+2026-10-05 16:35:19:210 81 sec: 10018682 operations; 155581 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2528.84] [UPDATE AverageLatency(us)=2609.36] 
+2026-10-05 16:35:20:210 82 sec: 10174600 operations; 155918 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2526.84] [UPDATE AverageLatency(us)=2600.04] 
+2026-10-05 16:35:20:210 82 sec: 10174600 operations; 155918 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2526.84] [UPDATE AverageLatency(us)=2600.04] 
+[AQRAFT-INSTR] t=1791218120764 fast=3065239 twoSided=6 collapse=2059951 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:21:210 83 sec: 10332319 operations; 157719 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2498.96] [UPDATE AverageLatency(us)=2568.24] 
+2026-10-05 16:35:21:210 83 sec: 10332319 operations; 157719 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2498.96] [UPDATE AverageLatency(us)=2568.24] 
+[AQDBG-COLLAPSE] slot=6162 slotOwner<-sharedPeer=10.10.1.5:8001
+2026-10-05 16:35:22:210 84 sec: 10484904 operations; 152585 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2580.36] [UPDATE AverageLatency(us)=2657.79] 
+2026-10-05 16:35:22:210 84 sec: 10484904 operations; 152585 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2580.36] [UPDATE AverageLatency(us)=2657.79] 
+2026-10-05 16:35:23:210 85 sec: 10637041 operations; 152137 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2585.45] [UPDATE AverageLatency(us)=2668.45] 
+2026-10-05 16:35:23:210 85 sec: 10637041 operations; 152137 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2585.45] [UPDATE AverageLatency(us)=2668.45] 
+[AQRAFT-INSTR] t=1791218123764 fast=3180414 twoSided=6 collapse=2174520 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:24:210 86 sec: 10785869 operations; 148828 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2645.69] [UPDATE AverageLatency(us)=2723.73] 
+2026-10-05 16:35:24:210 86 sec: 10785869 operations; 148828 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2645.69] [UPDATE AverageLatency(us)=2723.73] 
+2026-10-05 16:35:25:210 87 sec: 10943995 operations; 158126 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2488.55] [UPDATE AverageLatency(us)=2567.91] 
+2026-10-05 16:35:25:210 87 sec: 10943995 operations; 158126 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2488.55] [UPDATE AverageLatency(us)=2567.91] 
+2026-10-05 16:35:26:210 88 sec: 11098684 operations; 154689 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2546.72] [UPDATE AverageLatency(us)=2619.79] 
+2026-10-05 16:35:26:210 88 sec: 11098684 operations; 154689 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2546.72] [UPDATE AverageLatency(us)=2619.79] 
+[AQRAFT-INSTR] t=1791218126764 fast=3296073 twoSided=6 collapse=2290626 donorMoved=1607 || 2sidedDonorLeg: 10.10.1.1:8000=1 10.10.1.3:8002=5 || 2sidedPeerLeg: 10.10.1.6:8002=5 10.10.1.4:8000=1 || writeRedirect: 10.10.1.5:8002=292 10.10.1.5:8001=512 10.10.1.6:8002=1827 10.10.1.4:8002=311 10.10.1.4:8000=1288
+2026-10-05 16:35:27:210 89 sec: 11241816 operations; 143132 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2741.48] [UPDATE AverageLatency(us)=2827.34] 
+2026-10-05 16:35:27:210 89 sec: 11241816 operations; 143132 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2741.48] [UPDATE AverageLatency(us)=2827.34] 
+2026-10-05 16:35:28:210 90 sec: 11388672 operations; 146856 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2695.05] [UPDATE AverageLatency(us)=2765.23] 
+2026-10-05 16:35:28:210 90 sec: 11388672 operations; 146856 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2695.05] [UPDATE AverageLatency(us)=2765.23] 
+Maximum time elapsed. Requesting stop for the workload.
+Stop requested for workload. Now Joining!
+2026-10-05 16:35:28:630 90 sec: 11397804 operations; 21742.86 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2875.17] [CLEANUP AverageLatency(us)=215729.15] [UPDATE AverageLatency(us)=2948.8] 
+2026-10-05 16:35:28:630 90 sec: 11397804 operations; 21742.86 current ops/sec; est completion in 5 minutes [READ AverageLatency(us)=2875.17] [CLEANUP AverageLatency(us)=215729.15] [UPDATE AverageLatency(us)=2948.8] 
+[OVERALL], RunTime(ms), 90418
+[OVERALL], Throughput(ops/sec), 126056.80284899025
+[TOTAL_GCS_G1_Young_Generation], Count, 31
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 475
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 0.5253378752018404
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 31
+[TOTAL_GC_TIME], Time(ms), 475
+[TOTAL_GC_TIME_%], Time(%), 0.5253378752018404
+[READ], Operations, 5698116
+[READ], AverageLatency(us), 3051.852960171397
+[READ], MinLatency(us), 114
+[READ], MaxLatency(us), 777660
+[READ], Return=OK, 5698654
+[READ], 0, 3606.4225377152434
+[READ], 1000, 4760.688047981501
+[READ], 2000, 4845.874579517274
+[READ], 3000, 4961.076775286296
+[READ], 4000, 5443.443386856481
+[READ], 5000, 5044.506923724275
+[READ], 6000, 5037.548466978122
+[READ], 7000, 5060.6812439011865
+[READ], 8000, 5054.244027655952
+[READ], 9000, 5075.896139989707
+[READ], 10000, 5020.557784728049
+[READ], 11000, 5062.512285043958
+[READ], 12000, 5002.2068555828
+[READ], 13000, 4983.041737670727
+[READ], 14000, 5018.755842103922
+[READ], 15000, 5008.252741144965
+[READ], 16000, 5175.846609698669
+[READ], 17000, 5112.421276484709
+[READ], 18000, 5154.843994166059
+[READ], 19000, 5286.559287802285
+[READ], 20000, 4932.2731921474715
+[READ], 21000, 4880.628523473367
+[READ], 22000, 4485.687207418077
+[READ], 23000, 4389.254045452508
+[READ], 24000, 4071.4078524009287
+[READ], 25000, 4013.6961175906695
+[READ], 26000, 3458.4259657024077
+[READ], 27000, 3445.51688108484
+[READ], 28000, 2913.654056969591
+[READ], 29000, 3005.0479443827144
+[READ], 30000, 2827.062676478138
+[READ], 31000, 2559.0369523116315
+[READ], 32000, 2604.9279508510103
+[READ], 33000, 2589.6111418120577
+[READ], 34000, 2595.7793241082168
+[READ], 35000, 2607.9328243668792
+[READ], 36000, 2547.2828332833933
+[READ], 37000, 2567.3191278365916
+[READ], 38000, 2521.9665950755543
+[READ], 39000, 2611.25024164824
+[READ], 40000, 2582.720449157179
+[READ], 41000, 2608.925502342943
+[READ], 42000, 2608.160515135422
+[READ], 43000, 2552.9967850681383
+[READ], 44000, 2655.408506162518
+[READ], 45000, 2586.2054704364764
+[READ], 46000, 2560.212058751086
+[READ], 47000, 2620.046443017528
+[READ], 48000, 2572.585510084198
+[READ], 49000, 2600.9946976718825
+[READ], 50000, 2762.811751593655
+[READ], 51000, 2606.1718725014657
+[READ], 52000, 2584.19435580244
+[READ], 53000, 2600.1426611616034
+[READ], 54000, 2657.486938236325
+[READ], 55000, 2546.0707825861623
+[READ], 56000, 2659.05472784392
+[READ], 57000, 2571.1358182648996
+[READ], 58000, 2518.5913492906216
+[READ], 59000, 2746.983419240386
+[READ], 60000, 2668.2291247993744
+[READ], 61000, 2547.1383505208064
+[READ], 62000, 2761.780230906611
+[READ], 63000, 2856.9467901610356
+[READ], 64000, 2600.752606647613
+[READ], 65000, 2643.026270878966
+[READ], 66000, 2730.6713843188545
+[READ], 67000, 2935.8606503579954
+[READ], 68000, 2812.3179930550637
+[READ], 69000, 2622.5251436017443
+[READ], 70000, 2597.457216894887
+[READ], 71000, 2534.8799089576423
+[READ], 72000, 2713.53271272567
+[READ], 73000, 2702.0232193025945
+[READ], 74000, 2519.4598086734695
+[READ], 75000, 2616.9210252580483
+[READ], 76000, 2583.2321673391048
+[READ], 77000, 2464.275024037245
+[READ], 78000, 2561.2140894490385
+[READ], 79000, 2532.490639254738
+[READ], 80000, 2537.3233952364335
+[READ], 81000, 2524.007711718207
+[READ], 82000, 2596.769101019951
+[READ], 83000, 2581.8470934742877
+[READ], 84000, 2523.6362239213126
+[READ], 85000, 2566.869158149333
+[READ], 86000, 2559.0107222519337
+[READ], 87000, 2759.3845378292467
+[READ], 88000, 2881.5414563106797
+[CLEANUP], Operations, 400
+[CLEANUP], AverageLatency(us), 215729.155
+[CLEANUP], MinLatency(us), 16122
+[CLEANUP], MaxLatency(us), 360049
+[CLEANUP], 0, 215729.155
+[UPDATE], Operations, 5698822
+[UPDATE], AverageLatency(us), 3133.23232994468
+[UPDATE], MinLatency(us), 145
+[UPDATE], MaxLatency(us), 690506
+[UPDATE], Return=OK, 5699150
+[UPDATE], 0, 3798.4476925812105
+[UPDATE], 1000, 4881.474137309126
+[UPDATE], 2000, 4985.686629252203
+[UPDATE], 3000, 5095.759854654805
+[UPDATE], 4000, 5597.583176743672
+[UPDATE], 5000, 5171.417671608162
+[UPDATE], 6000, 5149.014869509866
+[UPDATE], 7000, 5204.926122522245
+[UPDATE], 8000, 5197.8013941730715
+[UPDATE], 9000, 5223.816468892378
+[UPDATE], 10000, 5174.263033903513
+[UPDATE], 11000, 5186.845934122491
+[UPDATE], 12000, 5148.274974097192
+[UPDATE], 13000, 5123.719610206952
+[UPDATE], 14000, 5149.95188837493
+[UPDATE], 15000, 5186.028627279508
+[UPDATE], 16000, 5335.561896812562
+[UPDATE], 17000, 5298.318207941484
+[UPDATE], 18000, 5248.699507389162
+[UPDATE], 19000, 5335.68805685193
+[UPDATE], 20000, 5065.510598847407
+[UPDATE], 21000, 4930.277791453328
+[UPDATE], 22000, 4515.732053142793
+[UPDATE], 23000, 4472.98486781725
+[UPDATE], 24000, 4112.142825428859
+[UPDATE], 25000, 3998.0980601925676
+[UPDATE], 26000, 3473.454926950575
+[UPDATE], 27000, 3496.118282933611
+[UPDATE], 28000, 2936.7026245486304
+[UPDATE], 29000, 3024.742916849645
+[UPDATE], 30000, 2892.869663211691
+[UPDATE], 31000, 2628.9850179006903
+[UPDATE], 32000, 2685.713740559515
+[UPDATE], 33000, 2669.2809920619247
+[UPDATE], 34000, 2672.259355687048
+[UPDATE], 35000, 2672.5882104540838
+[UPDATE], 36000, 2621.1949673176928
+[UPDATE], 37000, 2644.172773378875
+[UPDATE], 38000, 2585.5004794476763
+[UPDATE], 39000, 2684.009474019426
+[UPDATE], 40000, 2652.791095078859
+[UPDATE], 41000, 2682.000992838326
+[UPDATE], 42000, 2690.9103060007947
+[UPDATE], 43000, 2620.61665099383
+[UPDATE], 44000, 2740.2244006652513
+[UPDATE], 45000, 2668.186942022897
+[UPDATE], 46000, 2638.3615553178724
+[UPDATE], 47000, 2703.9180748862336
+[UPDATE], 48000, 2653.918754009925
+[UPDATE], 49000, 2655.2461471019355
+[UPDATE], 50000, 2861.41577293901
+[UPDATE], 51000, 2685.735681486257
+[UPDATE], 52000, 2654.2294393257253
+[UPDATE], 53000, 2688.2528702069203
+[UPDATE], 54000, 2735.12799351658
+[UPDATE], 55000, 2632.3884242872145
+[UPDATE], 56000, 2735.9393837050648
+[UPDATE], 57000, 2664.5480905791383
+[UPDATE], 58000, 2581.711836755503
+[UPDATE], 59000, 2828.1393190577564
+[UPDATE], 60000, 2740.7975321043627
+[UPDATE], 61000, 2624.829835925682
+[UPDATE], 62000, 2853.7886410934248
+[UPDATE], 63000, 2945.0512079679424
+[UPDATE], 64000, 2674.8326810305066
+[UPDATE], 65000, 2721.661074277706
+[UPDATE], 66000, 2792.8275966683213
+[UPDATE], 67000, 3014.8119776743074
+[UPDATE], 68000, 2870.875772690455
+[UPDATE], 69000, 2688.6904685963373
+[UPDATE], 70000, 2664.2245083566195
+[UPDATE], 71000, 2614.176431880056
+[UPDATE], 72000, 2789.0055346743216
+[UPDATE], 73000, 2768.771272539086
+[UPDATE], 74000, 2585.274548406479
+[UPDATE], 75000, 2684.9943514061815
+[UPDATE], 76000, 2656.2833300557195
+[UPDATE], 77000, 2541.411357358191
+[UPDATE], 78000, 2634.3223396994244
+[UPDATE], 79000, 2607.6206661259384
+[UPDATE], 80000, 2607.2117167365464
+[UPDATE], 81000, 2602.29463257314
+[UPDATE], 82000, 2676.874225551196
+[UPDATE], 83000, 2665.0376423712596
+[UPDATE], 84000, 2599.4677879060214
+[UPDATE], 85000, 2638.5685249406797
+[UPDATE], 86000, 2641.554651087309
+[UPDATE], 87000, 2845.8464660365967
+[UPDATE], 88000, 2922.841793221521

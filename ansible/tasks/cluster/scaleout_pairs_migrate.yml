@@ -1,0 +1,36 @@
+---
+# 3 -> 6 scale-out: every donor migrates the lower scaleout_slots_per_source
+# slots of its range to its own recipient group, then the donors are NARROWed
+# and the final 6-group slot map is pushed to every leader. All of it is one
+# driver process (scaleout_pairs.py), so nothing between the steps waits on
+# ansible. Needs scaleout_pairs_prepare.yml earlier in the run.
+# -e scaleout_mode=sequential|pipelined|parallel  (default sequential: one pair
+#    transfers at a time within each round; pipelined: also one copy at a time,
+#    but the next pair starts when the previous copy ends, without waiting for
+#    its commit; parallel dispatches the three pairs together)
+#    share no process, so they run at the same time)
+# -e n_rounds=N                         (default 1)
+- name: "Scale-out pairs: migrate, NARROW, reconcile ({{ scaleout_mode | default('sequential') }})"
+  hosts: redis_masters[0]
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: "Run the scale-out driver"
+      command: >
+        python3 {{ main_dir }}/ansible/scaleout_pairs.py migrate
+        {{ scaleout_topology_file | default('/tmp/aq_scaleout_topology.json') }}
+        --cli {{ redis_bin_dir }}/redis-cli
+        --rounds {{ n_rounds | default(1) }}
+        --mode {{ scaleout_mode | default('sequential') }}
+        --async-apply {{ rdma_async_apply | default('no') }}
+      register: scaleout_migrate
+      changed_when: true
+      failed_when: false
+
+    - debug:
+        msg: "{{ scaleout_migrate.stdout_lines + scaleout_migrate.stderr_lines }}"
+
+    - name: "Scale-out must have completed"
+      assert:
+        that: scaleout_migrate.rc == 0
+        fail_msg: "scaleout_pairs.py migrate rc={{ scaleout_migrate.rc }}"

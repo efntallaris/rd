@@ -67,12 +67,13 @@
           --rdma-chain-pipeline {{ rdma_chain_pipeline | default('no') }} \
           --rdma-chain-xsession {{ rdma_chain_xsession | default('no') }} \
           --rdma-async-apply {{ rdma_async_apply | default('no') }} \
-          {% if sg.id != 'sg4' %}--rdma-src-prereg-slots {{ rdma_src_prereg_slots | default(0) }} \
+          {% if sg.rdma_port is defined %}--rdma-migration-port {{ sg.rdma_port }} \
+          {% endif %}          {% if not (sg_is_recipient | bool) %}--rdma-warm-reg-batch {{ rdma_warm_reg_batch | default(0) }} --rdma-warm-reg-pause-us {{ rdma_warm_reg_pause_us | default(0) }} \
+          {% endif %}          {% if not (sg_is_recipient | bool) %}--rdma-src-prereg-slots {{ rdma_src_prereg_slots | default(0) }} \
           --rdma-src-prereg-bind {{ host_ip_map[inventory_hostname] }} \
-          {% endif %}{% if sg.id == 'sg4' and rdma_landing_prereg_pools is defined %}--rdma-landing-prereg-pools {{ rdma_landing_prereg_pools }} \
+          {% endif %}{% if (sg_is_recipient | bool) and rdma_landing_prereg_pools is defined %}--rdma-landing-prereg-pools {{ rdma_landing_prereg_pools }} \
           --rdma-landing-prereg-slots {{ rdma_landing_prereg_slots | default(1365) }} \
           --rdma-src-prereg-bind {{ host_ip_map[inventory_hostname] }} \
-          {% endif %}{% if rdma_chain_ack_via_raft is defined %}--rdma-chain-ack-via-raft {{ rdma_chain_ack_via_raft }} \
           {% endif %}          --rdma-naive-durability {{ rdma_naive_durability | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
           --cluster-rdma-reshard-debug-bytes {{ rdma_reshard_debug_bytes | default('no') }} \
@@ -83,6 +84,11 @@
           --rdma-migration-redisraft-slots "{{ sg.slot_config }}" \
           --rdma-migration-peer-stagger-ms {{ rdma_migration_peer_stagger_ms | default(30000) }} \
           --slot-meta-reply yes \
+          --rdma-peer-probe-ms {{ rdma_peer_probe_ms | default(300) }} \
+          --rdma-peer-probe-grace-ms {{ rdma_peer_probe_grace_ms | default(-1) }} \
+          --rdma-chain-warm-on-promote {{ rdma_chain_warm_on_promote | default('yes') }} \
+          --rdma-fwd-slot-gate {{ rdma_fwd_slot_gate | default('yes') }} \
+          --watchdog-period {{ redis_watchdog_ms | default(0) }} \
           {% endif %}--loadmodule {{ redisraft_module }} \
           --raft.append-req-max-count 2147483647 \
           --raft.id {{ (sg.nodes | selectattr('host', 'equalto', inventory_hostname) | first).raft_id }} \
@@ -91,11 +97,17 @@
           --raft.slot-config "{{ sg.slot_config }}" \
           --raft.sharding yes \
           --raft.follower-proxy {{ rdma_follower_proxy | default('yes') }} \
-          --raft.quorum-reads no \
-          --raft.log-fsync no{% if (rdma_disable_raft_snapshots | default(true)) or sg.id == 'sg4' %} \
+          --raft.quorum-reads {{ raft_quorum_reads | default('no') }} \
+          --raft.election-timeout {{ raft_election_timeout | default(300) }} \
+          --raft.request-timeout {{ raft_request_timeout | default(50) }} \
+          --raft.log-fsync no{% if (rdma_disable_raft_snapshots | default(true)) or (sg_is_recipient | bool) %} \
           --raft.snapshot-disable yes \
           --raft.log-max-file-size 0{% else %} \
           --raft.log-max-file-size {{ rdma_raft_log_max_file_size | default(1073741824) }}{% endif %}
+      # A group is a migration recipient if it says so (role: recipient, see
+      # experiments/custom_scaleout_3to6/topology.yml); without a role, only sg4 is.
+      vars:
+        sg_is_recipient: "{{ (sg.role | default('recipient' if sg.id == 'sg4' else 'donor')) == 'recipient' }}"
       loop: "{{ redisraft_shardgroups }}"
       loop_control:
         loop_var: sg

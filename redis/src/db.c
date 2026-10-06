@@ -454,15 +454,29 @@ kvobj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply) {
  */
 static kvobj *dbAddInternalImpl(redisDb *db, robj *key, robj **valref, dictEntryLink *link,
                                 const KeyMetaSpec *keymeta, int slot);
+static int dbGenericDeleteImpl(redisDb *db, robj *key, int async, int flags, int slot);
 
 kvobj *dbAddInternal(redisDb *db, robj *key, robj **valref, dictEntryLink *link,
                      const KeyMetaSpec *keymeta)
 {
     int slot = getKeySlot(key->ptr);
-    int wrap = (server.cluster_enabled || server.rdma_merge_background)
-            && !cluster_slot_lock_held_by_thread
-            && clusterSlotIsImporting(slot);
+    int guard = (server.cluster_enabled || server.rdma_merge_background)
+             && !cluster_slot_lock_held_by_thread;
+    int wrap = guard && clusterSlotIsImporting(slot);
     if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
+    /* The caller decided "key absent" (and may pass the dict position it found)
+     * in an EARLIER lookup that took and released the slot lock. A background
+     * migration merge can have changed this slot's dict since: it resizes the
+     * table (the position is then stale: dict.c 'bucket >= &d->ht_table...'
+     * assert) and it can install the donor's copy of this very key (the insert
+     * below would then assert on a duplicate). Re-validate now — under the write
+     * lock while the merge is running, or with the merge already over. The
+     * client's write is newer than the donor's frozen copy, so it replaces it. */
+    if (wrap || (guard && clusterSlotMergeTouched(slot))) {
+        if (dbFind(db, key->ptr) != NULL)
+            dbGenericDeleteImpl(db, key, 0, DB_FLAG_KEY_OVERWRITE, slot);
+        if (link != NULL) *link = NULL;
+    }
     kvobj *r = dbAddInternalImpl(db, key, valref, link, keymeta, slot);
     if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;
@@ -1042,6 +1056,10 @@ int dbGenericDelete(redisDb *db, robj *key, int async, int flags) {
             && !cluster_slot_lock_held_by_thread
             && clusterSlotIsImporting(slot);
     if (wrap) { clusterSlotLockWriteNoTopology(slot); cluster_slot_lock_held_by_thread++; }
+    /* AqRaft: tombstone under the same slot lock the merge holds while it checks,
+     * so a DEL either precedes the merge's check or follows its install. Recorded
+     * even when the key is absent here: the donor's copy may still be merged. */
+    rdmaTombstoneAdd(key->ptr);   /* no-op unless the slot is in a migration session */
     int r = dbGenericDeleteImpl(db, key, async, flags, slot);
     if (wrap) { cluster_slot_lock_held_by_thread--; clusterSlotUnlockNoTopology(slot); }
     return r;

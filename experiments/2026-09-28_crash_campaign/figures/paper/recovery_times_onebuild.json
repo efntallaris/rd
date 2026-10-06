@@ -1,0 +1,60 @@
+{
+ "s1": {
+  "tag": "S1",
+  "what": "recipient leader",
+  "kills": [
+   "13:27:27.066"
+  ],
+  "new_leader_s": {
+   "sg4": 2.0
+  },
+  "first_recovery_s": 2.0,
+  "all_durable_s": 19.03,
+  "seconds_below_half": 10,
+  "update_errors": 0
+ },
+ "s2": {
+  "tag": "S2",
+  "what": "donor leader, mid-transfer",
+  "kills": [
+   "13:40:30.926"
+  ],
+  "new_leader_s": {
+   "sg1": 1.63
+  },
+  "first_recovery_s": 1.63,
+  "all_durable_s": 22.38,
+  "seconds_below_half": 17,
+  "update_errors": 0
+ },
+ "s5": {
+  "tag": "S5",
+  "what": "donor leader, after transfer",
+  "kills": [
+   "12:58:57.681"
+  ],
+  "new_leader_s": {
+   "sg1": 1.46
+  },
+  "first_recovery_s": 1.86,
+  "all_durable_s": 2.94,
+  "seconds_below_half": 1,
+  "update_errors": 0
+ },
+ "s6": {
+  "tag": "S6",
+  "what": "donor + recipient leaders",
+  "kills": [
+   "13:12:05.313",
+   "13:12:05.668"
+  ],
+  "new_leader_s": {
+   "sg1": 1.74,
+   "sg4": 1.29
+  },
+  "first_recovery_s": 1.29,
+  "all_durable_s": 12.79,
+  "seconds_below_half": 16,
+  "update_errors": 200
+ }
+}

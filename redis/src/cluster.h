@@ -75,6 +75,21 @@ void clusterSlotUnlockNoTopology(int slot);
  * keyspace, so main-thread keyspace accessors must take the per-slot lock.
  * Returns 0 in non-cluster mode or out-of-range slot. */
 int clusterSlotIsImporting(int slot);
+int clusterSlotMergeTouched(int slot);
+
+/* AqRaft recipient tombstones: keys deleted on this node while their slot is in
+ * a migration session (MGN_RECP_TXN_START applied, session not yet closed here).
+ * A migration merge never installs a tombstoned key, and the GET slot-meta reports
+ * it so the client treats this node's nil as final. Thread-safe. */
+void rdmaTombstoneAdd(sds key);
+int  rdmaTombstoneHas(sds key);
+/* Session window, driven by the Raft apply of MGN_RECP_TXN_START / _DONE. */
+void rdmaTombstoneSessionStart(int lo, int hi);
+void rdmaTombstoneSessionDone(int lo, int hi);
+int  rdmaTombstoneSessionIsOpen(int lo, int hi);
+/* Client-request admission (before RedisRaft appends it): 1 if a DEL or
+ * read-modify-write must get TRYAGAIN (key's migrated value not merged here yet). */
+int  rdmaRejectUnmergedRmw(client *c);
 
 /* Phase 4d: TLS guard. Set to a non-zero count by code that has acquired a
  * slot lock and is about to call into nested code paths that ALSO want to
@@ -202,6 +217,7 @@ typedef struct rdmaOutboundLink {
     rdmaRemoteBufferInfo *block_buffers[CLUSTER_SLOTS];   /* per-slot, one per donor block; [0] mirrors buffers[slot] */
     int n_block_buffers[CLUSTER_SLOTS];                   /* length of block_buffers[slot] (0 if not prepped) */
     struct blockMrTable *block_mr_tbl;                    /* opaque; side table block_start -> live-block MR (cluster_rdma.c) */
+    int block_mr_shared;                                   /* 1 = block_mr_tbl is the process-wide table (do not destroy with the link) */
     struct rdmamig_buffer *source_buffers[CLUSTER_SLOTS]; /* sender-side registered MR per slot (Phase 1) */
     /* AqRaft Stage 5 (donor big-MR): one contiguous mmap pool + ONE ibv_reg_mr
      * covering all this link's source slots, registered once and reused across
@@ -219,6 +235,9 @@ typedef struct rdmaOutboundLink {
      * OUT of the measured migration window (paid during the pre-migration
      * pause instead). */
     uint8_t *prepared_slot;                         /* [CLUSTER_SLOTS] or NULL */
+    int broken;                                     /* an RDMA write on this link failed: its QP is
+                                                     * in the error state; the next migration to this
+                                                     * address opens a new link (startLocalMigration) */
     pthread_mutex_t mu;                             /* per-link guard for REGISTER round-trips */
 } rdmaOutboundLink;
 
@@ -283,6 +302,9 @@ typedef struct rdmaMigration {
      * already durably landed and re-ships only the rest; on DONE it also
      * closes the original session (TXN_DONE sess=<resume_of_sess>). 0 = normal. */
     long long resume_of_sess;
+    /* Re-home announcement (DONOR-REHOME) this worker started under, for its
+     * first slot. A later one means the recipient leader changed again. */
+    unsigned rehome_seq;
 
     /* All fields below are guarded by mu. */
     pthread_mutex_t mu;

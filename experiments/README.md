@@ -18,6 +18,7 @@ experiments/
 │   ├── plot_full_run.py          throughput, latency, CPU, cluster NIC traffic
 │   ├── plot_cpu_tputlat.py       CPU vs throughput/latency
 │   ├── migration_window.py       cold-excluded migration window (also used by collect_results.yml)
+│   ├── compare_runs.py           throughput + avg latency of two runs, side by side
 │   ├── analyze_crash.py          crash campaign metrics + per-scenario figures
 │   ├── build_artifact.py         crash campaign HTML report
 │   ├── analyze_double_read_trace.py   client double-read trace analysis
@@ -60,6 +61,8 @@ before committing, and compress or leave out the biggest per-host logs if needed
 | `2026-06-21_copyout_removed` | regression after removing copy-out (30M) | – | – |
 | `2026-07_throughput_rise` | +29% after ownership reconcile (153K → 197K ops/s) | – | 3 PNG |
 | `2026-07_crash_campaign` | S1–S5 crash scenarios | **to fetch** (see its README) | pre-fix PNGs |
+| `2026-10-01_procs_3_vs_6` | 3 vs 6 redis masters on the same 3 hosts (plain cluster, no Raft): throughput + latency | **not run yet** (`run.sh`) | – |
+| `2026-10-02_scaleout_3_to_6` | scale from 3 shardgroups to 6 with the AqRaft migration (sg1→sg4, sg2→sg5, sg3→sg6), healthy + crash scenarios S1–S9: all pass on the final build (20/20) | 6 first-day runs | 6 PNG |
 
 "–" under logs means the raw run output was not kept; only the notes and/or finished figures
 survived.

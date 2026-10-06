@@ -14,6 +14,9 @@
 # Env (required):  ARM_HOST ARM_LOG ARM_MARKER TARGET_HOST PIDFILE
 # Env (optional):
 #   ARM_COUNT        Nth marker occurrence to fire on   (default 1)
+#   PIDFILE_EXTRA    more pidfiles on TARGET_HOST (space separated), killed by
+#                    the same kill -9 as PIDFILE: a whole-host crash when the
+#                    host runs several instances            (default none)
 #   LABEL            human tag for result files         (default inject)
 #   MAX_WAIT         seconds to wait for the marker      (default 1800)
 #   RESTART          yes|no — relaunch after kill        (default no)
@@ -73,6 +76,15 @@ else
   exit 2
 fi
 
+# Optional second target (TARGET_HOST2/PIDFILE2): killed at the same instant as
+# the first, from a parallel ssh started as soon as the marker hits.
+if [ -n "${TARGET_HOST2:-}" ] && [ -n "${PIDFILE2:-}" ]; then
+  ( P2=$(sudo ssh $SSH_OPTS "$TARGET_HOST2" "p=\$(cat '$PIDFILE2' 2>/dev/null); kill -0 \$p 2>/dev/null && kill -9 \$p && echo \$p")
+    if [ -n "$P2" ]; then log "KILLED $TARGET_HOST2 pid=$P2 (verified alive)  t_kill=$(date -u +%s.%N)"
+    else log "ERROR: second target $TARGET_HOST2:$PIDFILE2 not alive -- NO KILL"; fi ) &
+  KILL2_PID=$!
+fi
+
 PID=$(sudo ssh $SSH_OPTS "$TARGET_HOST" "cat '$PIDFILE' 2>/dev/null" | tr -d '[:space:]')
 if [ -z "${PID:-}" ]; then
   log "ERROR: pidfile $PIDFILE empty/missing on $TARGET_HOST — NO KILL"
@@ -88,10 +100,16 @@ if ! sudo ssh $SSH_OPTS "$TARGET_HOST" "kill -0 $PID 2>/dev/null"; then
   echo "result=STALE_PID label=$LABEL target=$TARGET_HOST pid=$PID" >> "$RES"
   exit 3
 fi
-sudo ssh $SSH_OPTS "$TARGET_HOST" "kill -9 $PID"
+EXTRA_PIDS=""
+if [ -n "${PIDFILE_EXTRA:-}" ]; then
+  EXTRA_PIDS=$(sudo ssh $SSH_OPTS "$TARGET_HOST" "cat $PIDFILE_EXTRA 2>/dev/null" | tr '\n' ' ')
+  log "also killing on $TARGET_HOST: $PIDFILE_EXTRA -> pids ${EXTRA_PIDS:-<none>}"
+fi
+sudo ssh $SSH_OPTS "$TARGET_HOST" "kill -9 $PID $EXTRA_PIDS"
 T_KILL=$(date -u +%s.%N)
 log "KILLED $TARGET_HOST pid=$PID (verified alive)  t_kill=$T_KILL"
 echo "result=KILLED label=$LABEL target=$TARGET_HOST pid=$PID t_arm=$T_ARM t_kill=$T_KILL" >> "$RES"
+[ -n "${KILL2_PID:-}" ] && wait "$KILL2_PID"
 
 # Durable leader-log snapshot. The arm-host (recipient LEADER) log is WIPED at
 # end-of-run (the instance is restarted at teardown), destroying the re-form /

@@ -1,0 +1,81 @@
+---
+# Early reshard pre-warm (-e rdma_prewarm_early=yes): the PREPARE-AHEAD steps of
+# reshard_cluster_rdma_v2_orchestrated_nround.yml, run BEFORE the workload starts
+# instead of ~3.5 s before the migration.
+#
+# Why: RDMA MIGRATE-WARM registers every migrated slot's live blocks as RDMA
+# memory regions on the peer donor leaders (~1,365 regions, ~2.9 GB each). While
+# that runs, the donor serves clients ~3x slower: every 30M run showed a ~2 s dip
+# to ~50 Kops/s right before the migration, and throttling the registration made
+# the dip shallower (59 -> 107 Kops/s) — so the registration is the cause. Done
+# here, it happens before the measured workload.
+#
+# Blocks a donor allocates after this warm-up (client writes during the steady
+# state) are registered at TRANSFER by the existing fallback. Warmed slots stay
+# pinned until their migration ends. The orchestrator's own shardgroup is not
+# warmed (warming self breaks its WRITE_FLIP), exactly as in the reshard playbook.
+#
+# Uses its own fact names (pw_*): the reshard play appends to donor_specs /
+# peer_endpoints on the same host and must not see them pre-filled.
+- name: "RDMA reshard pre-warm (before the workload starts)"
+  hosts: redis_masters[0]
+  become: yes
+  gather_facts: no
+  vars:
+    reshard_target: "{{ groups['redis_migrate'][0] }}"
+    reshard_slots_per_source: "{{ (reshard_slots | int) // (groups['redis_masters'] | length) }}"
+    n_rounds: 2
+  tasks:
+    - name: "pre-warm: donor-leader list"
+      set_fact:
+        pw_donor_specs: "{{ pw_donor_specs | default([]) + [{'sg_id': sg.id, 'leader_host': sg.nodes[0].host, 'leader_port': sg.port}] }}"
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
+      loop_control:
+        loop_var: sg
+
+    - name: "pre-warm: resolve shardgroup-member IPs"
+      shell: "getent hosts {{ item }} | awk '{print $1}'"
+      register: pw_ip_lookup
+      changed_when: false
+      loop: "{{ redisraft_shardgroups | map(attribute='nodes') | sum(start=[]) | map(attribute='host') | unique | list }}"
+
+    - name: "pre-warm: host->IP map"
+      set_fact:
+        pw_ip_map: >-
+          {{
+            dict(
+              pw_ip_lookup.results
+                | map(attribute='item')
+                | zip(pw_ip_lookup.results | map(attribute='stdout'))
+            )
+          }}
+
+    - name: "pre-warm (peers): set RDMA port + RDMA MIGRATE-WARM"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ pw_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          CONFIG SET rdma-migration-port {{ 17777 + sg_idx }}
+        {{ redis_bin_dir }}/redis-cli -h {{ pw_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+          RDMA MIGRATE-WARM {{ reshard_target }} {{ master_port }} {{ reshard_slots_per_source }}
+      register: pw_warm_results
+      loop: "{{ pw_donor_specs }}"
+      loop_control:
+        loop_var: spec
+        index_var: sg_idx
+        label: "{{ spec.sg_id }} warm @ rdma-port {{ 17777 + sg_idx }}"
+      when: not (spec.leader_host == inventory_hostname and spec.leader_port | string == master_port | string)
+      retries: 3
+      delay: 1
+      until: pw_warm_results.rc == 0 and 'OK' in (pw_warm_results.stdout | default(''))
+
+    - name: "pre-warm (recipient): RDMA CHAIN-WARM"
+      shell: |
+        {{ redis_bin_dir }}/redis-cli -h {{ pw_ip_map[reshard_target] }} -p {{ master_port }} \
+          RDMA CHAIN-WARM {{ (reshard_slots_per_source | int) - ((reshard_slots_per_source | int) // (n_rounds | int)) * ((n_rounds | int) - 1) }}
+      register: pw_chain_warm_result
+      retries: 3
+      delay: 1
+      until: pw_chain_warm_result.rc == 0 and 'OK' in (pw_chain_warm_result.stdout | default(''))
+
+    - name: "pre-warm: let the registrations and the chain settle"
+      pause:
+        seconds: 6

@@ -1,0 +1,6 @@
+Five-replica recipient group (ansible/inventory_5replica.ini + sg4_5replica.yml): redis3 leader,
+redis4, redis5, ycsb1, ycsb0 chain followers (the YCSB hosts also run the clients).
+200 YCSB threads per client, 300k keys, 60 s workload.
+Scenarios: lin_healthy (no fault), crash_s6 (second follower killed as the forward starts),
+crash_s7 (recipient leader killed after the first hop). *_total.png sums both clients.
+The Gantt charts read only redis3's log, so they are incomplete when the leader moves.

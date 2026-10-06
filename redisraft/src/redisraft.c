@@ -1967,6 +1967,11 @@ static int registerRaftCommands(RedisModuleCtx *ctx)
         return REDISMODULE_ERR;
     }
 
+    if (RedisModule_CreateCommand(ctx, "raft.mgn-session-open", cmdRaftMgnSessionOpen,
+                                  "admin", 0, 0, 0) == REDISMODULE_ERR) {
+        return REDISMODULE_ERR;
+    }
+
     if (RedisModule_CreateCommand(ctx, "raft.scan", cmdRaftScan,
                                   "admin", 0, 0, 0) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;

@@ -1,0 +1,19 @@
+[lin 09:13:37] scenario=S1 profile=quick workload=workloada_lin_quick_60s quorum_reads=yes out=/tmp/lincheck/runs/S1_qyes_20261002_091337
+[lin 09:17:49] run_crash_scenario rc=0 (playbook exited rc=0)
+[crash_inject 09:16:36] MARKER HIT (x6)  t_arm=1790932596.558809883
+[crash_inject 09:16:37] KILLED redis3 pid=3279965 (verified alive)  t_kill=1790932597.118795512
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+[lin] final pass: 200 keys, unresolved=0
+[lin] done ok=162737 fail=0 unknown=587
+records=163324 keys=200
+ops: del/ok=16128 del/unknown=18 get/ok=73311 get/unknown=519 set/ok=73298 set/unknown=50
+linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+VERDICT: PASS
+[lin 09:18:01] lincheck rc=0
+POSTCHECK migration PASS  sg4 leader redis4:8000; all 3 ranges durable
+POSTCHECK crashes   PASS  none
+POSTCHECK replicas  PASS  2 live replicas identical (redis4 n=75044 b8eda4599a2b, redis5 n=75044 b8eda4599a2b)
+POSTCHECK donors    PASS  0-1364: 3 live replicas agree (24965 keys); 5461-6825: 3 live replicas agree (25068 keys); 10922-12286: 3 live replicas agree (25007 keys)
+POSTCHECK bulk      PASS  74880 donor YCSB keys checked, 0 missing
+POSTCHECK VERDICT: PASS
+[lin 09:18:42] OVERALL: PASS (lincheck rc=0, postcheck rc=0)

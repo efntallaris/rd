@@ -1,0 +1,1033 @@
+/usr/bin/java  -classpath /users/entall/ycsb_client/conf:/users/entall/ycsb_client/lib/HdrHistogram-2.1.12.jar:/users/entall/ycsb_client/lib/core-0.18.0-SNAPSHOT.jar:/users/entall/ycsb_client/lib/htrace-core4-4.1.0-incubating.jar:/users/entall/ycsb_client/lib/jackson-core-asl-1.9.4.jar:/users/entall/ycsb_client/lib/jackson-mapper-asl-1.9.4.jar:/users/entall/ycsb_client/redis-binding/lib/commons-pool2-2.4.2.jar:/users/entall/ycsb_client/redis-binding/lib/jedis-2.9.0.jar:/users/entall/ycsb_client/redis-binding/lib/redis-binding-0.18.0-SNAPSHOT.jar site.ycsb.Client -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada_prod_30m_run3min -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -p redis.slotpoll.ms=100 -p redis.preconnect=10.10.1.4:8000,10.10.1.5:8000,10.10.1.6:8000,10.10.1.4:8001,10.10.1.5:8001,10.10.1.6:8001,10.10.1.4:8002,10.10.1.5:8002,10.10.1.6:8002 -threads 200
+Command line: -t -db site.ycsb.db.RedisClient -p redis.host=redis0 -p redis.port=8000 -p redis.cluster=true -P /users/entall/rd/workloads/workloada_prod_30m_run3min -p status.interval=1 -s -p measurementtype=timeseries -p redis.timeout=10000 -p redis.slotpoll.ms=100 -p redis.preconnect=10.10.1.4:8000,10.10.1.5:8000,10.10.1.6:8000,10.10.1.4:8001,10.10.1.5:8001,10.10.1.6:8001,10.10.1.4:8002,10.10.1.5:8002,10.10.1.6:8002 -threads 200
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+Maximum execution time specified as: 180 secs
+2026-10-06 15:03:02:295 0 sec: 0 operations; est completion in 0 second 
+2026-10-06 15:03:02:295 0 sec: 0 operations; est completion in 0 second 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+[AQRAFT-INSTR] t=1791298983116 fast=0 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-10-06 15:03:03:216 1 sec: 15 operations; 14.99 current ops/sec; est completion in 154 days 11 hours [READ AverageLatency(us)=5142.96] [UPDATE AverageLatency(us)=3644.14] 
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.2026-10-06 15:03:03:216 1 sec: 15 operations; 14.99 current ops/sec; est completion in 154 days 11 hours [READ AverageLatency(us)=5142.96] [UPDATE AverageLatency(us)=3644.14] 
+
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+2026-10-06 15:03:04:216 2 sec: 54092 operations; 54131.13 current ops/sec; est completion in 2 hours 3 minutes [READ AverageLatency(us)=3346.53] [UPDATE AverageLatency(us)=3370.42] 
+2026-10-06 15:03:04:216 2 sec: 54092 operations; 54131.13 current ops/sec; est completion in 2 hours 3 minutes [READ AverageLatency(us)=3346.53] [UPDATE AverageLatency(us)=3370.42] 
+2026-10-06 15:03:05:216 3 sec: 127969 operations; 73877 current ops/sec; est completion in 1 hour 18 minutes [READ AverageLatency(us)=2657.68] [UPDATE AverageLatency(us)=2742.29] 
+2026-10-06 15:03:05:216 3 sec: 127969 operations; 73877 current ops/sec; est completion in 1 hour 18 minutes [READ AverageLatency(us)=2657.68] [UPDATE AverageLatency(us)=2742.29] 
+[AQRAFT-INSTR] t=1791298986116 fast=97092 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:06:216 4 sec: 201450 operations; 73481 current ops/sec; est completion in 1 hour 6 minutes [READ AverageLatency(us)=2677.91] [UPDATE AverageLatency(us)=2752.75] 
+2026-10-06 15:03:06:216 4 sec: 201450 operations; 73481 current ops/sec; est completion in 1 hour 6 minutes [READ AverageLatency(us)=2677.91] [UPDATE AverageLatency(us)=2752.75] 
+2026-10-06 15:03:07:216 5 sec: 273801 operations; 72351 current ops/sec; est completion in 1 hour [READ AverageLatency(us)=2718.91] [UPDATE AverageLatency(us)=2797.91] 
+2026-10-06 15:03:07:216 5 sec: 273801 operations; 72351 current ops/sec; est completion in 1 hour [READ AverageLatency(us)=2718.91] [UPDATE AverageLatency(us)=2797.91] 
+2026-10-06 15:03:08:216 6 sec: 348126 operations; 74325 current ops/sec; est completion in 57 minutes [READ AverageLatency(us)=2644.18] [UPDATE AverageLatency(us)=2727] 
+2026-10-06 15:03:08:216 6 sec: 348126 operations; 74325 current ops/sec; est completion in 57 minutes [READ AverageLatency(us)=2644.18] [UPDATE AverageLatency(us)=2727] 
+[AQRAFT-INSTR] t=1791298989116 fast=207383 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:09:216 7 sec: 421500 operations; 73374 current ops/sec; est completion in 55 minutes [READ AverageLatency(us)=2681.79] [UPDATE AverageLatency(us)=2756.19] 
+2026-10-06 15:03:09:216 7 sec: 421500 operations; 73374 current ops/sec; est completion in 55 minutes [READ AverageLatency(us)=2681.79] [UPDATE AverageLatency(us)=2756.19] 
+2026-10-06 15:03:10:216 8 sec: 494352 operations; 72852 current ops/sec; est completion in 53 minutes [READ AverageLatency(us)=2698.07] [UPDATE AverageLatency(us)=2782.6] 
+2026-10-06 15:03:10:216 8 sec: 494352 operations; 72852 current ops/sec; est completion in 53 minutes [READ AverageLatency(us)=2698.07] [UPDATE AverageLatency(us)=2782.6] 
+2026-10-06 15:03:11:216 9 sec: 567182 operations; 72830 current ops/sec; est completion in 52 minutes [READ AverageLatency(us)=2686.9] [UPDATE AverageLatency(us)=2791.04] 
+2026-10-06 15:03:11:216 9 sec: 567182 operations; 72830 current ops/sec; est completion in 52 minutes [READ AverageLatency(us)=2686.9] [UPDATE AverageLatency(us)=2791.04] 
+[AQRAFT-INSTR] t=1791298992116 fast=317561 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:12:216 10 sec: 642407 operations; 75149.85 current ops/sec; est completion in 51 minutes [READ AverageLatency(us)=2611.32] [UPDATE AverageLatency(us)=2696.45] 
+2026-10-06 15:03:12:216 10 sec: 642407 operations; 75149.85 current ops/sec; est completion in 51 minutes [READ AverageLatency(us)=2611.32] [UPDATE AverageLatency(us)=2696.45] 
+2026-10-06 15:03:13:216 11 sec: 716931 operations; 74598.6 current ops/sec; est completion in 50 minutes [READ AverageLatency(us)=2635.19] [UPDATE AverageLatency(us)=2720.24] 
+2026-10-06 15:03:13:216 11 sec: 716931 operations; 74598.6 current ops/sec; est completion in 50 minutes [READ AverageLatency(us)=2635.19] [UPDATE AverageLatency(us)=2720.24] 
+2026-10-06 15:03:14:216 12 sec: 791312 operations; 74381 current ops/sec; est completion in 50 minutes [READ AverageLatency(us)=2641.94] [UPDATE AverageLatency(us)=2726.62] 
+2026-10-06 15:03:14:216 12 sec: 791312 operations; 74381 current ops/sec; est completion in 50 minutes [READ AverageLatency(us)=2641.94] [UPDATE AverageLatency(us)=2726.62] 
+[AQRAFT-INSTR] t=1791298995116 fast=429661 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:15:216 13 sec: 866356 operations; 75044 current ops/sec; est completion in 49 minutes [READ AverageLatency(us)=2623.84] [UPDATE AverageLatency(us)=2695.35] 
+2026-10-06 15:03:15:216 13 sec: 866356 operations; 75044 current ops/sec; est completion in 49 minutes [READ AverageLatency(us)=2623.84] [UPDATE AverageLatency(us)=2695.35] 
+2026-10-06 15:03:16:216 14 sec: 941020 operations; 74664 current ops/sec; est completion in 49 minutes [READ AverageLatency(us)=2632.07] [UPDATE AverageLatency(us)=2714.11] 
+2026-10-06 15:03:16:216 14 sec: 941020 operations; 74664 current ops/sec; est completion in 49 minutes [READ AverageLatency(us)=2632.07] [UPDATE AverageLatency(us)=2714.11] 
+2026-10-06 15:03:17:216 15 sec: 1015754 operations; 74734 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2627.29] [UPDATE AverageLatency(us)=2713.54] 
+2026-10-06 15:03:17:216 15 sec: 1015754 operations; 74734 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2627.29] [UPDATE AverageLatency(us)=2713.54] 
+[AQRAFT-INSTR] t=1791298998116 fast=542259 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:18:216 16 sec: 1090882 operations; 75128 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2616.03] [UPDATE AverageLatency(us)=2699.39] 
+2026-10-06 15:03:18:216 16 sec: 1090882 operations; 75128 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2616.03] [UPDATE AverageLatency(us)=2699.39] 
+2026-10-06 15:03:19:216 17 sec: 1166475 operations; 75593 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2600.08] [UPDATE AverageLatency(us)=2681.75] 
+2026-10-06 15:03:19:216 17 sec: 1166475 operations; 75593 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2600.08] [UPDATE AverageLatency(us)=2681.75] 
+2026-10-06 15:03:20:216 18 sec: 1240554 operations; 74079 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2657.67] [UPDATE AverageLatency(us)=2730.87] 
+2026-10-06 15:03:20:216 18 sec: 1240554 operations; 74079 current ops/sec; est completion in 48 minutes [READ AverageLatency(us)=2657.67] [UPDATE AverageLatency(us)=2730.87] 
+[AQRAFT-INSTR] t=1791299001116 fast=654601 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:21:216 19 sec: 1315066 operations; 74512 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2638.19] [UPDATE AverageLatency(us)=2719.53] 
+2026-10-06 15:03:21:216 19 sec: 1315066 operations; 74512 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2638.19] [UPDATE AverageLatency(us)=2719.53] 
+2026-10-06 15:03:22:216 20 sec: 1389297 operations; 74231 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2647.41] [UPDATE AverageLatency(us)=2728.57] 
+2026-10-06 15:03:22:216 20 sec: 1389297 operations; 74231 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2647.41] [UPDATE AverageLatency(us)=2728.57] 
+2026-10-06 15:03:23:216 21 sec: 1462987 operations; 73690 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2667.71] [UPDATE AverageLatency(us)=2749.31] 
+2026-10-06 15:03:23:216 21 sec: 1462987 operations; 73690 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2667.71] [UPDATE AverageLatency(us)=2749.31] 
+[AQRAFT-INSTR] t=1791299004116 fast=765245 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:24:216 22 sec: 1536951 operations; 73964 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2664.96] [UPDATE AverageLatency(us)=2733.87] 
+2026-10-06 15:03:24:216 22 sec: 1536951 operations; 73964 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2664.96] [UPDATE AverageLatency(us)=2733.87] 
+2026-10-06 15:03:25:216 23 sec: 1611838 operations; 74887 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2624.33] [UPDATE AverageLatency(us)=2705.38] 
+2026-10-06 15:03:25:216 23 sec: 1611838 operations; 74887 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2624.33] [UPDATE AverageLatency(us)=2705.38] 
+2026-10-06 15:03:26:216 24 sec: 1685555 operations; 73717 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2670.14] [UPDATE AverageLatency(us)=2747.4] 
+2026-10-06 15:03:26:216 24 sec: 1685555 operations; 73717 current ops/sec; est completion in 47 minutes [READ AverageLatency(us)=2670.14] [UPDATE AverageLatency(us)=2747.4] 
+[AQRAFT-INSTR] t=1791299007116 fast=876945 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:27:216 25 sec: 1760346 operations; 74791 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2630.6] [UPDATE AverageLatency(us)=2705.21] 
+2026-10-06 15:03:27:216 25 sec: 1760346 operations; 74791 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2630.6] [UPDATE AverageLatency(us)=2705.21] 
+2026-10-06 15:03:28:216 26 sec: 1834883 operations; 74537 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2634.91] [UPDATE AverageLatency(us)=2724.02] 
+2026-10-06 15:03:28:216 26 sec: 1834883 operations; 74537 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2634.91] [UPDATE AverageLatency(us)=2724.02] 
+2026-10-06 15:03:29:216 27 sec: 1910645 operations; 75762 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2598.32] [UPDATE AverageLatency(us)=2670.32] 
+2026-10-06 15:03:29:216 27 sec: 1910645 operations; 75762 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2598.32] [UPDATE AverageLatency(us)=2670.32] 
+[AQRAFT-INSTR] t=1791299010116 fast=989305 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:30:216 28 sec: 1986070 operations; 75425 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2608.74] [UPDATE AverageLatency(us)=2683.63] 
+2026-10-06 15:03:30:216 28 sec: 1986070 operations; 75425 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2608.74] [UPDATE AverageLatency(us)=2683.63] 
+2026-10-06 15:03:31:216 29 sec: 2061533 operations; 75463 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2607.41] [UPDATE AverageLatency(us)=2681.42] 
+2026-10-06 15:03:31:216 29 sec: 2061533 operations; 75463 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2607.41] [UPDATE AverageLatency(us)=2681.42] 
+2026-10-06 15:03:32:216 30 sec: 2137089 operations; 75556 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2598.63] [UPDATE AverageLatency(us)=2683.72] 
+2026-10-06 15:03:32:216 30 sec: 2137089 operations; 75556 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2598.63] [UPDATE AverageLatency(us)=2683.72] 
+[AQRAFT-INSTR] t=1791299013116 fast=1102701 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:33:216 31 sec: 2212820 operations; 75731 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=1297.91] [UPDATE AverageLatency(us)=2674.7] 
+2026-10-06 15:03:33:216 31 sec: 2212820 operations; 75731 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=1297.91] [UPDATE AverageLatency(us)=2674.7] 
+2026-10-06 15:03:34:216 32 sec: 2288165 operations; 75345 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2610.2] [UPDATE AverageLatency(us)=2688.35] 
+2026-10-06 15:03:34:216 32 sec: 2288165 operations; 75345 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2610.2] [UPDATE AverageLatency(us)=2688.35] 
+2026-10-06 15:03:35:216 33 sec: 2362168 operations; 74003 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2660.15] [UPDATE AverageLatency(us)=2734.61] 
+2026-10-06 15:03:35:216 33 sec: 2362168 operations; 74003 current ops/sec; est completion in 46 minutes [READ AverageLatency(us)=2660.15] [UPDATE AverageLatency(us)=2734.61] 
+[AQRAFT-INSTR] t=1791299016116 fast=1214407 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:36:216 34 sec: 2436549 operations; 74381 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2643.54] [UPDATE AverageLatency(us)=2720.21] 
+2026-10-06 15:03:36:216 34 sec: 2436549 operations; 74381 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2643.54] [UPDATE AverageLatency(us)=2720.21] 
+2026-10-06 15:03:37:216 35 sec: 2510516 operations; 73967 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2664.48] [UPDATE AverageLatency(us)=2733.09] 
+2026-10-06 15:03:37:216 35 sec: 2510516 operations; 73967 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2664.48] [UPDATE AverageLatency(us)=2733.09] 
+2026-10-06 15:03:38:216 36 sec: 2586025 operations; 75509 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2603.88] [UPDATE AverageLatency(us)=2683.81] 
+2026-10-06 15:03:38:216 36 sec: 2586025 operations; 75509 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2603.88] [UPDATE AverageLatency(us)=2683.81] 
+[AQRAFT-INSTR] t=1791299019116 fast=1326462 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:39:216 37 sec: 2661003 operations; 74978 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2623.93] [UPDATE AverageLatency(us)=2701.71] 
+2026-10-06 15:03:39:216 37 sec: 2661003 operations; 74978 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2623.93] [UPDATE AverageLatency(us)=2701.71] 
+2026-10-06 15:03:40:216 38 sec: 2733242 operations; 72239 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2715.53] [UPDATE AverageLatency(us)=2811.02] 
+2026-10-06 15:03:40:216 38 sec: 2733242 operations; 72239 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2715.53] [UPDATE AverageLatency(us)=2811.02] 
+2026-10-06 15:03:41:216 39 sec: 2807598 operations; 74356 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2646.39] [UPDATE AverageLatency(us)=2724.93] 
+2026-10-06 15:03:41:216 39 sec: 2807598 operations; 74356 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2646.39] [UPDATE AverageLatency(us)=2724.93] 
+[AQRAFT-INSTR] t=1791299022116 fast=1436766 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:42:216 40 sec: 2881001 operations; 73403 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2680.79] [UPDATE AverageLatency(us)=2758.37] 
+2026-10-06 15:03:42:216 40 sec: 2881001 operations; 73403 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2680.79] [UPDATE AverageLatency(us)=2758.37] 
+2026-10-06 15:03:43:216 41 sec: 2955184 operations; 74183 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2650.66] [UPDATE AverageLatency(us)=2731.46] 
+2026-10-06 15:03:43:216 41 sec: 2955184 operations; 74183 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2650.66] [UPDATE AverageLatency(us)=2731.46] 
+2026-10-06 15:03:44:216 42 sec: 3029403 operations; 74144.86 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2648.57] [UPDATE AverageLatency(us)=2731.09] 
+2026-10-06 15:03:44:216 42 sec: 3029403 operations; 74144.86 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2648.57] [UPDATE AverageLatency(us)=2731.09] 
+[AQRAFT-INSTR] t=1791299025116 fast=1548152 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:45:216 43 sec: 3103868 operations; 74539.54 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2643.85] [UPDATE AverageLatency(us)=2717.27] 
+2026-10-06 15:03:45:216 43 sec: 3103868 operations; 74539.54 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2643.85] [UPDATE AverageLatency(us)=2717.27] 
+2026-10-06 15:03:46:216 44 sec: 3177922 operations; 74054 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2659.99] [UPDATE AverageLatency(us)=2730.71] 
+2026-10-06 15:03:46:216 44 sec: 3177922 operations; 74054 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2659.99] [UPDATE AverageLatency(us)=2730.71] 
+2026-10-06 15:03:47:216 45 sec: 3251813 operations; 73891 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2663.29] [UPDATE AverageLatency(us)=2739.64] 
+2026-10-06 15:03:47:216 45 sec: 3251813 operations; 73891 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2663.29] [UPDATE AverageLatency(us)=2739.64] 
+[AQRAFT-INSTR] t=1791299028116 fast=1658787 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:48:216 46 sec: 3325254 operations; 73441 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2672.72] [UPDATE AverageLatency(us)=2762.65] 
+2026-10-06 15:03:48:216 46 sec: 3325254 operations; 73441 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2672.72] [UPDATE AverageLatency(us)=2762.65] 
+2026-10-06 15:03:49:216 47 sec: 3399398 operations; 74144 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2649.18] [UPDATE AverageLatency(us)=2732.67] 
+2026-10-06 15:03:49:216 47 sec: 3399398 operations; 74144 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2649.18] [UPDATE AverageLatency(us)=2732.67] 
+2026-10-06 15:03:50:216 48 sec: 3473450 operations; 74052 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2655.77] [UPDATE AverageLatency(us)=2737.88] 
+2026-10-06 15:03:50:216 48 sec: 3473450 operations; 74052 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2655.77] [UPDATE AverageLatency(us)=2737.88] 
+[AQRAFT-INSTR] t=1791299031116 fast=1769371 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:51:216 49 sec: 3546933 operations; 73483 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2675.35] [UPDATE AverageLatency(us)=2759.24] 
+2026-10-06 15:03:51:216 49 sec: 3546933 operations; 73483 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2675.35] [UPDATE AverageLatency(us)=2759.24] 
+2026-10-06 15:03:52:216 50 sec: 3620749 operations; 73816 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2665.07] [UPDATE AverageLatency(us)=2742.68] 
+2026-10-06 15:03:52:216 50 sec: 3620749 operations; 73816 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2665.07] [UPDATE AverageLatency(us)=2742.68] 
+2026-10-06 15:03:53:216 51 sec: 3695696 operations; 74947 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2621.43] [UPDATE AverageLatency(us)=2705.61] 
+2026-10-06 15:03:53:216 51 sec: 3695696 operations; 74947 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2621.43] [UPDATE AverageLatency(us)=2705.61] 
+[AQRAFT-INSTR] t=1791299034116 fast=1881232 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:54:216 52 sec: 3770201 operations; 74505 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2640.6] [UPDATE AverageLatency(us)=2719.15] 
+2026-10-06 15:03:54:216 52 sec: 3770201 operations; 74505 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2640.6] [UPDATE AverageLatency(us)=2719.15] 
+2026-10-06 15:03:55:216 53 sec: 3843909 operations; 73634.37 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2667.17] [UPDATE AverageLatency(us)=2751.35] 
+2026-10-06 15:03:55:216 53 sec: 3843909 operations; 73634.37 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2667.17] [UPDATE AverageLatency(us)=2751.35] 
+2026-10-06 15:03:56:216 54 sec: 3917302 operations; 73466.47 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2682.77] [UPDATE AverageLatency(us)=2755.15] 
+2026-10-06 15:03:56:216 54 sec: 3917302 operations; 73466.47 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2682.77] [UPDATE AverageLatency(us)=2755.15] 
+[AQRAFT-INSTR] t=1791299037116 fast=1992077 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:03:57:216 55 sec: 3991643 operations; 74341 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2639.88] [UPDATE AverageLatency(us)=2729.26] 
+2026-10-06 15:03:57:216 55 sec: 3991643 operations; 74341 current ops/sec; est completion in 45 minutes [READ AverageLatency(us)=2639.88] [UPDATE AverageLatency(us)=2729.26] 
+2026-10-06 15:03:58:216 56 sec: 4066421 operations; 74778 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2628.27] [UPDATE AverageLatency(us)=2712.3] 
+2026-10-06 15:03:58:216 56 sec: 4066421 operations; 74778 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2628.27] [UPDATE AverageLatency(us)=2712.3] 
+2026-10-06 15:03:59:216 57 sec: 4140028 operations; 73607 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2672.1] [UPDATE AverageLatency(us)=2751.74] 
+2026-10-06 15:03:59:216 57 sec: 4140028 operations; 73607 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2672.1] [UPDATE AverageLatency(us)=2751.74] 
+[AQRAFT-INSTR] t=1791299040116 fast=2103451 twoSided=0 collapse=0 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect:
+2026-10-06 15:04:00:216 58 sec: 4214219 operations; 74191 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2654.97] [UPDATE AverageLatency(us)=2725.82] 
+2026-10-06 15:04:00:216 58 sec: 4214219 operations; 74191 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2654.97] [UPDATE AverageLatency(us)=2725.82] 
+2026-10-06 15:04:01:216 59 sec: 4288750 operations; 74531 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2641.05] [UPDATE AverageLatency(us)=2716.39] 
+2026-10-06 15:04:01:216 59 sec: 4288750 operations; 74531 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2641.05] [UPDATE AverageLatency(us)=2716.39] 
+2026-10-06 15:04:02:216 60 sec: 4362119 operations; 73369 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2675.23] [UPDATE AverageLatency(us)=2764.22] 
+2026-10-06 15:04:02:216 60 sec: 4362119 operations; 73369 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2675.23] [UPDATE AverageLatency(us)=2764.22] 
+[AQRAFT-INSTR] t=1791299043116 fast=2212935 twoSided=0 collapse=498 donorMoved=0 || 2sidedDonorLeg: || 2sidedPeerLeg: || writeRedirect: 10.10.1.5:8001=36 10.10.1.4:8000=13
+2026-10-06 15:04:03:216 61 sec: 4433336 operations; 71217 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2788.81] [UPDATE AverageLatency(us)=2807.22] 
+2026-10-06 15:04:03:216 61 sec: 4433336 operations; 71217 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2788.81] [UPDATE AverageLatency(us)=2807.22] 
+2026-10-06 15:04:04:216 62 sec: 4507089 operations; 73753 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2678.93] [UPDATE AverageLatency(us)=2746.46] 
+2026-10-06 15:04:04:216 62 sec: 4507089 operations; 73753 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2678.93] [UPDATE AverageLatency(us)=2746.46] 
+2026-10-06 15:04:05:216 63 sec: 4582500 operations; 75411 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2613.03] [UPDATE AverageLatency(us)=2678.33] 
+2026-10-06 15:04:05:216 63 sec: 4582500 operations; 75411 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2613.03] [UPDATE AverageLatency(us)=2678.33] 
+[AQRAFT-INSTR] t=1791299046116 fast=2319039 twoSided=612 collapse=11965 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=1 10.10.1.1:8000=90 10.10.1.3:8002=521 || 2sidedPeerLeg: 10.10.1.5:8001=1 10.10.1.6:8002=521 10.10.1.4:8000=90 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=436 10.10.1.6:8000=138 10.10.1.6:8002=2278 10.10.1.4:8002=312 10.10.1.4:8000=1324
+2026-10-06 15:04:06:216 64 sec: 4669890 operations; 87390 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2268.78] [UPDATE AverageLatency(us)=2304.97] 
+2026-10-06 15:04:06:216 64 sec: 4669890 operations; 87390 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2268.78] [UPDATE AverageLatency(us)=2304.97] 
+2026-10-06 15:04:07:216 65 sec: 4761119 operations; 91229 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2169.44] [UPDATE AverageLatency(us)=2198.52] 
+2026-10-06 15:04:07:216 65 sec: 4761119 operations; 91229 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=2169.44] [UPDATE AverageLatency(us)=2198.52] 
+2026-10-06 15:04:08:216 66 sec: 4860025 operations; 98906 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=1997.68] [UPDATE AverageLatency(us)=2042.32] 
+2026-10-06 15:04:08:216 66 sec: 4860025 operations; 98906 current ops/sec; est completion in 44 minutes [READ AverageLatency(us)=1997.68] [UPDATE AverageLatency(us)=2042.32] 
+[AQRAFT-INSTR] t=1791299049116 fast=2426355 twoSided=616 collapse=50206 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=2 10.10.1.1:8000=93 10.10.1.3:8002=521 || 2sidedPeerLeg: 10.10.1.5:8001=2 10.10.1.6:8002=521 10.10.1.4:8000=93 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=489 10.10.1.6:8000=138 10.10.1.6:8002=2346 10.10.1.4:8002=312 10.10.1.4:8000=1590
+2026-10-06 15:04:09:216 67 sec: 4964114 operations; 104089 current ops/sec; est completion in 43 minutes [READ AverageLatency(us)=1896.64] [UPDATE AverageLatency(us)=1935.15] 
+2026-10-06 15:04:09:216 67 sec: 4964114 operations; 104089 current ops/sec; est completion in 43 minutes [READ AverageLatency(us)=1896.64] [UPDATE AverageLatency(us)=1935.15] 
+2026-10-06 15:04:10:216 68 sec: 5075997 operations; 111883 current ops/sec; est completion in 43 minutes [READ AverageLatency(us)=1761.47] [UPDATE AverageLatency(us)=1805.12] 
+2026-10-06 15:04:10:216 68 sec: 5075997 operations; 111883 current ops/sec; est completion in 43 minutes [READ AverageLatency(us)=1761.47] [UPDATE AverageLatency(us)=1805.12] 
+2026-10-06 15:04:11:216 69 sec: 5191560 operations; 115563 current ops/sec; est completion in 43 minutes [READ AverageLatency(us)=1706.92] [UPDATE AverageLatency(us)=1736.42] 
+2026-10-06 15:04:11:216 69 sec: 5191560 operations; 115563 current ops/sec; est completion in 43 minutes [READ AverageLatency(us)=1706.92] [UPDATE AverageLatency(us)=1736.42] 
+[AQRAFT-INSTR] t=1791299052116 fast=2530929 twoSided=619 collapse=115869 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=93 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=93 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=639 10.10.1.6:8000=138 10.10.1.6:8002=2496 10.10.1.4:8002=312 10.10.1.4:8000=1600
+2026-10-06 15:04:12:216 70 sec: 5308510 operations; 116950 current ops/sec; est completion in 42 minutes [READ AverageLatency(us)=1690.89] [UPDATE AverageLatency(us)=1716.19] 
+2026-10-06 15:04:12:216 70 sec: 5308510 operations; 116950 current ops/sec; est completion in 42 minutes [READ AverageLatency(us)=1690.89] [UPDATE AverageLatency(us)=1716.19] 
+2026-10-06 15:04:13:216 71 sec: 5429309 operations; 120799 current ops/sec; est completion in 42 minutes [READ AverageLatency(us)=1636.83] [UPDATE AverageLatency(us)=1673.59] 
+2026-10-06 15:04:13:216 71 sec: 5429309 operations; 120799 current ops/sec; est completion in 42 minutes [READ AverageLatency(us)=1636.83] [UPDATE AverageLatency(us)=1673.59] 
+2026-10-06 15:04:14:216 72 sec: 5546603 operations; 117294 current ops/sec; est completion in 42 minutes [READ AverageLatency(us)=1683.89] [UPDATE AverageLatency(us)=1713.73] 
+2026-10-06 15:04:14:216 72 sec: 5546603 operations; 117294 current ops/sec; est completion in 42 minutes [READ AverageLatency(us)=1683.89] [UPDATE AverageLatency(us)=1713.73] 
+[AQRAFT-INSTR] t=1791299055116 fast=2621874 twoSided=620 collapse=205851 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:15:216 73 sec: 5673848 operations; 127245 current ops/sec; est completion in 41 minutes [READ AverageLatency(us)=1549.35] [UPDATE AverageLatency(us)=1589.02] 
+2026-10-06 15:04:15:216 73 sec: 5673848 operations; 127245 current ops/sec; est completion in 41 minutes [READ AverageLatency(us)=1549.35] [UPDATE AverageLatency(us)=1589.02] 
+2026-10-06 15:04:16:216 74 sec: 5804611 operations; 130763 current ops/sec; est completion in 41 minutes [READ AverageLatency(us)=1500.51] [UPDATE AverageLatency(us)=1548.28] 
+2026-10-06 15:04:16:216 74 sec: 5804611 operations; 130763 current ops/sec; est completion in 41 minutes [READ AverageLatency(us)=1500.51] [UPDATE AverageLatency(us)=1548.28] 
+2026-10-06 15:04:17:216 75 sec: 5932568 operations; 127957 current ops/sec; est completion in 40 minutes [READ AverageLatency(us)=1534.22] [UPDATE AverageLatency(us)=1581.81] 
+2026-10-06 15:04:17:216 75 sec: 5932568 operations; 127957 current ops/sec; est completion in 40 minutes [READ AverageLatency(us)=1534.22] [UPDATE AverageLatency(us)=1581.81] 
+[AQDBG-COLLAPSE] slot=6345 slotOwner<-sharedPeer=10.10.1.5:8001
+[AQRAFT-INSTR] t=1791299058116 fast=2714522 twoSided=620 collapse=307141 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:18:216 76 sec: 6061861 operations; 129293 current ops/sec; est completion in 40 minutes [READ AverageLatency(us)=1513.89] [UPDATE AverageLatency(us)=1568.6] 
+2026-10-06 15:04:18:216 76 sec: 6061861 operations; 129293 current ops/sec; est completion in 40 minutes [READ AverageLatency(us)=1513.89] [UPDATE AverageLatency(us)=1568.6] 
+2026-10-06 15:04:19:216 77 sec: 6191725 operations; 129864 current ops/sec; est completion in 40 minutes [READ AverageLatency(us)=1512.77] [UPDATE AverageLatency(us)=1558.03] 
+2026-10-06 15:04:19:216 77 sec: 6191725 operations; 129864 current ops/sec; est completion in 40 minutes [READ AverageLatency(us)=1512.77] [UPDATE AverageLatency(us)=1558.03] 
+2026-10-06 15:04:20:216 78 sec: 6318554 operations; 126829 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=1547.78] [UPDATE AverageLatency(us)=1596.47] 
+2026-10-06 15:04:20:216 78 sec: 6318554 operations; 126829 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=1547.78] [UPDATE AverageLatency(us)=1596.47] 
+[AQRAFT-INSTR] t=1791299061116 fast=2806893 twoSided=620 collapse=407715 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:21:216 79 sec: 6447739 operations; 129185 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=1516.91] [UPDATE AverageLatency(us)=1568.88] 
+2026-10-06 15:04:21:216 79 sec: 6447739 operations; 129185 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=1516.91] [UPDATE AverageLatency(us)=1568.88] 
+2026-10-06 15:04:22:216 80 sec: 6577693 operations; 129954 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=1509.49] [UPDATE AverageLatency(us)=1558.35] 
+2026-10-06 15:04:22:216 80 sec: 6577693 operations; 129954 current ops/sec; est completion in 39 minutes [READ AverageLatency(us)=1509.49] [UPDATE AverageLatency(us)=1558.35] 
+2026-10-06 15:04:23:216 81 sec: 6708750 operations; 131057 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1493.9] [UPDATE AverageLatency(us)=1546.02] 
+2026-10-06 15:04:23:216 81 sec: 6708750 operations; 131057 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1493.9] [UPDATE AverageLatency(us)=1546.02] 
+[AQRAFT-INSTR] t=1791299064116 fast=2900160 twoSided=620 collapse=509276 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:24:216 82 sec: 6837000 operations; 128250 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1533.62] [UPDATE AverageLatency(us)=1576.39] 
+2026-10-06 15:04:24:216 82 sec: 6837000 operations; 128250 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1533.62] [UPDATE AverageLatency(us)=1576.39] 
+2026-10-06 15:04:25:216 83 sec: 6968394 operations; 131394 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1492.91] [UPDATE AverageLatency(us)=1540.73] 
+2026-10-06 15:04:25:216 83 sec: 6968394 operations; 131394 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1492.91] [UPDATE AverageLatency(us)=1540.73] 
+2026-10-06 15:04:26:216 84 sec: 7099719 operations; 131325 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1494.74] [UPDATE AverageLatency(us)=1541.2] 
+2026-10-06 15:04:26:216 84 sec: 7099719 operations; 131325 current ops/sec; est completion in 38 minutes [READ AverageLatency(us)=1494.74] [UPDATE AverageLatency(us)=1541.2] 
+[AQDBG-COLLAPSE] slot=7018 slotOwner<-sharedPeer=10.10.1.5:8001
+[AQRAFT-INSTR] t=1791299067116 fast=2994560 twoSided=620 collapse=611946 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:27:216 85 sec: 7231906 operations; 132187 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1482.81] [UPDATE AverageLatency(us)=1532.9] 
+2026-10-06 15:04:27:216 85 sec: 7231906 operations; 132187 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1482.81] [UPDATE AverageLatency(us)=1532.9] 
+2026-10-06 15:04:28:216 86 sec: 7363258 operations; 131352 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1493.2] [UPDATE AverageLatency(us)=1541.28] 
+2026-10-06 15:04:28:216 86 sec: 7363258 operations; 131352 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1493.2] [UPDATE AverageLatency(us)=1541.28] 
+2026-10-06 15:04:29:216 87 sec: 7494638 operations; 131380 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1491.01] [UPDATE AverageLatency(us)=1544.17] 
+2026-10-06 15:04:29:216 87 sec: 7494638 operations; 131380 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1491.01] [UPDATE AverageLatency(us)=1544.17] 
+[AQRAFT-INSTR] t=1791299070116 fast=3088550 twoSided=620 collapse=714428 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:30:216 88 sec: 7624868 operations; 130230 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1506.37] [UPDATE AverageLatency(us)=1554.13] 
+2026-10-06 15:04:30:216 88 sec: 7624868 operations; 130230 current ops/sec; est completion in 37 minutes [READ AverageLatency(us)=1506.37] [UPDATE AverageLatency(us)=1554.13] 
+2026-10-06 15:04:31:216 89 sec: 7758176 operations; 133308 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1471.67] [UPDATE AverageLatency(us)=1518.98] 
+2026-10-06 15:04:31:216 89 sec: 7758176 operations; 133308 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1471.67] [UPDATE AverageLatency(us)=1518.98] 
+2026-10-06 15:04:32:216 90 sec: 7889719 operations; 131543 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1493.39] [UPDATE AverageLatency(us)=1537.78] 
+2026-10-06 15:04:32:216 90 sec: 7889719 operations; 131543 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1493.39] [UPDATE AverageLatency(us)=1537.78] 
+[AQRAFT-INSTR] t=1791299073116 fast=3183440 twoSided=620 collapse=817719 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:33:216 91 sec: 8022368 operations; 132649 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1479.26] [UPDATE AverageLatency(us)=1525.63] 
+2026-10-06 15:04:33:216 91 sec: 8022368 operations; 132649 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1479.26] [UPDATE AverageLatency(us)=1525.63] 
+2026-10-06 15:04:34:216 92 sec: 8156727 operations; 134359 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1462.84] [UPDATE AverageLatency(us)=1503.41] 
+2026-10-06 15:04:34:216 92 sec: 8156727 operations; 134359 current ops/sec; est completion in 36 minutes [READ AverageLatency(us)=1462.84] [UPDATE AverageLatency(us)=1503.41] 
+[AQDBG-COLLAPSE] slot=7011 slotOwner<-sharedPeer=10.10.1.5:8001
+2026-10-06 15:04:35:216 93 sec: 8290090 operations; 133363 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1469.61] [UPDATE AverageLatency(us)=1520.2] 
+2026-10-06 15:04:35:216 93 sec: 8290090 operations; 133363 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1469.61] [UPDATE AverageLatency(us)=1520.2] 
+[AQRAFT-INSTR] t=1791299076116 fast=3279382 twoSided=620 collapse=921967 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:36:216 94 sec: 8422789 operations; 132699 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1476.62] [UPDATE AverageLatency(us)=1527.22] 
+2026-10-06 15:04:36:216 94 sec: 8422789 operations; 132699 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1476.62] [UPDATE AverageLatency(us)=1527.22] 
+2026-10-06 15:04:37:216 95 sec: 8556222 operations; 133433 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1471.09] [UPDATE AverageLatency(us)=1516.21] 
+2026-10-06 15:04:37:216 95 sec: 8556222 operations; 133433 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1471.09] [UPDATE AverageLatency(us)=1516.21] 
+2026-10-06 15:04:38:216 96 sec: 8689808 operations; 133586 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1467.83] [UPDATE AverageLatency(us)=1517.02] 
+2026-10-06 15:04:38:216 96 sec: 8689808 operations; 133586 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1467.83] [UPDATE AverageLatency(us)=1517.02] 
+[AQRAFT-INSTR] t=1791299079116 fast=3375224 twoSided=620 collapse=1026667 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:39:216 97 sec: 8824520 operations; 134712 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1455.99] [UPDATE AverageLatency(us)=1502.12] 
+2026-10-06 15:04:39:216 97 sec: 8824520 operations; 134712 current ops/sec; est completion in 35 minutes [READ AverageLatency(us)=1455.99] [UPDATE AverageLatency(us)=1502.12] 
+2026-10-06 15:04:40:216 98 sec: 8958526 operations; 134006 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1463.66] [UPDATE AverageLatency(us)=1510.17] 
+2026-10-06 15:04:40:216 98 sec: 8958526 operations; 134006 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1463.66] [UPDATE AverageLatency(us)=1510.17] 
+2026-10-06 15:04:41:216 99 sec: 9094018 operations; 135492 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1448.26] [UPDATE AverageLatency(us)=1493.95] 
+2026-10-06 15:04:41:216 99 sec: 9094018 operations; 135492 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1448.26] [UPDATE AverageLatency(us)=1493.95] 
+[AQRAFT-INSTR] t=1791299082116 fast=3470975 twoSided=620 collapse=1130272 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:42:216 100 sec: 9223499 operations; 129481 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1513.12] [UPDATE AverageLatency(us)=1565.91] 
+2026-10-06 15:04:42:216 100 sec: 9223499 operations; 129481 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1513.12] [UPDATE AverageLatency(us)=1565.91] 
+2026-10-06 15:04:43:216 101 sec: 9356630 operations; 133131 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1473.97] [UPDATE AverageLatency(us)=1521.43] 
+2026-10-06 15:04:43:216 101 sec: 9356630 operations; 133131 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1473.97] [UPDATE AverageLatency(us)=1521.43] 
+[AQDBG-COLLAPSE] slot=13393 slotOwner<-sharedPeer=10.10.1.6:8002
+2026-10-06 15:04:44:216 102 sec: 9489822 operations; 133192 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1473.68] [UPDATE AverageLatency(us)=1519.07] 
+2026-10-06 15:04:44:216 102 sec: 9489822 operations; 133192 current ops/sec; est completion in 34 minutes [READ AverageLatency(us)=1473.68] [UPDATE AverageLatency(us)=1519.07] 
+[AQRAFT-INSTR] t=1791299085116 fast=3566148 twoSided=620 collapse=1233687 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:45:216 103 sec: 9620323 operations; 130501 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1503.32] [UPDATE AverageLatency(us)=1550.9] 
+2026-10-06 15:04:45:216 103 sec: 9620323 operations; 130501 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1503.32] [UPDATE AverageLatency(us)=1550.9] 
+2026-10-06 15:04:46:216 104 sec: 9752196 operations; 131873 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1485.83] [UPDATE AverageLatency(us)=1536.88] 
+2026-10-06 15:04:46:216 104 sec: 9752196 operations; 131873 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1485.83] [UPDATE AverageLatency(us)=1536.88] 
+2026-10-06 15:04:47:216 105 sec: 9883848 operations; 131652 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1489.71] [UPDATE AverageLatency(us)=1538.24] 
+2026-10-06 15:04:47:216 105 sec: 9883848 operations; 131652 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1489.71] [UPDATE AverageLatency(us)=1538.24] 
+[AQRAFT-INSTR] t=1791299088116 fast=3661183 twoSided=620 collapse=1336904 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:48:216 106 sec: 10016692 operations; 132844 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1480.33] [UPDATE AverageLatency(us)=1521.32] 
+2026-10-06 15:04:48:216 106 sec: 10016692 operations; 132844 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1480.33] [UPDATE AverageLatency(us)=1521.32] 
+2026-10-06 15:04:49:216 107 sec: 10152180 operations; 135488 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1445.8] [UPDATE AverageLatency(us)=1496.15] 
+2026-10-06 15:04:49:216 107 sec: 10152180 operations; 135488 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1445.8] [UPDATE AverageLatency(us)=1496.15] 
+2026-10-06 15:04:50:216 108 sec: 10285738 operations; 133558 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1468.18] [UPDATE AverageLatency(us)=1516.66] 
+2026-10-06 15:04:50:216 108 sec: 10285738 operations; 133558 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1468.18] [UPDATE AverageLatency(us)=1516.66] 
+[AQRAFT-INSTR] t=1791299091116 fast=3758298 twoSided=620 collapse=1442515 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:51:216 109 sec: 10422530 operations; 136792 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1435.83] [UPDATE AverageLatency(us)=1477.67] 
+2026-10-06 15:04:51:216 109 sec: 10422530 operations; 136792 current ops/sec; est completion in 33 minutes [READ AverageLatency(us)=1435.83] [UPDATE AverageLatency(us)=1477.67] 
+2026-10-06 15:04:52:216 110 sec: 10554794 operations; 132264 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1480.47] [UPDATE AverageLatency(us)=1533.29] 
+2026-10-06 15:04:52:216 110 sec: 10554794 operations; 132264 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1480.47] [UPDATE AverageLatency(us)=1533.29] 
+[AQDBG-COLLAPSE] slot=13505 slotOwner<-sharedPeer=10.10.1.6:8002
+2026-10-06 15:04:53:216 111 sec: 10689715 operations; 134921 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1452.85] [UPDATE AverageLatency(us)=1500.23] 
+2026-10-06 15:04:53:216 111 sec: 10689715 operations; 134921 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1452.85] [UPDATE AverageLatency(us)=1500.23] 
+[AQRAFT-INSTR] t=1791299094116 fast=3854200 twoSided=620 collapse=1547565 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:54:216 112 sec: 10824170 operations; 134455 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1459.91] [UPDATE AverageLatency(us)=1505.05] 
+2026-10-06 15:04:54:216 112 sec: 10824170 operations; 134455 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1459.91] [UPDATE AverageLatency(us)=1505.05] 
+2026-10-06 15:04:55:216 113 sec: 10956982 operations; 132812 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1479.51] [UPDATE AverageLatency(us)=1521.45] 
+2026-10-06 15:04:55:216 113 sec: 10956982 operations; 132812 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1479.51] [UPDATE AverageLatency(us)=1521.45] 
+2026-10-06 15:04:56:216 114 sec: 11091249 operations; 134267 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1461.2] [UPDATE AverageLatency(us)=1507.99] 
+2026-10-06 15:04:56:216 114 sec: 11091249 operations; 134267 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1461.2] [UPDATE AverageLatency(us)=1507.99] 
+[AQRAFT-INSTR] t=1791299097116 fast=3950568 twoSided=620 collapse=1652584 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:04:57:216 115 sec: 11228014 operations; 136765 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1434.01] [UPDATE AverageLatency(us)=1480.53] 
+2026-10-06 15:04:57:216 115 sec: 11228014 operations; 136765 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1434.01] [UPDATE AverageLatency(us)=1480.53] 
+2026-10-06 15:04:58:216 116 sec: 11362276 operations; 134262 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1461.58] [UPDATE AverageLatency(us)=1507.14] 
+2026-10-06 15:04:58:216 116 sec: 11362276 operations; 134262 current ops/sec; est completion in 32 minutes [READ AverageLatency(us)=1461.58] [UPDATE AverageLatency(us)=1507.14] 
+2026-10-06 15:04:59:216 117 sec: 11496373 operations; 134097 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1461.5] [UPDATE AverageLatency(us)=1511.2] 
+2026-10-06 15:04:59:216 117 sec: 11496373 operations; 134097 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1461.5] [UPDATE AverageLatency(us)=1511.2] 
+[AQRAFT-INSTR] t=1791299100116 fast=4046937 twoSided=620 collapse=1757207 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:00:216 118 sec: 11629830 operations; 133457 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1470.06] [UPDATE AverageLatency(us)=1516.61] 
+2026-10-06 15:05:00:216 118 sec: 11629830 operations; 133457 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1470.06] [UPDATE AverageLatency(us)=1516.61] 
+[AQDBG-COLLAPSE] slot=12789 slotOwner<-sharedPeer=10.10.1.6:8002
+2026-10-06 15:05:01:216 119 sec: 11764362 operations; 134532 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1458.96] [UPDATE AverageLatency(us)=1504.49] 
+2026-10-06 15:05:01:216 119 sec: 11764362 operations; 134532 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1458.96] [UPDATE AverageLatency(us)=1504.49] 
+2026-10-06 15:05:02:216 120 sec: 11897632 operations; 133270 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1472.58] [UPDATE AverageLatency(us)=1519.1] 
+2026-10-06 15:05:02:216 120 sec: 11897632 operations; 133270 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1472.58] [UPDATE AverageLatency(us)=1519.1] 
+[AQRAFT-INSTR] t=1791299103116 fast=4142255 twoSided=620 collapse=1860989 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:03:216 121 sec: 12029268 operations; 131636 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1490.25] [UPDATE AverageLatency(us)=1537.76] 
+2026-10-06 15:05:03:216 121 sec: 12029268 operations; 131636 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1490.25] [UPDATE AverageLatency(us)=1537.76] 
+2026-10-06 15:05:04:216 122 sec: 12165429 operations; 136161 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1441.75] [UPDATE AverageLatency(us)=1485.78] 
+2026-10-06 15:05:04:216 122 sec: 12165429 operations; 136161 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1441.75] [UPDATE AverageLatency(us)=1485.78] 
+2026-10-06 15:05:05:216 123 sec: 12299046 operations; 133617 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1471.55] [UPDATE AverageLatency(us)=1512.06] 
+2026-10-06 15:05:05:216 123 sec: 12299046 operations; 133617 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1471.55] [UPDATE AverageLatency(us)=1512.06] 
+[AQRAFT-INSTR] t=1791299106116 fast=4239254 twoSided=620 collapse=1966543 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:06:216 124 sec: 12434678 operations; 135632 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1446.65] [UPDATE AverageLatency(us)=1491.82] 
+2026-10-06 15:05:06:216 124 sec: 12434678 operations; 135632 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1446.65] [UPDATE AverageLatency(us)=1491.82] 
+2026-10-06 15:05:07:216 125 sec: 12569276 operations; 134598 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1457.88] [UPDATE AverageLatency(us)=1504.63] 
+2026-10-06 15:05:07:216 125 sec: 12569276 operations; 134598 current ops/sec; est completion in 31 minutes [READ AverageLatency(us)=1457.88] [UPDATE AverageLatency(us)=1504.63] 
+2026-10-06 15:05:08:216 126 sec: 12702437 operations; 133161 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1473.3] [UPDATE AverageLatency(us)=1519.83] 
+2026-10-06 15:05:08:216 126 sec: 12702437 operations; 133161 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1473.3] [UPDATE AverageLatency(us)=1519.83] 
+[AQRAFT-INSTR] t=1791299109116 fast=4334288 twoSided=620 collapse=2070462 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:09:216 127 sec: 12832463 operations; 130026 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1509.98] [UPDATE AverageLatency(us)=1557.06] 
+2026-10-06 15:05:09:216 127 sec: 12832463 operations; 130026 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1509.98] [UPDATE AverageLatency(us)=1557.06] 
+[AQDBG-COLLAPSE] slot=8161 slotOwner<-sharedPeer=10.10.1.5:8001
+2026-10-06 15:05:10:216 128 sec: 12968208 operations; 135745 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1445.8] [UPDATE AverageLatency(us)=1491] 
+2026-10-06 15:05:10:216 128 sec: 12968208 operations; 135745 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1445.8] [UPDATE AverageLatency(us)=1491] 
+2026-10-06 15:05:11:216 129 sec: 13102838 operations; 134630 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1455.37] [UPDATE AverageLatency(us)=1504.99] 
+2026-10-06 15:05:11:216 129 sec: 13102838 operations; 134630 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1455.37] [UPDATE AverageLatency(us)=1504.99] 
+[AQRAFT-INSTR] t=1791299112116 fast=4430488 twoSided=620 collapse=2175323 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:12:216 130 sec: 13234699 operations; 131861 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1488.93] [UPDATE AverageLatency(us)=1533.83] 
+2026-10-06 15:05:12:216 130 sec: 13234699 operations; 131861 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1488.93] [UPDATE AverageLatency(us)=1533.83] 
+2026-10-06 15:05:13:216 131 sec: 13360237 operations; 125538 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1564.97] [UPDATE AverageLatency(us)=1611.01] 
+2026-10-06 15:05:13:216 131 sec: 13360237 operations; 125538 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1564.97] [UPDATE AverageLatency(us)=1611.01] 
+2026-10-06 15:05:14:216 132 sec: 13494766 operations; 134529 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1460.47] [UPDATE AverageLatency(us)=1502.68] 
+2026-10-06 15:05:14:216 132 sec: 13494766 operations; 134529 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1460.47] [UPDATE AverageLatency(us)=1502.68] 
+[AQRAFT-INSTR] t=1791299115116 fast=4524892 twoSided=620 collapse=2278795 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:15:216 133 sec: 13631018 operations; 136252 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1440.73] [UPDATE AverageLatency(us)=1484.43] 
+2026-10-06 15:05:15:216 133 sec: 13631018 operations; 136252 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1440.73] [UPDATE AverageLatency(us)=1484.43] 
+2026-10-06 15:05:16:216 134 sec: 13767124 operations; 136106 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1442.75] [UPDATE AverageLatency(us)=1486.03] 
+2026-10-06 15:05:16:216 134 sec: 13767124 operations; 136106 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1442.75] [UPDATE AverageLatency(us)=1486.03] 
+2026-10-06 15:05:17:216 135 sec: 13902814 operations; 135690 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1446.29] [UPDATE AverageLatency(us)=1490.47] 
+2026-10-06 15:05:17:216 135 sec: 13902814 operations; 135690 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1446.29] [UPDATE AverageLatency(us)=1490.47] 
+[AQRAFT-INSTR] t=1791299118116 fast=4621782 twoSided=620 collapse=2384986 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+[AQDBG-COLLAPSE] slot=12659 slotOwner<-sharedPeer=10.10.1.6:8002
+2026-10-06 15:05:18:216 136 sec: 14038261 operations; 135447 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1452.23] [UPDATE AverageLatency(us)=1491.3] 
+2026-10-06 15:05:18:216 136 sec: 14038261 operations; 135447 current ops/sec; est completion in 30 minutes [READ AverageLatency(us)=1452.23] [UPDATE AverageLatency(us)=1491.3] 
+2026-10-06 15:05:19:216 137 sec: 14170378 operations; 132117 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1490.29] [UPDATE AverageLatency(us)=1526.32] 
+2026-10-06 15:05:19:216 137 sec: 14170378 operations; 132117 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1490.29] [UPDATE AverageLatency(us)=1526.32] 
+2026-10-06 15:05:20:216 138 sec: 14304276 operations; 133898 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1464.78] [UPDATE AverageLatency(us)=1512.31] 
+2026-10-06 15:05:20:216 138 sec: 14304276 operations; 133898 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1464.78] [UPDATE AverageLatency(us)=1512.31] 
+[AQRAFT-INSTR] t=1791299121116 fast=4717632 twoSided=620 collapse=2489697 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:21:216 139 sec: 14439369 operations; 135093 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1451.74] [UPDATE AverageLatency(us)=1498.78] 
+2026-10-06 15:05:21:216 139 sec: 14439369 operations; 135093 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1451.74] [UPDATE AverageLatency(us)=1498.78] 
+2026-10-06 15:05:22:216 140 sec: 14575210 operations; 135841 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1444.72] [UPDATE AverageLatency(us)=1489.84] 
+2026-10-06 15:05:22:216 140 sec: 14575210 operations; 135841 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1444.72] [UPDATE AverageLatency(us)=1489.84] 
+2026-10-06 15:05:23:216 141 sec: 14712753 operations; 137543 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1428.58] [UPDATE AverageLatency(us)=1469.7] 
+2026-10-06 15:05:23:216 141 sec: 14712753 operations; 137543 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1428.58] [UPDATE AverageLatency(us)=1469.7] 
+[AQRAFT-INSTR] t=1791299124116 fast=4815634 twoSided=620 collapse=2596392 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:24:216 142 sec: 14848692 operations; 135939 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1443.71] [UPDATE AverageLatency(us)=1489.18] 
+2026-10-06 15:05:24:216 142 sec: 14848692 operations; 135939 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1443.71] [UPDATE AverageLatency(us)=1489.18] 
+2026-10-06 15:05:25:216 143 sec: 14984527 operations; 135835 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1443.68] [UPDATE AverageLatency(us)=1491.04] 
+2026-10-06 15:05:25:216 143 sec: 14984527 operations; 135835 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1443.68] [UPDATE AverageLatency(us)=1491.04] 
+2026-10-06 15:05:26:216 144 sec: 15117019 operations; 132492 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1484.77] [UPDATE AverageLatency(us)=1523.16] 
+2026-10-06 15:05:26:216 144 sec: 15117019 operations; 132492 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1484.77] [UPDATE AverageLatency(us)=1523.16] 
+[AQDBG-COLLAPSE] slot=5513 slotOwner<-sharedPeer=10.10.1.5:8001
+[AQRAFT-INSTR] t=1791299127116 fast=4912198 twoSided=620 collapse=2701332 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:27:216 145 sec: 15251652 operations; 134633 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1459.18] [UPDATE AverageLatency(us)=1501.92] 
+2026-10-06 15:05:27:216 145 sec: 15251652 operations; 134633 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1459.18] [UPDATE AverageLatency(us)=1501.92] 
+2026-10-06 15:05:28:216 146 sec: 15386037 operations; 134385 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1457.28] [UPDATE AverageLatency(us)=1508.4] 
+2026-10-06 15:05:28:216 146 sec: 15386037 operations; 134385 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1457.28] [UPDATE AverageLatency(us)=1508.4] 
+2026-10-06 15:05:29:216 147 sec: 15520958 operations; 134921 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1457.01] [UPDATE AverageLatency(us)=1498.26] 
+2026-10-06 15:05:29:216 147 sec: 15520958 operations; 134921 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1457.01] [UPDATE AverageLatency(us)=1498.26] 
+[AQRAFT-INSTR] t=1791299130116 fast=5009413 twoSided=620 collapse=2806951 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:30:216 148 sec: 15657442 operations; 136484 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1438.81] [UPDATE AverageLatency(us)=1482.12] 
+2026-10-06 15:05:30:216 148 sec: 15657442 operations; 136484 current ops/sec; est completion in 29 minutes [READ AverageLatency(us)=1438.81] [UPDATE AverageLatency(us)=1482.12] 
+2026-10-06 15:05:31:216 149 sec: 15792802 operations; 135360 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1451.11] [UPDATE AverageLatency(us)=1493.09] 
+2026-10-06 15:05:31:216 149 sec: 15792802 operations; 135360 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1451.11] [UPDATE AverageLatency(us)=1493.09] 
+2026-10-06 15:05:32:216 150 sec: 15926448 operations; 133646 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1470.54] [UPDATE AverageLatency(us)=1512.04] 
+2026-10-06 15:05:32:216 150 sec: 15926448 operations; 133646 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1470.54] [UPDATE AverageLatency(us)=1512.04] 
+[AQRAFT-INSTR] t=1791299133116 fast=5106395 twoSided=620 collapse=2912967 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:33:216 151 sec: 16063623 operations; 137175 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1431.65] [UPDATE AverageLatency(us)=1473.52] 
+2026-10-06 15:05:33:216 151 sec: 16063623 operations; 137175 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1431.65] [UPDATE AverageLatency(us)=1473.52] 
+2026-10-06 15:05:34:216 152 sec: 16199257 operations; 135634 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1445.26] [UPDATE AverageLatency(us)=1493.45] 
+2026-10-06 15:05:34:216 152 sec: 16199257 operations; 135634 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1445.26] [UPDATE AverageLatency(us)=1493.45] 
+2026-10-06 15:05:35:216 153 sec: 16333890 operations; 134633 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1458.33] [UPDATE AverageLatency(us)=1503.5] 
+2026-10-06 15:05:35:216 153 sec: 16333890 operations; 134633 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1458.33] [UPDATE AverageLatency(us)=1503.5] 
+[AQDBG-COLLAPSE] slot=610 slotOwner<-sharedPeer=10.10.1.4:8000
+[AQRAFT-INSTR] t=1791299136116 fast=5203995 twoSided=620 collapse=3019356 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:36:216 154 sec: 16471227 operations; 137337 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1428.08] [UPDATE AverageLatency(us)=1471.34] 
+2026-10-06 15:05:36:216 154 sec: 16471227 operations; 137337 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1428.08] [UPDATE AverageLatency(us)=1471.34] 
+2026-10-06 15:05:37:216 155 sec: 16606747 operations; 135520 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1448.87] [UPDATE AverageLatency(us)=1495.42] 
+2026-10-06 15:05:37:216 155 sec: 16606747 operations; 135520 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1448.87] [UPDATE AverageLatency(us)=1495.42] 
+2026-10-06 15:05:38:216 156 sec: 16742122 operations; 135375 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1446.53] [UPDATE AverageLatency(us)=1497.47] 
+2026-10-06 15:05:38:216 156 sec: 16742122 operations; 135375 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1446.53] [UPDATE AverageLatency(us)=1497.47] 
+[AQRAFT-INSTR] t=1791299139116 fast=5300407 twoSided=620 collapse=3124482 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:39:216 157 sec: 16874597 operations; 132475 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1479.61] [UPDATE AverageLatency(us)=1529.34] 
+2026-10-06 15:05:39:216 157 sec: 16874597 operations; 132475 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1479.61] [UPDATE AverageLatency(us)=1529.34] 
+2026-10-06 15:05:40:216 158 sec: 17010283 operations; 135686 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1446.94] [UPDATE AverageLatency(us)=1491.28] 
+2026-10-06 15:05:40:216 158 sec: 17010283 operations; 135686 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1446.94] [UPDATE AverageLatency(us)=1491.28] 
+2026-10-06 15:05:41:216 159 sec: 17145175 operations; 134892 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1455.46] [UPDATE AverageLatency(us)=1500.01] 
+2026-10-06 15:05:41:216 159 sec: 17145175 operations; 134892 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1455.46] [UPDATE AverageLatency(us)=1500.01] 
+[AQRAFT-INSTR] t=1791299142116 fast=5397733 twoSided=620 collapse=3230616 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:42:216 160 sec: 17281828 operations; 136653 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1435.31] [UPDATE AverageLatency(us)=1481.25] 
+2026-10-06 15:05:42:216 160 sec: 17281828 operations; 136653 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1435.31] [UPDATE AverageLatency(us)=1481.25] 
+2026-10-06 15:05:43:216 161 sec: 17418882 operations; 137054 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1433.69] [UPDATE AverageLatency(us)=1475.28] 
+2026-10-06 15:05:43:216 161 sec: 17418882 operations; 137054 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1433.69] [UPDATE AverageLatency(us)=1475.28] 
+[AQDBG-COLLAPSE] slot=1845 slotOwner<-sharedPeer=10.10.1.4:8000
+2026-10-06 15:05:44:216 162 sec: 17554244 operations; 135362 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1449.02] [UPDATE AverageLatency(us)=1495.87] 
+2026-10-06 15:05:44:216 162 sec: 17554244 operations; 135362 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1449.02] [UPDATE AverageLatency(us)=1495.87] 
+[AQRAFT-INSTR] t=1791299145116 fast=5494958 twoSided=620 collapse=3336770 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:45:216 163 sec: 17689147 operations; 134903 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1455.23] [UPDATE AverageLatency(us)=1499.02] 
+2026-10-06 15:05:45:216 163 sec: 17689147 operations; 134903 current ops/sec; est completion in 28 minutes [READ AverageLatency(us)=1455.23] [UPDATE AverageLatency(us)=1499.02] 
+2026-10-06 15:05:46:216 164 sec: 17822689 operations; 133542 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1466.44] [UPDATE AverageLatency(us)=1513.45] 
+2026-10-06 15:05:46:216 164 sec: 17822689 operations; 133542 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1466.44] [UPDATE AverageLatency(us)=1513.45] 
+2026-10-06 15:05:47:216 165 sec: 17956364 operations; 133675 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1467.05] [UPDATE AverageLatency(us)=1514.93] 
+2026-10-06 15:05:47:216 165 sec: 17956364 operations; 133675 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1467.05] [UPDATE AverageLatency(us)=1514.93] 
+[AQRAFT-INSTR] t=1791299148116 fast=5591279 twoSided=620 collapse=3441541 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:48:216 166 sec: 18091191 operations; 134827 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1454.42] [UPDATE AverageLatency(us)=1502.26] 
+2026-10-06 15:05:48:216 166 sec: 18091191 operations; 134827 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1454.42] [UPDATE AverageLatency(us)=1502.26] 
+2026-10-06 15:05:49:216 167 sec: 18227502 operations; 136311 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1437.97] [UPDATE AverageLatency(us)=1486.2] 
+2026-10-06 15:05:49:216 167 sec: 18227502 operations; 136311 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1437.97] [UPDATE AverageLatency(us)=1486.2] 
+2026-10-06 15:05:50:216 168 sec: 18364555 operations; 137053 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1436.21] [UPDATE AverageLatency(us)=1473.05] 
+2026-10-06 15:05:50:216 168 sec: 18364555 operations; 137053 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1436.21] [UPDATE AverageLatency(us)=1473.05] 
+[AQRAFT-INSTR] t=1791299151116 fast=5689417 twoSided=620 collapse=3548532 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:51:216 169 sec: 18500322 operations; 135767 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1443.94] [UPDATE AverageLatency(us)=1491.59] 
+2026-10-06 15:05:51:216 169 sec: 18500322 operations; 135767 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1443.94] [UPDATE AverageLatency(us)=1491.59] 
+2026-10-06 15:05:52:216 170 sec: 18633998 operations; 133676 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1467.05] [UPDATE AverageLatency(us)=1514.59] 
+2026-10-06 15:05:52:216 170 sec: 18633998 operations; 133676 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1467.05] [UPDATE AverageLatency(us)=1514.59] 
+[AQDBG-COLLAPSE] slot=1281 slotOwner<-sharedPeer=10.10.1.4:8000
+2026-10-06 15:05:53:216 171 sec: 18770330 operations; 136332 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1438.15] [UPDATE AverageLatency(us)=1486.17] 
+2026-10-06 15:05:53:216 171 sec: 18770330 operations; 136332 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1438.15] [UPDATE AverageLatency(us)=1486.17] 
+[AQRAFT-INSTR] t=1791299154116 fast=5787374 twoSided=620 collapse=3654260 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:54:216 172 sec: 18907048 operations; 136718 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1434.9] [UPDATE AverageLatency(us)=1480.75] 
+2026-10-06 15:05:54:216 172 sec: 18907048 operations; 136718 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1434.9] [UPDATE AverageLatency(us)=1480.75] 
+2026-10-06 15:05:55:216 173 sec: 19043484 operations; 136436 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1434.54] [UPDATE AverageLatency(us)=1487.17] 
+2026-10-06 15:05:55:216 173 sec: 19043484 operations; 136436 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1434.54] [UPDATE AverageLatency(us)=1487.17] 
+2026-10-06 15:05:56:216 174 sec: 19179207 operations; 135723 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1446.41] [UPDATE AverageLatency(us)=1490.78] 
+2026-10-06 15:05:56:216 174 sec: 19179207 operations; 135723 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1446.41] [UPDATE AverageLatency(us)=1490.78] 
+[AQRAFT-INSTR] t=1791299157116 fast=5885144 twoSided=620 collapse=3760374 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:05:57:216 175 sec: 19315063 operations; 135856 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1447.71] [UPDATE AverageLatency(us)=1486.47] 
+2026-10-06 15:05:57:216 175 sec: 19315063 operations; 135856 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1447.71] [UPDATE AverageLatency(us)=1486.47] 
+2026-10-06 15:05:58:216 176 sec: 19450195 operations; 135132 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1450.48] [UPDATE AverageLatency(us)=1499.49] 
+2026-10-06 15:05:58:216 176 sec: 19450195 operations; 135132 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1450.48] [UPDATE AverageLatency(us)=1499.49] 
+2026-10-06 15:05:59:216 177 sec: 19584366 operations; 134171 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1466.01] [UPDATE AverageLatency(us)=1503.83] 
+2026-10-06 15:05:59:216 177 sec: 19584366 operations; 134171 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1466.01] [UPDATE AverageLatency(us)=1503.83] 
+[AQRAFT-INSTR] t=1791299160116 fast=5982047 twoSided=620 collapse=3866116 donorMoved=2657 || 2sidedDonorLeg: 10.10.1.2:8001=3 10.10.1.1:8000=94 10.10.1.3:8002=523 || 2sidedPeerLeg: 10.10.1.5:8001=3 10.10.1.6:8002=523 10.10.1.4:8000=94 || writeRedirect: 10.10.1.5:8002=329 10.10.1.5:8000=141 10.10.1.5:8001=665 10.10.1.6:8000=138 10.10.1.6:8002=2598 10.10.1.4:8002=312 10.10.1.4:8000=1699
+2026-10-06 15:06:00:216 178 sec: 19720787 operations; 136421 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1436.92] [UPDATE AverageLatency(us)=1485.03] 
+2026-10-06 15:06:00:216 178 sec: 19720787 operations; 136421 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1436.92] [UPDATE AverageLatency(us)=1485.03] 
+[AQDBG-COLLAPSE] slot=5703 slotOwner<-sharedPeer=10.10.1.5:8001
+2026-10-06 15:06:01:216 179 sec: 19857846 operations; 137059 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1431.59] [UPDATE AverageLatency(us)=1476.53] 
+2026-10-06 15:06:01:216 179 sec: 19857846 operations; 137059 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1431.59] [UPDATE AverageLatency(us)=1476.53] 
+2026-10-06 15:06:02:216 180 sec: 20009037 operations; 151039.96 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1294.75] [UPDATE AverageLatency(us)=1340.88] 
+2026-10-06 15:06:02:216 180 sec: 20009037 operations; 151039.96 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=1294.75] [UPDATE AverageLatency(us)=1340.88] 
+Maximum time elapsed. Requesting stop for the workload.
+Stop requested for workload. Now Joining!
+2026-10-06 15:06:02:393 180 sec: 20018144 operations; 51451.98 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=904.65] [CLEANUP AverageLatency(us)=28785.06] [UPDATE AverageLatency(us)=930.93] 
+2026-10-06 15:06:02:393 180 sec: 20018144 operations; 51451.98 current ops/sec; est completion in 27 minutes [READ AverageLatency(us)=904.65] [CLEANUP AverageLatency(us)=28785.06] [UPDATE AverageLatency(us)=930.93] 
+[OVERALL], RunTime(ms), 180190
+[OVERALL], Throughput(ops/sec), 111094.64454187246
+[TOTAL_GCS_G1_Young_Generation], Count, 31
+[TOTAL_GC_TIME_G1_Young_Generation], Time(ms), 464
+[TOTAL_GC_TIME_%_G1_Young_Generation], Time(%), 0.2575059659248571
+[TOTAL_GCS_G1_Old_Generation], Count, 0
+[TOTAL_GC_TIME_G1_Old_Generation], Time(ms), 0
+[TOTAL_GC_TIME_%_G1_Old_Generation], Time(%), 0.0
+[TOTAL_GCs], Count, 31
+[TOTAL_GC_TIME], Time(ms), 464
+[TOTAL_GC_TIME_%], Time(%), 0.2575059659248571
+[READ], Operations, 10006049
+[READ], AverageLatency(us), 1756.3991663442785
+[READ], MinLatency(us), 129
+[READ], MaxLatency(us), 212697
+[READ], Return=OK, 10007196
+[READ], 0, 3397.716961089035
+[READ], 1000, 2655.7265226359787
+[READ], 2000, 2674.18409589004
+[READ], 3000, 2722.709158381567
+[READ], 4000, 2641.5625721573365
+[READ], 5000, 2681.1076898012384
+[READ], 6000, 2695.7604246680567
+[READ], 7000, 2689.560014302217
+[READ], 8000, 2614.20269297427
+[READ], 9000, 2635.1064630605442
+[READ], 10000, 2643.1745212367605
+[READ], 11000, 2620.560114401796
+[READ], 12000, 2632.846604995868
+[READ], 13000, 2630.6677532262806
+[READ], 14000, 2613.4395645148475
+[READ], 15000, 2603.597753402934
+[READ], 16000, 2653.1060459621995
+[READ], 17000, 2637.9033178161076
+[READ], 18000, 2647.516326859971
+[READ], 19000, 2670.116361954511
+[READ], 20000, 2662.695108325385
+[READ], 21000, 2623.7615339327767
+[READ], 22000, 2668.6735270160198
+[READ], 23000, 2632.368822306339
+[READ], 24000, 2637.3511304675108
+[READ], 25000, 2601.1318345896593
+[READ], 26000, 2607.236592639932
+[READ], 27000, 2609.9401261342773
+[READ], 28000, 2596.498051689861
+[READ], 29000, 2583.295017136831
+[READ], 30000, 2621.92177673999
+[READ], 31000, 2658.029411764706
+[READ], 32000, 2640.821489863778
+[READ], 33000, 2669.395414462081
+[READ], 34000, 2601.640005316321
+[READ], 35000, 2627.333102326945
+[READ], 36000, 2713.813437973289
+[READ], 37000, 2644.6620088507443
+[READ], 38000, 2680.7787965616044
+[READ], 39000, 2649.471964371948
+[READ], 40000, 2650.3282669038185
+[READ], 41000, 2646.9805031955343
+[READ], 42000, 2657.2674972418804
+[READ], 43000, 2658.0691622297077
+[READ], 44000, 2678.725169361888
+[READ], 45000, 2647.2089422972826
+[READ], 46000, 2660.2429479863035
+[READ], 47000, 2672.2689870836166
+[READ], 48000, 2662.4133773115605
+[READ], 49000, 2625.8240941302315
+[READ], 50000, 2636.049431379338
+[READ], 51000, 2667.4733221385623
+[READ], 52000, 2678.6556248305774
+[READ], 53000, 2644.991722346958
+[READ], 54000, 2626.3810858424085
+[READ], 55000, 2672.929622190859
+[READ], 56000, 2658.439746699003
+[READ], 57000, 2640.5105558992013
+[READ], 58000, 2673.4689085256095
+[READ], 59000, 2767.8089189638913
+[READ], 60000, 2710.281464782537
+[READ], 61000, 2596.019437420986
+[READ], 62000, 2288.950196954689
+[READ], 63000, 2174.0608121448786
+[READ], 64000, 2005.6312998951698
+[READ], 65000, 1899.022203458136
+[READ], 66000, 1767.1285686017018
+[READ], 67000, 1709.227887544608
+[READ], 68000, 1683.506195230266
+[READ], 69000, 1638.6320219123506
+[READ], 70000, 1686.3125946341381
+[READ], 71000, 1555.9373155061642
+[READ], 72000, 1504.0129937709485
+[READ], 73000, 1516.7953544438778
+[READ], 74000, 1529.8093949443123
+[READ], 75000, 1513.3082799408576
+[READ], 76000, 1545.303592229953
+[READ], 77000, 1517.8470494963312
+[READ], 78000, 1509.130978219041
+[READ], 79000, 1492.9596650747
+[READ], 80000, 1514.8922801272745
+[READ], 81000, 1512.9945963421394
+[READ], 82000, 1495.1131361342493
+[READ], 83000, 1483.2325315350574
+[READ], 84000, 1492.28999421807
+[READ], 85000, 1489.6908902312528
+[READ], 86000, 1507.0858256675758
+[READ], 87000, 1474.6662179535658
+[READ], 88000, 1493.5093311062183
+[READ], 89000, 1479.2714531151098
+[READ], 90000, 1461.0741071295759
+[READ], 91000, 1470.7229051116774
+[READ], 92000, 1476.2022234306085
+[READ], 93000, 1471.7166406203041
+[READ], 94000, 1469.0474939158219
+[READ], 95000, 1456.2506601423222
+[READ], 96000, 1462.0193682200038
+[READ], 97000, 1447.1483949121744
+[READ], 98000, 1514.0821559959193
+[READ], 99000, 1475.4643451657894
+[READ], 100000, 1470.331628904317
+[READ], 101000, 1505.5533485809017
+[READ], 102000, 1483.54033637616
+[READ], 103000, 1490.775428944849
+[READ], 104000, 1481.992810418111
+[READ], 105000, 1447.8949598999338
+[READ], 106000, 1466.2085541370589
+[READ], 107000, 1436.8799959067917
+[READ], 108000, 1480.9860444041685
+[READ], 109000, 1452.4754071612922
+[READ], 110000, 1457.4703538507285
+[READ], 111000, 1481.0110985277463
+[READ], 112000, 1461.982947933761
+[READ], 113000, 1433.3160982764944
+[READ], 114000, 1434.2302870585434
+[READ], 115000, 1488.423471758059
+[READ], 116000, 1468.8125820112132
+[READ], 117000, 1459.6756313545425
+[READ], 118000, 1473.176271952966
+[READ], 119000, 1490.1097263696752
+[READ], 120000, 1442.4729564744127
+[READ], 121000, 1472.1964001487543
+[READ], 122000, 1446.4090963033289
+[READ], 123000, 1456.7999317021024
+[READ], 124000, 1474.702675454436
+[READ], 125000, 1509.3516081421806
+[READ], 126000, 1445.7352751283931
+[READ], 127000, 1453.5687500928552
+[READ], 128000, 1490.8141435082853
+[READ], 129000, 1564.1892439172168
+[READ], 130000, 1461.6243653306253
+[READ], 131000, 1434.0168219347433
+[READ], 132000, 1449.7304174657029
+[READ], 133000, 1445.7072947295321
+[READ], 134000, 1452.8195230515269
+[READ], 135000, 1490.120545374756
+[READ], 136000, 1464.0711018773168
+[READ], 137000, 1452.0786681465038
+[READ], 138000, 1444.5798594297955
+[READ], 139000, 1429.6978391059174
+[READ], 140000, 1444.4623358266094
+[READ], 141000, 1441.4442942170622
+[READ], 142000, 1486.2113106033128
+[READ], 143000, 1458.1590028358896
+[READ], 144000, 1456.8926790790433
+[READ], 145000, 1457.0089562009045
+[READ], 146000, 1438.7072013356963
+[READ], 147000, 1450.489186755436
+[READ], 148000, 1472.2048290099633
+[READ], 149000, 1432.3586761160225
+[READ], 150000, 1443.1247619469418
+[READ], 151000, 1459.6450054982613
+[READ], 152000, 1429.504347826087
+[READ], 153000, 1446.4047216297713
+[READ], 154000, 1447.6752078486002
+[READ], 155000, 1478.3115923412872
+[READ], 156000, 1448.517224590962
+[READ], 157000, 1455.540824059078
+[READ], 158000, 1436.4690776677733
+[READ], 159000, 1431.8560068992736
+[READ], 160000, 1449.635944563848
+[READ], 161000, 1456.206726351051
+[READ], 162000, 1465.2131385333173
+[READ], 163000, 1467.089463994372
+[READ], 164000, 1454.1242933661736
+[READ], 165000, 1437.9010828425714
+[READ], 166000, 1436.6053089895795
+[READ], 167000, 1442.5696873891975
+[READ], 168000, 1468.1699537265824
+[READ], 169000, 1438.4604013905525
+[READ], 170000, 1434.9115880831666
+[READ], 171000, 1442.679874408526
+[READ], 172000, 1438.5908100440195
+[READ], 173000, 1447.4996231879775
+[READ], 174000, 1450.4233790440687
+[READ], 175000, 1465.9251957912356
+[READ], 176000, 1436.5204248005994
+[READ], 177000, 1432.2773115376194
+[READ], 178000, 1324.189265384304
+[READ], 179000, 896.1554427523971
+[CLEANUP], Operations, 200
+[CLEANUP], AverageLatency(us), 28785.06
+[CLEANUP], MinLatency(us), 168
+[CLEANUP], MaxLatency(us), 134700
+[CLEANUP], 0, 28785.06
+[UPDATE], Operations, 10009393
+[UPDATE], AverageLatency(us), 1809.1115765961033
+[UPDATE], MinLatency(us), 153
+[UPDATE], MaxLatency(us), 212675
+[UPDATE], Return=OK, 10010948
+[UPDATE], 0, 3413.1231123424513
+[UPDATE], 1000, 2741.2164728734456
+[UPDATE], 2000, 2749.7146020723408
+[UPDATE], 3000, 2798.459876202056
+[UPDATE], 4000, 2726.0527607031167
+[UPDATE], 5000, 2754.7423824228676
+[UPDATE], 6000, 2783.973073224344
+[UPDATE], 7000, 2790.715057597367
+[UPDATE], 8000, 2699.351466326341
+[UPDATE], 9000, 2721.0766820227127
+[UPDATE], 10000, 2728.838514867573
+[UPDATE], 11000, 2691.9450598961093
+[UPDATE], 12000, 2714.8115204394894
+[UPDATE], 13000, 2717.1829563161573
+[UPDATE], 14000, 2695.1181245327352
+[UPDATE], 15000, 2687.544842810788
+[UPDATE], 16000, 2724.748167185175
+[UPDATE], 17000, 2720.851358950328
+[UPDATE], 18000, 2727.5390566037736
+[UPDATE], 19000, 2752.9687177537608
+[UPDATE], 20000, 2731.197154035802
+[UPDATE], 21000, 2704.2499467007783
+[UPDATE], 22000, 2747.10979807562
+[UPDATE], 23000, 2707.7078000482975
+[UPDATE], 24000, 2726.408454489264
+[UPDATE], 25000, 2671.8109863525206
+[UPDATE], 26000, 2681.638822257954
+[UPDATE], 27000, 2683.9741249305503
+[UPDATE], 28000, 2682.4643139946156
+[UPDATE], 29000, 2661.994843190907
+[UPDATE], 30000, 2697.4483016249965
+[UPDATE], 31000, 2735.945830305966
+[UPDATE], 32000, 2718.3375844162833
+[UPDATE], 33000, 2736.745
+[UPDATE], 34000, 2681.887105277031
+[UPDATE], 35000, 2705.602040269894
+[UPDATE], 36000, 2807.7038241342893
+[UPDATE], 37000, 2723.870747749205
+[UPDATE], 38000, 2756.8075636877734
+[UPDATE], 39000, 2734.5326988775014
+[UPDATE], 40000, 2729.972964959569
+[UPDATE], 41000, 2719.1627208622676
+[UPDATE], 42000, 2730.818295026936
+[UPDATE], 43000, 2734.166612851146
+[UPDATE], 44000, 2770.1529261115957
+[UPDATE], 45000, 2728.544942615038
+[UPDATE], 46000, 2744.2364753766947
+[UPDATE], 47000, 2757.9367409182505
+[UPDATE], 48000, 2739.6681937705007
+[UPDATE], 49000, 2706.6545885991573
+[UPDATE], 50000, 2717.7166256723517
+[UPDATE], 51000, 2750.6663857092362
+[UPDATE], 52000, 2755.5944526505828
+[UPDATE], 53000, 2733.311497397929
+[UPDATE], 54000, 2707.890655957162
+[UPDATE], 55000, 2752.8825897714905
+[UPDATE], 56000, 2729.4703354326025
+[UPDATE], 57000, 2715.3986189915427
+[UPDATE], 58000, 2765.0941843353135
+[UPDATE], 59000, 2792.536092018516
+[UPDATE], 60000, 2767.6285979319564
+[UPDATE], 61000, 2666.114950746743
+[UPDATE], 62000, 2326.62338713407
+[UPDATE], 63000, 2200.8703845732443
+[UPDATE], 64000, 2052.2639745823512
+[UPDATE], 65000, 1937.7763383648526
+[UPDATE], 66000, 1808.3074638614569
+[UPDATE], 67000, 1742.2689815612614
+[UPDATE], 68000, 1704.8172171217361
+[UPDATE], 69000, 1677.2292677254302
+[UPDATE], 70000, 1710.0487913595064
+[UPDATE], 71000, 1603.4289467021142
+[UPDATE], 72000, 1550.8045463615294
+[UPDATE], 73000, 1559.6415635259484
+[UPDATE], 74000, 1588.9929413237758
+[UPDATE], 75000, 1558.3202239392958
+[UPDATE], 76000, 1595.2817647336979
+[UPDATE], 77000, 1569.5348575133532
+[UPDATE], 78000, 1560.0089025799
+[UPDATE], 79000, 1543.5207657070048
+[UPDATE], 80000, 1560.3379506933745
+[UPDATE], 81000, 1557.5637294197447
+[UPDATE], 82000, 1540.9972367255962
+[UPDATE], 83000, 1534.1514699389493
+[UPDATE], 84000, 1541.3155018344014
+[UPDATE], 85000, 1543.0397232421935
+[UPDATE], 86000, 1553.734563933021
+[UPDATE], 87000, 1523.51468761691
+[UPDATE], 88000, 1537.7993815406644
+[UPDATE], 89000, 1525.282039296108
+[UPDATE], 90000, 1502.2212527498662
+[UPDATE], 91000, 1520.7025162337663
+[UPDATE], 92000, 1525.3490554704629
+[UPDATE], 93000, 1518.0257366151634
+[UPDATE], 94000, 1518.7300559937382
+[UPDATE], 95000, 1502.6603904645078
+[UPDATE], 96000, 1508.6471061332697
+[UPDATE], 97000, 1492.1934138794754
+[UPDATE], 98000, 1567.4425611470774
+[UPDATE], 99000, 1523.4539938416954
+[UPDATE], 100000, 1516.241770256103
+[UPDATE], 101000, 1552.0053219226404
+[UPDATE], 102000, 1535.3312217743157
+[UPDATE], 103000, 1540.2425234000457
+[UPDATE], 104000, 1521.9086376235236
+[UPDATE], 105000, 1497.8946743277954
+[UPDATE], 106000, 1515.170120410287
+[UPDATE], 107000, 1477.8044028747493
+[UPDATE], 108000, 1534.8336491095113
+[UPDATE], 109000, 1499.5374864876871
+[UPDATE], 110000, 1502.7034398836554
+[UPDATE], 111000, 1523.046067280496
+[UPDATE], 112000, 1508.122811718471
+[UPDATE], 113000, 1480.4045685797169
+[UPDATE], 114000, 1481.8776157918935
+[UPDATE], 115000, 1535.6829599153289
+[UPDATE], 116000, 1515.4342362384632
+[UPDATE], 117000, 1505.7843847947831
+[UPDATE], 118000, 1518.9258910417414
+[UPDATE], 119000, 1537.1104247104247
+[UPDATE], 120000, 1486.993934231204
+[UPDATE], 121000, 1513.8478034498892
+[UPDATE], 122000, 1491.4300013189325
+[UPDATE], 123000, 1503.993157002172
+[UPDATE], 124000, 1520.16642922484
+[UPDATE], 125000, 1557.652741433981
+[UPDATE], 126000, 1490.907779487483
+[UPDATE], 127000, 1503.4273263569798
+[UPDATE], 128000, 1535.4264914880107
+[UPDATE], 129000, 1609.5204161165636
+[UPDATE], 130000, 1504.3102404723404
+[UPDATE], 131000, 1478.2248569927622
+[UPDATE], 132000, 1492.193656436851
+[UPDATE], 133000, 1490.0612781457926
+[UPDATE], 134000, 1492.3429477678308
+[UPDATE], 135000, 1525.8436596479012
+[UPDATE], 136000, 1511.5258447079884
+[UPDATE], 137000, 1499.6089991552176
+[UPDATE], 138000, 1489.3369380549277
+[UPDATE], 139000, 1470.8498560502514
+[UPDATE], 140000, 1491.1771178576164
+[UPDATE], 141000, 1488.3599546912237
+[UPDATE], 142000, 1523.0228030726046
+[UPDATE], 143000, 1502.9508428218926
+[UPDATE], 144000, 1507.1583633066793
+[UPDATE], 145000, 1497.7643895520623
+[UPDATE], 146000, 1483.066140322557
+[UPDATE], 147000, 1492.4083562331944
+[UPDATE], 148000, 1513.1175711369913
+[UPDATE], 149000, 1474.65850462936
+[UPDATE], 150000, 1491.2696104353956
+[UPDATE], 151000, 1504.620352862354
+[UPDATE], 152000, 1472.7577409220428
+[UPDATE], 153000, 1494.2756063991949
+[UPDATE], 154000, 1496.9067204855485
+[UPDATE], 155000, 1529.6231683048904
+[UPDATE], 156000, 1492.4987606963707
+[UPDATE], 157000, 1499.6877812648033
+[UPDATE], 158000, 1482.5398970115752
+[UPDATE], 159000, 1474.3758014567977
+[UPDATE], 160000, 1496.2625643142517
+[UPDATE], 161000, 1499.6153697625025
+[UPDATE], 162000, 1512.1011392386113
+[UPDATE], 163000, 1515.4407236162858
+[UPDATE], 164000, 1502.2667002922458
+[UPDATE], 165000, 1484.667731018246
+[UPDATE], 166000, 1474.2708538503373
+[UPDATE], 167000, 1490.8114430706503
+[UPDATE], 168000, 1514.6601475407383
+[UPDATE], 169000, 1486.9278434149003
+[UPDATE], 170000, 1480.50741066198
+[UPDATE], 171000, 1494.6473925408543
+[UPDATE], 172000, 1483.7765134809326
+[UPDATE], 173000, 1486.936163969542
+[UPDATE], 174000, 1499.7152339467211
+[UPDATE], 175000, 1502.074297516977
+[UPDATE], 176000, 1485.9962839419475
+[UPDATE], 177000, 1476.6674162225304
+[UPDATE], 178000, 1372.0165440677506
+[UPDATE], 179000, 923.4483931117692

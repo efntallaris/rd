@@ -14,6 +14,7 @@
         -p measurementtype=timeseries
         -p "redis.timeout={{ ycsb_timeout }}"
         -p "redis.slotpoll.ms={{ ycsb_slotpoll_ms | default(100) }}"
+        -p "redis.preconnect={{ ycsb_preconnect | default('') }}"
         -threads {{ ycsb_threads_run }}
         >> {{ ycsb_log_filename }}_{{ inventory_hostname }} 2>&1
       async: 3600

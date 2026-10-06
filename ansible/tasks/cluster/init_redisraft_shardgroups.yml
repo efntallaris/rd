@@ -111,6 +111,7 @@
       # sg1/2/3. It owns 0:16383 in its own slot-config; if we LINKed it
       # to sg1/2/3 the donor cluster would refuse the overlapping slot
       # ranges. So skip any pair touching sg4.
+      # The same holds for every group with role: recipient (3 -> 6 scale-out).
       set_fact:
         link_specs: >-
           {{
@@ -129,8 +130,8 @@
         label: "{{ item[0].id }} -> {{ item[1].id }}"
       when:
         - item[0].id != item[1].id
-        - item[0].id != 'sg4'
-        - item[1].id != 'sg4'
+        - (item[0].role | default('recipient' if item[0].id == 'sg4' else 'donor')) != 'recipient'
+        - (item[1].role | default('recipient' if item[1].id == 'sg4' else 'donor')) != 'recipient'
 
     - name: RAFT.SHARDGROUP LINK each pair (sequential, with settle)
       shell: |

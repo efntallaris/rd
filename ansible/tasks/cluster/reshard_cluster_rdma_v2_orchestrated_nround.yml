@@ -84,14 +84,19 @@
     # RAFT.SHARDGROUP WRITE_FLIP for its OWN slot range right after MGN_TXN_START
     # (instead of ansible flipping all donors up-front each round). The worker
     # supplies the slot range; this spec is the constant tail, same every round.
-    - name: "Set per-donor JIT WRITE_FLIP spec on each donor leader"
+    # Set on EVERY replica of each donor group, not only the leader: a replica
+    # promoted after a donor-leader crash issues the WRITE_FLIP and the ownership
+    # handover (NARROW after MGN_TXN_DONE) for the resumed session itself.
+    - name: "Set the recipient shardgroup spec on every donor replica (JIT WRITE_FLIP + donor NARROW)"
       shell: |
-        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[spec.leader_host] }} -p {{ spec.leader_port }} \
+        {% for nd in sg.nodes %}
+        {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[nd.host] }} -p {{ sg.port }} \
           CONFIG SET rdma-writeflip-spec "{{ sg4_dbid }} {{ sg4_node_argv | trim }}"
-      loop: "{{ donor_specs }}"
+        {% endfor %}
+      loop: "{{ redisraft_shardgroups | rejectattr('id', 'equalto', 'sg4') | list }}"
       loop_control:
-        loop_var: spec
-        label: "{{ spec.sg_id }}"
+        loop_var: sg
+        label: "{{ sg.id }}"
       changed_when: false
 
     # PREPARE-AHEAD (peers only): pre-register donor buffers + dial the RDMA link
@@ -110,7 +115,10 @@
         loop_var: spec
         index_var: sg_idx
         label: "{{ spec.sg_id }} warm @ rdma-port {{ 17777 + sg_idx }}"
-      when: not (spec.leader_host == inventory_hostname and spec.leader_port | string == master_port | string)
+      # Skipped when reshard_prewarm.yml already ran (-e rdma_prewarm_early=yes).
+      when:
+        - not (rdma_prewarm_early | default(false) | bool)
+        - not (spec.leader_host == inventory_hostname and spec.leader_port | string == master_port | string)
       retries: 3
       delay: 1
       until: warm_results.rc == 0 and 'OK' in (warm_results.stdout | default(''))
@@ -125,6 +133,7 @@
         {{ redis_bin_dir }}/redis-cli -h {{ narrow_host_ip_map[reshard_target] }} -p {{ master_port }} \
           RDMA CHAIN-WARM {{ (reshard_slots_per_source | int) - ((reshard_slots_per_source | int) // (n_rounds | int)) * ((n_rounds | int) - 1) }}
       register: chain_warm_result
+      when: not (rdma_prewarm_early | default(false) | bool)
       retries: 3
       delay: 1
       until: chain_warm_result.rc == 0 and 'OK' in (chain_warm_result.stdout | default(''))
@@ -134,6 +143,7 @@
     - name: "PREPARE-AHEAD (recipient): wait for CHAIN-WARM to settle"
       pause:
         seconds: 2
+      when: not (rdma_prewarm_early | default(false) | bool)
 
     # Reset the per-donor reshard offset so round 0 starts at the donor's first
     # owned slot. Each donor then self-advances server.rdma_reshard_migrated as it
@@ -164,25 +174,11 @@
                   {{ reshard_target }} {{ master_port }} $CNT {{ peer_endpoints | join(' ') }})
           oid=$(printf '%s' "$out" | grep -oE 'orchestration_id=[0-9]+' | grep -oE '[0-9]+' | head -1)
           if [ -z "$oid" ]; then echo "round $RI DISPATCH FAILED: $out"; exit 1; fi
-          final=TIMEOUT; orchdown=0
+          final=TIMEOUT; orchdown=0; down_since=""
           for i in $(seq 1 1200); do
-            raw=$({{ redis_bin_dir }}/redis-cli -t 2 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>&1)
+            raw=$({{ redis_bin_dir }}/redis-cli -t 0.3 -p {{ master_port }} RDMA MIGRATE-ALL-STATUS $oid 2>&1)
             st=$(printf '%s' "$raw" | head -1 | grep -oE 'DONE|FAILED' | head -1)
             if [ "$st" = "DONE" ] || [ "$st" = "FAILED" ]; then final=$st; break; fi
-            # AqRaft: leave early when waiting cannot help. (a) Any donor already
-            # reported FAILED: the round can never end DONE, and the re-drive below
-            # waits for donors that are still running anyway. (b) About once a second,
-            # check that the round target is still the sg4 leader; after a recipient
-            # leader crash the orchestrator may never hear from every donor.
-            nfail=$(printf '%s' "$raw" | sed -n 4p | tr -dc '0-9')
-            if [ -n "$nfail" ] && [ "$nfail" -gt 0 ]; then final=DONORFAILED; break; fi
-            if [ $((i % 20)) -eq 0 ]; then
-              trole=$({{ redis_bin_dir }}/redis-cli -t 1 -h {{ reshard_target }} -p {{ master_port }} INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n')
-              if [ "$trole" != "leader" ]; then
-                echo "round $RI orch=$oid: target {{ reshard_target }} is no longer the sg4 leader (role=${trole:-unreachable}) -> re-drive"
-                final=LEADERCHANGE; break
-              fi
-            fi
             # AqRaft S2: the orchestrator IS -p master_port (redis_masters[0]:8000). On a
             # donor-LEADER crash that is the killed node, so every status query hits a dead
             # orchestrator, never returns DONE, and the loop otherwise burns its full ~60s
@@ -191,9 +187,17 @@
             # become-leader resume, and the recovery-drain below (which watches the LIVE sg4
             # recipient) waits for that correctly. Require ~1s (20 x 0.05) of refusal so a
             # transient blip does not trip it.
-            if printf '%s' "$raw" | grep -qiE 'could not connect|connection refused'; then orchdown=$((orchdown+1)); else orchdown=0; fi
+            # 2026-10-05: a killed server does not refuse at once. For ~2.8 s it still accepts and
+            # just does not answer, so with -t 2 and "refused" only, this loop sat on the dead
+            # orchestrator until +2.8 s (3 -> 4 both-leaders run: the new donor leader had given up
+            # on the dead recipient at +1.2 s and then waited for the driver). No answer counts
+            # like a refusal now, and 0.6 s without one is enough.
+            if printf '%s' "$raw" | grep -qiE 'could not connect|connection refused|timed out|timeout|temporarily unavailable|server closed|^Error' || [ -z "$raw" ]; then
+              [ -z "$down_since" ] && down_since=$(date +%s.%N)
+              if awk -v a="$down_since" -v b="$(date +%s.%N)" 'BEGIN{exit !(b-a >= 0.6)}'; then orchdown=20; fi
+            else orchdown=0; down_since=""; fi
             if [ "$orchdown" -ge 20 ]; then
-              echo "round $RI orch=$oid: orchestrator (-p {{ master_port }}) unreachable ~1s (donor-leader crash) -> skipping dead poll, going to recovery-drain"
+              echo "round $RI orch=$oid: orchestrator (-p {{ master_port }}) unreachable 0.6 s (donor-leader crash) -> skipping dead poll, going to recovery-drain"
               final=ORCHDOWN; break
             fi
             sleep 0.05
@@ -219,15 +223,23 @@
           SG4_EPS="{% for nd in (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).nodes %}{{ narrow_host_ip_map[nd.host] }}:{{ (redisraft_shardgroups | selectattr('id','equalto','sg4') | first).port }} {% endfor %}"
           # donor spec: id:port:slot_lo:ip,ip,ip
           DONORS="{% for sg in redisraft_shardgroups if sg.id != 'sg4' %}{{ sg.id }}:{{ sg.port }}:{{ sg.slot_config.split(':')[0] | int }}:{% for nd in sg.nodes %}{{ narrow_host_ip_map[nd.host] }}{{ ',' if not loop.last else '' }}{% endfor %} {% endfor %}"
-          role_of() { {{ redis_bin_dir }}/redis-cli -t 2 -h "$1" -p "$2" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n'; }
+          # -t 0.3: a killed server keeps accepting connections for ~2.8 s without answering; with
+          # -t 2 the first pass after a leader was killed sat 2 s on it (3 -> 4 both-leaders run,
+          # 2026-10-05: the donor had given up on the dead recipient at +1.2 s, re-drive came at +2.8 s).
+          role_of() { {{ redis_bin_dir }}/redis-cli -t 0.3 -h "$1" -p "$2" INFO raft 2>/dev/null | awk -F: '/^raft_role:/{print $2}' | tr -d ' \r\n'; }
           sg4_leader() { for ep in $SG4_EPS; do [ "$(role_of ${ep%%:*} ${ep##*:})" = "leader" ] && { echo "$ep"; return; }; done; echo ""; }
           donor_leader() { local pt=$1; for ip in $(echo "$2" | tr ',' ' '); do [ "$(role_of $ip $pt)" = "leader" ] && { echo "$ip"; return; }; done; echo ""; }
           alldone=0
-          for w in $(seq 1 300); do
+          # Polls every 0.1 s (was: fixed sleeps of 2 s per pass and 3 s per re-drive, which
+          # were 2.0 of the ~2.8 s of client downtime after a recipient-leader crash and
+          # spaced the three donors' recoveries 3 s apart, 2026-10-04). Donors are still
+          # recovered ONE AT A TIME: nothing is dispatched while another donor's migration
+          # is running, so two donors never copy into sg4 at once.
+          for w in $(seq 1 6000); do
             L4=$(sg4_leader)
-            if [ -z "$L4" ]; then sleep 2; continue; fi
+            if [ -z "$L4" ]; then sleep 0.1; continue; fi
             L4IP=${L4%%:*}; L4PT=${L4##*:}
-            ndur=0; ntot=0; summary=""
+            ndur=0; ntot=0; summary=""; inflight=0
             for d in $DONORS; do
               id=$(echo $d | cut -d: -f1); pt=$(echo $d | cut -d: -f2); base=$(echo $d | cut -d: -f3); ips=$(echo $d | cut -d: -f4)
               lo=$((base + CHUNK * RI)); hi=$((lo + CNT - 1)); ntot=$((ntot+1))
@@ -239,8 +251,9 @@
               if [ -z "$DL" ]; then summary="$summary $id=no-leader"; continue; fi
               mst=$({{ redis_bin_dir }}/redis-cli -t 2 -h $DL -p $pt RDMA MIGRATE-STATUS 2>/dev/null | head -1 | tr -d '\r')
               if [ "$pend" != "0" ] || { [ -n "$mst" ] && ! echo "$mst" | grep -qE 'DONE|FAILED|ERR|no migrations'; }; then
-                summary="$summary $id=waiting(p=$pend,m=$miss,donor=$mst)"; continue
+                summary="$summary $id=waiting(p=$pend,m=$miss,donor=$mst)"; inflight=1; continue
               fi
+              if [ "$inflight" = "1" ]; then summary="$summary $id=queued"; continue; fi
               key="D_${id}_$(echo $L4 | tr '.:' '__')"
               n=$(eval echo \${$key:-0})
               if [ "$n" -ge 3 ]; then summary="$summary $id=gave-up"; continue; fi
@@ -249,12 +262,17 @@
                 "sess=$tok slots=$lo-$hi n=$CNT recipient=$L4IP:$L4PT" >/dev/null 2>&1
               eval "$key=$((n+1))"
               echo "  re-drive: $id slots=$lo-$hi from $DL:$pt -> sg4 leader $L4 (missing=$miss, attempt $((n+1)), token $tok)"
-              summary="$summary $id=dispatched"
-              sleep 3   # let MIGRATE-STATUS show the new worker before the next poll
+              summary="$summary $id=dispatched"; inflight=1
+              # let MIGRATE-STATUS show the new worker before the next pass (at most 3 s)
+              for z in $(seq 1 60); do
+                m2=$({{ redis_bin_dir }}/redis-cli -t 2 -h $DL -p $pt RDMA MIGRATE-STATUS 2>/dev/null | head -1 | tr -d '\r')
+                echo "$m2" | grep -qE 'DONE|FAILED|ERR|no migrations' || break
+                sleep 0.05
+              done
             done
-            [ $((w % 5)) -eq 1 ] && echo "  re-drive poll $w: sg4 leader=$L4 $ndur/$ntot durable:$summary"
+            [ $((w % 50)) -eq 1 ] && echo "  re-drive poll $w: sg4 leader=$L4 $ndur/$ntot durable:$summary"
             if [ "$ndur" -eq "$ntot" ]; then echo "RE-DRIVE COMPLETE: all $ntot donor ranges durable on sg4 leader $L4 -> NARROW"; alldone=1; break; fi
-            sleep 2
+            sleep 0.1
           done
           [ "$alldone" = "1" ] || { echo "RE-DRIVE INCOMPLETE: not every donor range is durable on sg4 (see polls above)"; exit 1; }
         done

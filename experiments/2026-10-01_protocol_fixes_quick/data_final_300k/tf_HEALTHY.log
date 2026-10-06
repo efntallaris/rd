@@ -1,0 +1,17 @@
+[lin 12:38:58] scenario=HEALTHY profile=quick workload=workloada_lin_quick_60s quorum_reads=yes out=/tmp/lincheck/runs/HEALTHY_qyes_20261002_123858
+[lin 12:43:12] playbook rc=0
+WARN: CLUSTER SLOTSTATE failed (treating all slots as STABLE): ERR Unknown subcommand.
+[lin] final pass: 200 keys, unresolved=0
+[lin] done ok=171307 fail=0 unknown=0
+records=171307 keys=200
+ops: del/ok=16962 get/ok=77474 set/ok=76871
+linearizable keys=200  VIOLATING keys=0  timed-out keys=0  lost-write keys=0
+VERDICT: PASS
+[lin 12:43:24] lincheck rc=0
+POSTCHECK migration PASS  sg4 leader redis3:8000; all 3 ranges durable
+POSTCHECK crashes   PASS  none
+POSTCHECK replicas  PASS  3 live replicas identical (redis3 n=75046 34908c1dfaa3, redis4 n=75046 34908c1dfaa3, redis5 n=75046 34908c1dfaa3)
+POSTCHECK donors    PASS  0-1364: 3 live replicas agree (24968 keys); 5461-6825: 3 live replicas agree (25063 keys); 10922-12286: 3 live replicas agree (25009 keys)
+POSTCHECK bulk      PASS  74880 donor YCSB keys checked, 0 missing
+POSTCHECK VERDICT: PASS
+[lin 12:44:08] OVERALL: PASS (lincheck rc=0, postcheck rc=0)

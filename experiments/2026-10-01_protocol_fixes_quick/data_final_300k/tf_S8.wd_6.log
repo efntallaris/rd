@@ -1,0 +1,51 @@
+[lin 10:27:49] scenario=S8 profile=quick workload=workloada_lin_quick_60s quorum_reads=yes out=/tmp/lincheck/runs/S8_qyes_20261002_102749
+[lin 10:32:02] run_crash_scenario rc=0 (playbook exited rc=0)
+[crash_inject 10:30:45] MARKER HIT (x1)  t_arm=1790937045.846882525
+[crash_inject 10:30:46] KILLED redis3 pid=3373005 (verified alive)  t_kill=1790937046.039963131
+[crash_inject 10:30:46] KILLED redis0 pid=2104797 (verified alive)  t_kill=1790937046.395987726
+	at java.base/java.net.Socket.connect(Socket.java:609)
+	at redis.clients.jedis.Connection.connect(Connection.java:184)
+	... 7 more
+skip line 135997: unexpected end of JSON input
+records=135996 keys=200
+ops: del/ok=13466 del/unknown=27 get/ok=60316 get/unknown=970 set/ok=61136 set/unknown=81
+linearizable keys=165  VIOLATING keys=35  timed-out keys=0  lost-write keys=0
+  lin:106:20: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_106_20.html
+  lin:112:6: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_112_6.html
+  lin:115:30: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_115_30.html
+  lin:127:5: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_127_5.html
+  lin:130:2: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_130_2.html
+  lin:133:21: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_133_21.html
+  lin:136:9: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_136_9.html
+  lin:139:3: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_139_3.html
+  lin:13:22: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_13_22.html
+  lin:142:1: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_142_1.html
+  lin:148:48: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_148_48.html
+  lin:151:3: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_151_3.html
+  lin:154:33: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_154_33.html
+  lin:157:14: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_157_14.html
+  lin:166:2: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_166_2.html
+  lin:16:32: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_16_32.html
+  lin:175:0: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_175_0.html
+  lin:181:21: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_181_21.html
+  lin:190:20: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_190_20.html
+  lin:19:11: Illegal lost=false no final read /tmp/lincheck/runs/S8_qyes_20261002_102749/check/viz_lin_19_11.html
+  lin:28:21: Illegal lost=false no final read 
+  lin:31:1: Illegal lost=false no final read 
+  lin:37:2: Illegal lost=false no final read 
+  lin:43:2: Illegal lost=false no final read 
+  lin:46:23: Illegal lost=false no final read 
+  lin:49:13: Illegal lost=false no final read 
+  lin:4:12: Illegal lost=false no final read 
+  lin:55:20: Illegal lost=false no final read 
+  lin:64:18: Illegal lost=false no final read 
+  lin:70:6: Illegal lost=false no final read 
+VERDICT: FAIL
+[lin 10:32:19] lincheck rc=1
+POSTCHECK migration PASS  sg4 leader redis4:8000; all 3 ranges durable
+POSTCHECK crashes   PASS  none
+POSTCHECK replicas  PASS  2 live replicas identical (redis4 n=75047 8d6410afe9f2, redis5 n=75047 8d6410afe9f2)
+POSTCHECK donors    PASS  0-1364: 2 live replicas agree (24966 keys); 5461-6825: 3 live replicas agree (25065 keys); 10922-12286: 3 live replicas agree (25012 keys)
+POSTCHECK bulk      PASS  74880 donor YCSB keys checked, 0 missing
+POSTCHECK VERDICT: PASS
+[lin 10:33:01] OVERALL: FAIL (lincheck rc=1, postcheck rc=0)

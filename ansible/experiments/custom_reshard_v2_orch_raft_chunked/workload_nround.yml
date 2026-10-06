@@ -19,6 +19,11 @@
 - import_playbook: ../../tasks/ycsb/load_ycsb.yml
   when: dataset_snapshot | length == 0
 - import_playbook: ../../tasks/monitor/start_monitoring.yml
+# -e rdma_prewarm_early=yes: do the reshard's RDMA warm-up (donor memory
+# registration + recipient chain) here, before the workload starts, instead of
+# ~3.5 s before the migration (where it dents client throughput for ~2 s).
+- import_playbook: ../../tasks/cluster/reshard_prewarm.yml
+  when: rdma_prewarm_early | default(false) | bool
 - import_playbook: ../../tasks/ycsb/start_ycsb_async.yml
 - import_playbook: ../../tasks/cluster/pause_pre_reshard.yml
 - import_playbook: ../../tasks/cluster/reshard_cluster_rdma_v2_orchestrated_nround.yml

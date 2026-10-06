@@ -1,0 +1,132 @@
+===== HEALTHY  []
+redis0_sg1.log: 6 07:59:25.745 * <raft> State change: Node is now a leader, term 4
+redis0_sg2.log: 6 07:59:19.352 * <raft> State change: Node is now a leader, term 2
+redis0_sg3.log: 6 07:59:09.893 * <raft> State change: Node is now a leader, term 2
+redis1_sg2.log: 6 07:59:25.930 * <raft> State change: Node is now a leader, term 3
+redis2_sg1.log: 6 07:59:07.695 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 07:59:26.117 * <raft> State change: Node is now a leader, term 3
+redis3_sg4.log: 6 07:59:26.315 * <raft> State change: Node is now a leader, term 3
+redis4_sg4.log: 6 07:58:43.050 * <raft> State change: Node is now a leader, term 2
+===== S1  ['redis3 @ 14:07:05.440 UTC']
+redis0_sg1.log: 6 08:05:35.405 * <raft> State change: Node is now a leader, term 4
+redis0_sg1.log: 6 08:07:09.485 * AqRaft B#1 DONOR-REHOME recorded: slot_lo=0 -> new recipient leader redis4:8000 (in-flight migration for this range will re-ship there on its next backpatch timeout)
+redis0_sg1.log: 6 08:07:09.561 * AqRaft S2 resume-plan: id=800000000000000001 sess=1 1365 slots fully landed on the recipient but not yet durable — waiting for it to finalize
+redis0_sg1.log: 6 08:07:09.763 * AqRaft S2 resume-plan: id=800000000000000001 sess=1 range=0-1364 — recipient reports durable=1365 pending=0 missing=0; skipping 1365 already-landed slots, re-shipping 0 (waited 202ms)
+redis0_sg2.log: 6 08:05:29.326 * <raft> State change: Node is now a leader, term 2
+redis0_sg3.log: 6 08:05:19.553 * <raft> State change: Node is now a leader, term 2
+redis1_sg2.log: 6 08:05:35.593 * <raft> State change: Node is now a leader, term 3
+redis1_sg2.log: 6 08:07:09.488 * AqRaft B#1 DONOR-REHOME recorded: slot_lo=5461 -> new recipient leader redis4:8000 (in-flight migration for this range will re-ship there on its next backpatch timeout)
+redis1_sg2.log: 6 08:07:09.562 * AqRaft S2 resume-plan: id=800000000000005461 sess=1 range=5461-6825 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slots, re-shipping 1365 (waited 0ms)
+redis2_sg1.log: 6 08:05:17.394 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:05:35.807 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:07:09.489 * AqRaft B#1 DONOR-REHOME recorded: slot_lo=10922 -> new recipient leader redis4:8000 (in-flight migration for this range will re-ship there on its next backpatch timeout)
+redis2_sg3.log: 6 08:07:12.957 * AqRaft MGN-RECOVER: role=donor sess=703 payload="sess=703 slots=10922-12286 n=1365 recipient=10.10.1.5:8000" — driving roll-forward resume
+redis2_sg3.log: 6 08:07:12.978 * AqRaft MGN-RECOVER: sess=703 RESUMED — re-dispatched migration id=800000000000000703 to 10.10.1.5:8000 n_slots=1365
+redis2_sg3.log: 6 08:07:12.978 * AqRaft S2 resume-plan: id=800000000000000703 sess=703 range=10922-12286 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slots, re-shipping 1365 (waited 0ms)
+redis3_sg4.log: 6 08:04:52.783 * <raft> State change: Node is now a leader, term 2
+redis4_sg4.log: 6 08:07:05.775 * <raft> State change: Node is now a leader, term 3
+redis4_sg4.log: 6 08:07:05.775 * <raft> AqRaft become-leader: in-flight migration sess=700000000000000000 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis4_sg4.log: 6 08:07:05.775 * AqRaft MGN-RECOVER: role=recipient sess=700000000000000000 payload="register_id=3999297-0 slots=0-1364 n=1365 donor=redis0.entall-318211.streamstore-pg0.utah.cloudlab.us:8000 term=3" — driving 
+redis4_sg4.log: 6 08:07:09.485 * <raft> AqRaft become-leader: in-flight migration sess=700000000000005461 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis4_sg4.log: 6 08:07:09.485 * AqRaft MGN-RECOVER: role=recipient sess=700000000000005461 payload="register_id=2035756-0 slots=5461-6825 n=1365 donor=redis1.entall-318211.streamstore-pg0.utah.cloudlab.us:8001 term=3" — drivi
+redis4_sg4.log: 6 08:07:09.487 * <raft> AqRaft become-leader: in-flight migration sess=700000000000010922 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis4_sg4.log: 6 08:07:09.487 * AqRaft MGN-RECOVER: role=recipient sess=700000000000010922 payload="register_id=2033010-0 slots=10922-12286 n=1365 donor=redis2.entall-318211.streamstore-pg0.utah.cloudlab.us:8002 term=3" — dri
+redis4_sg4.log: 6 08:07:09.561 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=0 pending=1365 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:09.561 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=0 pending=0 missing=1365 (from 0 batches)
+redis4_sg4.log: 6 08:07:09.652 * CHAIN: sess=700000000000000000 dropped 1 dead follower(s) at establish; head is now redis5:8000
+redis4_sg4.log: 6 08:07:09.661 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=0 pending=1365 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:09.762 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:12.917 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:12.929 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis4_sg4.log: 6 08:07:12.941 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=0 missing=1365 (from 0 batches)
+redis4_sg4.log: 6 08:07:12.978 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=0 missing=1365 (from 0 batches)
+redis4_sg4.log: 6 08:07:14.517 * CHAIN: sess=700000000000000001 dropped 1 dead follower(s) at establish; head is now redis5:8000
+redis4_sg4.log: 6 08:07:17.996 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:18.009 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis4_sg4.log: 6 08:07:18.022 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=1365 pending=0 missing=0 (from 1 batches)
+===== S2  ['redis0 @ 14:13:13.010 UTC']
+redis0_sg1.log: 6 08:11:44.729 * <raft> State change: Node is now a leader, term 4
+redis0_sg2.log: 6 08:11:39.845 * <raft> State change: Node is now a leader, term 2
+redis0_sg3.log: 6 08:11:29.695 * <raft> State change: Node is now a leader, term 2
+redis1_sg1.log: 6 08:13:13.528 * <raft> State change: Node is now a leader, term 5
+redis1_sg1.log: 6 08:13:13.528 * <raft> AqRaft become-leader: in-flight migration sess=1 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis1_sg1.log: 6 08:13:13.528 * AqRaft MGN-RECOVER: role=donor sess=1 payload="sess=1 slots=0-1364 n=1365 recipient=10.10.1.4:8000 term=5" — driving roll-forward resume
+redis1_sg1.log: 6 08:13:13.550 * AqRaft MGN-RECOVER: sess=1 RESUMED — re-dispatched migration id=800000000000000001 to 10.10.1.4:8000 n_slots=1365
+redis1_sg1.log: 6 08:13:13.551 * AqRaft S2 resume-plan: id=800000000000000001 sess=1 range=0-1364 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slots, re-shipping 1365 (waited 1ms)
+redis1_sg2.log: 6 08:11:44.920 * <raft> State change: Node is now a leader, term 3
+redis1_sg2.log: 6 08:13:14.864 * AqRaft MGN-RECOVER: role=donor sess=702 payload="sess=702 slots=5461-6825 n=1365 recipient=10.10.1.4:8000" — driving roll-forward resume
+redis1_sg2.log: 6 08:13:14.866 * AqRaft MGN-RECOVER: sess=702 RESUMED — re-dispatched migration id=800000000000000702 to 10.10.1.4:8000 n_slots=1365
+redis1_sg2.log: 6 08:13:14.867 * AqRaft S2 resume-plan: id=800000000000000702 sess=702 range=5461-6825 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slots, re-shipping 1365 (waited 1ms)
+redis2_sg1.log: 6 08:11:27.074 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:11:45.103 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:13:17.904 * AqRaft MGN-RECOVER: role=donor sess=703 payload="sess=703 slots=10922-12286 n=1365 recipient=10.10.1.4:8000" — driving roll-forward resume
+redis2_sg3.log: 6 08:13:17.904 * AqRaft MGN-RECOVER: sess=703 RESUMED — re-dispatched migration id=800000000000000703 to 10.10.1.4:8000 n_slots=1365
+redis2_sg3.log: 6 08:13:17.904 * AqRaft S2 resume-plan: id=800000000000000703 sess=703 range=10922-12286 — recipient reports durable=0 pending=0 missing=1365; skipping 0 already-landed slots, re-shipping 1365 (waited 0ms)
+redis3_sg4.log: 6 08:11:45.295 * <raft> State change: Node is now a leader, term 3
+redis3_sg4.log: 6 08:13:13.550 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=0 pending=0 missing=1365 (from 0 batches)
+redis3_sg4.log: 6 08:13:14.783 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=0 pending=0 missing=1365 (from 0 batches)
+redis3_sg4.log: 6 08:13:14.812 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=0 pending=0 missing=1365 (from 0 batches)
+redis3_sg4.log: 6 08:13:14.866 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=0 pending=0 missing=1365 (from 0 batches)
+redis3_sg4.log: 6 08:13:17.882 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=0 missing=1365 (from 0 batches)
+redis3_sg4.log: 6 08:13:17.904 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=0 missing=1365 (from 0 batches)
+redis3_sg4.log: 6 08:13:22.924 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:13:22.941 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:13:22.956 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=1365 pending=0 missing=0 (from 1 batches)
+redis4_sg4.log: 6 08:07:05.775 * <raft> State change: Node is now a leader, term 3
+redis4_sg4.log: 6 08:07:05.775 * <raft> AqRaft become-leader: in-flight migration sess=700000000000000000 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis4_sg4.log: 6 08:07:05.775 * AqRaft MGN-RECOVER: role=recipient sess=700000000000000000 payload="register_id=3999297-0 slots=0-1364 n=1365 donor=redis0.entall-318211.streamstore-pg0.utah.cloudlab.us:8000 term=3" — driving 
+redis4_sg4.log: 6 08:07:09.485 * <raft> AqRaft become-leader: in-flight migration sess=700000000000005461 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis4_sg4.log: 6 08:07:09.485 * AqRaft MGN-RECOVER: role=recipient sess=700000000000005461 payload="register_id=2035756-0 slots=5461-6825 n=1365 donor=redis1.entall-318211.streamstore-pg0.utah.cloudlab.us:8001 term=3" — drivi
+redis4_sg4.log: 6 08:07:09.487 * <raft> AqRaft become-leader: in-flight migration sess=700000000000010922 detected on promotion (START seen, no DONE) — driving roll-forward recovery
+redis4_sg4.log: 6 08:07:09.487 * AqRaft MGN-RECOVER: role=recipient sess=700000000000010922 payload="register_id=2033010-0 slots=10922-12286 n=1365 donor=redis2.entall-318211.streamstore-pg0.utah.cloudlab.us:8002 term=3" — dri
+redis4_sg4.log: 6 08:07:09.561 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=0 pending=1365 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:09.561 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=0 pending=0 missing=1365 (from 0 batches)
+redis4_sg4.log: 6 08:07:09.652 * CHAIN: sess=700000000000000000 dropped 1 dead follower(s) at establish; head is now redis5:8000
+redis4_sg4.log: 6 08:07:09.661 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=0 pending=1365 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:09.762 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:12.917 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:12.929 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis4_sg4.log: 6 08:07:12.941 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=0 missing=1365 (from 0 batches)
+redis4_sg4.log: 6 08:07:12.978 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=0 missing=1365 (from 0 batches)
+redis4_sg4.log: 6 08:07:14.517 * CHAIN: sess=700000000000000001 dropped 1 dead follower(s) at establish; head is now redis5:8000
+redis4_sg4.log: 6 08:07:17.996 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 0 batches)
+redis4_sg4.log: 6 08:07:18.009 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis4_sg4.log: 6 08:07:18.022 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=1365 pending=0 missing=0 (from 1 batches)
+===== S3  ['redis1 @ 14:19:19.047 UTC']
+redis0_sg1.log: 6 08:17:50.423 * <raft> State change: Node is now a leader, term 4
+redis0_sg2.log: 6 08:17:45.290 * <raft> State change: Node is now a leader, term 2
+redis0_sg3.log: 6 08:17:35.428 * <raft> State change: Node is now a leader, term 2
+redis1_sg2.log: 6 08:17:50.616 * <raft> State change: Node is now a leader, term 3
+redis2_sg1.log: 6 08:17:32.529 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:17:50.802 * <raft> State change: Node is now a leader, term 3
+redis3_sg4.log: 6 08:17:50.999 * <raft> State change: Node is now a leader, term 3
+redis4_sg4.log: 6 08:11:02.141 * <raft> State change: Node is now a leader, term 2
+redis5_sg4.log: 6 08:16:11.949 * <raft> State change: Node is now a leader, term 4
+===== S4  ['redis4 @ 14:25:29.504 UTC']
+redis0_sg1.log: 6 08:24:01.363 * <raft> State change: Node is now a leader, term 4
+redis0_sg2.log: 6 08:23:56.121 * <raft> State change: Node is now a leader, term 2
+redis0_sg3.log: 6 08:23:46.308 * <raft> State change: Node is now a leader, term 2
+redis1_sg2.log: 6 08:24:01.550 * <raft> State change: Node is now a leader, term 3
+redis2_sg1.log: 6 08:23:43.268 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:24:01.732 * <raft> State change: Node is now a leader, term 3
+redis3_sg4.log: 6 08:23:18.781 * <raft> State change: Node is now a leader, term 2
+redis3_sg4.log: 6 08:25:31.979 # CHAIN: sess=700000000000000000 RE-FORM — dropped dead head redis4:8000, promoted redis5:8000 to direct successor (leader will re-forward straight to it)
+redis3_sg4.log: 6 08:25:31.980 * CHAIN: sess=700000000000000001 dropped 1 dead follower(s) at establish; head is now redis5:8000
+redis3_sg4.log: 6 08:25:31.980 * CHAIN: sess=700000000000000002 dropped 1 dead follower(s) at establish; head is now redis5:8000
+redis4_sg4.log: 6 08:17:07.846 * <raft> State change: Node is now a leader, term 2
+redis4_sg4.log: 6 08:22:22.694 * <raft> State change: Node is now a leader, term 4
+===== S5  ['redis0 @ 14:31:37.194 UTC']
+redis0_sg1.log: 6 08:30:05.945 * <raft> State change: Node is now a leader, term 4
+redis0_sg2.log: 6 08:30:00.050 * <raft> State change: Node is now a leader, term 2
+redis0_sg3.log: 6 08:29:50.331 * <raft> State change: Node is now a leader, term 2
+redis1_sg1.log: 6 08:31:37.604 * <raft> State change: Node is now a leader, term 5
+redis1_sg2.log: 6 08:30:06.131 * <raft> State change: Node is now a leader, term 3
+redis2_sg1.log: 6 08:29:47.528 * <raft> State change: Node is now a leader, term 3
+redis2_sg3.log: 6 08:30:06.318 * <raft> State change: Node is now a leader, term 3
+redis3_sg4.log: 6 08:29:23.458 * <raft> State change: Node is now a leader, term 2
+redis3_sg4.log: 6 08:31:39.004 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:31:39.018 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:31:39.033 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=0 pending=1365 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:31:41.062 * AqRaft MGN-RESUME-STATUS: range=0-1364 durable=1365 pending=0 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:31:41.079 * AqRaft MGN-RESUME-STATUS: range=5461-6825 durable=1365 pending=0 missing=0 (from 1 batches)
+redis3_sg4.log: 6 08:31:41.095 * AqRaft MGN-RESUME-STATUS: range=10922-12286 durable=1365 pending=0 missing=0 (from 1 batches)

@@ -1,0 +1,40 @@
+---
+# Like start_redis_instances.yml, but starts {{ procs_per_host }} redis-server
+# processes on every master host, on consecutive ports from {{ master_port }}
+# (8000, 8001, ...). Each process gets its own conf, log and nodes file.
+- name: "Start Redis instances on master nodes (procs_per_host each)"
+  hosts: redis_masters
+  become: yes
+  vars:
+    redis_ports: "{{ range(master_port | int, master_port | int + procs_per_host | default(1) | int) | list }}"
+  tasks:
+    - name: Remove old node configs
+      file:
+        path: "/users/entall/{{ inventory_hostname }}_{{ item }}.conf"
+        state: absent
+      loop: "{{ redis_ports }}"
+
+    - name: Create Redis log directory
+      file:
+        path: "{{ redis_log_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Create Redis data directory
+      file:
+        path: "{{ redis_data_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Generate cluster config (one per port)
+      template:
+        src: ../../templates/redis_cluster.conf.j2
+        dest: "/users/entall/{{ inventory_hostname }}_{{ item }}.conf"
+        mode: "0644"
+      vars:
+        redis_port: "{{ item }}"
+      loop: "{{ redis_ports }}"
+
+    - name: Start redis-server (one per port)
+      command: "{{ redis_bin_dir }}/redis-server /users/entall/{{ inventory_hostname }}_{{ item }}.conf"
+      loop: "{{ redis_ports }}"

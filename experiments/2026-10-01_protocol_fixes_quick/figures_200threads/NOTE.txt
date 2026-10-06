@@ -1,0 +1,4 @@
+No-fault run and fault scenarios S1-S5, 200 YCSB threads per client (2 clients = 400), quick data set (300k keys),
+60 s workload, 20 s pause before the migration, early warm-up (rdma_prewarm_early, now the default),
+YCSB client with JMX registration of connection pools turned off (clients start in 1 s).
+*_total.png sums both clients (tools/plot_total_ycsb.py); *_ycsb.png and *_full_run.png read ycsb0 only.
