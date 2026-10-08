@@ -2251,18 +2251,18 @@ struct redisServer {
     int rdma_transfer_chunk_slots;  /* Aqueduct: K = slots per DONE-SLOTS-CHUNK RPC.
                                        Only consulted when rdma_transfer_overlap=1. */
     int rdma_naive_durability;      /* EXPERIMENT (paper baseline): when on, chainPendingTick
-                                       fires MGN_INDX_UPD on the 5s CHAIN_PENDING_TIMEOUT_MS
+                                       fires MGN_RECP_DURABLE on the 5s CHAIN_PENDING_TIMEOUT_MS
                                        deadline even without a real CHAIN-ACK (the pre-Part-A
                                        "faked durability" behaviour). Default off (honest). */
     sds rdma_src_prereg_bind;       /* AqRaft: local IP whose RDMA device the migration links use (keeper cm_id binds here); empty = first RDMA-capable address. */
-    int rdma_indx_upd_after_merge;  /* AqRaft: log MGN_INDX_UPD only after the recipient leader's merge finishes (default on). */
+    int rdma_indx_upd_after_merge;  /* AqRaft: also hold MGN_RECP_DURABLE until the recipient leader's merge finishes (default off: logged once a majority holds the batch). */
     int rdma_landing_prereg_pools;  /* AqRaft recipient: landing-ring pools to register at startup (0 = lazily at the first REGISTER-BLOCK-SLOTS). */
     int rdma_landing_prereg_slots;  /* AqRaft recipient: slots per donor those pools are sized for. */
     int rdma_src_prereg_slots;      /* AqRaft: pre-register the donor source big-MR pool (this many 2 MiB blocks) at startup; 0 = register lazily at MIGRATE-WARM / REGISTERING. */
     int rdma_async_apply;           /* Aqueduct: separate Raft COMMIT from APPLY. When on,
                                        the recipient reports BACKPATCH-STATUS "done" to the
                                        donor as soon as the migration is COMMITTED (chain
-                                       replicated to the sg4 majority + MGN_INDX_UPD logged:
+                                       replicated to the sg4 majority + MGN_RECP_DURABLE logged:
                                        chain_acked && indx_applied), WITHOUT waiting for the
                                        keyspace MERGE to execute. The merge becomes background
                                        "apply" work that drains after the window. SAFE ONLY

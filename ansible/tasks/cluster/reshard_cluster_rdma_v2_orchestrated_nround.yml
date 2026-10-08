@@ -280,7 +280,7 @@
       changed_when: true
 
     # async-apply MERGE-DRAIN BARRIER: with rdma-async-apply the recipient reports
-    # each donor "done" on COMMIT (chain replicated to majority + MGN_INDX_UPD
+    # each donor "done" on COMMIT (chain replicated to majority + MGN_RECP_DURABLE
     # logged) WITHOUT waiting for the keyspace merge to execute — so when the
     # rounds loop above returns, the last round's merges may still be draining
     # into db[0]. NARROW hands the slots to sg4 and stops the donor serving, so it

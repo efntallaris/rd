@@ -497,3 +497,56 @@ Risk: a live follower whose main thread stalls for more than ~600 ms is treated 
   `plot_scaleout_ycsb.py` (`.bak_s5rename`).
 - Still open: 0.2-0.25 s between "chain established" and the first forwarded block in EVERY round
   (not the twin registration); clients wait ~2.8 s on a killed leader (ycsb_timeout 10 s).
+
+## 46. 2026-10-06: log entry MGN_INDX_UPD renamed MGN_RECP_DURABLE
+
+- The recipient's closing entry is named for what it means (the range is on a majority of the
+  recipient group; its session is closed), not for the index update. Same log type number
+  (`RAFT_LOGTYPE_NUM + 12`), so existing Raft logs are read as before. `RAFT.MGN-LOG` takes
+  `RECP_DURABLE`; the old word `INDX_UPD` is no longer accepted. Server log lines say
+  `MGN_RECP_DURABLE`.
+- NOT renamed: the option `rdma-indx-upd-after-merge` (`-e` name unchanged) and the internal
+  fields `indx_applied` / `indx_wait_logged`.
+- Scripts that read server logs accept both names, for saved runs: `crash/verdict.sh`,
+  `experiments/tools/scaleout/gantt_pairs.py`, `tl.py`. Dated experiment folders and their
+  write-ups keep the old name.
+- Backups `*.bak_recpdurable`. Server and module rebuilt and deployed.
+
+## 47. 2026-10-06: MGN_RECP_DURABLE is logged when a majority holds the batch (not after the merge)
+
+- `rdma-indx-upd-after-merge` default 1 -> 0 (`config.c`; backups `*.bak_durable_on_ack`). The
+  recipient leader logs MGN_RECP_DURABLE as soon as a majority of its group holds the batch; its own
+  merge (index update) is independent. The donor is told "done" (BACKPATCH-STATUS) only when the
+  entry is committed AND the merge is finished (`backpatchBatchDoneGate`, unchanged). `yes` gives
+  the earlier protocol. The playbooks do not pass the option.
+- Unchanged and still tied to the entry on every replica: it closes the recipient session for
+  become-leader recovery, marks the slots durable for MGN-RESUME-STATUS, and moves the tombstone
+  window to CLOSING (tombstones are kept per node until that node's merge of the slot is done).
+- OPEN: recovery. A recipient leader that dies after the entry but before its merge / the donor's
+  "done" leaves no open session, so the new leader runs no recovery and sends no DONOR-REHOME; the
+  donor waits 30 s and fails. Recovery is to be reworked for the new order.
+- Tested: 3 -> 4 quick HEALTHY PASS (`durable_on_ack`), window 3.44 s, no dip. The quick profile does
+  NOT exercise the new order: its merge ends ~10 ms before the majority report. 30M needed.
+
+## 48. 2026-10-07: the recipient leader's chain is sent to the followers (soft state, on AppendEntries)
+
+- Every change of a session's chain gives a new view, kept per slot range on the leader:
+  `slots=lo-hi sess=K reason=establish|reform|repair ver=N chain=h:p,.. holders=h:p,.. out=..`
+  (`chainViewPublish` / `rdmaLeaderChainViewDescribe`). The module attaches all views as a trailing
+  `RAFT.AE` argument when they changed since that node last got them, and on every heartbeat;
+  followers store them (`rdmaChainViewReceive`), ignoring a sender whose term is behind. Dropped on
+  every replica when the range's MGN_RECP_DURABLE applies. Server log line: `CHAIN view: ...`.
+- NOT logged in Raft. A first version logged an MGN_CHAIN_UPD entry per change; removed (the view is
+  only a hint for a new leader, and the commit sat on the re-form path).
+- Used so far only to print `last chain known here` in `rdmaRecipientRecover`; recovery does not act
+  on it yet.
+- The donor sends the session's slot range in DONE-SLOTS-INIT as `<total_slots>:<lo>-<hi>` (same
+  argument). Do NOT change a command's arity in `commands.def` without committing it: the build runs
+  `git checkout -- src/commands.def` on every node (the first attempt added two arguments and every
+  donor got "wrong number of arguments": 3 runs lost).
+- Known gaps: holders are a snapshot at each change (a later report is not sent until the next
+  change); a follower that did not answer at establish is missing from `out=` (S4, later sessions
+  show `chain=redis5:8000 out=-`).
+- Tested, 3 -> 4 quick (`chainsoft`): HEALTHY PASS 3.42 s no dip; S4 PASS 4.99 s (view goes
+  establish -> reform on leader and follower in the same ms); S1 PASS 6.75 s (promoted leader prints
+  the view of both open ranges). 30M not run. Backups `*.bak_chainlog`.

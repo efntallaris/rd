@@ -188,6 +188,8 @@ typedef struct rdmaLeaderChainState {
      * soon as the head is ready, but the recipe is only complete, and the
      * followers only know their positions, after this. */
     int establish_done;
+    /* Number of chain changes published for this session (chain view ver=). */
+    int view_ver;
 } rdmaLeaderChainState;
 
 /* Per-session chain state on a FOLLOWER. Keyed in g_follower_chains
@@ -282,7 +284,7 @@ static pthread_mutex_t g_chain_forward_mu = PTHREAD_MUTEX_INITIALIZER;
  *  replicated: it describes node-local facts (every node's answer         *
  *  differs), so consensus would be semantically wrong and a Raft round-   *
  *  trip per slot prohibitively slow. The GLOBAL facts stay in Raft where  *
- *  they already are (mgn-log TXN_START / INDX_UPD / TXN_DONE).            *
+ *  they already are (mgn-log TXN_START / RECP_DURABLE / TXN_DONE).            *
  *                                                                         *
  *  Safety WITHOUT durability: the inventory lives and dies with the       *
  *  in-memory keyspace it describes (sg4 runs snapshot-disable). A crash   *
@@ -400,7 +402,7 @@ int rdmaInvSlotFullyMerged(int slot) {
 }
 
 /* Mark AFTER the session's merge is FULLY applied to the live keyspace
- * (the local mgn_executed watermark — "I executed this INDX_UPD"). */
+ * (the local mgn_executed watermark — "I executed this RECP_DURABLE"). */
 void rdmaInvMarkExecuted(long long sess) {
     if (sess == 0) return;
     pthread_mutex_lock(&g_slot_inv_mu);
@@ -2287,6 +2289,44 @@ int rdmaLeaderChainAckFrom(long long src_mig_id, long long length, int position)
     return C_OK;
 }
 
+/* The session's chain as it is now, for the chain view (cluster_rdma.c):
+ *   "ver=N chain=h:p,h:p holders=h:p out=h:p"
+ * chain   = the followers the leader forwards through, in chain order;
+ * holders = those of them that reported holding the whole batch;
+ * out     = followers left out when the chain was established (no answer).
+ * A follower dropped later (re-form) is in the previous entry's chain and not
+ * in this one. Each call counts as one change (ver). C_ERR: no such session. */
+int rdmaLeaderChainViewDescribe(long long src_mig_id, char *buf, size_t len) {
+    sds chain = sdsempty(), holders = sdsempty(), out = sdsempty();
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaLeaderChainState *st = findLeaderState(src_mig_id);
+    if (st == NULL) {
+        pthread_mutex_unlock(&g_chain_state_mu);
+        sdsfree(chain); sdsfree(holders); sdsfree(out);
+        return C_ERR;
+    }
+    int ver = ++st->view_ver;
+    for (int i = 0; i < st->n_peers; i++) {
+        rdmaChainPeer *p = &st->peers[i];
+        if (p->host == NULL) continue;
+        if (!p->established) {
+            out = sdscatprintf(out, "%s%s:%d", sdslen(out) ? "," : "", p->host, p->port);
+            continue;
+        }
+        chain = sdscatprintf(chain, "%s%s:%d", sdslen(chain) ? "," : "", p->host, p->port);
+        if (p->wire_position >= 1 && p->wire_position <= 63 &&
+            (st->acked_mask & (1ULL << p->wire_position)))
+            holders = sdscatprintf(holders, "%s%s:%d", sdslen(holders) ? "," : "",
+                                   p->host, p->port);
+    }
+    pthread_mutex_unlock(&g_chain_state_mu);
+    snprintf(buf, len, "ver=%d chain=%s holders=%s out=%s", ver,
+             sdslen(chain) ? chain : "-", sdslen(holders) ? holders : "-",
+             sdslen(out) ? out : "-");
+    sdsfree(chain); sdsfree(holders); sdsfree(out);
+    return C_OK;
+}
+
 /* Number of DISTINCT followers that reported holding the session's batch, or -1
  * if there is no chain state for the session. */
 int rdmaLeaderChainAckedFollowers(long long src_mig_id) {
@@ -3218,7 +3258,7 @@ int rdmaLeaderChainRepair(long long src_mig_id, const int *slots, int n_slots,
     return rc;
 }
 
-/* After a batch is durable (a majority holds it and MGN_INDX_UPD is committed),
+/* After a batch is durable (a majority holds it and MGN_RECP_DURABLE is committed),
  * bring the LIVE followers that still lack it up to date: a follower that was
  * skipped while the chain routed around a failure would otherwise never get
  * the range. Ask a follower that holds the batch to serve it to the ones that
@@ -4032,7 +4072,7 @@ void rdmaDebugChainStatusCommand(client *c) {
  *
  * AqRaft B#1 recipient-leader recovery: the newly-promoted sg4 leader broadcasts
  * this to every surviving replica to discover WHICH one holds a registered landing
- * block for each slot in [lo,hi] (a committed INDX_UPD guarantees a majority of sg4
+ * block for each slot in [lo,hi] (a committed RECP_DURABLE guarantees a majority of sg4
  * physically holds the blocks). Replies with the list of held slots in the range,
  * so the new leader can have that holder forward the gap slots inward (reusing the
  * chain-forward push + rdmaApplySlotBlock — no new transfer primitive).

@@ -65,14 +65,14 @@ done
 #     synchronous forward-failure ('immediately as fallback', fires when the
 #     pipelined forward to a dead F1 errors: Connection reset / poll_send). ---
 p3=$(resolve_log redis3 sg4)
-echo "[chain degrade] 'firing MGN_INDX_UPD (anyway|immediately)' on redis3  (S4 baseline: >0)"
-echo "   redis3 total:      $(grepc "$p3" 'firing MGN_INDX_UPD')"
-echo "   redis3 immediate:  $(grepc "$p3" 'firing MGN_INDX_UPD immediately')"
-echo "   redis3 5s-timeout: $(grepc "$p3" 'firing MGN_INDX_UPD anyway')"
+echo "[chain degrade] 'firing MGN_RECP_DURABLE (anyway|immediately)' on redis3  (S4 baseline: >0)"
+echo "   redis3 total:      $(grepc "$p3" 'firing MGN_(RECP_DURABLE|INDX_UPD)')"
+echo "   redis3 immediate:  $(grepc "$p3" 'firing MGN_(RECP_DURABLE|INDX_UPD) immediately')"
+echo "   redis3 5s-timeout: $(grepc "$p3" 'firing MGN_(RECP_DURABLE|INDX_UPD) anyway')"
 
 # --- migration completion ---------------------------------------------------
 echo "[migration] markers on recipient (redis3)"
-echo "   TXN_DONE:  $(grepc "$p3" 'TXN_DONE')   INDX_UPD applied: $(grepc "$p3" 'MGN_INDX_UPD applied')"
+echo "   TXN_DONE:  $(grepc "$p3" 'TXN_DONE')   RECP_DURABLE applied: $(grepc "$p3" 'MGN_(RECP_DURABLE|INDX_UPD) applied')"
 echo "   bg-merge:  $( [ -n "$p3" ] && sudo grep -a 'AqRaft bg-merge' "$p3" 2>/dev/null | tail -1 | grep -oE 'moved=[0-9]+ skipped=[0-9]+' || echo 'n/a')"
 
 # --- recipient integrity (live; cluster usually still up at verdict) --------
@@ -109,7 +109,7 @@ case "$SCENARIO" in
   S5) echo " EXPECTATION: sg1 data already on recipient; killing sg1 leader is a";
       echo " NON-EVENT -> reshard still completes via a new sg1 leader (NARROW/reconcile),";
       echo " crash-sig=0, UPDATE-err ~0, integrity intact. (Debug 500k: DBSIZE << 7.49M.)";;
-  S4) echo " BASELINE EXPECTATION: migration completes but 'firing MGN_INDX_UPD anyway' > 0";
+  S4) echo " BASELINE EXPECTATION: migration completes but 'firing MGN_RECP_DURABLE anyway' > 0";
       echo " (chain degraded to Raft-only; killed follower missing bytes). (Gap until Phase-B #4.)";;
 esac
 hr; echo

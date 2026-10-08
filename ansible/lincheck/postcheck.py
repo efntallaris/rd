@@ -10,7 +10,7 @@ keys. This adds the migration / fault-tolerance side, once the run is over:
              SIGKILL and leaves none)
   replicas   every live sg4 replica holds the same migrated-slot keyspace
              (keys + values, read locally via RAFT.DEBUG EXEC, so followers
-             answer from their own data) — the durability claim behind INDX_UPD
+             answer from their own data) — the durability claim behind RECP_DURABLE
   bulk       every YCSB key of the migrated slots in the donor's frozen copy is
              present on the recipient leader (YCSB never deletes, EVICT is off)
 

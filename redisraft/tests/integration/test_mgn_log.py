@@ -16,7 +16,7 @@ import pytest
 TYPES = [
     ('TXN_START',      'sess=1 slots=0-100 recipient=dbid-r'),
     ('RECP_TXN_START', 'sess=1 slots=0-100 donor=dbid-d'),
-    ('INDX_UPD',       'sess=1 idx=99'),
+    ('RECP_DURABLE',       'sess=1 idx=99'),
     ('RECP_TXN_DONE',  'sess=1'),
     ('TXN_DONE',       'sess=1'),
 ]

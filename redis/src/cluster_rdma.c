@@ -233,7 +233,7 @@ void rdmaMgnReceivedAsync(long long sess, long long len, int position) {
  * Sync hiredis to 127.0.0.1:<this server's port> — same pattern the existing
  * RDMA control RPCs already use. Safe from worker threads; NOT safe from the
  * main Redis thread (would deadlock — main thread is the one that processes
- * RAFT.MGN-LOG). The two main-thread sites (mergeBackpatchTick INDX_UPD /
+ * RAFT.MGN-LOG). The two main-thread sites (mergeBackpatchTick RECP_DURABLE /
  * RECP_TXN_DONE) need a different mechanism — out of scope for 1c.1. */
 static int rdmaMgnLogSync(const char *type, const char *payload) {
     redisContext *ctx = redisConnect("127.0.0.1", server.port);
@@ -281,6 +281,122 @@ static int rdmaMgnLogSyncRetry(const char *type, const char *payload, int tries)
         if (i + 1 < tries) usleep(200000);
     }
     return -1;
+}
+
+/* ---- The recipient leader's replication chains: soft state ------------------
+ *
+ * Every change of a session's chain (established, a dead follower dropped, a
+ * repair) produces a new view of it:
+ *   "slots=lo-hi sess=K reason=R ver=N chain=h:p,.. holders=h:p,.. out=h:p,.."
+ * The leader keeps the latest view per slot range and the redisraft module
+ * sends them to the followers on AppendEntries (when they change, and on every
+ * heartbeat). Nothing is logged: a leader promoted later uses its copy as a
+ * hint of which replicas were in the chain, in what order (a batch moves down
+ * the chain, so the holders are a prefix of it) and who was left out, and
+ * checks with those replicas before it relies on it. Only the leader acts on
+ * it. A range's view is dropped when its MGN_RECP_DURABLE applies. */
+#define CHAIN_VIEW_MAX 64
+static struct { int lo, hi; char text[512]; } g_chain_view[CHAIN_VIEW_MAX];
+static int g_chain_view_next = 0;
+static unsigned long g_chain_view_gen = 0;   /* bumped on every change */
+static pthread_mutex_t g_chain_view_mu = PTHREAD_MUTEX_INITIALIZER;
+static volatile uint8_t g_durable_slot[CLUSTER_SLOTS];
+
+/* Store one view; the newest for a range replaces the older one. */
+static void chainViewStore(const char *payload) {
+    int lo = -1, hi = -1;
+    const char *sp = payload ? strstr(payload, "slots=") : NULL;
+    if (sp == NULL || sscanf(sp, "slots=%d-%d", &lo, &hi) != 2 || lo < 0 || hi < lo ||
+        hi >= CLUSTER_SLOTS) return;
+    if (__atomic_load_n(&g_durable_slot[lo], __ATOMIC_ACQUIRE) == 2) return;   /* range closed */
+    pthread_mutex_lock(&g_chain_view_mu);
+    int idx = -1;
+    for (int i = 0; i < CHAIN_VIEW_MAX; i++)
+        if (g_chain_view[i].text[0] && g_chain_view[i].lo == lo) { idx = i; break; }
+    if (idx < 0) {
+        for (int i = 0; i < CHAIN_VIEW_MAX && idx < 0; i++)
+            if (g_chain_view[i].text[0] == '\0') idx = i;
+        if (idx < 0) { idx = g_chain_view_next; g_chain_view_next = (g_chain_view_next + 1) % CHAIN_VIEW_MAX; }
+    }
+    if (strcmp(g_chain_view[idx].text, payload) != 0) {
+        g_chain_view[idx].lo = lo;
+        g_chain_view[idx].hi = hi;
+        snprintf(g_chain_view[idx].text, sizeof(g_chain_view[idx].text), "%s", payload);
+        g_chain_view_gen++;
+        serverLog(LL_NOTICE, "CHAIN view: %s", g_chain_view[idx].text);
+    }
+    pthread_mutex_unlock(&g_chain_view_mu);
+}
+
+/* Follower: the views the leader attached to an AppendEntries request, one per
+ * line (called by the redisraft module, weak symbol). */
+void rdmaChainViewReceive(const char *views) {
+    char line[512];
+    while (views != NULL && *views != '\0') {
+        const char *nl = strchr(views, '\n');
+        size_t n = nl ? (size_t) (nl - views) : strlen(views);
+        if (n > 0 && n < sizeof(line)) {
+            memcpy(line, views, n);
+            line[n] = '\0';
+            chainViewStore(line);
+        }
+        views = nl ? nl + 1 : NULL;
+    }
+}
+
+/* Leader: every view, one per line, for the next AppendEntries request (called
+ * by the redisraft module, weak symbol). Returns the generation, 0 if there is
+ * no view. There is one short line per range still open; lines that do not fit
+ * in buf are left out. */
+unsigned long rdmaChainViewSerialize(char *buf, size_t len) {
+    size_t off = 0;
+    buf[0] = '\0';
+    pthread_mutex_lock(&g_chain_view_mu);
+    unsigned long gen = g_chain_view_gen;
+    for (int i = 0; i < CHAIN_VIEW_MAX; i++) {
+        if (g_chain_view[i].text[0] == '\0') continue;
+        int w = snprintf(buf + off, len - off, "%s%s", off ? "\n" : "", g_chain_view[i].text);
+        if (w < 0 || (size_t) w >= len - off) { buf[off] = '\0'; break; }
+        off += (size_t) w;
+    }
+    pthread_mutex_unlock(&g_chain_view_mu);
+    return off > 0 ? gen : 0;
+}
+
+/* The range starting at lo is durable: its chain no longer matters. */
+static void chainViewDrop(int lo) {
+    pthread_mutex_lock(&g_chain_view_mu);
+    for (int i = 0; i < CHAIN_VIEW_MAX; i++)
+        if (g_chain_view[i].text[0] && g_chain_view[i].lo == lo) {
+            g_chain_view[i].text[0] = '\0';
+            g_chain_view_gen++;
+        }
+    pthread_mutex_unlock(&g_chain_view_mu);
+}
+
+/* The latest known chain for the range starting at lo. 1 if there is one. */
+static int chainViewLookup(int lo, char *buf, size_t len) {
+    int found = 0;
+    pthread_mutex_lock(&g_chain_view_mu);
+    for (int i = 0; i < CHAIN_VIEW_MAX; i++)
+        if (g_chain_view[i].text[0] && g_chain_view[i].lo == lo) {
+            snprintf(buf, len, "%s", g_chain_view[i].text);
+            found = 1; break;
+        }
+    pthread_mutex_unlock(&g_chain_view_mu);
+    return found;
+}
+
+/* Leader: the session's chain changed. Record its new view; the followers get
+ * it on the next AppendEntries. A session with no slot range (chain warm-up)
+ * has no view. Never blocks. */
+static void chainViewPublish(long long chain_sess, int lo, int hi, const char *reason) {
+    if (lo < 0 || hi < lo) return;
+    char view[400], payload[480];
+    if (rdmaLeaderChainViewDescribe(chain_sess, view, sizeof(view)) != C_OK) return;
+    snprintf(payload, sizeof(payload), "slots=%d-%d sess=%lld reason=%s %s",
+             lo, hi, chain_sess, reason, view);
+    chainViewStore(payload);
 }
 
 /* AqRaft per-donor JIT WRITE_FLIP. Issued by the migration worker right after
@@ -340,7 +456,7 @@ static void rdmaMigrationParseSlotRange(const char *spec, int *out_lo, int *out_
 
 /* AqRaft donor-side ownership handover. Issued by the migration worker right
  * after its MGN_TXN_DONE commits (the recipient holds the range durably: merged,
- * on a majority, MGN_INDX_UPD committed), so the donor stops serving [lo,hi] and
+ * on a majority, MGN_RECP_DURABLE committed), so the donor stops serving [lo,hi] and
  * redirects clients to the recipient group at once. Before this the handover was
  * issued by the experiment's playbook after ALL donors finished, 0.7-3 s later,
  * and clients kept double-reading through the donors until then. Same command
@@ -870,7 +986,10 @@ typedef struct {
     int n_peers;
     sds *hosts;
     int *ports;
+    int slot_lo, slot_hi;   /* the session's slot range; -1 = none (warm-up) */
 } chainEstablishJob;
+
+static void chainViewPublish(long long chain_sess, int lo, int hi, const char *reason);
 
 static void *chainEstablishThread(void *arg) {
     chainEstablishJob *job = arg;
@@ -903,6 +1022,7 @@ static void *chainEstablishThread(void *arg) {
                 "(will fall back to main-thread lazy-init)",
                 job->src_mig_id, ensure_err);
         }
+        chainViewPublish(job->src_mig_id, job->slot_lo, job->slot_hi, "establish");
     }
     zfree(host_arr);
     for (int i = 0; i < job->n_peers; i++) sdsfree(job->hosts[i]);
@@ -924,7 +1044,7 @@ static void *chainForwardWorker(void *arg);
  * the main thread is never blocked by RDMA QP setup. Called from
  * DONE-SLOTS-INIT (main thread). */
 static void rdmaChainSpawnEstablish(long long src_mig_id, long long pool_bytes,
-                                    sds followers_str) {
+                                    sds followers_str, int slot_lo, int slot_hi) {
     /* Skip if a chain is already established for this session (e.g., a
      * retry of DONE-SLOTS-INIT). rdmaLeaderChainAckCount returns -1 when
      * no state exists, ≥ 0 once leaderEstablishChain has stored state. */
@@ -949,6 +1069,8 @@ static void rdmaChainSpawnEstablish(long long src_mig_id, long long pool_bytes,
     chainEstablishJob *job = zcalloc(sizeof(*job));
     job->src_mig_id = src_mig_id;
     job->pool_bytes = pool_bytes;
+    job->slot_lo = slot_lo;
+    job->slot_hi = slot_hi;
     job->hosts = zmalloc((size_t) count * sizeof(sds));
     job->ports = zmalloc((size_t) count * sizeof(int));
     for (int i = 0; i < count; i++) {
@@ -1882,6 +2004,9 @@ typedef struct backpatchBatch {
      * correct and the overwrite race disappears. 7e17 namespace keeps it
      * disjoint from the warm sentinel (9e17) and donor re-home ids (8e17). */
     long long chain_sess;
+    /* The session's slot range (the key of the recipient session in the Raft
+     * log), -1 if the donor did not send it. Its chain view is kept under it. */
+    int sess_lo, sess_hi;
     _Atomic int          idx;        /* Slots completed so far (pool path); was in-order
                                         position in the single-thread path. */
     _Atomic long long    applied;
@@ -1899,15 +2024,15 @@ typedef struct backpatchBatch {
     time_t               t_started;
     time_t               t_ended;
     /* Phase B.5: chain replication coordination. chain_forwarded=1 once we've
-     * issued rdmaLeaderChainForward for this batch's data; gates MGN_INDX_UPD
+     * issued rdmaLeaderChainForward for this batch's data; gates MGN_RECP_DURABLE
      * on chain-majority CHAIN-ACK arriving. */
     int                  chain_forwarded;
     int                  chain_acked;
-    int                  indx_wait_logged;   /* logged once: INDX_UPD waiting for merge */
+    int                  indx_wait_logged;   /* logged once: RECP_DURABLE waiting for merge */
     long long            chain_baseline_ack_count; /* ack_count snapshot when forward was issued */
     /* AqRaft 3-flag DONE invariant: BACKPATCH-STATUS reports "done" only when
      * ALL THREE are true — leader merge complete (merge_done), chain replicated
-     * to majority (chain_acked), and MGN_INDX_UPD raft log committed
+     * to majority (chain_acked), and MGN_RECP_DURABLE raft log committed
      * (indx_applied). Otherwise the donor leader could release its slots while
      * the recipient followers haven't received the migrated bytes yet → a
      * recipient-leader crash would silently lose data. */
@@ -2086,15 +2211,15 @@ static int backpatch_dispose_pipe[2] = {-1, -1};
 static pthread_mutex_t backpatch_dispose_mu = PTHREAD_MUTEX_INITIALIZER;
 static list *backpatch_dispose_list = NULL;
 
-/* Phase B.5: batches in BACKPATCH_DONE whose MGN_INDX_UPD log + dispose are
+/* Phase B.5: batches in BACKPATCH_DONE whose MGN_RECP_DURABLE log + dispose are
  * deferred pending CHAIN-ACK from the chain tail. chainPendingTick polls
  * rdmaLeaderChainAckCount; when it crosses the batch's baseline, we log
- * MGN_INDX_UPD + RECP_TXN_DONE and dispose. */
+ * MGN_RECP_DURABLE + RECP_TXN_DONE and dispose. */
 static pthread_mutex_t backpatch_chain_pending_mu = PTHREAD_MUTEX_INITIALIZER;
 static list *backpatch_chain_pending = NULL;
 static long long chain_pending_timer_id = -1;
 #define CHAIN_PENDING_TICK_MS 25
-/* AqRaft #4: retired — the leader no longer fires MGN_INDX_UPD on a deadline
+/* AqRaft #4: retired — the leader no longer fires MGN_RECP_DURABLE on a deadline
  * (it faked durability; the real CHAIN-ACK always arrives, just after ~5s). Kept
  * defined for reference / possible future "probe the tail" cadence. */
 #define CHAIN_PENDING_TIMEOUT_MS 5000   /* (unused) former fake-durability deadline */
@@ -2269,6 +2394,7 @@ void rdmaDoneSlotsCommand(client *c) {
     b->src_node_id[strlen(src_node_id)] = '\0';
     b->src_mig_id = src_mig_id;
     b->chain_sess = chainSessAlloc();
+    b->sess_lo = b->sess_hi = -1;
     atomic_store(&b->idx, 0);
     atomic_store(&b->applied, 0);
     atomic_store(&b->clobber_skipped, 0);
@@ -2380,11 +2506,15 @@ void rdmaDoneSlotsCommand(client *c) {
         /* Chain is keyed by the batch's UNIQUE chain_sess, not the donor's
          * colliding src_mig_id — each batch gets its own follower session +
          * landing pool (see backpatchBatch.chain_sess). */
+        for (int _i = 0; _i < n_slots; _i++) {
+            if (b->sess_lo < 0 || b->slots[_i] < b->sess_lo) b->sess_lo = b->slots[_i];
+            if (b->slots[_i] > b->sess_hi) b->sess_hi = b->slots[_i];
+        }
         serverLog(LL_NOTICE,
             "AqRaft chain: batch node=%.8s mig_id=%lld -> chain_sess=%lld (legacy DONE-SLOTS)",
             src_node_id, src_mig_id, b->chain_sess);
         rdmaChainSpawnEstablish(b->chain_sess, pool_bytes,
-                                server.rdma_chain_followers);
+                                server.rdma_chain_followers, b->sess_lo, b->sess_hi);
     }
 
     /* Try to enqueue on the SPSC ring. Safe to run on a dedicated backpatch
@@ -2459,7 +2589,12 @@ void rdmaDoneSlotsCommand(client *c) {
 
 /* Aqueduct TRANSFER/BACKPATCH overlap path.
  *
- * RDMA DONE-SLOTS-INIT <src_node_id> <src_mig_id> <total_slots>
+ * RDMA DONE-SLOTS-INIT <src_node_id> <src_mig_id> <total_slots>[:<slot_lo>-<slot_hi>]
+ *
+ * slot_lo/slot_hi (optional, in the same argument: the command's arity is fixed
+ * in the committed commands.def): the session's slot range, the key of the recipient session
+ * in the Raft log (MGN_RECP_TXN_START); this batch's chain view is kept under
+ * it.
  *
  * Pre-allocate a backpatchBatch sized to total_slots so per-chunk DONE-SLOTS-CHUNK
  * RPCs can append per-slot work items onto the pool work queue without needing
@@ -2473,7 +2608,8 @@ static void xferGateRelease(void);
 void rdmaDoneSlotsInitCommand(client *c) {
     xferGateActivity();   /* the active transfer is alive (transfer gate idle check) */
     if (c->argc != 5) {
-        addReplyError(c, "DONE-SLOTS-INIT: expected <src_node_id> <src_mig_id> <total_slots>");
+        addReplyError(c, "DONE-SLOTS-INIT: expected <src_node_id> <src_mig_id> "
+                         "<total_slots>[:<slot_lo>-<slot_hi>]");
         return;
     }
     sds src_node_id = c->argv[2]->ptr;
@@ -2486,8 +2622,14 @@ void rdmaDoneSlotsInitCommand(client *c) {
         addReplyError(c, "src_mig_id must be an integer");
         return;
     }
-    if (getLongLongFromObject(c->argv[4], &total_slots_ll) != C_OK ||
-        total_slots_ll <= 0 || total_slots_ll > CLUSTER_SLOTS) {
+    int rlo = -1, rhi = -1;
+    {
+        const char *ts = c->argv[4]->ptr;
+        int nf = sscanf(ts, "%lld:%d-%d", &total_slots_ll, &rlo, &rhi);
+        if (nf < 1) total_slots_ll = -1;
+        if (nf != 3 || rlo < 0 || rhi < rlo || rhi >= CLUSTER_SLOTS) rlo = rhi = -1;
+    }
+    if (total_slots_ll <= 0 || total_slots_ll > CLUSTER_SLOTS) {
         addReplyError(c, "total_slots out of range");
         return;
     }
@@ -2501,6 +2643,9 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->src_node_id[CLUSTER_NAMELEN] = '\0';
     b->src_mig_id = src_mig_id;
     b->chain_sess = chainSessAlloc();
+    b->sess_lo = b->sess_hi = -1;
+    b->sess_lo = rlo;
+    b->sess_hi = rhi;
     atomic_store(&b->idx, 0);
     atomic_store(&b->applied, 0);
     atomic_store(&b->clobber_skipped, 0);
@@ -2638,7 +2783,7 @@ void rdmaDoneSlotsInitCommand(client *c) {
             "AqRaft chain: batch node=%.8s mig_id=%lld -> chain_sess=%lld (DONE-SLOTS-INIT)",
             src_node_id, src_mig_id, b->chain_sess);
         rdmaChainSpawnEstablish(b->chain_sess, pool_bytes,
-                                server.rdma_chain_followers);
+                                server.rdma_chain_followers, b->sess_lo, b->sess_hi);
         /* chain-pipeline: spawn the dedicated forwarder NOW (not at merge-done)
          * so it RDMA-forwards each block to F1 as the backpatch workers capture
          * it, overlapping the forward with the transfer + merge. */
@@ -3056,7 +3201,7 @@ static void chainPendingAddLocked(backpatchBatch *b) {
     listAddNodeTail(backpatch_chain_pending, b);
 }
 
-/* Phase B.5: fire MGN_INDX_UPD + RECP_TXN_DONE for a finished batch and
+/* Phase B.5: fire MGN_RECP_DURABLE + RECP_TXN_DONE for a finished batch and
  * push it onto the dispose list. Called both from the no-chain immediate
  * path and from chainPendingTick after chain-ack arrives. Caller must hold
  * NO mutex on b. */
@@ -3403,12 +3548,12 @@ static void backpatchFinalize(backpatchBatch *b) {
      * connection pool. Measure to confirm. */
     long long t0 = ustime();
 
-    /* AqRaft fix (2026-06-05): the MGN_INDX_UPD / MGN_RECP_TXN_DONE emit below
+    /* AqRaft fix (2026-06-05): the MGN_RECP_DURABLE / MGN_RECP_TXN_DONE emit below
      * MUST be thread-safe here. backpatchFinalize runs OFF the main thread in
      * the normal path (chainForwardWorker / backpatchFinalizeWorker), but
      * rdmaMgnLogAsync drives ONE shared event-loop async context that is
      * main-thread-only. Concurrent worker-thread sends raced and corrupted that
-     * context, so only the first ~2 of N sessions' INDX_UPD/RECP_TXN_DONE ever
+     * context, so only the first ~2 of N sessions' RECP_DURABLE/RECP_TXN_DONE ever
      * committed — leaving most migrated sessions UNINDEXED on the sg4 followers
      * (reads -MOVED to a follower then miss => mass read failures + post-
      * migration throughput collapse on read-heavy workloads). Fix: emit via the
@@ -3418,7 +3563,7 @@ static void backpatchFinalize(backpatchBatch *b) {
      * deadlock the event loop on its own RAFT.MGN-LOG. */
     int off_main = !pthread_equal(pthread_self(), server.main_thread_id);
     if (!off_main) {
-        /* Never finalize on the main thread: MGN_INDX_UPD must be COMMITTED
+        /* Never finalize on the main thread: MGN_RECP_DURABLE must be COMMITTED
          * before the donor is told "done", and waiting for a commit here would
          * deadlock the event loop that commits it. Hand the batch back to
          * chainPendingTick, which finalizes on a worker thread. */
@@ -3431,7 +3576,7 @@ static void backpatchFinalize(backpatchBatch *b) {
     }
 
     /* The slot RANGE is unique per donor session (session ids collide across
-     * donors), so MGN_INDX_UPD carries slots=lo-hi: every replica keys the
+     * donors), so MGN_RECP_DURABLE carries slots=lo-hi: every replica keys the
      * session close, the durable-slot map and the tombstone window on it. */
     int _slot_lo = CLUSTER_SLOTS, _slot_hi = -1;
     if (b->covered_slots != NULL) {
@@ -3443,22 +3588,23 @@ static void backpatchFinalize(backpatchBatch *b) {
     }
 
     {
-        /* MGN_INDX_UPD is the recipient's closing entry (there is no separate
-         * RECP_TXN_DONE): a majority holds the range and this leader's index
-         * update is done. indx_applied — which lets BACKPATCH-STATUS answer
-         * "done", so the donor drops its copy — is set only once the entry is
-         * committed. If it cannot be committed (this node is no longer the
-         * leader), the batch stays un-finalized: the donor never sees "done"
-         * from us and re-homes to the new leader. */
+        /* MGN_RECP_DURABLE: a majority of the recipient group holds the range.
+         * It says nothing about this leader's merge (index update), which runs
+         * independently and may still be going. indx_applied is set only once
+         * the entry is committed; BACKPATCH-STATUS answers "done" — so the
+         * donor drops its copy — when the entry is committed AND the merge is
+         * finished (backpatchBatchDoneGate). If it cannot be committed (this node
+         * is no longer the leader), the batch stays un-finalized: the donor never
+         * sees "done" from us and re-homes to the new leader. */
         char mgn_payload[192];
         snprintf(mgn_payload, sizeof(mgn_payload),
                  "sess=%lld slots=%d-%d n_slots=%d applied=%lld clobber_skipped=%lld",
                  b->src_mig_id, _slot_lo, _slot_hi, b->n_slots,
                  (long long) atomic_load(&b->applied),
                  (long long) atomic_load(&b->clobber_skipped));
-        if (rdmaMgnLogSyncRetry("INDX_UPD", mgn_payload, 3) != 0) {
+        if (rdmaMgnLogSyncRetry("RECP_DURABLE", mgn_payload, 3) != 0) {
             serverLog(LL_WARNING,
-                "backpatchFinalize sess=%lld slots=%d-%d: MGN_INDX_UPD could NOT be "
+                "backpatchFinalize sess=%lld slots=%d-%d: MGN_RECP_DURABLE could NOT be "
                 "committed — batch left un-finalized, donor is not told done",
                 b->src_mig_id, _slot_lo, _slot_hi);
             return;
@@ -3634,6 +3780,7 @@ static void *chainForwardWorker(void *arg) {
                 "RE-FORM (never faking durability)", b->src_mig_id, errbuf);
             char rfe[256] = {0};
             if (rdmaLeaderChainDropDeadHead(b->chain_sess, rfe, sizeof(rfe)) == C_OK) {
+                chainViewPublish(b->chain_sess, b->sess_lo, b->sess_hi, "reform");
                 char fe2[256] = {0};
                 frc = rdmaLeaderChainForwardPerSlot(b->chain_sess,
                                                     job->slots_copy, job->n_slots,
@@ -3642,12 +3789,12 @@ static void *chainForwardWorker(void *arg) {
                 if (frc != C_OK)
                     serverLog(LL_WARNING,
                         "CHAIN: sess=%lld re-forward after RE-FORM also failed (%s) — NOT "
-                        "firing MGN_INDX_UPD; fail loud rather than fake durability",
+                        "firing MGN_RECP_DURABLE; fail loud rather than fake durability",
                         b->src_mig_id, fe2);
             } else {
                 serverLog(LL_WARNING,
                     "CHAIN: sess=%lld chain RE-FORM impossible (%s) — no live majority; NOT "
-                    "firing MGN_INDX_UPD (fail loud)", b->src_mig_id, rfe);
+                    "firing MGN_RECP_DURABLE (fail loud)", b->src_mig_id, rfe);
             }
         }
         /* Forwarder is done RDMA-reading the landing buffer (success OR give-up) —
@@ -3672,7 +3819,7 @@ static void *chainForwardWorker(void *arg) {
             (void) wr;
             serverLog(LL_NOTICE,
                 "CHAIN: sess=%lld batch BACKPATCH_DONE -> "
-                "pass-through forwarded %d slots (%zu B), MGN_INDX_UPD deferred [off-main]",
+                "pass-through forwarded %d slots (%zu B), MGN_RECP_DURABLE deferred [off-main]",
                 b->src_mig_id, job->n_slots,
                 (size_t) job->n_slots * (size_t) RDMAMIG_BLOCK_SIZE_BYTES);
         }
@@ -3687,13 +3834,13 @@ static void *chainForwardWorker(void *arg) {
             chainFwdGateOpen(b);
             landingConsumerDone(b);
         }
-        /* AqRaft 3-flag DONE: with no chain configured, MGN_INDX_UPD raft
+        /* AqRaft 3-flag DONE: with no chain configured, MGN_RECP_DURABLE raft
          * replication is the sole durability path. Set chain_acked=1 so the
          * BACKPATCH-STATUS handler doesn't gate on a chain that doesn't exist. */
         b->chain_acked = 1;
         if (server.rdma_indx_upd_after_merge &&
             !atomic_load_explicit(&b->merge_done, memory_order_acquire))
-            chainPendingEnqueue(b);   /* INDX_UPD after the merge (tick) */
+            chainPendingEnqueue(b);   /* RECP_DURABLE after the merge (tick) */
         else
             backpatchFinalize(b);
     }
@@ -3777,6 +3924,7 @@ static void *chainPipelineForwardWorker(void *arg) {
         if (!merge_ok) {
             /* leave the batch un-finalized (fail loud) */
         } else if (rdmaLeaderChainDropDeadHead(b->chain_sess, rfe, sizeof(rfe)) == C_OK) {
+            chainViewPublish(b->chain_sess, b->sess_lo, b->sess_hi, "reform");
             char fe2[256] = {0};
             frc = rdmaLeaderChainForwardPipelined(
                       b->chain_sess, b->covered_slots, b->total_blocks,
@@ -3787,17 +3935,17 @@ static void *chainPipelineForwardWorker(void *arg) {
             if (frc == C_OK)
                 serverLog(LL_NOTICE,
                     "CHAIN: sess=%lld RE-FORMED + re-forwarded to surviving follower — "
-                    "MGN_INDX_UPD deferred (awaiting REAL CHAIN-ACK from new tail)",
+                    "MGN_RECP_DURABLE deferred (awaiting REAL CHAIN-ACK from new tail)",
                     b->src_mig_id);
             else
                 serverLog(LL_WARNING,
                     "CHAIN: sess=%lld re-forward after RE-FORM also failed (%s) — NOT "
-                    "firing MGN_INDX_UPD; fail loud rather than claim false durability",
+                    "firing MGN_RECP_DURABLE; fail loud rather than claim false durability",
                     b->src_mig_id, fe2);
         } else {
             serverLog(LL_WARNING,
                 "CHAIN: sess=%lld chain RE-FORM impossible (%s) — no live majority; NOT "
-                "firing MGN_INDX_UPD (fail loud, never fake durability)",
+                "firing MGN_RECP_DURABLE (fail loud, never fake durability)",
                 b->src_mig_id, rfe);
         }
     }
@@ -3816,7 +3964,7 @@ static void *chainPipelineForwardWorker(void *arg) {
         char tick = 1; ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1); (void) wr;
         serverLog(LL_NOTICE,
             "CHAIN: sess=%lld pipelined forward complete -> BACKPATCH_DONE "
-            "(MGN_INDX_UPD deferred)", b->src_mig_id);
+            "(MGN_RECP_DURABLE deferred)", b->src_mig_id);
     }
     /* else: frc != C_OK even after re-form → leave b un-finalized (fail loud). */
     zfree(job);
@@ -3861,7 +4009,7 @@ static void rdmaSpawnPipelineForward(backpatchBatch *b) {
  * mergeBackpatchTick (last-merge) racing paths. */
 /* Queue b for chainPendingTick (thread-safe; wakes main via the dispose pipe,
  * which arms the tick timer). Used by paths that have no chain ack to wait for,
- * so --rdma-indx-upd-after-merge still holds INDX_UPD until the merge is done. */
+ * so --rdma-indx-upd-after-merge still holds RECP_DURABLE until the merge is done. */
 static void chainPendingEnqueue(backpatchBatch *b) {
     pthread_mutex_lock(&backpatch_chain_pending_mu);
     chainPendingAddLocked(b);
@@ -3909,7 +4057,7 @@ static void spawnChainForwardWorker(backpatchBatch *b) {
         b->chain_acked = 1;
         if (server.rdma_indx_upd_after_merge &&
             !atomic_load_explicit(&b->merge_done, memory_order_acquire))
-            chainPendingEnqueue(b);   /* INDX_UPD after the merge (tick) */
+            chainPendingEnqueue(b);   /* RECP_DURABLE after the merge (tick) */
         else
             backpatchFinalize(b);
     } else {
@@ -3951,12 +4099,13 @@ static void *chainRepairWorker(void *arg) {
                                                b->landing_pool_buf, errbuf, sizeof(errbuf));
         }
     }
-    if (rc == C_OK)
+    if (rc == C_OK) {
         serverLog(LL_NOTICE, "CHAIN repair: sess=%lld repair #%d issued (%s)", b->src_mig_id,
                   b->repair_count, need_data ? "leader re-sent the blocks" : "recipe to a holder");
-    else
+        chainViewPublish(b->chain_sess, b->sess_lo, b->sess_hi, "repair");
+    } else
         serverLog(LL_WARNING, "CHAIN repair: sess=%lld repair #%d could not be issued (%s) — "
-                  "will retry; MGN_INDX_UPD stays unlogged until a real majority holds "
+                  "will retry; MGN_RECP_DURABLE stays unlogged until a real majority holds "
                   "the batch", b->src_mig_id, b->repair_count,
                   errbuf[0] ? errbuf : "no slots");
     if (slots) zfree(slots);
@@ -3994,9 +4143,9 @@ static int chainFollowersForMajority(void) {
 }
 
 /* Main thread: poll the per-batch chain-ack state. For each pending batch:
- *   - if the real CHAIN-ACK arrived (ack_count > baseline) → fire MGN_INDX_UPD
+ *   - if the real CHAIN-ACK arrived (ack_count > baseline) → fire MGN_RECP_DURABLE
  *     and proceed with dispose.
- * AqRaft #4: there is NO deadline fallback. A committed MGN_INDX_UPD must mean a
+ * AqRaft #4: there is NO deadline fallback. A committed MGN_RECP_DURABLE must mean a
  * live majority physically holds the bytes, so we wait for the real ack as long
  * as it takes (the follower merge of the ~2.86 GB pool legitimately runs longer
  * than the old 5s window). If the ack never comes, we do NOT fake it — the batch
@@ -4050,7 +4199,7 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
             }
         }
         /* EXPERIMENT (paper naive baseline): if rdma-naive-durability is set,
-         * fire MGN_INDX_UPD on the 5s deadline even WITHOUT a real ack — the
+         * fire MGN_RECP_DURABLE on the 5s deadline even WITHOUT a real ack — the
          * pre-Part-A "faked durability" behaviour. Off by default (honest). */
         int naive_fire = 0;
         if (!acked && server.rdma_naive_durability) {
@@ -4058,13 +4207,13 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
             if ((now_ms - (long long) b->t_ended * 1000LL) > CHAIN_PENDING_TIMEOUT_MS) {
                 serverLog(LL_WARNING,
                     "CHAIN: sess=%lld pending CHAIN-ACK timeout after %dms — firing "
-                    "MGN_INDX_UPD anyway (NAIVE durability baseline: faked)",
+                    "MGN_RECP_DURABLE anyway (NAIVE durability baseline: faked)",
                     b->src_mig_id, CHAIN_PENDING_TIMEOUT_MS);
                 naive_fire = 1;
             }
         }
-        /* AqRaft #4: NEVER fire MGN_INDX_UPD on a deadline. A committed
-         * INDX_UPD MUST mean a live majority physically holds the bytes, so we
+        /* AqRaft #4: NEVER fire MGN_RECP_DURABLE on a deadline. A committed
+         * RECP_DURABLE MUST mean a live majority physically holds the bytes, so we
          * wait for the real CHAIN-ACK as long as it takes. The ack DOES arrive
          * — the follower merge of the ~2.86 GB pool simply runs longer than the
          * old 5s window, which faked durability on every session (observed:
@@ -4080,19 +4229,18 @@ static int chainPendingTick(struct aeEventLoop *el, long long id, void *clientDa
                 "real live-majority durability",
                 b->src_mig_id, have, need);
             b->chain_acked = 1;
-            /* AqRaft (--rdma-indx-upd-after-merge, default on): MGN_INDX_UPD is
-             * logged only once the recipient leader's own merge has finished, so
-             * a committed INDX_UPD means both "a majority holds the batch" and
-             * "the leader's keyspace has it". The chain ack can arrive first
-             * (forward starts when the batch has landed, in parallel with the
-             * merge); the batch then stays here and this tick picks it up on the
-             * first tick after merge_done. */
+            /* A majority holds the batch: MGN_RECP_DURABLE is logged now, whether
+             * or not the leader's own merge has finished (the donor is told
+             * "done" only after both, see backpatchBatchDoneGate).
+             * --rdma-indx-upd-after-merge (default off) restores the earlier
+             * protocol: the entry also waits for merge_done, and the batch stays
+             * here until the first tick after it. */
             if (server.rdma_indx_upd_after_merge &&
                 !atomic_load_explicit(&b->merge_done, memory_order_acquire)) {
                 if (!b->indx_wait_logged) {
                     b->indx_wait_logged = 1;
                     serverLog(LL_NOTICE,
-                        "CHAIN: sess=%lld acked — MGN_INDX_UPD waits for the leader merge "
+                        "CHAIN: sess=%lld acked — MGN_RECP_DURABLE waits for the leader merge "
                         "to finish", b->src_mig_id);
                 }
                 continue;
@@ -4285,7 +4433,7 @@ static int mergeBackpatchTickOne(struct aeEventLoop *el, long long id, void *cli
              * BACKPATCH-STATUS handler reports "done" only when all three
              * flags (merge_done, chain_acked, indx_applied) are set, so the
              * donor's poll correctly waits until chain has replicated to
-             * majority AND MGN_INDX_UPD has committed. */
+             * majority AND MGN_RECP_DURABLE has committed. */
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
             /* Local inventory: session merge FULLY applied on this node —
              * the local "mgn executed" watermark advances (no Raft involved). */
@@ -4397,7 +4545,7 @@ static int mergeBackpatchTickOne(struct aeEventLoop *el, long long id, void *cli
 /* One timer tick. mergeBackpatchTickOne handles at most one work item (one
  * slot), so a round of 455 slots took 455 ticks, ~0.47 s of wall time for
  * ~0.5 ms of work (with the background merge the item is already merged and
- * only the bookkeeping is left), and MGN_INDX_UPD -- hence the donor's
+ * only the bookkeeping is left), and MGN_RECP_DURABLE -- hence the donor's
  * TXN_DONE -- waited for all of it: 8 of the 20 s of a 3 -> 6 scale-out
  * (2026-10-03). Keep taking items for up to MERGE_TICK_BUDGET_US per tick. */
 #define MERGE_TICK_BUDGET_US 250
@@ -5362,9 +5510,11 @@ static const char *backpatchStateName(backpatchBatchState s) {
     return "unknown";
 }
 
-/* The donor-facing durability gate (see rdmaBackpatchStatusCommand): the batch's
- * data is merged, chain-replicated to a live sg4 majority, and MGN_INDX_UPD is
- * committed. Under rdma-async-apply the merge is dropped from the gate. */
+/* The donor-facing "migration done" gate (see rdmaBackpatchStatusCommand): the
+ * transfer is durable (held by a live sg4 majority and MGN_RECP_DURABLE committed)
+ * AND the leader's index update (merge) is finished. The two are independent and
+ * can finish in either order. Under rdma-async-apply the merge is dropped from
+ * the gate. */
 static int backpatchBatchDoneGate(backpatchBatch *b) {
     int md = atomic_load_explicit(&b->merge_done,   memory_order_acquire);
     int ca = b->chain_acked;
@@ -5389,7 +5539,7 @@ void rdmaBackpatchStatusCommand(client *c) {
     }
 
     /* A deposed recipient leader cannot finish the batch (it cannot commit
-     * MGN_INDX_UPD). Say so, so the donor re-homes to the new leader now instead
+     * MGN_RECP_DURABLE). Say so, so the donor re-homes to the new leader now instead
      * of polling a node that will answer "running" until its timeout. */
     if (rdmaNotRaftLeader()) {
         addReplyError(c, "NOTLEADER this node is no longer the recipient leader");
@@ -5418,7 +5568,7 @@ void rdmaBackpatchStatusCommand(client *c) {
      * (1) the recipient leader's merge finished (merge_done),
      * (2) the chain has replicated to majority of recipient followers
      *     (chain_acked, set by chainPendingTick when CHAIN-ACK arrives), and
-     * (3) MGN_INDX_UPD has been appended to the raft log (indx_applied,
+     * (3) MGN_RECP_DURABLE has been appended to the raft log (indx_applied,
      *     set by backpatchFinalize).
      * Without all three, the donor would release its slots while either
      * followers don't have the bytes or the migration metadata isn't durable
@@ -5427,7 +5577,7 @@ void rdmaBackpatchStatusCommand(client *c) {
     int ca  = b->chain_acked;
     /* AqRaft async-apply (rdma-async-apply): separate Raft COMMIT from APPLY.
      * The migration is durable + ordered once it is COMMITTED — chain replicated
-     * to the sg4 majority (chain_acked) and MGN_INDX_UPD in the raft log
+     * to the sg4 majority (chain_acked) and MGN_RECP_DURABLE in the raft log
      * (indx_applied). The keyspace MERGE (merge_done) is the APPLY step; it is
      * deterministic, recoverable from the committed entry + the followers'
      * chained raw blocks, and can drain in the background. So under the flag we
@@ -5455,10 +5605,10 @@ void rdmaBackpatchStatusCommand(client *c) {
     /* AqRaft Round 2: element[6] is the chain-durable flag (merge_done &&
      * chain_acked). When set, the recipient leader has merged this donor's
      * data into its keyspace AND the chain has replicated to a majority of
-     * followers; only the metadata-only MGN_INDX_UPD raft append (indx_applied)
+     * followers; only the metadata-only MGN_RECP_DURABLE raft append (indx_applied)
      * is still outstanding. The donor's poll loop forwards this to the
      * orchestrator as an early CHAIN_DURABLE signal so the next donor can be
-     * dispatched while this donor's INDX_UPD commits. */
+     * dispatched while this donor's RECP_DURABLE commits. */
     int chain_durable = (md && ca) ? 1 : 0;
 
     /* element[7] = merge_done alone (landing pool free). The cross-session
@@ -5487,7 +5637,7 @@ void rdmaBackpatchStatusCommand(client *c) {
  * scanned and each slot in [lo,hi] classified by the best batch covering it:
  *
  *   durable — covered by a batch whose donor-facing DONE gate holds (merged +
- *             chain-acked by a live sg4 majority + MGN_INDX_UPD committed).
+ *             chain-acked by a live sg4 majority + MGN_RECP_DURABLE committed).
  *             Safe to skip: the same condition that lets a live donor finish.
  *   pending — covered by a batch that has received ALL its slots but hasn't
  *             finalized yet; it completes on its own (merge + chain forward need
@@ -5498,18 +5648,18 @@ void rdmaBackpatchStatusCommand(client *c) {
  *
  * Reply: [pending_count, missing_count, [durable slot ids...]]. */
 /* AqRaft: per-slot durability from the Raft LOG, not from in-memory batches.
- * 2 = an MGN_INDX_UPD covering the slot has been applied here (every replica
+ * 2 = an MGN_RECP_DURABLE covering the slot has been applied here (every replica
  *     applies it, so a promoted follower knows what the old leader committed);
- * 1 = this node is adopting the slot (held copy on a majority, its own INDX_UPD
+ * 1 = this node is adopting the slot (held copy on a majority, its own RECP_DURABLE
  *     is being committed) — reported as pending so a re-homed donor waits for it
  *     instead of re-shipping.
  * The redisraft module calls rdmaMgnDurableMark from its apply path (weak symbol). */
-static volatile uint8_t g_durable_slot[CLUSTER_SLOTS];
 
 void rdmaMgnDurableMark(int lo, int hi) {
     if (lo < 0) lo = 0;
     if (hi >= CLUSTER_SLOTS) hi = CLUSTER_SLOTS - 1;
     for (int s = lo; s <= hi; s++) __atomic_store_n(&g_durable_slot[s], 2, __ATOMIC_RELEASE);
+    chainViewDrop(lo);
 }
 
 /* Undo rdmaMgnAdoptingMark for slots that did not become durable. */
@@ -7591,8 +7741,15 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
      * backpatchBatch exists before any CHUNK RPC arrives. TCP ordering on
      * L->ctrl guarantees subsequent CHUNK RPCs land after the INIT reply. */
     if (overlap) {
-        char total_buf[16];
-        int total_len = snprintf(total_buf, sizeof(total_buf), "%d", n_slots);
+        char total_buf[48];
+        int total_len;
+        /* The session's slot range: the recipient logs its chain under it. */
+        int r_lo = chosen[0], r_hi = chosen[0];
+        for (int ri = 1; ri < n_slots; ri++) {
+            if (chosen[ri] < r_lo) r_lo = chosen[ri];
+            if (chosen[ri] > r_hi) r_hi = chosen[ri];
+        }
+        total_len = snprintf(total_buf, sizeof(total_buf), "%d:%d-%d", n_slots, r_lo, r_hi);
         const char *init_argv[5] = {
             "RDMA", "DONE-SLOTS-INIT", src_id, migid_buf, total_buf
         };
@@ -8197,7 +8354,7 @@ static unsigned donorRehomeSeq(int slot_lo);
 /* AqRaft S2 query-first resume. Before a newly-elected donor leader re-ships a
  * crashed session, ask the recipient leader (RDMA MGN-RESUME-STATUS) which of the
  * session's slots are already DURABLY landed — covered by a batch whose 3-flag
- * DONE gate holds (merged + chain-acked by a live sg4 majority + MGN_INDX_UPD
+ * DONE gate holds (merged + chain-acked by a live sg4 majority + MGN_RECP_DURABLE
  * committed) — and drop those from mig->chosen. Slots of a batch that has fully
  * landed but not yet finalized ("pending") are waited on (bounded) rather than
  * re-shipped. Anything else (partially transferred batch: the chain forwards a
@@ -8712,8 +8869,8 @@ static void *migrationWorker(void *arg) {
                 const char *state_str = r->element[0]->str;
                 /* AqRaft Round 2: element[6] (when present) is the chain-durable
                  * flag - merge_done && chain_acked, with only the metadata-only
-                 * MGN_INDX_UPD raft append still pending. Signal the orchestrator
-                 * NOW (once) so it can dispatch the next donor while our INDX_UPD
+                 * MGN_RECP_DURABLE raft append still pending. Signal the orchestrator
+                 * NOW (once) so it can dispatch the next donor while our RECP_DURABLE
                  * commits, overlapping the raft round-trip with the next donor's
                  * PREP+TRANSFER. We keep polling here until full "done" so the
                  * donor still holds its slots until all three durability flags
@@ -9298,7 +9455,7 @@ static void *orchSequencerMain(void *arg) {
         /* AqRaft Round 2: gate on chain_durable OR terminal, not terminal
          * alone. chain_durable means the prior donor's data is merged on the
          * recipient and chain-replicated to a majority; only its metadata-only
-         * MGN_INDX_UPD raft append is still in flight. Dispatching the next
+         * MGN_RECP_DURABLE raft append is still in flight. Dispatching the next
          * donor now overlaps that raft round-trip with the next donor's
          * PREP+TRANSFER. terminal is still honored so a FAILED prior donor
          * (which may never go chain_durable) doesn't stall the chain. */
@@ -9837,7 +9994,7 @@ static unsigned donorRehomeSeq(int slot_lo) {
  * run reports exactly what the promoted node holds (gap-pull for un-received slots
  * is Increment 2). */
 /* Main thread: run the merge queue to empty right here. Used on promotion, where
- * the new leader must not serve (or log INDX_UPD for) slots whose held data is
+ * the new leader must not serve (or log RECP_DURABLE for) slots whose held data is
  * not yet in its keyspace. */
 static void mergeQueueDrainSync(long long sess) {
     long long t0 = ustime(); int ticks = 0;
@@ -9876,7 +10033,7 @@ static void rdmaSelfShortHost(char *buf, size_t len) {
 
 /* Recipient-leader recovery of ONE in-flight session, off the main thread.
  *
- * A newly elected leader may close the session itself — commit MGN_INDX_UPD
+ * A newly elected leader may close the session itself — commit MGN_RECP_DURABLE
  * with no donor re-ship — if it and enough other replicas for a majority hold
  * the whole range (the durability rule was met although the old leader died
  * before logging it). If this node lacks the range but another replica holds
@@ -10037,12 +10194,12 @@ static void *recipientRecoverWorker(void *arg) {
         char pl[256];
         snprintf(pl, sizeof(pl), "sess=%lld slots=%d-%d n_slots=%d applied=0 adopted=1",
                  j->sess, j->lo, j->hi, nrange);
-        closed = (rdmaMgnLogSyncRetry("INDX_UPD", pl, 3) == 0);
+        closed = (rdmaMgnLogSyncRetry("RECP_DURABLE", pl, 3) == 0);
     }
     if (closed) {
         serverLog(LL_NOTICE,
             "AqRaft recipient-recover: sess=%lld range=%d-%d held by me + %d/%d peers "
-            "(majority) — INDX_UPD committed here, donor will not re-ship",
+            "(majority) — RECP_DURABLE committed here, donor will not re-ship",
             j->sess, j->lo, j->hi, peers_full, j->npeers);
     } else {
         rdmaMgnAdoptingClear(j->lo, j->hi);
@@ -10101,7 +10258,7 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
             if (n > 0 && n <= CLUSTER_SLOTS) {
                 rdmaChainSpawnEstablish(900000000000000001LL + term,
                                         n * (long long) RDMAMIG_BLOCK_SIZE_BYTES,
-                                        server.rdma_chain_followers);
+                                        server.rdma_chain_followers, -1, -1);
                 serverLog(LL_NOTICE, "AqRaft recipient-recover: term=%lld -- chain warm-up started "
                           "(connections to the followers + landing registration, %lld slots)", term, n);
             }
@@ -10127,6 +10284,16 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
         serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — no slot range in the "
                   "payload; nothing to recover", sess);
         return;
+    }
+    /* What the old leader last told this node about the range's chain. */
+    {
+        char cv[512];
+        if (chainViewLookup(alo, cv, sizeof(cv)))
+            serverLog(LL_NOTICE, "AqRaft recipient-recover: sess=%lld — last chain known here: %s",
+                      sess, cv);
+        else
+            serverLog(LL_NOTICE, "AqRaft recipient-recover: sess=%lld range=%d-%d — no chain "
+                      "known here (none established, or its view never arrived)", sess, alo, ahi);
     }
     int nrange = ahi - alo + 1, mine = 0;
     for (int slot = alo; slot <= ahi; slot++)
@@ -10302,7 +10469,7 @@ void rdmaChainWarmCommand(client *c) {
     }
     long long pool_bytes = slots_ll * (long long) RDMAMIG_BLOCK_SIZE_BYTES;
     rdmaChainSpawnEstablish(RDMA_CHAIN_WARM_SESS, pool_bytes,
-                            server.rdma_chain_followers);
+                            server.rdma_chain_followers, -1, -1);
     addReplyStatusFormat(c,
         "OK chain-warm dispatched slots=%lld pool_bytes=%lld followers=%s",
         slots_ll, pool_bytes, server.rdma_chain_followers);
@@ -10472,7 +10639,7 @@ void rdmaMigrateCompleteCommand(client *c) {
 
     /* AqRaft Round 2: CHAIN_DURABLE is a non-terminal early signal - the donor
      * reports that the recipient has merged its data and the chain replicated
-     * to a majority, with only MGN_INDX_UPD (metadata) still outstanding. It
+     * to a majority, with only MGN_RECP_DURABLE (metadata) still outstanding. It
      * lets the sequencer dispatch the next donor before this donor reaches the
      * full 3-flag DONE. */
     int is_chain_durable = 0;
@@ -10529,7 +10696,7 @@ void rdmaMigrateCompleteCommand(client *c) {
         pthread_mutex_unlock(&orch->mu);
         serverLog(LL_NOTICE,
             "RDMA MIGRATE-COMPLETE orch_id=%lld donor=%s CHAIN_DURABLE "
-            "(pre-INDX_UPD early-dispatch signal)",
+            "(pre-RECP_DURABLE early-dispatch signal)",
             want_id, donor_id);
         addReply(c, shared.ok);
         return;

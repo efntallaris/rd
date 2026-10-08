@@ -543,7 +543,7 @@ const char *raftLogTypeName(int type)
         case RAFT_LOGTYPE_TIMEOUT_BLOCKED:     return "TIMEOUT_BLOCKED";
         case RAFT_LOGTYPE_MGN_TXN_START:       return "MGN_TXN_START";
         case RAFT_LOGTYPE_MGN_RECP_TXN_START:  return "MGN_RECP_TXN_START";
-        case RAFT_LOGTYPE_MGN_INDX_UPD:        return "MGN_INDX_UPD";
+        case RAFT_LOGTYPE_MGN_RECP_DURABLE:    return "MGN_RECP_DURABLE";
         case RAFT_LOGTYPE_MGN_RECP_TXN_DONE:   return "MGN_RECP_TXN_DONE";
         case RAFT_LOGTYPE_MGN_TXN_DONE:        return "MGN_TXN_DONE";
         default:                               return "UNKNOWN";

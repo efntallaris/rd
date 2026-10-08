@@ -2,8 +2,8 @@
 Figure: AqRaft migration with chain replication and where crashes are recovered.
 
 One donor session: donor leader D ships to recipient leader L, L forwards down the
-chain L -> F1 -> F2, F1's ack (L + F1 = majority) lets L commit INDX_UPD. Crashes
-before INDX_UPD are repaired by the donor re-shipping; after it the data is durable.
+chain L -> F1 -> F2, F1's ack (L + F1 = majority) lets L commit RECP_DURABLE. Crashes
+before RECP_DURABLE are repaired by the donor re-shipping; after it the data is durable.
 """
 
 import os
@@ -68,12 +68,12 @@ label(45.2, 16.0, "chain", C_DATA)
 arrow(45.5, "F1", 47.5, "F2", C_DATA, lw=1.1)
 arrow(59, "F1", 61, "L", C_ACK, lw=1.0, ls=(0, (2, 1)))
 label(61.6, 16.0, "ack", C_ACK)
-logbox(66, "L", "INDX_UPD")
+logbox(66, "L", "RECP_DURABLE")
 logbox(79.5, "L", "RECP_TXN_DONE")
 arrow(87, "L", 88.5, "D")
 logbox(91, "D", "TXN_DONE")
 
-# Durability split at INDX_UPD
+# Durability split at RECP_DURABLE
 ax.add_patch(Rectangle((X0, -5.8), 66 - X0, 3.4, fc="#f3dcdc", ec="none"))
 ax.add_patch(Rectangle((66, -5.8), X1 - 66, 3.4, fc="#dcefdc", ec="none"))
 ax.plot([66, 66], [-5.8, Y["L"] - 1.4], color="#555555", lw=0.6, ls=(0, (2, 2)))

@@ -41,8 +41,8 @@ for f in glob.glob(d + "/logs/redis*/*.log"):
         if "slots released earlier" in x and " 0 slots released earlier" not in x:
             rec.setdefault((sg, host), {}).setdefault("early", set()).add(round(ts(m.group(1)), 3))
         for key, pat in (("fp", "forward FIRST-POST"), ("fw", "leader → F1 ("), ("gate", "forward gate open"),
-                         ("merged", "merge_done"), ("commit", "MGN_INDX_UPD applied")):
-            if pat in x:
+                         ("merged", "merge_done"), ("commit", ("MGN_RECP_DURABLE applied", "MGN_INDX_UPD applied"))):  # old name: saved runs
+            if any(p in x for p in ((pat,) if isinstance(pat, str) else pat)):
                 # a recipient group shared by several donors (3 -> 4): tell the donor from the slots when present
                 rec.setdefault((sg, host), {}).setdefault(key, set()).add(round(ts(m.group(1)), 3))
 t0 = min(e["start"] for e in tr.values() if "start" in e)

@@ -98,7 +98,7 @@ int rdmamig_client_connect(rdmamig_client *c) {
      * F1 redis4) over a reused sess QP succeeds for round-2's first donor, then
      * ~2s later goes unresponsive for the next donor's batch — the leader's
      * WRITEs get no ACK and the WR eventually errors with RETRY_EXC, after which
-     * the forward falls back to MGN_INDX_UPD raft replication (no data loss).
+     * the forward falls back to MGN_RECP_DURABLE raft replication (no data loss).
      *
      * Counter evidence (mlx5_3 hw_counters sampled across a stall window; see the
      * aqraft-stage2-r2-chain-control-gap memory) pins the mechanism and rules out

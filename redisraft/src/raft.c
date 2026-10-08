@@ -204,6 +204,9 @@ static ShardGroup *getSlotShardGroup(RedisRaftCtx *rr, unsigned int slot, bool a
 extern int rdmaRedirectHintFor(int slot, char *ip_out, size_t ip_sz, int *port_out)
     __attribute__((weak));
 extern void rdmaMgnDurableMark(int lo, int hi) __attribute__((weak));
+/* AqRaft: the recipient leader's replication chains (soft state), sent to the
+ * followers as a trailing RAFT.AE argument. Returns its generation, 0 = none. */
+extern unsigned long rdmaChainViewSerialize(char *buf, size_t len) __attribute__((weak));
 extern void rdmaTombstoneSessionStart(int lo, int hi) __attribute__((weak));
 extern void rdmaTombstoneSessionDone(int lo, int hi) __attribute__((weak));
 static ShardGroupNode *redirectHintNode(ShardGroup *sg, unsigned int slot)
@@ -1058,6 +1061,15 @@ static int raftSendAppendEntries(raft_server_t *raft, void *user_data,
         return 0;
     }
 
+    /* AqRaft: attach the chain view when it changed since this node last got
+     * it, and on every heartbeat (which re-sends it if a request was lost). */
+    char chain_view[2048];
+    unsigned long chain_gen = rdmaChainViewSerialize != NULL
+                              ? rdmaChainViewSerialize(chain_view, sizeof(chain_view)) : 0;
+    int send_view = chain_gen != 0 &&
+                    (chain_gen != node->chain_view_gen || msg->n_entries == 0);
+    if (send_view) argc++;
+
     argv = RedisModule_Alloc(sizeof(argv[0]) * argc);
     argvlen = RedisModule_Alloc(sizeof(argvlen[0]) * argc);
 
@@ -1097,6 +1109,11 @@ static int raftSendAppendEntries(raft_server_t *raft, void *user_data,
         argvlen[5 + i * 2] = snprintf(argv[5 + i * 2], 63, "%ld:%d:%llu:%d", e->term, e->id, e->session, e->type);
         argvlen[6 + i * 2] = e->data_len;
         argv[6 + i * 2] = e->data;
+    }
+    if (send_view) {
+        argv[argc - 1] = chain_view;
+        argvlen[argc - 1] = strlen(chain_view);
+        node->chain_view_gen = chain_gen;
     }
 
     if (redisAsyncCommandArgv(ConnGetRedisCtx(node->conn), handleAppendEntriesResponse,
@@ -1308,7 +1325,7 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
             break;
         case RAFT_LOGTYPE_MGN_TXN_START:
         case RAFT_LOGTYPE_MGN_RECP_TXN_START:
-        case RAFT_LOGTYPE_MGN_INDX_UPD:
+        case RAFT_LOGTYPE_MGN_RECP_DURABLE:
         case RAFT_LOGTYPE_MGN_RECP_TXN_DONE:
         case RAFT_LOGTYPE_MGN_TXN_DONE: {
             /* Bookkeeping-only apply for the migration protocol entries.
@@ -1332,25 +1349,25 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                     mgnMarkActive(_rkey, _pl, 'r');
                 else if (entry->type == RAFT_LOGTYPE_MGN_TXN_DONE)
                     mgnMarkDone(_sess);
-                /* INDX_UPD closes the recipient's session: a majority holds the
+                /* RECP_DURABLE closes the recipient's session: a majority holds the
                  * range and the leader's index update is done, so a leader
                  * promoted later has nothing to resume. (RECP_TXN_DONE is no
                  * longer logged; still honoured if found in an old log.) */
-                else if (entry->type == RAFT_LOGTYPE_MGN_INDX_UPD ||
+                else if (entry->type == RAFT_LOGTYPE_MGN_RECP_DURABLE ||
                          entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE)
                     mgnMarkDone(_rkey);
                 /* Every replica records which slots are committed durable, so a
                  * promoted follower can answer MGN-RESUME-STATUS from the log. */
-                if (entry->type == RAFT_LOGTYPE_MGN_INDX_UPD && rdmaMgnDurableMark != NULL) {
+                if (entry->type == RAFT_LOGTYPE_MGN_RECP_DURABLE && rdmaMgnDurableMark != NULL) {
                     int _lo = -1, _hi = -1;
                     const char *_sp = strstr(_pl, "slots=");
                     if (_sp && sscanf(_sp, "slots=%d-%d", &_lo, &_hi) == 2 && _lo >= 0 && _hi >= _lo)
                         rdmaMgnDurableMark(_lo, _hi);
                 }
                 /* Recipient tombstones are kept for a slot range from its
-                 * RECP_TXN_START until its INDX_UPD, on every replica. */
+                 * RECP_TXN_START until its RECP_DURABLE, on every replica. */
                 if (entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_START ||
-                    entry->type == RAFT_LOGTYPE_MGN_INDX_UPD ||
+                    entry->type == RAFT_LOGTYPE_MGN_RECP_DURABLE ||
                     entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE) {
                     int _lo = -1, _hi = -1;
                     const char *_sp = strstr(_pl, "slots=");

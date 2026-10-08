@@ -87,6 +87,10 @@ int  rdmaTombstoneHas(sds key);
 void rdmaTombstoneSessionStart(int lo, int hi);
 void rdmaTombstoneSessionDone(int lo, int hi);
 int  rdmaTombstoneSessionIsOpen(int lo, int hi);
+/* The recipient leader's replication chains (soft state), carried on
+ * AppendEntries by the redisraft module. */
+void rdmaChainViewReceive(const char *views);
+unsigned long rdmaChainViewSerialize(char *buf, size_t len);
 /* Client-request admission (before RedisRaft appends it): 1 if a DEL or
  * read-modify-write must get TRYAGAIN (key's migrated value not merged here yet). */
 int  rdmaRejectUnmergedRmw(client *c);
@@ -344,7 +348,7 @@ typedef struct rdmaOrchestrationDonor {
     int       chain_durable;   /* AqRaft Round 2: 1 once this donor's data is
                                 * merged on the recipient AND chain-replicated
                                 * to a majority (merge_done && chain_acked),
-                                * with only the metadata-only MGN_INDX_UPD raft
+                                * with only the metadata-only MGN_RECP_DURABLE raft
                                 * append still pending. The sequencer dispatches
                                 * the next donor on this (earlier than terminal). */
     int       terminal;        /* 0 until DONE/FAILED reported */

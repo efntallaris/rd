@@ -120,7 +120,7 @@ echo "result=KILLED label=$LABEL target=$TARGET_HOST pid=$PID t_arm=$T_ARM t_kil
 # FAILS FAST, so the wrapper reaps this injector early — a synchronous sleep was
 # killed before it fired (observed 2026-07-09: S1/S2 snapshots empty). Detaching
 # survives the reap; 60s (< the ~90s fail-fast playbook end) means the snapshot is
-# ready BEFORE verdict.sh runs, yet still captures re-form+ack+INDX_UPD (all within
+# ready BEFORE verdict.sh runs, yet still captures re-form+ack+RECP_DURABLE (all within
 # ~30s of the kill). For follower-kill S4 the run lasts ~10min so 60s is ample too.
 LEADER_SNAP="$RESULT_DIR/${LABEL}_leaderlog.snap"
 log "arming DETACHED leader-log snapshot of $ARM_HOST:$ARM_LOG at t_kill+60s -> $LEADER_SNAP"

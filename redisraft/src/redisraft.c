@@ -880,11 +880,14 @@ static int cmdRaftEntry(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
     return REDISMODULE_OK;
 }
 
+extern void rdmaChainViewReceive(const char *views) __attribute__((weak));
+
 /* RAFT.AE [target_node_id] [src_node_id]
  *         [leader_id]:[term]:[prev_log_idx]:[prev_log_term]:[leader_commit]:[msg_id]
- *         [n_entries] [<term>:<id>:<session>:<type> <entry>]...
+ *         [n_entries] [<term>:<id>:<session>:<type> <entry>]... [chain_view]
  *
  *   A leader request to append entries to the Raft log (per Raft paper).
+ *   chain_view (AqRaft, optional): the leader's replication chains, soft state.
  * Reply:
  *   -NOCLUSTER ||
  *   -LOADING ||
@@ -919,10 +922,11 @@ static int cmdRaftAppendEntries(RedisModuleCtx *ctx, RedisModuleString **argv, i
         RedisModule_ReplyWithError(ctx, "invalid n_entries value");
         return REDISMODULE_OK;
     }
-    if (argc != 5 + 2 * n_entries) {
+    if (argc != 5 + 2 * n_entries && argc != 6 + 2 * n_entries) {
         RedisModule_WrongArity(ctx);
         return REDISMODULE_OK;
     }
+    int has_chain_view = (argc == 6 + 2 * n_entries);
 
     raft_node_id_t src_node_id;
     if (RedisModuleStringToInt(argv[2], &src_node_id) == REDISMODULE_ERR) {
@@ -971,6 +975,13 @@ static int cmdRaftAppendEntries(RedisModuleCtx *ctx, RedisModuleString **argv, i
     if (raft_recv_appendentries(rr->raft, node, &msg, &resp) != 0) {
         RedisModule_ReplyWithError(ctx, "ERR operation failed");
         goto out;
+    }
+
+    /* AqRaft: keep the leader's chain view, unless the sender is a deposed
+     * leader (its term is behind ours). */
+    if (has_chain_view && rdmaChainViewReceive != NULL &&
+        msg.term >= raft_get_current_term(rr->raft)) {
+        rdmaChainViewReceive(RedisModule_StringPtrLen(argv[argc - 1], NULL));
     }
 
     char mgn_recv[512];

@@ -27,7 +27,7 @@ The bulk data movement (RDMA-WRITE into pre-registered landing buffers, `DONE-SL
 | 1 | Donor leader | Receives `RAFT.MIGRATE` from client/orchestrator | `MGN_TXN_START` (donor log) | Kicks off migration session. |
 | 2 | Recipient leader | Receives `RAFT.MGN-PREP` from donor, prepares landing buffers + connection | `MGN_RECP_TXN_START` (recipient log) | Appended **before** replying OK to donor. |
 | 3 | Donor → Recipient leader | RDMA-WRITE bulk data into recipient's landing buffer, then `DONE-SLOTS` control message | (no entry — RDMA primitive) | Recipient leader propagates to followers via chain. |
-| 4 | Recipient leader | Majority of followers ack TRANSFER (matchIndex caught up via AppendEntries response) | `MGN_INDX_UPD` (recipient log) | Acknowledges majority durability of transferred data. |
+| 4 | Recipient leader | Majority of followers ack TRANSFER (matchIndex caught up via AppendEntries response) | `MGN_RECP_DURABLE` (recipient log) | Acknowledges majority durability of transferred data. |
 | 5 | Recipient leader | (Overlap — not a log entry) | — | BACKPATCH apply on recipient leader runs in parallel with chain replication. |
 | 6 | Recipient leader | Both: (a) BACKPATCH on leader complete, (b) chain majority has the data | `MGN_RECP_TXN_DONE` (recipient log) | Recipient signals donor "migration done." |
 | 7 | Donor leader | Receives done-signal from recipient | `MGN_TXN_DONE` (donor log) | Closes out the session. |
@@ -44,8 +44,8 @@ The bulk data movement (RDMA-WRITE into pre-registered landing buffers, `DONE-SL
 
 ### Step 1 — Protocol log infrastructure (COMPLETE)
 
-- Five `RAFT_LOGTYPE_MGN_*` constants in [redisraft.h](redisraft/src/redisraft.h): `MGN_TXN_START`, `MGN_RECP_TXN_START`, `MGN_INDX_UPD`, `MGN_RECP_TXN_DONE`, `MGN_TXN_DONE`.
-- Single `RAFT.MGN-LOG <type> <payload>` command in [migrate.c](redisraft/src/migrate.c), registered in [redisraft.c](redisraft/src/redisraft.c) + [commands.c](redisraft/src/commands.c). Type is a string (`TXN_START` / `RECP_TXN_START` / `INDX_UPD` / `RECP_TXN_DONE` / `TXN_DONE`).
+- Five `RAFT_LOGTYPE_MGN_*` constants in [redisraft.h](redisraft/src/redisraft.h): `MGN_TXN_START`, `MGN_RECP_TXN_START`, `MGN_RECP_DURABLE`, `MGN_RECP_TXN_DONE`, `MGN_TXN_DONE`.
+- Single `RAFT.MGN-LOG <type> <payload>` command in [migrate.c](redisraft/src/migrate.c), registered in [redisraft.c](redisraft/src/redisraft.c) + [commands.c](redisraft/src/commands.c). Type is a string (`TXN_START` / `RECP_TXN_START` / `RECP_DURABLE` / `RECP_TXN_DONE` / `TXN_DONE`).
 - Apply handlers in [raft.c](redisraft/src/raft.c): all five `MGN_*` cases collapsed into one bookkeeping branch that `LOG_NOTICE`s the payload and frees any req.
 - Verification: [test_mgn_log.py](redisraft/tests/integration/test_mgn_log.py) — parametrized over all five types + unknown-type rejection. 6 tests, all pass.
 
@@ -60,8 +60,8 @@ The bulk data movement (RDMA-WRITE into pre-registered landing buffers, `DONE-SL
 ### Step 1c.2 — Main-thread instrumentation (COMPLETE under no-chain assumption)
 
 - Async hiredis adapter (`mgnRedisAe*` family) + `rdmaMgnLogAsync(type, payload)` helper in [cluster_rdma.c](redis/src/cluster_rdma.c) — lazy-attaches one shared `redisAsyncContext` to `server.el`, fire-and-forget.
-- **`MGN_INDX_UPD`** at the `BACKPATCH_DONE` transition in `mergeBackpatchTick` (main thread) — payload `"sess=<src_mig_id> n_slots=<n> applied=<count>"`. Fires once per batch finishing backpatch on the recipient leader.
-- **`MGN_RECP_TXN_DONE`** logged immediately after `MGN_INDX_UPD` at the same BACKPATCH_DONE site. Safe in the current no-chain model: `backpatch_batches_by_key` is keyed by `(src_node_id, src_mig_id)` → one batch per session, so per-batch done = per-session done. Once chain replication lands (Phase E), the two diverge: `MGN_INDX_UPD` per-batch chain-majority, `MGN_RECP_TXN_DONE` only after the last batch is both backpatched AND chain-majority-acked. Payload: `"sess=<id> applied=<n> clobber_skipped=<n>"`.
+- **`MGN_RECP_DURABLE`** at the `BACKPATCH_DONE` transition in `mergeBackpatchTick` (main thread) — payload `"sess=<src_mig_id> n_slots=<n> applied=<count>"`. Fires once per batch finishing backpatch on the recipient leader.
+- **`MGN_RECP_TXN_DONE`** logged immediately after `MGN_RECP_DURABLE` at the same BACKPATCH_DONE site. Safe in the current no-chain model: `backpatch_batches_by_key` is keyed by `(src_node_id, src_mig_id)` → one batch per session, so per-batch done = per-session done. Once chain replication lands (Phase E), the two diverge: `MGN_RECP_DURABLE` per-batch chain-majority, `MGN_RECP_TXN_DONE` only after the last batch is both backpatched AND chain-majority-acked. Payload: `"sess=<id> applied=<n> clobber_skipped=<n>"`.
 
 **Coverage: all 5 protocol log events instrumented.**
 
@@ -128,7 +128,7 @@ When the recipient leader receives `DONE-SLOTS` for a batch (donor finished its 
 2. F1's "chain receive" handler completes (RDMA completion event) — F1 then RDMA-WRITEs into F2's buffer.
 3. ... and so on to Fn.
 4. Each link's RDMA completion event triggers a small TCP/hiredis "chain-ack" back to the recipient leader, so the leader knows which followers have the body.
-5. Recipient leader appends `MGN_INDX_UPD` to its Raft log **only once chain-majority** (ceil((n+1)/2) replicas including itself) holds the body. The AE for this entry carries only the manifest; followers that don't yet have the chain-delivered body delay their matchIndex ack until both arrive.
+5. Recipient leader appends `MGN_RECP_DURABLE` to its Raft log **only once chain-majority** (ceil((n+1)/2) replicas including itself) holds the body. The AE for this entry carries only the manifest; followers that don't yet have the chain-delivered body delay their matchIndex ack until both arrive.
 
 ### Backpatch on followers
 
@@ -145,9 +145,9 @@ These have no dependency on each other — the leader can finish its backpatch b
 
 **Buffer lifetime is governed by a reference count.** Each buffer gets +1 for the local backpatch consumer and +1 for the outgoing chain forward (0 at the chain tail). The buffer's `ibv_reg_mr` registration is held until both decrement to 0; then the buffer can be unmapped / reused for the next batch.
 
-### `MGN_INDX_UPD` and `MGN_RECP_TXN_DONE` semantics under the overlap
+### `MGN_RECP_DURABLE` and `MGN_RECP_TXN_DONE` semantics under the overlap
 
-- **`MGN_INDX_UPD`** says "the bytes are durable across a chain-majority of replicas." It does **not** imply any replica has applied them. Appended as soon as chain-majority chain-acks arrive — independent of backpatch progress on any replica.
+- **`MGN_RECP_DURABLE`** says "the bytes are durable across a chain-majority of replicas." It does **not** imply any replica has applied them. Appended as soon as chain-majority chain-acks arrive — independent of backpatch progress on any replica.
 
 - **`MGN_RECP_TXN_DONE`** is appended on the recipient leader when **both** hold:
   - (a) The recipient leader's own backpatch worker has drained every batch for this session, AND
@@ -430,7 +430,7 @@ Three forward paths (deferred decision):
 | **A** | RDMA chain transport plumbing: QP setup between adjacent replicas, `RDMA CHAIN-PREP` + `RDMA CHAIN-WIRE` RPCs, buffer registration on followers. No batches yet — just verify a buffer can be RDMA-WRITTEN from leader through to chain tail. |
 | **B** | Wire TRANSFER to the chain: recipient leader, on receiving `DONE-SLOTS`, forwards the buffer down the chain. Chain-ack TCP control flow back to leader. |
 | **C** | Follower-side backpatch consumer: each follower's worker drains its own buffer; uses existing `mergeBackpatchTick` install path. Verify all 3 replicas have keys post-session. |
-| **D** | Wrapped body-less AE for `MGN_INDX_UPD`: manifest body only; followers gate matchIndex ack on chain delivery. Implements true chain-majority `MGN_INDX_UPD` semantics. |
+| **D** | Wrapped body-less AE for `MGN_RECP_DURABLE`: manifest body only; followers gate matchIndex ack on chain delivery. Implements true chain-majority `MGN_RECP_DURABLE` semantics. |
 | **E** | Session-end tracking + `MGN_RECP_TXN_DONE` on recipient leader at chain-majority done-of-last-batch. Closes the deferred Step 1c.2 item. |
 | **F** | Self-healing on chain link failures (timeout → re-wire). |
 
@@ -471,7 +471,7 @@ A benchmark experiment combining the existing aqueduct RDMA migration path (RDMA
 ## Still open / deferred
 
 - **Chain replication** — design locked in (see section above); implementation phasing A–F. Closes the recipient-follower correctness gap. **Implementation deferred per operating assumption above; revisit when failover-during-migration becomes a concrete need.**
-- ~~**Recipient-side `MGN_RECP_TXN_DONE`**~~ — **implemented under the no-chain assumption.** Logged in [cluster_rdma.c](redis/src/cluster_rdma.c) at the `BACKPATCH_DONE` site, immediately after `MGN_INDX_UPD`. Justification: `backpatch_batches_by_key` is keyed by `(src_node_id, src_mig_id)` → one batch per session, so the per-batch BACKPATCH_DONE event = per-session done. Under chain replication (Phase E), the two log entries will diverge: `MGN_INDX_UPD` per-batch on chain-majority durability, `MGN_RECP_TXN_DONE` only after the last batch is both backpatched and chain-majority-acked. Payload: `"sess=<id> applied=<n> clobber_skipped=<n>"`.
+- ~~**Recipient-side `MGN_RECP_TXN_DONE`**~~ — **implemented under the no-chain assumption.** Logged in [cluster_rdma.c](redis/src/cluster_rdma.c) at the `BACKPATCH_DONE` site, immediately after `MGN_RECP_DURABLE`. Justification: `backpatch_batches_by_key` is keyed by `(src_node_id, src_mig_id)` → one batch per session, so the per-batch BACKPATCH_DONE event = per-session done. Under chain replication (Phase E), the two log entries will diverge: `MGN_RECP_DURABLE` per-batch on chain-majority durability, `MGN_RECP_TXN_DONE` only after the last batch is both backpatched and chain-majority-acked. Payload: `"sess=<id> applied=<n> clobber_skipped=<n>"`.
 - ~~**Don't-clobber rule** in the backpatch apply path~~ — **already implemented** in both install paths; observability added. [cluster_rdma.c:1547](redis/src/cluster_rdma.c#L1547) uses `kvstoreDictAddRaw` (skip-on-existing); the legacy [cluster_rdma.c:848-855](redis/src/cluster_rdma.c#L848-L855) path uses `lookupKeyWrite + dbAdd` (skip-on-existing). Counter added to both paths: `backpatchMergeWork.skipped_existing` aggregated into `backpatchBatch.clobber_skipped`, logged at `BACKPATCH_DONE` as `clobber_skipped=N`; legacy path stores into `pendingBackpatch.clobber_skipped` and logs at end-of-chunk.
 - **In-memory tombstone** for post-FLIP DELETEs (prevent backpatch from resurrecting deleted keys).
 - ~~**Donor side write-rejection in MIGRATED state**~~ — **already enforced** by FLIP ordering. `rdmaReshardFlipHelper` at [cluster_rdma.c:3736](redis/src/cluster_rdma.c#L3736) calls `clusterDelSlot(slot) + clusterAddSlot(recipient_node, slot)` under the topology write lock **before** `slot_mig_state` transitions to MIGRATED at [cluster_rdma.c:3747](redis/src/cluster_rdma.c#L3747). By the time MIGRATED is set, `server.cluster->slots[slot]` already points to the recipient → standard routing returns `-MOVED <slot> <recipient>`. Intent documented at [cluster.c:1315-1331](redis/src/cluster.c#L1315-L1331). **CI verification deferred to the fake-harness item below** — RedisRaft fakes Redis Cluster mode (`config.c:736-738`), so the standard routing path doesn't run; faking it across all three layers (`server.cluster->slots[]` + `ShardingInfo` + `slot_mig_state`) for a one-off test is more brittle than building it into the fake-harness once.
@@ -494,4 +494,4 @@ A benchmark experiment combining the existing aqueduct RDMA migration path (RDMA
 
 ---
 
-*Last updated: Step 1c.1 (worker-thread instrumentation) + 1c.2 (`MGN_INDX_UPD` main-thread instrumentation) complete; recipient-follower correctness gap identified and chain replication design locked in. Phase A (RDMA chain transport plumbing) is the next implementation step.*
+*Last updated: Step 1c.1 (worker-thread instrumentation) + 1c.2 (`MGN_RECP_DURABLE` main-thread instrumentation) complete; recipient-follower correctness gap identified and chain replication design locked in. Phase A (RDMA chain transport plumbing) is the next implementation step.*

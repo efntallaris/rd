@@ -2,7 +2,7 @@ import re,sys,glob,os,datetime
 d=sys.argv[1]; span=float(sys.argv[2]) if len(sys.argv)>2 else 6
 kills=[float(m.group(1)) for l in open(d+"/run.log") for m in [re.search(r"KILLED.*t_kill=([\d.]+)",l)] if m]
 k0=min(kills)
-pat=re.compile(sys.argv[3] if len(sys.argv)>3 else r"now a leader|now a follower|unresponsive|REHOME|re-home|re-ship|resume-plan|MGN-RECOVER|RESUME-STATUS|TXN_DONE applied|TXN_START applied|RECP_TXN_START applied|INDX_UPD applied|re-form|catch-up|CATCH|repair|STALL|superseded|broken|promot|FAILED|failed|timeout|NARROW applied|started id=|state=TRANSFER|TRANSFER \(overlap\) finished")
+pat=re.compile(sys.argv[3] if len(sys.argv)>3 else r"now a leader|now a follower|unresponsive|REHOME|re-home|re-ship|resume-plan|MGN-RECOVER|RESUME-STATUS|TXN_DONE applied|TXN_START applied|RECP_TXN_START applied|RECP_DURABLE applied|INDX_UPD applied|re-form|catch-up|CATCH|repair|STALL|superseded|broken|promot|FAILED|failed|timeout|NARROW applied|started id=|state=TRANSFER|TRANSFER \(overlap\) finished")
 ev=[]
 for f in glob.glob(d+"/logs/redis*/*.log"):
     n=os.path.basename(f)[:-4]

@@ -534,7 +534,7 @@ def migrate_pipelined(a, pairs):
     """One donor -> recipient copy at a time, like sequential, but the next
     transfer is dispatched as soon as the previous one's copy is over (its donor
     reports BACKPATCH): the wait for that round's commit (chain replication,
-    merge, MGN_INDX_UPD, TXN_DONE) overlaps the next pair's copy instead of
+    merge, MGN_RECP_DURABLE, TXN_DONE) overlaps the next pair's copy instead of
     sitting between two copies. A pair's own next round still waits for its
     previous round to be DONE. Any transfer that does not end DONE stops the
     pipeline: everything in flight is polled to the end and re-driven as in

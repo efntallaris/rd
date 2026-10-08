@@ -406,8 +406,8 @@ exit:
  * <type> is one of:
  *   TXN_START         - donor: migration session opened
  *   RECP_TXN_START    - recipient: PREP buffers ready
- *   INDX_UPD          - recipient: chain majority has the TRANSFER data
- *   RECP_TXN_DONE     - (no longer logged: INDX_UPD closes the recipient session)
+ *   RECP_DURABLE      - recipient: chain majority has the TRANSFER data
+ *   RECP_TXN_DONE     - (no longer logged: RECP_DURABLE closes the recipient session)
  *   TXN_DONE          - donor: recipient acked done
  *
  * <payload> is an opaque bytestring; senders agree on a format per type
@@ -434,8 +434,8 @@ int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
         log_type = RAFT_LOGTYPE_MGN_TXN_START;
     } else if (type_len == 14 && memcmp(type_str, "RECP_TXN_START", 14) == 0) {
         log_type = RAFT_LOGTYPE_MGN_RECP_TXN_START;
-    } else if (type_len == 8 && memcmp(type_str, "INDX_UPD", 8) == 0) {
-        log_type = RAFT_LOGTYPE_MGN_INDX_UPD;
+    } else if (type_len == 12 && memcmp(type_str, "RECP_DURABLE", 12) == 0) {
+        log_type = RAFT_LOGTYPE_MGN_RECP_DURABLE;
     } else if (type_len == 13 && memcmp(type_str, "RECP_TXN_DONE", 13) == 0) {
         log_type = RAFT_LOGTYPE_MGN_RECP_TXN_DONE;
     } else if (type_len == 8 && memcmp(type_str, "TXN_DONE", 8) == 0) {
@@ -443,7 +443,7 @@ int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
     } else {
         RedisModule_ReplyWithError(ctx,
             "ERR unknown MGN log type (expected TXN_START | RECP_TXN_START | "
-            "INDX_UPD | RECP_TXN_DONE | TXN_DONE)");
+            "RECP_DURABLE | RECP_TXN_DONE | TXN_DONE)");
         return REDISMODULE_OK;
     }
 
@@ -460,7 +460,7 @@ int cmdRaftMgnLog(RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
      * here (raftApplyLog replies OK). If the entry is dropped instead — this
      * node lost leadership before it committed — the caller gets an error
      * (entryFreeAttachedRaftReq), never OK: the migration protocol's decisions
-     * (INDX_UPD in particular) must not be acted on before they are durable. */
+     * (RECP_DURABLE in particular) must not be acted on before they are durable. */
     RaftReq *req = RaftReqInit(ctx, RR_GENERIC);
     int e = RedisRaftRecvEntry(rr, entry, req);
     if (e != 0) {
@@ -532,7 +532,7 @@ int cmdRaftMgnSessionOpen(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
  * follower reports its recently received sessions as a 5th element of every
  * RAFT.AE reply ("sess:len:pos,sess:len:pos,..."). The leader hands each newly
  * reported (node, session) to cluster_rdma, which counts distinct followers for
- * the durability gate (INDX_UPD only once a majority holds the batch). */
+ * the durability gate (RECP_DURABLE only once a majority holds the batch). */
 #define MGN_RECV_MAX 16
 static long long g_mgn_recv_sess[MGN_RECV_MAX];
 static long long g_mgn_recv_len[MGN_RECV_MAX];

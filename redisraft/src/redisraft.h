@@ -468,6 +468,7 @@ typedef struct Node {
      * once per second per follower as "AE-RTT node=<id> n= avg= max=". */
     unsigned long ae_sent_id[64];
     long long ae_sent_us[64];
+    unsigned long chain_view_gen;   /* AqRaft: newest chain view sent to this node */
     long long ae_rtt_sum_us, ae_rtt_max_us, ae_rtt_n, ae_rtt_win_us;
 } Node;
 
@@ -596,7 +597,7 @@ typedef struct ShardGroup {
  * via the standard Raft log to record progress through a migration session. */
 #define RAFT_LOGTYPE_MGN_TXN_START       (RAFT_LOGTYPE_NUM + 10)
 #define RAFT_LOGTYPE_MGN_RECP_TXN_START  (RAFT_LOGTYPE_NUM + 11)
-#define RAFT_LOGTYPE_MGN_INDX_UPD        (RAFT_LOGTYPE_NUM + 12)
+#define RAFT_LOGTYPE_MGN_RECP_DURABLE    (RAFT_LOGTYPE_NUM + 12)
 #define RAFT_LOGTYPE_MGN_RECP_TXN_DONE   (RAFT_LOGTYPE_NUM + 13)
 #define RAFT_LOGTYPE_MGN_TXN_DONE        (RAFT_LOGTYPE_NUM + 14)
 

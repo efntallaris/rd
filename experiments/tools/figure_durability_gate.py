@@ -2,11 +2,11 @@
 Figure: commit-on-timeout vs commit-on-ack for the migration durability entry.
 
 (a) Before: the recipient leader waited up to 5 s for the chain ack, then logged
-    INDX_UPD anyway. The follower's ack came after its merge of the batch, later
-    than 5 s, so in every clean run INDX_UPD committed while only L held the batch.
+    RECP_DURABLE anyway. The follower's ack came after its merge of the batch, later
+    than 5 s, so in every clean run RECP_DURABLE committed while only L held the batch.
     A leader crash in that window loses data the log says is durable.
 (b) After: the follower acks as soon as the batch lands in its pool (on its
-    AppendEntries reply) and L logs INDX_UPD only after that ack. With no ack, L
+    AppendEntries reply) and L logs RECP_DURABLE only after that ack. With no ack, L
     re-forms the chain instead of committing.
 
 Source: CRASH_SCENARIOS.md (EMPIRICAL: invariant violated in the clean baseline),
@@ -79,7 +79,7 @@ ax.annotate("", xy=(58, LA + 3.2), xytext=(18, LA + 3.2),
             arrowprops=dict(arrowstyle="|-|", lw=0.7, color="#555555",
                             shrinkA=0, shrinkB=0, mutation_scale=2))
 text(38, LA + 5.0, "wait for ack, at most 5 s", "#555555", ha="center")
-box(61.5, LA, "INDX_UPD")
+box(61.5, LA, "RECP_DURABLE")
 text(61.5, LA - 3.3, "fired anyway", C_BAD, ha="center", style="italic")
 arrow(77, FA + 1.3, 79, LA - 1.3, C_ACK, lw=1.0, ls=(0, (2, 1)))
 text(79.6, 28.5, "ack (too late)", C_ACK)
@@ -100,7 +100,7 @@ bar(20, 31, FB, "land in pool", "#dcb393")
 bar(31, 76, FB, "merge (background)", "#f5e9de")
 arrow(32, FB + 1.3, 34, LB - 1.3, C_ACK, lw=1.0, ls=(0, (2, 1)))
 text(34.6, 5.5, "ack on AE reply", C_ACK)
-box(42.5, LB, "INDX_UPD")
+box(42.5, LB, "RECP_DURABLE")
 text(47.5, LB + 2.9, "a majority ($L$ + $F_1$) holds the batch", "#1f5a22")
 text(47.5, LB - 3.0, "no ack $\\Rightarrow$ re-form the chain, never commit on a timeout",
      "#444444", style="italic", size=6.8)

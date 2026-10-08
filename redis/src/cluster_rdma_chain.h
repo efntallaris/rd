@@ -129,6 +129,8 @@ long long rdmaLeaderChainAckCount(long long src_mig_id);
  * distinct followers that reported (-1 if no chain state). */
 int rdmaLeaderChainAckFrom(long long src_mig_id, long long length, int position);
 int rdmaLeaderChainAckedFollowers(long long src_mig_id);
+/* "ver=N chain=... holders=... out=..." for the chain view. */
+int rdmaLeaderChainViewDescribe(long long src_mig_id, char *buf, size_t len);
 
 /* Leader-driven chain repair: re-issue the chain recipe with a new attempt
  * number, holders first. *need_data = 1 means no reachable follower holds the
