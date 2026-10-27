@@ -105,6 +105,7 @@ int rdmaPeerAnswers(struct redisContext *ctx, struct timeval restore);
  * overlapping the recipient->F1 write with the ongoing transfer + merge
  * (rdma-chain-pipeline). Single-threaded; sole forwarder for the session. */
 int rdmaLeaderChainForwardPipelined(long long src_mig_id,
+                                    int sess_first_slot,
                                     const int *slots, int n_slots,
                                     void *const *landing_va,
                                     void *landing_buf,
@@ -171,5 +172,12 @@ int rdmaFollowerEnqueueSlotMerge(redisDb *db, int slot, const char *pool_lo, siz
 /* Same merge, drained on the calling (background) thread under the per-slot locks
  * (rdma-merge-background). The slot must be marked active on the main thread first. */
 int rdmaFollowerMergeSlotBackground(redisDb *db, int slot, const char *pool_lo, size_t pool_bytes);
+
+/* Promotion: apply a batch this node holds as a follower for [lo,hi] now (background
+ * thread only). 1 = applied here, 0 = none held / timed out. */
+int rdmaChainApplyHeldRange(int lo, int hi, long long timeout_ms);
+
+/* Crash-scenario test hook (cluster_rdma.c): a one-shot pause when /tmp/rdma_hook_<name> exists. */
+void rdmaTestHook(const char *name, long long id);
 
 #endif /* __CLUSTER_RDMA_CHAIN_H */

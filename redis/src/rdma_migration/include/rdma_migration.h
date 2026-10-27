@@ -150,6 +150,17 @@ int rdmamig_client_wait_send(rdmamig_client *c);
  * rdmamig_client_wait_send. */
 int rdmamig_client_poll_send(rdmamig_client *c, struct ibv_wc *wc, int max);
 
+/* Small control messages on the migration QP itself (AqRaft chunk notices: a chunk's
+ * "landed" notice goes on the QP that carried its data, so it does not depend on the
+ * TCP control connection, and on an RC QP it is delivered only after every earlier
+ * write on that QP has been placed). Inline RDMA SEND of at most RDMAMIG_NOTICE_MAX
+ * bytes, unsignaled (no send completion; a failure puts the QP into the error state,
+ * which the following signaled writes report). The receiving listener must have been
+ * created with rdmamig_server_create_recv. Returns 0 on success, -1 if the QP cannot
+ * take inline data of that size or the post fails. */
+#define RDMAMIG_NOTICE_MAX 256
+int rdmamig_client_post_send_inline(rdmamig_client *c, const void *data, uint32_t len);
+
 /* ------------------------------------------------------------------------- *
  * Server (recipient passive endpoint)
  * ------------------------------------------------------------------------- */
@@ -159,6 +170,13 @@ typedef struct rdmamig_server rdmamig_server;
 /* Bind a listening endpoint on <port> and start the accept thread.
  * Returns NULL if rdma_getaddrinfo / rdma_create_ep / pthread_create fail. */
 rdmamig_server *rdmamig_server_create(const char *port);
+
+/* The same, and every accepted connection receives small SENDs: a ring of receive
+ * buffers (RDMAMIG_NOTICE_MAX bytes each) is posted before the connection is
+ * accepted, and a thread per connection calls cb(data, len, arg) for each message
+ * (on that thread; data is valid only during the call). */
+typedef void (*rdmamig_recv_cb)(const void *data, uint32_t len, void *arg);
+rdmamig_server *rdmamig_server_create_recv(const char *port, rdmamig_recv_cb cb, void *arg);
 
 /* Accessor for the accepted-connection cm_id. NULL until a peer connects
  * (the accept thread sets it from rdma_get_request). */

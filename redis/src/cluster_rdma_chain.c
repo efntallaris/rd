@@ -240,6 +240,15 @@ typedef struct rdmaFollowerChainState {
      * that lacks it (CHAIN-STATUS ... SEND). Owned. */
     int *slots;
     int  n_slots;
+    /* The apply of the batch held here, while it waits for this node's forward
+     * to its successor (a non-tail applies after forwarding). A follower promoted
+     * in that window applies it at once instead (rdmaChainApplyHeldRange), so the
+     * job is taken exactly once, under g_chain_state_mu: deferred_apply is the
+     * pending job, deferred_taken the one a promotion took, fwd_writing is set
+     * while the chain worker RDMA-reads the landing pool (no apply may start then). */
+    void *deferred_apply;
+    void *deferred_taken;
+    int   fwd_writing;
 } rdmaFollowerChainState;
 
 /* ====================================================================== *
@@ -574,6 +583,8 @@ typedef struct chainWorkItem {
 } chainWorkItem;
 
 static void chainSpawnApply(void *job);
+static int chainFwdWriteBegin(long long sess);
+static void chainFwdWriteEnd(long long sess);
 
 static chainWorkItem *g_chain_work_head = NULL;
 static chainWorkItem *g_chain_work_tail = NULL;
@@ -761,6 +772,13 @@ static void chainWorkerHandleForward(chainWorkItem *item) {
     /* RDMA-WRITE per-slot (n_slots × 2 MiB) to stay within HCA per-WR max_msg_sz. */
     int n_slots_local = item->n_slots > 0 ? item->n_slots
                        : (int) (item->length / RDMAMIG_BLOCK_SIZE_BYTES);
+    /* Not while a promotion applies this pool (see chainFwdWriteBegin). */
+    if (!chainFwdWriteBegin(item->src_mig_id)) {
+        serverLog(LL_WARNING, "CHAIN worker: forward sess=%lld local apply of the pool did "
+                  "not finish — not forwarding", item->src_mig_id);
+        sdsfree(succ_host);
+        return;
+    }
     for (int i = 0; i < n_slots_local; i++) {
         char *l_addr = (char *) local_pool + (size_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
         uint64_t r_addr = remote_addr + (uint64_t) i * RDMAMIG_BLOCK_SIZE_BYTES;
@@ -771,6 +789,7 @@ static void chainWorkerHandleForward(chainWorkItem *item) {
             serverLog(LL_WARNING,
                 "CHAIN worker: forward sess=%lld post_write failed slot_idx=%d",
                 item->src_mig_id, i);
+            chainFwdWriteEnd(item->src_mig_id);
             sdsfree(succ_host);
             return;
         }
@@ -779,10 +798,12 @@ static void chainWorkerHandleForward(chainWorkItem *item) {
             serverLog(LL_WARNING,
                 "CHAIN worker: forward sess=%lld wait_send failed slot_idx=%d",
                 item->src_mig_id, i);
+            chainFwdWriteEnd(item->src_mig_id);
             sdsfree(succ_host);
             return;
         }
     }
+    chainFwdWriteEnd(item->src_mig_id);
     serverLog(LL_NOTICE,
         "CHAIN worker: forward sess=%lld wrote %zu bytes (%d × 2 MiB WRs) → %s",
         item->src_mig_id, item->length, n_slots_local, succ_host);
@@ -1195,6 +1216,42 @@ static int chainWaitApplyDone(long long sess) {
     }
 }
 
+/* A held pool can be read (forwarded) now: its apply has not started, or is done. */
+static int chainSourceReadable(long long sess) {
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaFollowerChainState *st = findFollowerState(sess);
+    int untouched = (st != NULL && st->deferred_apply != NULL);
+    pthread_mutex_unlock(&g_chain_state_mu);
+    return untouched ? 1 : chainWaitApplyDone(sess);
+}
+
+/* Before the chain worker RDMA-reads a held pool to forward it: the read must
+ * not overlap the local apply, which rewrites the pool. OK while the apply has
+ * not started (still deferred) or once it is done; while a promotion is applying
+ * it, wait for the end. Sets fwd_writing (a promotion then waits for the write).
+ * 0: the apply did not finish in time, do not forward. */
+static int chainFwdWriteBegin(long long sess) {
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaFollowerChainState *st = findFollowerState(sess);
+    if (st == NULL) { pthread_mutex_unlock(&g_chain_state_mu); return 1; }
+    int ok = (st->deferred_apply != NULL || st->apply_state != 1);
+    if (ok) st->fwd_writing = 1;
+    pthread_mutex_unlock(&g_chain_state_mu);
+    if (ok) return 1;
+    if (!chainWaitApplyDone(sess)) return 0;
+    pthread_mutex_lock(&g_chain_state_mu);
+    st = findFollowerState(sess);
+    if (st != NULL) st->fwd_writing = 1;
+    pthread_mutex_unlock(&g_chain_state_mu);
+    return 1;
+}
+static void chainFwdWriteEnd(long long sess) {
+    pthread_mutex_lock(&g_chain_state_mu);
+    rdmaFollowerChainState *st = findFollowerState(sess);
+    if (st != NULL) st->fwd_writing = 0;
+    pthread_mutex_unlock(&g_chain_state_mu);
+}
+
 /* Forward down the recipe (see "Chain recipes"). Chain worker thread. */
 static void chainWorkerHandleRecipeForward(chainWorkItem *item) {
     long long sess = item->src_mig_id;
@@ -1245,8 +1302,11 @@ static void chainWorkerHandleRecipeForward(chainWorkItem *item) {
             continue;
         }
         if (holds != 1) {
-            /* It needs the blocks. GATE first: our copy must be readable. */
-            if (source_ready < 0) source_ready = chainWaitApplyDone(sess);
+            /* It needs the blocks. GATE first: our copy must be readable — untouched
+             * (our own apply has not started: it waits for this node's forward) or
+             * applied. Waiting for the apply alone deadlocked a holder whose apply
+             * waited behind its forward (C6: asked to serve a new leader). */
+            if (source_ready < 0) source_ready = chainSourceReadable(sess);
             if (pool == NULL || length > pool_bytes || !source_ready) {
                 serverLog(LL_WARNING, "CHAIN recipe: sess=%lld cannot serve as source "
                           "(pool=%p length=%zu/%zu apply_done=%d) — token dropped, "
@@ -1272,8 +1332,20 @@ static void chainWorkerHandleRecipeForward(chainWorkItem *item) {
             /* CLAIM its landing pool for this attempt before the first byte. */
             int claim = chainClaimTarget(ctx, sess, item->attempt);
             if (claim == 0) {
+                /* C6: keep the next follower without the data for a while. */
+                rdmaTestHook("follower_forward", sess);
+                /* A promotion may have started applying this pool meanwhile: write
+                 * only before the apply starts or after it is done. */
+                if (!chainFwdWriteBegin(sess)) {
+                    serverLog(LL_WARNING, "CHAIN recipe: sess=%lld local apply of the pool did "
+                              "not finish — not forwarding it to %s:%d", sess, host, port);
+                    redisFree(ctx);
+                    break;
+                }
                 long long t0 = mstime();
-                if (chainWriteBlocks(cli, fbuf, pool, addr, rkey, n_blocks) != C_OK) {
+                int wrc = chainWriteBlocks(cli, fbuf, pool, addr, rkey, n_blocks);
+                chainFwdWriteEnd(sess);
+                if (wrc != C_OK) {
                     serverLog(LL_WARNING, "CHAIN recipe: sess=%lld RDMA write to %s:%d "
                               "failed — skipping it", sess, host, port);
                     redisFree(ctx);
@@ -1331,7 +1403,15 @@ static void *chainWorkerMain(void *arg) {
                 serverLog(LL_WARNING,
                     "CHAIN worker: unknown work kind %d", item->kind);
         }
-        if (item->deferred_apply) chainSpawnApply(item->deferred_apply);
+        if (item->deferred_apply) {
+            void *j = item->deferred_apply;
+            pthread_mutex_lock(&g_chain_state_mu);
+            rdmaFollowerChainState *ds = findFollowerState(item->src_mig_id);
+            if (ds != NULL && ds->deferred_apply == j) ds->deferred_apply = NULL;
+            else if (ds != NULL && ds->deferred_taken == j) { ds->deferred_taken = NULL; j = NULL; }
+            pthread_mutex_unlock(&g_chain_state_mu);
+            if (j) chainSpawnApply(j);   /* NULL: a promotion applied it already */
+        }
         if (item->host) sdsfree(item->host);
         if (item->slots) zfree(item->slots);
         if (item->recipe_hosts) {
@@ -1424,6 +1504,13 @@ static struct rdmamig_buffer *g_flp_buf[N_FOLLOWER_LANDING_POOLS]   = {0};
 static void                  *g_flp_pd[N_FOLLOWER_LANDING_POOLS]    = {0};
 static int                    g_flp_next      = 0;
 static int                    g_flp_prewarmed = 0;
+
+/* Ring pools to register ahead of use (rdma-chain-follower-prereg-pools). The ring
+ * is claimed in order (g_flp_next), so these are exactly the first claims. */
+static int followerPreregCount(void) {
+    int n = server.rdma_chain_follower_prereg_pools;
+    return (n < 1 || n > N_FOLLOWER_LANDING_POOLS) ? N_FOLLOWER_LANDING_POOLS : n;
+}
 static pthread_mutex_t        g_flp_mu = PTHREAD_MUTEX_INITIALIZER;
 
 /* AqRaft: a follower merges a pool's kvobjs IN PLACE, so once a session has been
@@ -1476,12 +1563,12 @@ static int followerEnsurePool(int idx, struct rdma_cm_id *cm, size_t bytes) {
 typedef struct { struct rdma_cm_id *cm; size_t bytes; } flpPrewarmArg;
 static void *followerPrewarmThread(void *arg) {
     flpPrewarmArg *a = arg;
-    int done = 0;
-    for (int i = 0; i < N_FOLLOWER_LANDING_POOLS; i++)
+    int done = 0, n = followerPreregCount();
+    for (int i = 0; i < n; i++)
         if (followerEnsurePool(i, a->cm, a->bytes) == 0) done++;
     serverLog(LL_NOTICE,
         "CHAIN-PREP: follower pre-warmed %d/%d landing pools (~%zu B each, off-main)",
-        done, N_FOLLOWER_LANDING_POOLS, a->bytes);
+        done, n, a->bytes);
     zfree(a);
     return NULL;
 }
@@ -1500,14 +1587,14 @@ static void *followerPreregThread(void *arg) {
     }
     size_t bytes = ((size_t) server.rdma_landing_prereg_slots + 2) * (size_t) RDMAMIG_BLOCK_SIZE_BYTES;
     long long t0 = ustime();
-    int done = 0;
-    for (int i = 0; i < N_FOLLOWER_LANDING_POOLS; i++)
+    int done = 0, n = followerPreregCount();
+    for (int i = 0; i < n; i++)
         if (followerEnsurePool(i, keeper, bytes) == 0) done++;
     pthread_mutex_lock(&g_flp_mu);
     g_flp_prewarmed = 1;
     pthread_mutex_unlock(&g_flp_mu);
     serverLog(LL_NOTICE, "CHAIN FOLLOWER-PREREG: %d/%d follower pools ready (%zu B each, pd=%p) "
-              "in %lld ms [startup, off-main]", done, N_FOLLOWER_LANDING_POOLS, bytes,
+              "in %lld ms [startup, off-main]", done, n, bytes,
               rdmamig_cm_pd(keeper), (ustime() - t0) / 1000);
     return NULL;
 }
@@ -2032,6 +2119,52 @@ static void chainSpawnApply(void *job) {
     }
 }
 
+/* Promotion (recipient-leader recovery, background thread): if this node holds, as
+ * a follower, a batch covering every slot of [lo,hi] whose apply still waits for
+ * the forward to its successor, apply it now (C6: the promoted follower ignored the
+ * round it held and the donor re-shipped it). Waits while the forward is writing
+ * the pool or another apply runs. 1 = applied here (or already), 0 = no such batch
+ * or not applied within timeout_ms. */
+int rdmaChainApplyHeldRange(int lo, int hi, long long timeout_ms) {
+    if (lo < 0 || hi < lo || hi >= CLUSTER_SLOTS) return 0;
+    long long t0 = mstime(), sess = 0;
+    for (;;) {
+        void *job = NULL;
+        int found = 0, state = -1;
+        pthread_mutex_lock(&g_chain_state_mu);
+        for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS && !found; i++) {
+            rdmaFollowerChainState *fs = g_follower_chains[i];
+            if (fs == NULL || !fs->applied || fs->slots == NULL || fs->n_slots <= 0) continue;
+            if (sess != 0 && fs->src_mig_id != sess) continue;
+            unsigned char cov[CLUSTER_SLOTS / 8];
+            memset(cov, 0, sizeof(cov));
+            int n = 0;
+            for (int k = 0; k < fs->n_slots; k++) {
+                int s = fs->slots[k];
+                if (s >= lo && s <= hi && !INV_BIT_GET(cov, s)) { INV_BIT_SET(cov, s); n++; }
+            }
+            if (n != hi - lo + 1) continue;
+            found = 1; sess = fs->src_mig_id; state = fs->apply_state;
+            if (fs->deferred_apply != NULL && !fs->fwd_writing) {
+                job = fs->deferred_apply;
+                fs->deferred_apply = NULL;
+                fs->deferred_taken = job;
+            }
+        }
+        pthread_mutex_unlock(&g_chain_state_mu);
+        if (!found) return 0;
+        if (job != NULL) {
+            serverLog(LL_NOTICE, "CHAIN apply: sess=%lld slots=%d-%d applied here on promotion, "
+                      "before the forward to the successor", sess, lo, hi);
+            chainApplyWorker(job);   /* sets apply_state = 2, frees job */
+            return 1;
+        }
+        if (state == 2) return 1;
+        if (mstime() - t0 > timeout_ms) return 0;
+        usleep(5000);   /* the forward is writing the pool, or another apply runs */
+    }
+}
+
 void rdmaChainForwardedCommand(client *c) {
     if (c->argc < 4) {
         addReplyError(c,
@@ -2187,6 +2320,10 @@ void rdmaChainForwardedCommand(client *c) {
          * work item spawns it). The tail applies now. */
         if (!is_tail) {
             deferred_job = job;
+            pthread_mutex_lock(&g_chain_state_mu);
+            rdmaFollowerChainState *ds = findFollowerState(src_mig_id);
+            if (ds != NULL && ds->deferred_apply == NULL) ds->deferred_apply = job;
+            pthread_mutex_unlock(&g_chain_state_mu);
         } else {
             chainSpawnApply(job);
             apply_spawned = 1;
@@ -3556,6 +3693,7 @@ int rdmaLeaderChainEnsureSrcPool(long long src_mig_id,
  * replaced. */
 static void leaderEnsureHeadClient(long long src_mig_id) {
     char host[256]; int port = 0;
+    long long pool_bytes = 0;
     pthread_mutex_lock(&g_chain_state_mu);
     rdmaLeaderChainState *st = findLeaderState(src_mig_id);
     int broken = (st != NULL && st->n_peers >= 1 && st->peers[0].client != NULL &&
@@ -3563,6 +3701,7 @@ static void leaderEnsureHeadClient(long long src_mig_id) {
     if (broken) {
         snprintf(host, sizeof(host), "%s", st->peers[0].host);
         port = st->peers[0].port;
+        pool_bytes = (long long) st->peers[0].peer_pool_bytes;
     }
     pthread_mutex_unlock(&g_chain_state_mu);
     if (!broken) return;
@@ -3578,11 +3717,30 @@ static void leaderEnsureHeadClient(long long src_mig_id) {
                   "%s:%d (%s)", src_mig_id, host, port, err);
         return;
     }
+    /* Its landing pool may be new too: a follower that RESTARTED registered a new
+     * pool (new address and rkey), and writes to the old one fail with "remote
+     * access error" on every try, so a restarted follower was never refilled
+     * (C12, 2026-10-22: it ended with none of the migrated keys). Ask again. */
+    rdmaChainPeer prep;
+    memset(&prep, 0, sizeof(prep));
+    char perr[200] = {0};
+    int have_prep = (pool_bytes > 0 &&
+                     sendChainPrep(host, port, src_mig_id, pool_bytes, &prep, perr, sizeof(perr)) == C_OK &&
+                     prep.peer_pool_addr != 0 && prep.peer_pool_rkey != 0);
+    if (!have_prep)
+        serverLog(LL_WARNING, "CHAIN: sess=%lld chain head %s:%d: no fresh landing pool (%s); "
+                  "keeping the old address", src_mig_id, host, port, perr[0] ? perr : "-");
     pthread_mutex_lock(&g_chain_state_mu);
     st = findLeaderState(src_mig_id);
     if (st != NULL && st->n_peers >= 1 && st->peers[0].host != NULL &&
-        st->peers[0].port == port && strcmp(st->peers[0].host, host) == 0)
+        st->peers[0].port == port && strcmp(st->peers[0].host, host) == 0) {
         st->peers[0].client = tmp.client;
+        if (have_prep) {
+            st->peers[0].peer_pool_addr = prep.peer_pool_addr;
+            st->peers[0].peer_pool_rkey = prep.peer_pool_rkey;
+            st->peers[0].peer_pool_bytes = prep.peer_pool_bytes;
+        }
+    }
     pthread_mutex_unlock(&g_chain_state_mu);
     serverLog(LL_NOTICE, "CHAIN: sess=%lld new RDMA client to chain head %s:%d (the previous "
               "one had failed)", src_mig_id, host, port);
@@ -3642,6 +3800,8 @@ int rdmaLeaderChainForwardPerSlot(long long src_mig_id,
     }
     int skip_data = leaderClaimHead(src_mig_id, f1_host, f1_port, errbuf, errbuf_len);
     if (skip_data == C_ERR) { sdsfree(f1_host); return C_ERR; }
+    /* C5: recipient leader crash with the data landed on it only, before any chain step. */
+    rdmaTestHook("before_forward", src_mig_id);
 
     /* RDMA-WRITE per-slot: each 2 MiB chunk is its own WR (a single ~1.43 GiB
      * write would exceed IB HCA max_msg_sz, typically 2 GiB).
@@ -3743,6 +3903,7 @@ void rdmaSlotRegGenBump(const int *slots, int n) {
 }
 
 int rdmaLeaderChainForwardPipelined(long long src_mig_id,
+                                    int sess_first_slot,
                                     const int *slots, int n_slots,
                                     void *const *landing_va,
                                     void *landing_buf,
@@ -3806,6 +3967,8 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
     }
     int skip_data = leaderClaimHead(src_mig_id, f1_host, f1_port, errbuf, errbuf_len);
     if (skip_data == C_ERR) { sdsfree(f1_host); return C_ERR; }
+    /* C5: recipient leader crash with the data landed on it only, before any chain step. */
+    rdmaTestHook("before_forward", src_mig_id);
 
     /* Scan-post loop: forward any captured-but-unposted block; reap completions.
      * Out-of-order capture (4 concurrent pool workers) is fine — each WR targets
@@ -3838,7 +4001,17 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                 serverLog(LL_WARNING, "CHAIN: sess=%lld drained %d send completions left by an "
                           "earlier session on this QP", src_mig_id, stale);
         }
-        int ref_slot = -1; unsigned int ref_gen = 0;   /* superseded check (see g_slot_reg_gen) */
+        /* Superseded check (see g_slot_reg_gen): watch the session's first slot (its registered
+         * range, known at DONE-SLOTS-INIT) from the start. Taking it at the first post left the
+         * check unarmed when the donor died before any block landed, and slots[] (covered_slots)
+         * is only filled as chunks arrive, so its entries are not usable at start. Unarmed, a
+         * dead donor's forwarder held g_chain_forward_mu until the ~10 s STALL-ABORT while the
+         * recovery session's forward waited (S2, 2026-10-21: 12 s). */
+        int ref_slot = -1; unsigned int ref_gen = 0;
+        if (sess_first_slot >= 0 && sess_first_slot < CLUSTER_SLOTS) {
+            ref_slot = sess_first_slot;
+            ref_gen = atomic_load_explicit(&g_slot_reg_gen[ref_slot], memory_order_acquire);
+        }
         while (reaped < n_slots) {
             int progressed = 0;
             for (int idx = 0; idx < n_slots && (n_posted - reaped) < INFLIGHT; idx++) {
@@ -3868,7 +4041,7 @@ int rdmaLeaderChainForwardPipelined(long long src_mig_id,
                     return C_ERR;
                 }
                 posted[idx] = 1; order[n_posted++] = idx; progressed = 1;
-                if (ref_slot < 0 && slots[idx] >= 0 && slots[idx] < CLUSTER_SLOTS) {
+                if (ref_slot < 0 && slots[idx] >= 0 && slots[idx] < CLUSTER_SLOTS) {   /* no range given */
                     ref_slot = slots[idx];
                     ref_gen = atomic_load_explicit(&g_slot_reg_gen[ref_slot], memory_order_acquire);
                 }
@@ -4181,6 +4354,30 @@ void rdmaChainStatusCommand(client *c) {
                 if (r_allocator_get_landing_blocks_for_slot(slot, NULL, 0) > 0)
                     held[n++] = slot;
         }
+    }
+    /* RECEIVED also covers a batch held here as a follower but not applied yet (a
+     * non-tail applies only after forwarding it): its bytes are in our pool. A new
+     * leader that lacks the range then fetches it from here instead of reporting
+     * it missing (C6, 2026-10-22: F1 held the whole round and answered 0/682). */
+    if (kind == 0 && n < cap) {
+        pthread_mutex_lock(&g_chain_state_mu);
+        for (int i = 0; i < RDMA_CHAIN_MAX_SESSIONS && n < cap; i++) {
+            rdmaFollowerChainState *fs = g_follower_chains[i];
+            if (fs == NULL || !fs->applied || fs->slots == NULL || fs->n_slots <= 0) continue;
+            unsigned char cov[CLUSTER_SLOTS / 8];
+            memset(cov, 0, sizeof(cov));
+            int m = 0;
+            for (int k = 0; k < fs->n_slots; k++) {
+                int sl = fs->slots[k];
+                if (sl >= lo && sl <= hi && !INV_BIT_GET(cov, sl)) { INV_BIT_SET(cov, sl); m++; }
+            }
+            if (m == cap) {
+                for (int k = 0; k < cap; k++) held[k] = lo + k;
+                n = cap;
+                src = "held follower batch";
+            }
+        }
+        pthread_mutex_unlock(&g_chain_state_mu);
     }
     long long nr = 0, nm = 0; int ex = 0;
     (void) rdmaInvSummary(sess, &nr, &nm, &ex);

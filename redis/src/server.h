@@ -2233,6 +2233,7 @@ struct redisServer {
     int rdma_chain_warm_on_promote; /* Aqueduct: a newly elected recipient leader with open rounds warms its chain. */
     int rdma_peer_probe_ms;         /* Aqueduct: a peer that accepts a control connection must answer a PING
                                      * within this many ms (two tries) or it is treated as dead; 0 = off. */
+    int rdma_chunk_notice_rdma;     /* Aqueduct: chunk notices over RDMA, not TCP (donor side) */
     int rdma_fwd_slot_gate;         /* Aqueduct: merge a slot as soon as its block is on the chain head
                                      * (not when the whole round is). Default on. */
     int rdma_chain_pipeline;        /* Aqueduct: recipient pipelines CHAIN-REPLICATION with
@@ -2257,6 +2258,7 @@ struct redisServer {
     sds rdma_src_prereg_bind;       /* AqRaft: local IP whose RDMA device the migration links use (keeper cm_id binds here); empty = first RDMA-capable address. */
     int rdma_indx_upd_after_merge;  /* AqRaft: also hold MGN_RECP_DURABLE until the recipient leader's merge finishes (default off: logged once a majority holds the batch). */
     int rdma_landing_prereg_pools;  /* AqRaft recipient: landing-ring pools to register at startup (0 = lazily at the first REGISTER-BLOCK-SLOTS). */
+    int rdma_chain_follower_prereg_pools;  /* AqRaft recipient: follower ring pools to register ahead of use (1..8); the rest of the ring is registered on its first claim. */
     int rdma_landing_prereg_slots;  /* AqRaft recipient: slots per donor those pools are sized for. */
     int rdma_src_prereg_slots;      /* AqRaft: pre-register the donor source big-MR pool (this many 2 MiB blocks) at startup; 0 = register lazily at MIGRATE-WARM / REGISTERING. */
     int rdma_async_apply;           /* Aqueduct: separate Raft COMMIT from APPLY. When on,

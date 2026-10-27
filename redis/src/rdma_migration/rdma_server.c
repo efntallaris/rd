@@ -84,6 +84,97 @@ static void create_listening_endpoint(rdmamig_server *s) {
 }
 
 /* ------------------------------------------------------------------------- *
+ * Receive ring (listeners created with rdmamig_server_create_recv)
+ * ------------------------------------------------------------------------- *
+ *
+ * Each accepted connection gets RECV_RING_N receive buffers, posted before
+ * rdma_accept (a peer's SEND finding no receive would be RNR-NAKed, and after
+ * rnr_retry_count retries its QP goes into the error state). A thread per
+ * connection waits for receive completions, hands each message to the callback
+ * and reposts the buffer. When the connection dies its receives complete with a
+ * flush error and the thread exits; the ring (RECV_RING_N x RDMAMIG_NOTICE_MAX
+ * bytes) is then left allocated, since the dead QP's id is never destroyed here
+ * either. */
+#define RECV_RING_N 512
+
+typedef struct {
+    struct rdma_cm_id *id;
+    struct ibv_mr     *mr;
+    char              *buf;
+    rdmamig_recv_cb    cb;
+    void              *arg;
+} recv_ring;
+
+static int recv_ring_post(recv_ring *r, int i) {
+    struct ibv_sge sge;
+    sge.addr = (uintptr_t) (r->buf + (size_t) i * RDMAMIG_NOTICE_MAX);
+    sge.length = RDMAMIG_NOTICE_MAX;
+    sge.lkey = r->mr->lkey;
+    struct ibv_recv_wr wr, *bad = NULL;
+    memset(&wr, 0, sizeof(wr));
+    wr.wr_id = (uint64_t) i;
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+    return ibv_post_recv(r->id->qp, &wr, &bad);
+}
+
+static void *recv_ring_main(void *data) {
+    recv_ring *r = data;
+    for (;;) {
+        struct ibv_wc wc;
+        int n = rdma_get_recv_comp(r->id, &wc);
+        if (n <= 0) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_server: recv ring cm_id=%p: get_recv_comp: %s "
+                     "— receiver stops", (void *) r->id, strerror(errno));
+            break;
+        }
+        if (wc.status != IBV_WC_SUCCESS) {   /* flush: the connection is gone */
+            RMIG_LOG(RDMAMIG_LOG_NOTICE, "rdma_server: recv ring cm_id=%p: %s — receiver stops",
+                     (void *) r->id, ibv_wc_status_str(wc.status));
+            break;
+        }
+        int i = (int) wc.wr_id;
+        if (i < 0 || i >= RECV_RING_N) continue;
+        r->cb(r->buf + (size_t) i * RDMAMIG_NOTICE_MAX, wc.byte_len, r->arg);
+        if (recv_ring_post(r, i) != 0) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_server: recv ring cm_id=%p: repost: %s "
+                     "— receiver stops", (void *) r->id, strerror(errno));
+            break;
+        }
+    }
+    return NULL;
+}
+
+/* Post the ring on a requested (not yet accepted) connection and start its thread. */
+static int recv_ring_start(rdmamig_server *s, struct rdma_cm_id *id) {
+    if (id == NULL || id->qp == NULL || id->pd == NULL) return -1;
+    recv_ring *r = zcalloc(sizeof(*r));
+    size_t bytes = (size_t) RECV_RING_N * RDMAMIG_NOTICE_MAX;
+    r->id = id; r->cb = s->recv_cb; r->arg = s->recv_arg;
+    r->buf = zcalloc(bytes);
+    r->mr = ibv_reg_mr(id->pd, r->buf, bytes, IBV_ACCESS_LOCAL_WRITE);
+    if (r->mr == NULL) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_server: recv ring reg_mr: %s", strerror(errno));
+        zfree(r->buf); zfree(r);
+        return -1;
+    }
+    for (int i = 0; i < RECV_RING_N; i++) {
+        if (recv_ring_post(r, i) != 0) {
+            RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_server: recv ring post %d/%d: %s", i,
+                     RECV_RING_N, strerror(errno));
+            return -1;   /* posted ones flush with the QP; ring stays allocated */
+        }
+    }
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, recv_ring_main, r) != 0) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_server: recv ring thread: pthread_create failed");
+        return -1;
+    }
+    pthread_detach(tid);
+    return 0;
+}
+
+/* ------------------------------------------------------------------------- *
  * Accept loop (runs in the listen thread)
  * ------------------------------------------------------------------------- */
 
@@ -135,6 +226,9 @@ static void *listen_thread_main(void *data) {
         }
         RMIG_LOG(RDMAMIG_LOG_NOTICE,
                  "rdma_server: incoming connection request, calling rdma_accept");
+        if (s->recv_cb != NULL && recv_ring_start(s, s->id) != 0)
+            RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_server: no receive ring on cm_id=%p — "
+                     "a notice SEND on it will break its QP", (void *) s->id);
         if (rdma_accept(s->id, &s->conn_param) != 0) {
             RMIG_LOG(RDMAMIG_LOG_WARNING,
                      "rdma_server: rdma_accept: %s — continuing accept loop",
@@ -163,10 +257,16 @@ static int spawn_listen_thread(rdmamig_server *s) {
  * ------------------------------------------------------------------------- */
 
 rdmamig_server *rdmamig_server_create(const char *port) {
+    return rdmamig_server_create_recv(port, NULL, NULL);
+}
+
+rdmamig_server *rdmamig_server_create_recv(const char *port, rdmamig_recv_cb cb, void *arg) {
     rdmamig_server *s = zmalloc(sizeof(*s));
     if (s == NULL) return NULL;
     memset(s, 0, sizeof(*s));
     strncpy(s->serverPort, port, sizeof(s->serverPort) - 1);
+    s->recv_cb = cb;     /* set before the accept thread starts */
+    s->recv_arg = arg;
 
     create_listening_endpoint(s);
     if (s->listen_id == NULL) {

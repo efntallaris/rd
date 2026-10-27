@@ -76,6 +76,7 @@ struct rdmamig_client {
     char ip[60];
     char ip_address[60];
     char port[60];
+    uint32_t inline_max;               /* max_inline_data the QP was created with */
 };
 
 struct rdmamig_server {
@@ -88,6 +89,8 @@ struct rdmamig_server {
     struct rdma_cm_id         *id;              /* the accepted donor id */
     struct rdma_conn_param     conn_param;
     pthread_t                  listen_thread;
+    rdmamig_recv_cb            recv_cb;         /* NULL: accepted QPs post no receives */
+    void                      *recv_arg;
 };
 
 #endif /* RDMAMIG_INTERNAL_H_ */

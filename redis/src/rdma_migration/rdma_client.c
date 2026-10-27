@@ -42,6 +42,7 @@ static void init_qp_init_attr(struct ibv_qp_init_attr *attr) {
     attr->cap.max_recv_sge = MAX_RECV_SGE;
     attr->sq_sig_all       = 0;
     attr->qp_type          = IBV_QPT_RC;
+    attr->cap.max_inline_data = RDMAMIG_NOTICE_MAX;   /* chunk notices (post_send_inline) */
 }
 
 /* Resolve <ip,port> via rdma_getaddrinfo and bring up an endpoint that owns
@@ -61,6 +62,14 @@ static int resolve_and_create_endpoint(rdmamig_client *c) {
     }
 
     err = rdma_create_ep(&c->id, c->res, NULL, &c->attr);
+    if (err && c->attr.cap.max_inline_data > 0) {
+        /* A device without inline support: no notices on this QP (callers fall
+         * back to their TCP path), but the data path still works. */
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "rdma_create_ep with max_inline_data=%u failed (%s); "
+                 "retrying without inline data", c->attr.cap.max_inline_data, strerror(errno));
+        c->attr.cap.max_inline_data = 0;
+        err = rdma_create_ep(&c->id, c->res, NULL, &c->attr);
+    }
     if (err) {
         RMIG_LOG(RDMAMIG_LOG_WARNING,
                  "rdma_create_ep failed: %s", strerror(errno));
@@ -71,6 +80,7 @@ static int resolve_and_create_endpoint(rdmamig_client *c) {
 
     rdma_freeaddrinfo(c->res);
     c->res = NULL;
+    c->inline_max = c->attr.cap.max_inline_data;   /* what the device granted */
     return 0;
 }
 
@@ -247,4 +257,24 @@ int rdmamig_client_poll_send(rdmamig_client *c, struct ibv_wc *wc, int max) {
         }
     }
     return n;
+}
+
+int rdmamig_client_post_send_inline(rdmamig_client *c, const void *data, uint32_t len) {
+    if (c == NULL || c->id == NULL || c->id->qp == NULL || len == 0 || len > c->inline_max)
+        return -1;
+    struct ibv_sge sge;
+    memset(&sge, 0, sizeof(sge));
+    sge.addr = (uintptr_t) data;   /* inline: copied at post time, no MR needed */
+    sge.length = len;
+    struct ibv_send_wr wr, *bad = NULL;
+    memset(&wr, 0, sizeof(wr));
+    wr.opcode = IBV_WR_SEND;
+    wr.send_flags = IBV_SEND_INLINE;   /* unsignaled (sq_sig_all = 0) */
+    wr.sg_list = &sge;
+    wr.num_sge = 1;
+    if (ibv_post_send(c->id->qp, &wr, &bad) != 0) {
+        RMIG_LOG(RDMAMIG_LOG_WARNING, "post_send_inline(%u B): %s", len, strerror(errno));
+        return -1;
+    }
+    return 0;
 }

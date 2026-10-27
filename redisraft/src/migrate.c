@@ -7,6 +7,7 @@
 #include "redisraft.h"
 
 #include <string.h>
+#include <unistd.h>
 
 static bool validSlotMigrationSessionKey(RedisRaftCtx *rr, unsigned int slot, unsigned long long migration_session_key)
 {
@@ -518,6 +519,15 @@ int cmdRaftMgnSessionOpen(RedisModuleCtx *ctx, RedisModuleString **argv, int arg
         if (e != 0) {
             replyRaftError(ctx, NULL, e);
             return REDISMODULE_OK;
+        }
+        /* C4 TEST HOOK (ansible/crash/run_crash_scenario.sh, HOOKS): with
+         * /tmp/rdma_hook_before_recp_open present, pause here once (main thread: the entry
+         * is appended but its commit can't be seen) so a recipient leader crash lands
+         * between the session-open request and its commit. */
+        if (access("/tmp/rdma_hook_before_recp_open", F_OK) == 0 &&
+            unlink("/tmp/rdma_hook_before_recp_open") == 0) {
+            LOG_WARNING("TEST HOOK before_recp_open: slots=%lld-%lld pausing 800 ms", lo, hi);
+            usleep(800 * 1000);
         }
         last_lo = lo; last_hi = hi; last_ms = now_ms;
     }

@@ -1237,6 +1237,23 @@ static void mgnMarkActive(long long sess, const char *payload, char role) {
         g_mgn_active_count++; return;
     }
 }
+/* Recipient sessions closed recently (RECP_DURABLE applied), with their RECP_TXN_START
+ * payload (it names the donor). A leader that dies right after closing one never tells the
+ * donor "done"; the donor waits for a re-home from the next leader, which has nothing in
+ * flight and so sent none: the donor gave up after 30 s (C7, 2026-10-22). The next leader
+ * re-homes these too (become-leader hook). */
+#define MGN_CLOSED_KEEP 4
+static char      g_mgn_closed_payload[MGN_CLOSED_KEEP][208];
+static long long g_mgn_closed_ms[MGN_CLOSED_KEEP];
+static int       g_mgn_closed_next = 0;
+static void mgnRememberClosed(long long sess) {
+    for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess && g_mgn_role[i] == 'r') {
+        int k = g_mgn_closed_next++ % MGN_CLOSED_KEEP;
+        snprintf(g_mgn_closed_payload[k], sizeof(g_mgn_closed_payload[k]), "%s", g_mgn_payload[i]);
+        g_mgn_closed_ms[k] = RedisModule_Milliseconds();
+        return;
+    }
+}
 static void mgnMarkDone(long long sess) {
     if (sess < 0) return;
     for (int i = 0; i < MGN_MAX_ACTIVE; i++) if (g_mgn_active[i] == sess) { g_mgn_active[i] = 0; if (g_mgn_active_count>0) g_mgn_active_count--; return; }
@@ -1354,8 +1371,10 @@ static int raftApplyLog(raft_server_t *raft, void *user_data, raft_entry_t *entr
                  * promoted later has nothing to resume. (RECP_TXN_DONE is no
                  * longer logged; still honoured if found in an old log.) */
                 else if (entry->type == RAFT_LOGTYPE_MGN_RECP_DURABLE ||
-                         entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE)
+                         entry->type == RAFT_LOGTYPE_MGN_RECP_TXN_DONE) {
+                    mgnRememberClosed(_rkey);
                     mgnMarkDone(_rkey);
+                }
                 /* Every replica records which slots are committed durable, so a
                  * promoted follower can answer MGN-RESUME-STATUS from the log. */
                 if (entry->type == RAFT_LOGTYPE_MGN_RECP_DURABLE && rdmaMgnDurableMark != NULL) {
@@ -1592,6 +1611,21 @@ static void raftNotifyStateEvent(raft_server_t *raft, void *user_data, raft_stat
                                                     _pl);
                     if (_rep) RedisModule_FreeCallReply(_rep);
                 }
+            }
+            /* Recipient sessions closed in the last 30 s (the donor's re-home wait): tell
+             * their donors where the leader is now, so one still waiting for "done" from the
+             * dead leader finishes (it asks, finds the range durable, re-ships nothing). */
+            for (int _i = 0; _i < MGN_CLOSED_KEEP; _i++) {
+                if (g_mgn_closed_ms[_i] == 0 || RedisModule_Milliseconds() - g_mgn_closed_ms[_i] > 30000)
+                    continue;
+                /* term=N: the new leader also warms its chain once per promotion */
+                char _cpl[260];
+                snprintf(_cpl, sizeof(_cpl), "%.207s term=%ld", g_mgn_closed_payload[_i],
+                         (long) raft_get_current_term(raft));
+                RedisModuleCallReply *_rep = RedisModule_Call(redis_raft.ctx, "RDMA", "cclc",
+                                                "MGN-RECOVER", "recipient-closed", 0LL, _cpl);
+                if (_rep) RedisModule_FreeCallReply(_rep);
+                g_mgn_closed_ms[_i] = 0;
             }
             break;
         default:

@@ -1173,6 +1173,10 @@ void rdmaInitClientCommand(client *c) {
     addReply(c, shared.ok);
 }
 
+/* Chunk notices over RDMA (see rdmaChunkLanded / rdmaChunkNoticeRecv below). */
+static void rdmaChunkNoticeRecv(const void *data, uint32_t len, void *arg);
+static int g_chunk_notice_rx = 0;   /* a migration listener with a receive ring exists */
+
 void rdmaInitServerCommand(client *c) {
     /* argv[0]=RDMA argv[1]=INIT-SERVER argv[2]=port */
     char *rdma_server_port = c->argv[2]->ptr;
@@ -1195,7 +1199,8 @@ void rdmaInitServerCommand(client *c) {
         serverLog(LL_NOTICE, "RDMA INIT-SERVER: reusing existing RDMA listener on port %s "
                   "for a new peer (resuming donor leader)", rdma_server_port);
     } else {
-        s = rdmamig_server_create(rdma_server_port);
+        s = rdmamig_server_create_recv(rdma_server_port, rdmaChunkNoticeRecv, NULL);
+        if (s != NULL) g_chunk_notice_rx = 1;
         if (s == NULL) {
             serverLog(LL_WARNING, "RDMA INIT-SERVER: rdmamig_server_create(%s) failed", rdma_server_port);
             addReplyError(c, "rdmamig_server_create failed");
@@ -1305,6 +1310,44 @@ void rdmaMergeResizeHold(int delta) {
     recipientBackpatchInProgressAdd(delta);
 }
 
+/* Registrations whose batch does not exist yet, per first slot (main thread only).
+ * Every REGISTER-BLOCK-SLOTS takes a backpatch-in-progress hold, and the batch created
+ * at DONE-SLOTS(-INIT) releases it at merge_done. A donor that dies between its
+ * registration and DONE-SLOTS-INIT never creates the batch, so its hold was never
+ * released: the count stayed > 0 for good, dict resize stayed forbidden and the key-count
+ * (Fenwick) index was never rebuilt, so SCAN/DBSIZE missed every key merged afterwards
+ * (S2, 2026-10-21: the sg4 leader's SCAN saw 12k of 49.7k keys; its GETs were fine).
+ * A newer registration of the same slots (the re-ship) now releases that orphaned hold. */
+static int g_reg_hold_pending[CLUSTER_SLOTS];
+static void landingPoolOrphanRelease(int lo);   /* below, next to the landing-pool ring */
+static void landingPoolToBatch(int lo);
+
+static int regHoldFirstSlot(const int *slots, int n) {
+    int lo = -1;
+    for (int i = 0; i < n; i++)
+        if (slots[i] >= 0 && slots[i] < CLUSTER_SLOTS && (lo < 0 || slots[i] < lo)) lo = slots[i];
+    return lo;
+}
+
+static void regHoldTake(int lo) {
+    if (lo < 0) return;
+    if (g_reg_hold_pending[lo] > 0) {
+        serverLog(LL_WARNING, "RDMA REGISTER-BLOCK-SLOTS: releasing %d backpatch hold(s) of an earlier "
+                  "registration of slot %d that never started (its donor is gone)",
+                  g_reg_hold_pending[lo], lo);
+        recipientBackpatchInProgressAdd(-g_reg_hold_pending[lo]);
+        g_reg_hold_pending[lo] = 0;
+        landingPoolOrphanRelease(lo);   /* and its landing pool: it never received data */
+    }
+    g_reg_hold_pending[lo]++;
+}
+
+/* The batch created for a registration takes over its hold (released at merge_done). */
+static void regHoldToBatch(int lo) {
+    if (lo >= 0 && lo < CLUSTER_SLOTS && g_reg_hold_pending[lo] > 0) g_reg_hold_pending[lo]--;
+    landingPoolToBatch(lo);
+}
+
 void rdmaRegisterBlockSlotsCommand(client *c) {
     rdmaCachedConnection *cs = rdmaGetConnection(c);
     if (cs == NULL) {
@@ -1391,6 +1434,7 @@ void rdmaRegisterBlockSlotsCommand(client *c) {
      * mutating via dbAdd. Per-slot rwlock doesn't cover this cross-slot
      * shared state. Reset in rdmaReshardRecvFlipCommand once the backpatch
      * completes and ownership swaps. */
+    regHoldTake(regHoldFirstSlot(job->slot_ids, job->n_pairs));   /* releases an orphaned earlier hold */
     recipientBackpatchInProgressAdd(1);   /* +FORBID dict resize on 0->1 (bg-merge) */
 
     /* Aqueduct: defer Fenwick-tree updates on the keys kvstore while backpatch
@@ -1966,6 +2010,23 @@ static int migrationBackpatchTick(struct aeEventLoop *el, long long id, void *cl
 #include <fcntl.h>
 #include <unistd.h>
 
+/* TEST HOOK for the crash scenarios (ansible/crash/run_crash_scenario.sh, HOOKS): with
+ * /tmp/rdma_hook_<name> present on the host, pause here for the milliseconds the file
+ * holds (1500 if none) and delete it, so it fires once. It widens a window of a few ms
+ * (e.g. between two protocol steps) enough for an external kill -9 to land in it. The
+ * line logged here is what the injector arms on. Absent file: one access() call. */
+void rdmaTestHook(const char *name, long long id) {
+    char path[96];
+    snprintf(path, sizeof(path), "/tmp/rdma_hook_%s", name);
+    if (access(path, F_OK) != 0) return;
+    int ms = 1500;
+    FILE *f = fopen(path, "r");
+    if (f) { if (fscanf(f, "%d", &ms) != 1 || ms <= 0) ms = 1500; fclose(f); }
+    if (unlink(path) != 0) return;   /* another thread took it */
+    serverLog(LL_WARNING, "TEST HOOK %s: id=%lld pausing %d ms", name, id, ms);
+    usleep((useconds_t) ms * 1000);
+}
+
 /* Same value bio.c uses for its worker threads. */
 #define BACKPATCH_THREAD_STACK_SIZE (1024*1024*4)
 
@@ -2130,6 +2191,17 @@ typedef struct backpatchBatch {
     int                  total_blocks;
     int                 *slot_pos_base;
     int                 *slot_pos_nb;
+    /* Slots already announced landed (DONE-SLOTS-CHUNK over TCP or a chunk notice
+     * over RDMA; the same chunk may come both ways): CLUSTER_SLOTS bits, under
+     * g_chunk_announce_mu. Allocated with the batch, never freed (like slot_pos_base). */
+    unsigned char       *announced;
+    /* Per-chunk timing log (PERCHUNK REPL / INDEX ... done): the chunk of each slot, the
+     * slots of each chunk, and how many of them reached F1 / were merged. Allocated with
+     * the batch, never freed. */
+#define RDMA_PERCHUNK_MAX 1024
+    short               *pc_chunk_of;      /* CLUSTER_SLOTS, -1 = none */
+    unsigned short      *pc_size;          /* RDMA_PERCHUNK_MAX */
+    _Atomic int         *pc_repl, *pc_idx; /* RDMA_PERCHUNK_MAX */
     /* Per-chunk start-timestamp instrumentation: chunk_slots = the uniform chunk
      * size (first DONE-SLOTS-CHUNK's n_slots), so a covered_slots position idx
      * maps to chunk seq = idx / chunk_slots. bp_/ch_chunk_logged are bitmasks
@@ -2276,13 +2348,24 @@ static int              backpatch_pool_started = 0;
 
 static dict *backpatch_batches_by_key = NULL;
 
-/* Recipient-local allocator for globally-unique per-batch chain session ids
- * (see backpatchBatch.chain_sess). Process-local monotonic counter is enough:
- * the id only needs to be consistent leader<->followers for one batch's
- * lifetime, and it does not survive restart (nothing chain-side does). */
+/* Recipient-local allocator for per-batch chain session ids (see
+ * backpatchBatch.chain_sess). They must be unique across LEADERS, not only within
+ * one process: a follower keeps what it received under the old leader's ids, and
+ * when it is promoted its own new sessions must not reuse them. With every process
+ * counting from BASE+0, a promoted follower's first re-ship got the id of the old
+ * leader's first batch, its own "received" record of that batch counted as a
+ * follower ack, and RECP_DURABLE was committed with no follower holding the data
+ * (C11, 2026-10-22: one copy for 33 s; the forwarder then ran on the freed batch
+ * and stalled the next rounds 20 s). Each process starts its counter at its start
+ * time in microseconds (mod 1e14, far below the 800000000000000000 re-ship ids). */
 #define RDMA_CHAIN_SESS_BASE 700000000000000000LL
-static _Atomic long long g_chain_sess_seq = 0;
+static _Atomic long long g_chain_sess_seq = -1;
 static long long chainSessAlloc(void) {
+    long long s = atomic_load_explicit(&g_chain_sess_seq, memory_order_acquire);
+    if (s < 0) {
+        long long seed = ustime() % 100000000000000LL;
+        atomic_compare_exchange_strong(&g_chain_sess_seq, &s, seed);
+    }
     return RDMA_CHAIN_SESS_BASE +
            atomic_fetch_add_explicit(&g_chain_sess_seq, 1, memory_order_relaxed);
 }
@@ -2425,6 +2508,7 @@ void rdmaDoneSlotsCommand(client *c) {
         }
         b->slots[j] = (int) s;
     }
+    regHoldToBatch(regHoldFirstSlot(b->slots, n_slots));   /* this batch takes over its registration's hold */
     /* Phase C: legacy DONE-SLOTS knows all slots up front; mirror them
      * into covered_slots so the chain-encode path sees the same list. */
     b->chain_forwarded = 0;
@@ -2450,6 +2534,12 @@ void rdmaDoneSlotsCommand(client *c) {
      * == b->slots). Make the per-block fields consistent: one position per slot,
      * slot_pos_base[slot]=its index, nb=1, so capture/forward behave as before. */
     b->total_blocks = n_slots;
+    b->announced = zcalloc(CLUSTER_SLOTS / 8);
+    b->pc_chunk_of = zmalloc(CLUSTER_SLOTS * sizeof(short));
+    for (int s_ = 0; s_ < CLUSTER_SLOTS; s_++) b->pc_chunk_of[s_] = -1;
+    b->pc_size = zcalloc(RDMA_PERCHUNK_MAX * sizeof(unsigned short));
+    b->pc_repl = zcalloc(RDMA_PERCHUNK_MAX * sizeof(_Atomic int));
+    b->pc_idx  = zcalloc(RDMA_PERCHUNK_MAX * sizeof(_Atomic int));
     b->slot_pos_base = zmalloc((size_t) CLUSTER_SLOTS * sizeof(int));
     b->slot_pos_nb   = zcalloc((size_t) CLUSTER_SLOTS * sizeof(int));
     for (int s = 0; s < CLUSTER_SLOTS; s++) b->slot_pos_base[s] = -1;
@@ -2646,6 +2736,7 @@ void rdmaDoneSlotsInitCommand(client *c) {
     b->sess_lo = b->sess_hi = -1;
     b->sess_lo = rlo;
     b->sess_hi = rhi;
+    regHoldToBatch(rlo);
     atomic_store(&b->idx, 0);
     atomic_store(&b->applied, 0);
     atomic_store(&b->clobber_skipped, 0);
@@ -2689,6 +2780,12 @@ void rdmaDoneSlotsInitCommand(client *c) {
      * slot id → its position range, filled in Phase C, read at capture. */
     b->covered_slots = zmalloc((size_t) b->total_blocks * sizeof(int));
     b->covered_slot_count = 0;
+    b->announced = zcalloc(CLUSTER_SLOTS / 8);
+    b->pc_chunk_of = zmalloc(CLUSTER_SLOTS * sizeof(short));
+    for (int s_ = 0; s_ < CLUSTER_SLOTS; s_++) b->pc_chunk_of[s_] = -1;
+    b->pc_size = zcalloc(RDMA_PERCHUNK_MAX * sizeof(unsigned short));
+    b->pc_repl = zcalloc(RDMA_PERCHUNK_MAX * sizeof(_Atomic int));
+    b->pc_idx  = zcalloc(RDMA_PERCHUNK_MAX * sizeof(_Atomic int));
     b->slot_pos_base = zmalloc((size_t) CLUSTER_SLOTS * sizeof(int));
     b->slot_pos_nb   = zcalloc((size_t) CLUSTER_SLOTS * sizeof(int));
     for (int s = 0; s < CLUSTER_SLOTS; s++) b->slot_pos_base[s] = -1;
@@ -2789,7 +2886,9 @@ void rdmaDoneSlotsInitCommand(client *c) {
          * it, overlapping the forward with the transfer + merge. */
         rdmaSpawnPipelineForward(b);
     }
-    addReply(c, shared.ok);
+    /* "NOTICE": this node takes chunk notices over RDMA (rdmaChunkNoticeRecv). */
+    if (g_chunk_notice_rx) addReplyStatus(c, "OK NOTICE");
+    else addReply(c, shared.ok);
 }
 
 /* RDMA DONE-SLOTS-CHUNK <src_node_id> <src_mig_id> <chunk_seq> <s1> ... <sK>
@@ -2799,59 +2898,51 @@ void rdmaDoneSlotsInitCommand(client *c) {
  * the worker that decrements remaining → 0 finalizes the batch (no change
  * from the existing single-batch flow). chunk_seq is currently advisory (for
  * logs/debugging); ordering is not enforced. */
-void rdmaDoneSlotsChunkCommand(client *c) {
+/* A chunk of a batch has landed in our landing pool: enqueue its slots for the
+ * backpatch workers (shared by DONE-SLOTS-CHUNK over TCP and the chunk notice over
+ * RDMA, see rdmaChunkNoticeRecv). Slots already announced are skipped, so the same
+ * chunk arriving both ways is applied once. Main thread. Returns NULL, or an error
+ * message for the TCP reply. */
+static pthread_mutex_t g_chunk_announce_mu = PTHREAD_MUTEX_INITIALIZER;
+static const char *rdmaChunkLanded(const char *src_node_id, long long src_mig_id,
+                                   long long chunk_seq, const int *slots_in, int n_in,
+                                   const char *via) {
     xferGateActivity();   /* the active transfer is alive (transfer gate idle check) */
-    if (c->argc < 6) {
-        addReplyError(c, "DONE-SLOTS-CHUNK: expected <src_node_id> <src_mig_id> <chunk_seq> <slot> [<slot> ...]");
-        return;
-    }
-    sds src_node_id = c->argv[2]->ptr;
-    if (sdslen(src_node_id) != CLUSTER_NAMELEN) {
-        addReplyError(c, "src_node_id must be 40 chars");
-        return;
-    }
-    long long src_mig_id, chunk_seq;
-    if (getLongLongFromObject(c->argv[3], &src_mig_id) != C_OK) {
-        addReplyError(c, "src_mig_id must be an integer");
-        return;
-    }
-    if (getLongLongFromObject(c->argv[4], &chunk_seq) != C_OK) {
-        addReplyError(c, "chunk_seq must be an integer");
-        return;
-    }
-    int n_slots = c->argc - 5;
-
     sds key = backpatchBatchKey(src_node_id, src_mig_id);
     pthread_mutex_lock(&backpatch_batches_mu);
     backpatchBatch *b = backpatch_batches_by_key
         ? dictFetchValue(backpatch_batches_by_key, key) : NULL;
     pthread_mutex_unlock(&backpatch_batches_mu);
     sdsfree(key);
-    if (b == NULL) {
-        addReplyError(c, "no such backpatch batch — DONE-SLOTS-INIT first");
-        return;
-    }
+    if (b == NULL) return "no such backpatch batch — DONE-SLOTS-INIT first";
+    for (int j = 0; j < n_in; j++)
+        if (slots_in[j] < 0 || slots_in[j] >= CLUSTER_SLOTS) return "slot id out of range";
 
     /* Validate + build all work items before taking the queue lock, so we
      * hold the lock only long enough to splice the tail. */
-    backpatchSlotWork **items = zmalloc((size_t) n_slots * sizeof(*items));
-    for (int j = 0; j < n_slots; j++) {
-        long long s;
-        if (getLongLongFromObject(c->argv[5 + j], &s) != C_OK ||
-            s < 0 || s >= CLUSTER_SLOTS) {
-            for (int k = 0; k < j; k++) zfree(items[k]);
-            zfree(items);
-            addReplyError(c, "slot id out of range");
-            return;
+    backpatchSlotWork **items = zmalloc((size_t) (n_in > 0 ? n_in : 1) * sizeof(*items));
+    int n_slots = 0;
+    pthread_mutex_lock(&g_chunk_announce_mu);
+    for (int j = 0; j < n_in; j++) {
+        int s = slots_in[j];
+        if (b->announced != NULL) {
+            if (b->announced[s >> 3] & (1u << (s & 7))) continue;   /* came the other way */
+            b->announced[s >> 3] |= (unsigned char) (1u << (s & 7));
         }
         backpatchSlotWork *w = zmalloc(sizeof(*w));
         w->batch = b;
         w->db    = b->db;
-        w->slot  = (int) s;
+        w->slot  = s;
         w->captured = 0;
         w->chunk_seq = (int) chunk_seq;
-        items[j] = w;
+        items[n_slots++] = w;
     }
+    if (b->pc_chunk_of != NULL && chunk_seq >= 0 && chunk_seq < RDMA_PERCHUNK_MAX) {
+        for (int j = 0; j < n_slots; j++) b->pc_chunk_of[items[j]->slot] = (short) chunk_seq;
+        b->pc_size[chunk_seq] = (unsigned short) (b->pc_size[chunk_seq] + n_slots);
+    }
+    pthread_mutex_unlock(&g_chunk_announce_mu);
+    if (n_slots == 0) { zfree(items); return NULL; }
     /* First chunk's slot count = the uniform chunk size, used to map a
      * covered_slots position to a chunk seq in the forwarder. */
     if (chunk_seq == 0) b->chunk_slots = n_slots;
@@ -2948,9 +3039,123 @@ void rdmaDoneSlotsChunkCommand(client *c) {
     zfree(items);
 
     serverLog(LL_NOTICE,
-        "RDMA DONE-SLOTS-CHUNK: from %.*s mig_id=%lld seq=%lld n_slots=%d",
-        CLUSTER_NAMELEN, b->src_node_id, src_mig_id, chunk_seq, n_slots);
-    addReply(c, shared.ok);
+        "RDMA DONE-SLOTS-CHUNK: from %.*s mig_id=%lld seq=%lld n_slots=%d via=%s",
+        CLUSTER_NAMELEN, b->src_node_id, src_mig_id, chunk_seq, n_slots, via);
+    return NULL;
+}
+
+/* RDMA DONE-SLOTS-CHUNK <src_node_id> <src_mig_id> <chunk_seq> <s1> ... <sK>
+ *
+ * Append K per-slot work items onto backpatch_work_queue for the batch
+ * created by a prior DONE-SLOTS-INIT (rdmaChunkLanded). chunk_seq is advisory
+ * (for logs/debugging); ordering is not enforced. */
+void rdmaDoneSlotsChunkCommand(client *c) {
+    if (c->argc < 6) {
+        addReplyError(c, "DONE-SLOTS-CHUNK: expected <src_node_id> <src_mig_id> <chunk_seq> <slot> [<slot> ...]");
+        return;
+    }
+    sds src_node_id = c->argv[2]->ptr;
+    if (sdslen(src_node_id) != CLUSTER_NAMELEN) {
+        addReplyError(c, "src_node_id must be 40 chars");
+        return;
+    }
+    long long src_mig_id, chunk_seq;
+    if (getLongLongFromObject(c->argv[3], &src_mig_id) != C_OK) {
+        addReplyError(c, "src_mig_id must be an integer");
+        return;
+    }
+    if (getLongLongFromObject(c->argv[4], &chunk_seq) != C_OK) {
+        addReplyError(c, "chunk_seq must be an integer");
+        return;
+    }
+    int n_slots = c->argc - 5;
+    int *slots = zmalloc((size_t) n_slots * sizeof(int));
+    for (int j = 0; j < n_slots; j++) {
+        long long s;
+        if (getLongLongFromObject(c->argv[5 + j], &s) != C_OK || s < 0 || s >= CLUSTER_SLOTS) {
+            zfree(slots);
+            addReplyError(c, "slot id out of range");
+            return;
+        }
+        slots[j] = (int) s;
+    }
+    const char *err = rdmaChunkLanded(src_node_id, src_mig_id, chunk_seq, slots, n_slots, "tcp");
+    zfree(slots);
+    if (err) addReplyError(c, err);
+    else addReply(c, shared.ok);
+}
+
+/* ---- Chunk notices over RDMA ----------------------------------------------------
+ * The donor announces each landed chunk with a small SEND on the migration QP that
+ * carried the chunk's data, instead of DONE-SLOTS-CHUNK on its TCP control link:
+ * a TCP-only partition between the leaders then no longer holds back a chunk whose
+ * data has already arrived (C15, 2026-10-22: chunks 42-56 were announced 6.4 s late),
+ * and on an RC QP the notice arrives only after the chunk's writes have been placed.
+ * The listener's receive thread (rdmamig_server_create_recv) queues each notice and
+ * wakes the main thread through backpatch_dispose_pipe; rdmaChunkNoticeDrain runs it
+ * there. Advertised in the DONE-SLOTS-INIT reply ("OK NOTICE"). */
+#define RDMA_CHUNK_NOTICE_MAGIC 0x4e435141u   /* "AQCN" */
+typedef struct __attribute__((packed)) {
+    uint32_t  magic;
+    uint16_t  ver;
+    uint16_t  n;                        /* slots that follow */
+    long long mig_id;
+    long long seq;
+    char      src[CLUSTER_NAMELEN];
+    uint16_t  slots[];
+} rdmaChunkNoticeWire;
+#define RDMA_CHUNK_NOTICE_MAX_SLOTS \
+    ((int) ((RDMAMIG_NOTICE_MAX - sizeof(rdmaChunkNoticeWire)) / sizeof(uint16_t)))
+
+typedef struct rdmaChunkNotice {
+    struct rdmaChunkNotice *next;
+    char src[CLUSTER_NAMELEN + 1];
+    long long mig_id, seq;
+    int n;
+    int slots[];
+} rdmaChunkNotice;
+static pthread_mutex_t g_chunk_notice_mu = PTHREAD_MUTEX_INITIALIZER;
+static rdmaChunkNotice *g_chunk_notice_head = NULL, *g_chunk_notice_tail = NULL;
+
+/* Receive thread of the migration listener. */
+static void rdmaChunkNoticeRecv(const void *data, uint32_t len, void *arg) {
+    UNUSED(arg);
+    const rdmaChunkNoticeWire *w = data;
+    if (len < sizeof(*w) || w->magic != RDMA_CHUNK_NOTICE_MAGIC || w->ver != 1 ||
+        len < sizeof(*w) + (size_t) w->n * sizeof(uint16_t)) {
+        serverLog(LL_WARNING, "RDMA chunk notice: malformed message (%u bytes) — dropped", len);
+        return;
+    }
+    rdmaChunkNotice *m = zmalloc(sizeof(*m) + (size_t) w->n * sizeof(int));
+    m->next = NULL;
+    memcpy(m->src, w->src, CLUSTER_NAMELEN);
+    m->src[CLUSTER_NAMELEN] = '\0';
+    m->mig_id = w->mig_id; m->seq = w->seq; m->n = w->n;
+    for (int i = 0; i < w->n; i++) m->slots[i] = w->slots[i];
+    pthread_mutex_lock(&g_chunk_notice_mu);
+    if (g_chunk_notice_tail) g_chunk_notice_tail->next = m; else g_chunk_notice_head = m;
+    g_chunk_notice_tail = m;
+    pthread_mutex_unlock(&g_chunk_notice_mu);
+    char tick = 1;
+    ssize_t wr = write(backpatch_dispose_pipe[1], &tick, 1);
+    (void) wr;
+}
+
+/* Main thread (backpatchDisposePipeHandler). */
+static void rdmaChunkNoticeDrain(void) {
+    pthread_mutex_lock(&g_chunk_notice_mu);
+    rdmaChunkNotice *m = g_chunk_notice_head;
+    g_chunk_notice_head = g_chunk_notice_tail = NULL;
+    pthread_mutex_unlock(&g_chunk_notice_mu);
+    while (m) {
+        rdmaChunkNotice *next = m->next;
+        const char *err = rdmaChunkLanded(m->src, m->mig_id, m->seq, m->slots, m->n, "rdma");
+        if (err)
+            serverLog(LL_WARNING, "RDMA chunk notice: mig_id=%lld seq=%lld: %s",
+                      m->mig_id, m->seq, err);
+        zfree(m);
+        m = next;
+    }
 }
 
 /* Legacy stubs kept for server.c init-time call; the new recipientBackpatch
@@ -3290,6 +3495,39 @@ static int                    g_lp_next = 0;     /* round-robin cursor (xsession
 static pthread_mutex_t        g_lp_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t         g_lp_cv = PTHREAD_COND_INITIALIZER;
 
+/* The landing pool claimed by a registration that has no batch yet, per first slot
+ * (index + 1; 0 = none), under g_lp_mu. The batch returns the pool to g_lp_free once its
+ * merge and forward are done (landingConsumerDone); a registration whose donor died before
+ * DONE-SLOTS-INIT has no batch, so its pool stayed claimed for good: the next round of the
+ * migration found no free pool and registered a new 2.2 GB one (~0.6 s in-window, and the
+ * pinned memory leaked; S8, 2026-10-21). Released with the orphaned hold (regHoldTake). */
+static int g_reg_pool_pending[CLUSTER_SLOTS];
+
+static void landingPoolClaimedFor(int lo, int idx) {   /* caller holds g_lp_mu */
+    if (lo >= 0 && lo < CLUSTER_SLOTS) g_reg_pool_pending[lo] = idx + 1;
+}
+
+static void landingPoolToBatch(int lo) {
+    if (lo < 0 || lo >= CLUSTER_SLOTS) return;
+    pthread_mutex_lock(&g_lp_mu);
+    g_reg_pool_pending[lo] = 0;
+    pthread_mutex_unlock(&g_lp_mu);
+}
+
+static void landingPoolOrphanRelease(int lo) {
+    if (lo < 0 || lo >= CLUSTER_SLOTS) return;
+    pthread_mutex_lock(&g_lp_mu);
+    int idx = g_reg_pool_pending[lo] - 1;
+    g_reg_pool_pending[lo] = 0;
+    if (idx >= 0 && idx < N_LANDING_POOLS && !g_lp_free[idx]) {
+        g_lp_free[idx] = 1;
+        pthread_cond_broadcast(&g_lp_cv);
+        serverLog(LL_WARNING, "RDMA REGISTER-BLOCK-SLOTS: landing pool %d of the registration of "
+                  "slot %d that never started returned to the free ring", idx, lo);
+    }
+    pthread_mutex_unlock(&g_lp_mu);
+}
+
 /* AqRaft crash-recovery landing-pool right-sizing. A promoted sg4 leader's
  * donor re-ship (rdmaRecipientRecover) re-pulls exactly ONE session's slot range,
  * so registerWorkerThread needs only ONE landing pool, not the full xsession ring
@@ -3440,6 +3678,18 @@ static void chainFwdGateOpen(backpatchBatch *b) {
 
 /* Per-slot forward gate: block `idx` of this session is held by the chain head.
  * Called by the pipelined forwarder for every completed write, in its thread. */
+/* Per-chunk timing: one more slot of `slot`'s chunk replicated to F1 (what = "REPL") or
+ * merged into the leader's keyspace ("INDEX"); logs the chunk once all its slots are. */
+static void perChunkCount(backpatchBatch *b, int slot, int repl) {
+    if (b == NULL || b->pc_chunk_of == NULL || slot < 0 || slot >= CLUSTER_SLOTS) return;
+    int c = b->pc_chunk_of[slot];
+    if (c < 0 || c >= RDMA_PERCHUNK_MAX || b->pc_size[c] == 0) return;
+    int n = atomic_fetch_add_explicit(repl ? &b->pc_repl[c] : &b->pc_idx[c], 1, memory_order_acq_rel) + 1;
+    if (n == b->pc_size[c])
+        serverLog(LL_NOTICE, "PERCHUNK %s mig_id=%lld slot0=%d seq=%d done (%d slots)",
+                  repl ? "REPL" : "INDEX", b->src_mig_id, b->sess_lo, c, n);
+}
+
 static void chainFwdBlockDone(void *ctx, int idx) {
     backpatchBatch *b = ctx;
     if (b->fwd_blk_done == NULL || idx < 0 || idx >= b->total_blocks) return;
@@ -3461,6 +3711,7 @@ static void chainFwdBlockDone(void *ctx, int idx) {
     for (int i = lo; i <= hi; i++) if (!b->fwd_blk_done[i]) { all = 0; break; }
     if (all && !b->fwd_slot_ok[slot]) {
         b->fwd_slot_ok[slot] = 1;
+        perChunkCount(b, slot, 1);   /* the slot is on F1 */
         b->fwd_released++;
         if (b->fwd_held != NULL) {
             listIter li; listNode *ln; listRewind(b->fwd_held, &li);
@@ -3602,6 +3853,8 @@ static void backpatchFinalize(backpatchBatch *b) {
                  b->src_mig_id, _slot_lo, _slot_hi, b->n_slots,
                  (long long) atomic_load(&b->applied),
                  (long long) atomic_load(&b->clobber_skipped));
+        /* C6: recipient leader crash with the data on a follower, before RECP_DURABLE. */
+        rdmaTestHook("before_recp_durable", b->src_mig_id);
         if (rdmaMgnLogSyncRetry("RECP_DURABLE", mgn_payload, 3) != 0) {
             serverLog(LL_WARNING,
                 "backpatchFinalize sess=%lld slots=%d-%d: MGN_RECP_DURABLE could NOT be "
@@ -3609,6 +3862,9 @@ static void backpatchFinalize(backpatchBatch *b) {
                 b->src_mig_id, _slot_lo, _slot_hi);
             return;
         }
+        /* C7: recipient leader crash after RECP_DURABLE committed, before the donor can
+         * see "done". */
+        rdmaTestHook("after_recp_durable", b->src_mig_id);
         atomic_store_explicit(&b->indx_applied, 1, memory_order_release);
 
         /* The range is durable. Followers the chain had to route around still
@@ -3749,12 +4005,18 @@ static void *chainForwardWorker(void *arg) {
         (long long) atomic_load(&b->applied),
         (long long) atomic_load(&b->clobber_skipped));
 
-    if (job->chain_configured &&
-        server.rdma_chain_pipeline && b->snapshot_ready != NULL) {
+    if (server.rdma_chain_pipeline && b->snapshot_ready != NULL &&
+        (job->chain_configured ||
+         atomic_load_explicit(&b->pipeline_spawn_initiated, memory_order_acquire))) {
         /* chain-pipeline: the dedicated pipeline forwarder (spawned at
          * DONE-SLOTS-INIT) owns the forward + BACKPATCH_DONE handoff and runs
          * concurrently with this merge. We only did the Fenwick rebuild + log
-         * above; do NOT forward again here. */
+         * above; do NOT forward again here. It owns them also when its chain is
+         * not up yet at merge-done (it waits for the chain): falling through to
+         * the "no chain" branch below set chain_acked and committed RECP_DURABLE
+         * with no follower holding the batch (C11, 2026-10-22: a new leader's
+         * chain to a restarted follower came up 0.2 s after the merge; one copy
+         * for 33 s, and the forwarder then ran on the finalized batch). */
         zfree(job->slots_copy);
         zfree(job);
         return NULL;
@@ -3869,7 +4131,7 @@ static void *chainPipelineForwardWorker(void *arg) {
      * every block of a fat slot is forwarded. total_blocks == n_slots in the
      * common single-block case. */
     int frc = rdmaLeaderChainForwardPipelined(
-                  b->chain_sess, b->covered_slots, b->total_blocks,
+                  b->chain_sess, b->sess_lo, b->covered_slots, b->total_blocks,
                   b->landing_va, b->landing_pool_buf,
                   b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
                   chainFwdBlockDone, b,
@@ -3927,7 +4189,7 @@ static void *chainPipelineForwardWorker(void *arg) {
             chainViewPublish(b->chain_sess, b->sess_lo, b->sess_hi, "reform");
             char fe2[256] = {0};
             frc = rdmaLeaderChainForwardPipelined(
-                      b->chain_sess, b->covered_slots, b->total_blocks,
+                      b->chain_sess, b->sess_lo, b->covered_slots, b->total_blocks,
                       b->landing_va, b->landing_pool_buf,
                       b->snapshot_ready, &b->chunk_slots, &b->ch_chunk_logged,
                       NULL, NULL,
@@ -4843,6 +5105,7 @@ static void *backpatchPoolWorkerMain(void *arg) {
             int skipped = 0;
             int moved = bgMergeDrainShadowLocked(w->db, w->slot, shadow, &skipped);
             bgMergeSlotSetActive(w->slot, 0);
+            perChunkCount(w->batch, w->slot, 0);   /* the slot is merged (indexed) */
             long long us = ustime() - t0;
             atomic_fetch_add_explicit(&g_bgm_cpu_us,  us,      memory_order_relaxed);
             atomic_fetch_add_explicit(&g_bgm_moved,   moved,   memory_order_relaxed);
@@ -5024,6 +5287,7 @@ static void backpatchDisposePipeHandler(aeEventLoop *el, int fd, void *priv, int
      *   2. The dispatch tail (last slot of a batch DONE) → batch in dispose_list.
      * Both paths just write a byte; the handler does the cheap thing for each. */
     armMergeTimer();
+    rdmaChunkNoticeDrain();   /* chunk notices received over RDMA */
     /* AqRaft Patch 16: chainForwardWorker (off-main) writes the pipe after
      * appending to backpatch_chain_pending. The chain-pending timer is
      * main-thread-only (aeCreateTimeEvent is not thread-safe), so arm it
@@ -5369,7 +5633,10 @@ static void *registerWorkerThread(void *arg) {
             }
             if (pthread_cond_timedwait(&g_lp_cv, &g_lp_mu, &ts) == ETIMEDOUT) break;
         }
-        if (idx >= 0) { g_lp_next = (idx + 1) % n_pools; g_lp_free[idx] = 0; }
+        if (idx >= 0) {
+            g_lp_next = (idx + 1) % n_pools; g_lp_free[idx] = 0;
+            landingPoolClaimedFor(regHoldFirstSlot(job->slot_ids, job->n_pairs), idx);
+        }
         pthread_mutex_unlock(&g_lp_mu);
     }
     #undef LP_USABLE
@@ -7710,6 +7977,24 @@ static void rdmaTransferRemoteBlock(rdmaOutboundLink *L, int slot, int k,
     }
 }
 
+/* Announce a landed chunk with an RDMA SEND on the link's QP (rdmaChunkLanded on the
+ * recipient). 0 = posted; -1 = not possible here, use DONE-SLOTS-CHUNK over TCP. */
+static int rdmaChunkNoticeSend(rdmaOutboundLink *L, const char *src_id, long long mig_id,
+                               int seq, const int *slots, int n) {
+    if (n <= 0 || n > RDMA_CHUNK_NOTICE_MAX_SLOTS) return -1;
+    char buf[RDMAMIG_NOTICE_MAX];
+    rdmaChunkNoticeWire *w = (rdmaChunkNoticeWire *) buf;
+    w->magic = RDMA_CHUNK_NOTICE_MAGIC;
+    w->ver = 1;
+    w->n = (uint16_t) n;
+    w->mig_id = mig_id;
+    w->seq = seq;
+    memcpy(w->src, src_id, CLUSTER_NAMELEN);
+    for (int i = 0; i < n; i++) w->slots[i] = (uint16_t) slots[i];
+    return rdmamig_client_post_send_inline(L->client, buf,
+                                           (uint32_t) (sizeof(*w) + (size_t) n * sizeof(uint16_t)));
+}
+
 static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                                   const int *chosen, int n_slots,
                                   long long mig_id, sds *err_out) {
@@ -7729,6 +8014,9 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
     const int K = (server.rdma_transfer_chunk_slots > 0)
                   ? server.rdma_transfer_chunk_slots : 32;
     int chunk_seq = 0;
+    int use_notice = 0;        /* the recipient takes chunk notices over RDMA (INIT: "OK NOTICE") */
+    int chunk_other_qp = 0;    /* a write of this chunk went on another QP: no RDMA notice for it */
+    int n_notice = 0;          /* chunks announced over RDMA */
     int pending_replies = 0;   /* hiredis pipelined replies we still need to drain (overlap path) */
     int chunk_errs = 0;        /* CHUNK RPC write/reply failures (overlap path). Distinct from
                                   `errs` (RDMA-WRITE post/completion failures) so a control-plane
@@ -7765,10 +8053,12 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
             pthread_mutex_unlock(&L->mu);
             return -1;
         }
+        use_notice = server.rdma_chunk_notice_rdma && ir->str != NULL &&
+                     strstr(ir->str, "NOTICE") != NULL;
         freeReplyObject(ir);
         serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: TRANSFER overlap on (K=%d), DONE-SLOTS-INIT sent",
-            K);
+            "RDMA MIGRATE worker: TRANSFER overlap on (K=%d), DONE-SLOTS-INIT sent; chunk "
+            "notices over %s", K, use_notice ? "RDMA" : "TCP");
     }
 
     /* Per-chunk accumulators (overlap path). Reused across chunks. */
@@ -7875,6 +8165,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
              * shouldn't happen for migrated slots (they were loaded via
              * r_allocator), but keeps correctness. */
             char *staging = rdmamig_buffer_data(L->source_buffers[slot]);
+            chunk_other_qp = 1;   /* posted on the buffer's QP, not L->client's */
             uint32_t n_entries = rdmaEncodeSlotEntries(db, slot, staging,
                                                        RDMAMIG_BLOCK_SIZE_BYTES);
             (void) n_entries;
@@ -7945,6 +8236,12 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                     "RDMA MIGRATE worker: not sending DONE-SLOTS-CHUNK seq=%d: %d write(s) "
                     "failed in it (slots stay missing on the recipient)",
                     chunk_seq, errs - errs_at_chunk);
+            } else if (overlap && chunk_used > 0 && use_notice && !chunk_other_qp &&
+                       rdmaChunkNoticeSend(L, src_id, mig_id, chunk_seq, chunk_slots,
+                                           chunk_used) == 0) {
+                /* Announced on the QP that carried the chunk: no TCP round trip. */
+                n_notice++;
+                chunk_seq++;
             } else if (overlap && chunk_used > 0) {
                 int chunk_argc = 5 + chunk_used;
                 const char **cargv = zmalloc((size_t) chunk_argc * sizeof(*cargv));
@@ -7985,6 +8282,7 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
                 zfree(cargv); zfree(cargvlen); zfree(cnumbuf);
             }
             chunk_used = 0;   /* reset moved OUT of the overlap-only block (slot-keyed) */
+            chunk_other_qp = 0;
             errs_at_chunk = errs;
         }
     }
@@ -8032,10 +8330,10 @@ static int rdmaReshardTransferHelper(rdmaOutboundLink *L, redisDb *db,
             if (cr) freeReplyObject(cr);
         }
         serverLog(LL_NOTICE,
-            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunk_errs=%d chunks=%d transfer_ms=%lld inwindow_reg=%lld",
+            "RDMA MIGRATE worker: TRANSFER (overlap) finished n=%d bytes=%zu errs=%d chunk_errs=%d chunks=%d transfer_ms=%lld inwindow_reg=%lld rdma_notices=%d",
             n_slots, total_bytes, errs, chunk_errs, chunk_seq,
             (ustime() - transfer_t0) / 1000,
-            blockMrTableRegCount(L->block_mr_tbl) - reg0);
+            blockMrTableRegCount(L->block_mr_tbl) - reg0, n_notice);
     } else {
         /* Legacy path: single end-of-TRANSFER DONE-SLOTS RPC. The recipient
          * also accepts the legacy 2-arg form for back-compat (no tracking). */
@@ -8639,6 +8937,9 @@ static void *migrationWorker(void *arg) {
             return NULL;
         }
     }
+    /* C1: donor crash after TXN_START committed, before the recipient is asked to open
+     * the session (prepare). */
+    rdmaTestHook("before_open", mig->id);
 
     /* Open the recipient's session BEFORE redirecting writes to it, so no
      * redirected write precedes MGN_RECP_TXN_START in the recipient's log.
@@ -8740,6 +9041,10 @@ static void *migrationWorker(void *arg) {
      * recipient holds any post-FLIP writes; the donor's snapshot fills in
      * for keys not yet transferred. */
     migSetState(mig, RDMA_MIG_FLIPPING);
+    /* S8: donor crash after the recipient accepted the block registration, before
+     * DONE-SLOTS-INIT (a ~1 ms window otherwise). The recipient must then release the
+     * orphaned registration's hold when the range is re-registered. */
+    rdmaTestHook("before_init", mig->id);
     if (rdmaReshardFlipHelper(mig->L, mig->chosen, mig->n_slots, &err) != 0) {
         migFail(mig, err);
         return NULL;
@@ -8893,6 +9198,9 @@ static void *migrationWorker(void *arg) {
                 }
                 if (state_str && strcmp(state_str, "done") == 0) {
                     done = 1;
+                    /* C3: donor crash after the recipient reported the range durable,
+                     * before TXN_DONE commits here. */
+                    rdmaTestHook("before_txn_done", mig->id);
                     /* Protocol log: donor sees recipient acked done. All
                      * donor replicas record the session close. */
                     char mgn_payload[64];
@@ -10087,6 +10395,13 @@ static void recoverPushRehome(recipientRecoverJob *j) {
     redisFree(ctx);
 }
 
+static void *recipientClosedRehomeWorker(void *arg) {
+    recipientRecoverJob *j = arg;
+    recoverPushRehome(j);
+    zfree(j);
+    return NULL;
+}
+
 static int recoverRangeMergedHere(int lo, int hi) {
     for (int s = lo; s <= hi; s++) if (!rdmaInvSlotFullyMerged(s)) return 0;
     return 1;
@@ -10120,6 +10435,19 @@ static void *recipientRecoverWorker(void *arg) {
      * leader whose event loop waits on a peer stops sending heartbeats, loses
      * its leadership, and two replicas promoted in turn can end up each waiting
      * for the other's event loop forever (seen with a 5-replica group). */
+    /* A round this node received as a follower but has not applied yet (a non-tail
+     * applies only after forwarding it to its successor) is held here all the same:
+     * apply it now instead of reporting the range missing, which made the donor
+     * re-ship it (C6, 2026-10-22). */
+    if (!have_me && rdmaChainApplyHeldRange(j->lo, j->hi, 30000)) {
+        long long t0 = mstime();
+        while (mstime() - t0 < 20000 && !(have_me = recoverRangeMergedHere(j->lo, j->hi)))
+            usleep(50000);
+        serverLog(have_me ? LL_NOTICE : LL_WARNING,
+            "AqRaft recipient-recover: sess=%lld range=%d-%d — the batch held here as a "
+            "follower was applied on promotion%s (%lld ms)", j->sess, j->lo, j->hi,
+            have_me ? " and merged" : ", NOT merged within 20 s", mstime() - t0);
+    }
     int peers_full = recoverCountPeersFull(j);
     serverLog(LL_NOTICE,
         "AqRaft recipient-recover: sess=%lld range=%d-%d — I %s the range, %d/%d peers "
@@ -10212,6 +10540,10 @@ static void *recipientRecoverWorker(void *arg) {
     return NULL;
 }
 
+/* The election term whose chain warm-up was started (rdmaRecipientRecover or a
+ * recipient-closed promotion), so one promotion warms the chain once. Main thread. */
+static long long g_chain_warm_term = -1;
+
 static void rdmaRecipientRecover(long long sess, const char *payload) {
     redisDb *db = &server.db[0];
     unsigned long long db_before = dbSize(db);
@@ -10259,6 +10591,7 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
                 rdmaChainSpawnEstablish(900000000000000001LL + term,
                                         n * (long long) RDMAMIG_BLOCK_SIZE_BYTES,
                                         server.rdma_chain_followers, -1, -1);
+                g_chain_warm_term = term;
                 serverLog(LL_NOTICE, "AqRaft recipient-recover: term=%lld -- chain warm-up started "
                           "(connections to the followers + landing registration, %lld slots)", term, n);
             }
@@ -10359,6 +10692,43 @@ void rdmaMgnRecoverCommand(client *c) {
     serverLog(LL_NOTICE,
         "AqRaft MGN-RECOVER: role=%s sess=%lld payload=\"%s\" — driving roll-forward resume",
         role ? role : "(nil)", sess, payload);
+
+    /* C7: a session this group closed (RECP_DURABLE committed) shortly before its leader
+     * died. Nothing to merge or adopt, but its donor may still be waiting for "done" from
+     * the dead leader, and gave up after 30 s: tell it where the leader is now. Its re-ship
+     * then asks (MGN-RESUME-STATUS: every slot durable), re-ships nothing and commits DONE.
+     * Off the main thread: the donor may be gone too. */
+    if (role && strcmp((const char *) role, "recipient-closed") == 0) {
+        recipientRecoverJob *job = zcalloc(sizeof(*job));
+        const char *sp = strstr(payload, "slots=");
+        const char *dp = strstr(payload, "donor=");
+        const char *np = strstr(payload, " n=");
+        if (sp) sscanf(sp, "slots=%d-%d", &job->lo, &job->hi);
+        if (dp) sscanf(dp, "donor=%255[^: ]:%d", job->dhost, &job->dport);
+        if (np) sscanf(np, " n=%d", &job->nslots);
+        job->sess = 700000000000000000LL + job->lo;
+        /* The new leader's next round needs its chain to the followers: connect and
+         * register the landing memory now, as rdmaRecipientRecover does for a round in
+         * flight. Without it the first round of this term waited 0.25 s for that before
+         * replicating (C7 on 10M keys, 2026-10-23). */
+        const char *tp = strstr(payload, "term=");
+        long long term = tp ? strtoll(tp + 5, NULL, 10) : -1;
+        if (server.rdma_chain_warm_on_promote && term >= 0 && term != g_chain_warm_term &&
+            job->nslots > 0 && job->nslots <= CLUSTER_SLOTS &&
+            server.rdma_chain_followers != NULL && sdslen(server.rdma_chain_followers) > 0) {
+            rdmaChainSpawnEstablish(900000000000000001LL + term,
+                                    (long long) job->nslots * (long long) RDMAMIG_BLOCK_SIZE_BYTES,
+                                    server.rdma_chain_followers, -1, -1);
+            g_chain_warm_term = term;
+            serverLog(LL_NOTICE, "AqRaft recipient-closed: term=%lld -- chain warm-up started "
+                      "(connections to the followers + landing registration, %d slots)", term, job->nslots);
+        }
+        pthread_t tid;
+        if (sp == NULL || pthread_create(&tid, NULL, recipientClosedRehomeWorker, job) != 0) zfree(job);
+        else pthread_detach(tid);
+        addReply(c, shared.ok);
+        return;
+    }
 
     /* B#1 recipient-leader recovery: this node is a surviving sg4 replica that was
      * promoted; execute the merges the dead leader never finalized. */
