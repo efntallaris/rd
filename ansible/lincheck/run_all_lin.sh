@@ -29,7 +29,7 @@ for rep in $(seq 1 "${REPS:-1}"); do
       # Don't start on top of another campaign (they don't honor $LOCK).
       # Match on the program tokens only: a shell whose command TEXT mentions
       # ansible-playbook (e.g. the one that launched us) must not count.
-      while ps -eo args | awk '{for (i = 1; i <= 3 && i <= NF; i++) if ($i ~ /(^|\/)ansible-playbook$|crash_inject\.sh$|camp[0-9a-z]*_driver\.sh$/) f = 1} END {exit !f}'; do
+      while ps -eo args | awk '{for (i = 1; i <= 3 && i <= NF; i++) if ($i ~ /(^|\/)ansible-playbook$|crash_inject\.sh$|fault_steps\.sh$|camp[0-9a-z]*_driver\.sh$/) f = 1} END {exit !f}'; do
         sleep 30
       done
       QUORUM_READS=$qr "$SCRIPT_DIR/run_lin_scenario.sh" "$s" > /dev/null 2>&1

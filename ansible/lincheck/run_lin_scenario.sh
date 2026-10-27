@@ -28,8 +28,8 @@
 set -uo pipefail
 
 SCENARIO="${1:-}"
-if [[ ! "$SCENARIO" =~ ^(HEALTHY|S[1-9])$ ]]; then
-  echo "usage: $0 <HEALTHY|S1..S5>" >&2; exit 1
+if [[ ! "$SCENARIO" =~ ^(HEALTHY|S[1-9]|C[1-9][0-9]?)$ ]]; then
+  echo "usage: $0 <HEALTHY|S1..S9|C1..C16>" >&2; exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -75,7 +75,7 @@ cleanup() {
   # A leftover injector would kill a node in the NEXT run. Only touch the one
   # this run started (same session id): other campaigns share this host.
   if [ -n "$RUN_SID" ]; then
-    for p in $(ps -eo pid=,sid=,args= | awk -v s="$RUN_SID" '$2==s && /crash_inject\.sh/ {print $1}'); do
+    for p in $(ps -eo pid=,sid=,args= | awk -v s="$RUN_SID" '$2==s && /crash_inject\.sh|fault_steps\.sh/ {print $1}'); do
       sudo kill "$p" 2>/dev/null
     done
   fi
@@ -161,7 +161,7 @@ else
   grep -aE "VERDICT|PASS|FAIL" "$OUT/playbook.log" | tail -5 >> "$OUT/run.log"
   # Injector record of THIS run (its own result file under /tmp/crash_inject is
   # root-owned; the same lines are on its stdout in playbook.log).
-  grep -aE '^\[crash_inject .*(MARKER HIT|KILLED|TIMEOUT|gave up|not alive)' "$OUT/playbook.log" | tee -a "$OUT/run.log"
+  grep -aE '^\[crash_inject .*(MARKER HIT|KILLED|RESTARTED|IN SYNC|NOT IN SYNC|CMD|STOPPED|CONTINUED|PARTITIONED|HEALED|TIMEOUT|gave up|not alive)' "$OUT/playbook.log" | tee -a "$OUT/run.log"
 fi
 wait "$LAUNCHER_PID" 2>/dev/null; LAUNCHER_PID=""
 

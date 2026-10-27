@@ -11,7 +11,7 @@ leaders, so it keeps working when a leader is killed.
       print the pairs, ranges and ports (no cluster access)
   scaleout_pairs.py prepare  <topology.json> [--rounds N] [--warm-skip sg1]
       RDMA ports + write-flip spec on the donors, MIGRATE-WARM, CHAIN-WARM
-  scaleout_pairs.py migrate  <topology.json> [--rounds N] [--mode parallel|sequential]
+  scaleout_pairs.py migrate  <topology.json> [--rounds N] [--mode parallel|sequential|pipelined|pairwise]
                              [--async-apply yes|no]
       dispatch, poll to DONE, re-drive whatever a crash interrupted, wait for
       the recipients' merges, NARROW the donors, push the final 6-group map
@@ -21,6 +21,7 @@ redisraft_shardgroups: {"slots_per_source": N, "groups": [...]}.
 Exit 0 = every pair migrated and the ownership handed over.
 """
 import argparse
+import concurrent.futures
 import json
 import re
 import socket
@@ -82,7 +83,22 @@ class _Resp:
             pass
 
 
+TRACE = "/tmp/scaleout_driver_trace.log"   # every server call: start time, duration, target, command
+
+
 def cli(ip, port, *args, t=5):
+    t0 = time.time()
+    out = _cli(ip, port, *args, t=t)
+    try:
+        with open(TRACE, "a") as f:
+            f.write("%.3f %6.3f %s:%s %s -> %s\n" % (t0, time.time() - t0, ip, port, " ".join(map(str, args))[:60],
+                                                   out.split("\n", 1)[0][:50]))
+    except OSError:
+        pass
+    return out
+
+
+def _cli(ip, port, *args, t=5):
     c = None
     try:
         c = _Resp(ip, port, t)
@@ -137,14 +153,37 @@ class Group:
         return d
 
     def leader(self):
-        """(host, ip) of the current leader, or None."""
+        """(host, ip) of the current leader, or None. Asks every member at once and answers as
+        soon as one says it leads: asked one after the other, a just-killed leader (its port
+        still accepts while ~15 GB of RDMA-pinned memory is released, ~1.2 s) held up every
+        lookup, and the next round started 1.3 s late (C7 on 10M keys, 2026-10-23). Of two
+        nodes that both say so within 50 ms, the one with the higher term."""
         m = self.members()
-        m.sort(key=lambda x: x[1] != getattr(self, "_last_leader", None))   # last known leader first
-        for h, ip, _ in m:
-            if self.info(ip).get("raft_role", "").lower() == "leader":
-                self._last_leader = ip
-                return h, ip
-        return None
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=len(m))
+        fs = {ex.submit(self.info, ip): (h, ip) for h, ip, _ in m}
+        found, pending, t_end = [], set(fs), time.time() + 3
+        try:
+            # Wait on a deadline, not on the next answer: a member that never answers held the
+            # loop until its 2 s INFO timeout although the leader had answered (C7 on 10M keys,
+            # 2026-10-23: round 2 still started 1.29 s after round 1).
+            while pending:
+                left = t_end - time.time()
+                if left <= 0:
+                    break
+                done, pending = concurrent.futures.wait(pending, timeout=left,
+                                                        return_when=concurrent.futures.FIRST_COMPLETED)
+                for f in done:
+                    d = f.result()
+                    if d.get("raft_role", "").lower() == "leader":
+                        found.append((int(d.get("raft_current_term", 0) or 0), fs[f]))
+                        t_end = min(t_end, time.time() + 0.05)
+        finally:
+            ex.shutdown(wait=False)   # a member that does not answer finishes in the background
+        if not found:
+            return None
+        h, ip = max(found)[1]
+        self._last_leader = ip
+        return h, ip
 
     def wait_leader(self, secs=120):
         t0 = time.time()
@@ -349,21 +388,41 @@ def wait_tail_hop(p, prev, timeout=3.0):
 
 
 def poll(running, timeout):
-    """running: {pair: (donor ip, migration id, first slot)} -> {pair: DONE|FAILED|DONORDOWN|TIMEOUT}"""
+    """running: {pair: (donor ip, migration id, first slot[, slot count])}
+    -> {pair: DONE|FAILED|DONORDOWN|TIMEOUT}"""
     final, down, down_t = {}, {p: 0 for p in running}, {}
     t0 = time.time()
-    nxt = {p: t0 + 2 for p in running}
+    nxt = {p: t0 + 0.1 for p in running}   # the re-ship check below, from the start (was after 2 s)
+    nxt_dur = {p: 0.0 for p in running}
     while len(final) < len(running) and time.time() - t0 < timeout:
-        for p, (ip, mid, lo) in running.items():
+        for p, v in running.items():
+            ip, mid, lo = v[:3]
             if p in final:
                 continue
-            out = cli(ip, p.donor.port, "RDMA", "MIGRATE-STATUS", mid, t=2)
+            # 1 s (was 2): a dying donor (RDMA-pinned memory, ~1.2 s to exit) accepts the
+            # connection and never answers, so every poll waited for the full timeout.
+            # Once it has stopped answering, don't ask it again (each try would wait the
+            # timeout once more): only the recipient's durability is checked below, every
+            # 0.1 s (S8, 2026-10-22: the next round still started 0.62 s after the re-ship).
+            if down[p] and len(v) > 3:
+                out = ""
+                time.sleep(0.01)
+            else:
+                out = cli(ip, p.donor.port, "RDMA", "MIGRATE-STATUS", mid, t=1)
             st = re.search(r"DONE|FAILED", out.split("\n", 1)[0])
-            if not st and time.time() >= nxt[p]:
+            # not to a donor that stopped answering: each try waited out the 2 s timeout and held
+            # up the recipient-durability check below (S8 on 10M keys, 2026-10-23: the next round
+            # started 0.7 s after the new donor leader's re-ship was done)
+            # nor right after the status call itself went unanswered (C3 on 10M keys, 2026-10-23: the
+            # status call timed out at the kill, then this check waited 1 s more on the dead donor)
+            if not st and not down[p] and not unreachable(out) and time.time() >= nxt[p]:
                 # A donor whose recipient leader died re-ships the round itself under
                 # id 8e17 + first slot and leaves the original id in BACKPATCH for
                 # good (S1 sequential, 2026-10-03: 120 s spent polling the dead id).
-                nxt[p] = time.time() + 1
+                # every 0.1 s (was 1 s): the re-ship of a closed round finishes within ms of
+                # the new recipient leader's election, and the next round waited for this
+                # check (C7 on 10M keys, 2026-10-23: round 2 started 1 s after round 1 was done)
+                nxt[p] = time.time() + 0.1
                 o2 = cli(ip, p.donor.port, "RDMA", "MIGRATE-STATUS", 800000000000000000 + max(lo, 1), t=2)
                 st = re.search(r"DONE|FAILED", o2.split("\n", 1)[0])
                 if st:
@@ -376,6 +435,20 @@ def poll(running, timeout):
                 # can never turn DONE; after 1 s of that (and 3 polls) leave it to the re-drive.
                 down[p] += 1
                 down_t.setdefault(p, time.time())
+                # Meanwhile the donor group's NEW leader resumes the round by itself
+                # (MGN-RECOVER on promotion). Once the recipient holds the range durably
+                # the round is done: don't sit out the 1 s above (S8, 2026-10-21: the
+                # next round started 0.66 s after the re-ship had finished).
+                if len(v) > 3 and time.time() >= nxt_dur[p]:
+                    nxt_dur[p] = time.time() + 0.1
+                    rl = p.recip.leader()
+                    if rl is not None:
+                        st = cli(rl[1], p.recip.port, "RDMA", "MGN-RESUME-STATUS", lo, lo + v[3] - 1, t=1).split()
+                        if len(st) >= 2 and st[0] == "0" and st[1] == "0":
+                            say("%s: donor %s gone, round %d-%d already durable on %s (resumed by the new donor leader)"
+                                % (p, ip, lo, lo + v[3] - 1, rl[0]))
+                            final[p] = "DONE"
+                            continue
                 if down[p] >= 3 and time.time() - down_t[p] >= 1.0:
                     final[p] = "DONORDOWN"
             else:
@@ -590,12 +663,46 @@ def migrate_pipelined(a, pairs):
         sys.exit(1)
 
 
+def migrate_pairwise(a, pairs):
+    """One transfer at a time, like sequential, but pair by pair: every round of
+    the first pair, then of the second, then of the third. A recipient's chain
+    hop to its last replica (F1 -> F2) is not needed for the commit, so it is
+    still running when the next transfer starts. In the 3 -> 6 topology the next
+    pair's first hop (leader -> F1) is exactly that link (A's F1 -> F2 is
+    redis4 -> redis5 = B's leader -> F1, and so on round the cycle): sequential
+    ran every leader -> F1 hop but the first at ~13.5 instead of ~23 Gb/s
+    (2026-10-20, quick profile). The same pair's next round uses the links
+    leader -> F1 and donor -> leader, never F1 -> F2, so nothing collides.
+    At the switch to the next pair the collision is unavoidable (the next pair's
+    copy and first hop land on its leader and F1, the previous tail on its F2);
+    letting it happen (~0.23 s) is cheaper than waiting for the tail (0.32 s)."""
+    prev = None
+    for p in pairs:
+        for ri in range(a.rounds):
+            lo, _, cnt = round_range(p, ri, a.rounds)
+            _, dip = p.donor.wait_leader()
+            cli(dip, p.donor.port, "CONFIG", "SET", "rdma-reshard-migrated", lo - p.lo)
+            wait_tail_hop(p, prev)
+            prev = (p, lo, cnt, ri)
+            ip, mid = dispatch(p, cnt)
+            if ip is None:
+                say("%s: round %d DISPATCH FAILED: %s" % (p, ri, mid))
+                final = "NODISPATCH"
+            else:
+                final = poll({p: (ip, mid, lo, cnt)}, a.poll_timeout)[p]
+            say("round %d: %s=%s" % (ri, p, final))
+            if final != "DONE" and not redrive([p], ri, a.rounds):
+                sys.exit(1)
+
+
 def cmd_migrate(a):
     groups, pairs = load(a.topology)
     if a.mode == "pipelined":
         migrate_pipelined(a, pairs)
+    elif a.mode == "pairwise":
+        migrate_pairwise(a, pairs)
     prev = None   # (pair, first slot, slot count) of the round dispatched last
-    for ri in range(a.rounds if a.mode != "pipelined" else 0):
+    for ri in range(a.rounds if a.mode not in ("pipelined", "pairwise") else 0):
         # The donor picks "the next N slots it owns after rdma-reshard-migrated" and
         # advances that counter itself, but only on the node that ran the round. Set
         # it on the current leader before every round, so a leader elected between
@@ -640,7 +747,7 @@ def main():
     ap.add_argument("--cli", default=CLI)
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--warm-followers", choices=["yes", "no"], default="yes")
-    ap.add_argument("--mode", choices=["parallel", "sequential", "pipelined"], default="sequential")
+    ap.add_argument("--mode", choices=["parallel", "sequential", "pipelined", "pairwise"], default="sequential")
     ap.add_argument("--async-apply", default="no")
     ap.add_argument("--warm-skip", default="")
     ap.add_argument("--settle", type=int, default=10)

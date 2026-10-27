@@ -48,6 +48,12 @@
     # the jinja first() lookup of raft_id would fail for non-member hosts.
     - name: Start one redis-server per shardgroup membership
       shell: |
+        # The start command is also kept in /tmp/redis_start_<host>_<sg>.sh: the crash suite
+        # restarts a killed instance with it (ansible/crash/fault_steps.sh), since redis-server
+        # rewrites its process title and /proc/<pid>/cmdline no longer has the arguments.
+        # (The blank line before AQRAFT_START is needed: Jinja trim_blocks drops the newline
+        # after the endif, which would glue the terminator to the last argument.)
+        cat > /tmp/redis_start_{{ inventory_hostname }}_{{ sg.id }}.sh <<'AQRAFT_START'
         ulimit -l unlimited
         {{ redis_bin_dir }}/redis-server \
           --port {{ sg.port }} \
@@ -74,6 +80,7 @@
           {% endif %}{% if (sg_is_recipient | bool) and rdma_landing_prereg_pools is defined %}--rdma-landing-prereg-pools {{ rdma_landing_prereg_pools }} \
           --rdma-landing-prereg-slots {{ rdma_landing_prereg_slots | default(1365) }} \
           --rdma-src-prereg-bind {{ host_ip_map[inventory_hostname] }} \
+          {% if rdma_chain_follower_prereg_pools is defined %}--rdma-chain-follower-prereg-pools {{ rdma_chain_follower_prereg_pools }} {% endif %}\
           {% endif %}          --rdma-naive-durability {{ rdma_naive_durability | default('no') }} \
           --cluster-rdma-transfer-chunk-slots {{ rdma_transfer_chunk_slots | default(32) }} \
           --cluster-rdma-reshard-debug-bytes {{ rdma_reshard_debug_bytes | default('no') }} \
@@ -104,6 +111,9 @@
           --raft.snapshot-disable yes \
           --raft.log-max-file-size 0{% else %} \
           --raft.log-max-file-size {{ rdma_raft_log_max_file_size | default(1073741824) }}{% endif %}
+
+        AQRAFT_START
+        bash /tmp/redis_start_{{ inventory_hostname }}_{{ sg.id }}.sh
       # A group is a migration recipient if it says so (role: recipient, see
       # experiments/custom_scaleout_3to6/topology.yml); without a role, only sg4 is.
       vars:

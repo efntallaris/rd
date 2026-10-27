@@ -144,18 +144,75 @@ public class RedisClient extends DB {
   private static final java.util.concurrent.ConcurrentHashMap<HostAndPort, Long> DEAD_UNTIL =
       new java.util.concurrent.ConcurrentHashMap<>();
   private static final int PROBE_CONNECT_TIMEOUT_MS = 400;
+  /* Reply timeout of a control-plane probe (CLUSTER SLOTS answers in ms). A killed redis-server
+   * with many GB of RDMA-pinned memory takes ~1.2 s to exit (2026-10-21: 15 GB pinned, 1.18 s);
+   * meanwhile its port still ACCEPTS connections and never answers, so a probe with the 2 s
+   * request timeout stalled the poller (and every re-resolve) until the process was gone. */
+  private static final int PROBE_SO_TIMEOUT_MS = 400;
   private static final long DEAD_TTL_MS = 2000;   // re-probe after 2 s in case it recovered
   private static boolean endpointDead(HostAndPort hp) {
     Long until = DEAD_UNTIL.get(hp);
     return until != null && until > System.currentTimeMillis();
   }
+  /* A probe that only timed out (no reply within PROBE_SO_TIMEOUT_MS) may be a live node that
+   * is briefly busy -- e.g. a donor follower being elected leader. Marking it dead for the full
+   * DEAD_TTL_MS hid the NEW leader from the poller for 2 s after a donor-leader crash (S2,
+   * 2026-10-21: clients out 3.2 s with the election done at 1.05 s). A timeout therefore marks
+   * the endpoint dead only briefly; a refused / reset connection keeps the long TTL. */
+  private static final long DEAD_TTL_TIMEOUT_MS = 500;
   private static void markEndpointDead(HostAndPort hp) {
     DEAD_UNTIL.put(hp, System.currentTimeMillis() + DEAD_TTL_MS);
+  }
+  /* An error REPLY (e.g. "-CLUSTERDOWN No raft leader" from a follower while its group elects
+   * a leader) comes from a live node: it is not marked dead at all. Marking it for DEAD_TTL_MS
+   * hid the follower that won the election for 2 s (C1, 2026-10-22: clients out 3.0 s with the
+   * new donor leader elected at 1.09 s). */
+  private static void markEndpointDead(HostAndPort hp, Throwable why) {
+    boolean timeout = false;
+    for (Throwable t = why; t != null; t = t.getCause()) {
+      if (t instanceof redis.clients.jedis.exceptions.JedisDataException) return;
+      if (t instanceof java.net.SocketTimeoutException) { timeout = true; break; }
+    }
+    boolean wasDead = endpointDead(hp);
+    DEAD_UNTIL.put(hp, System.currentTimeMillis() + (timeout ? DEAD_TTL_TIMEOUT_MS : DEAD_TTL_MS));
+    if (!wasDead) {
+      System.err.println("[AQRAFT] endpoint " + hp + " marked dead (" + (timeout ? "no reply" : "unreachable") + ")");
+    }
   }
   /* Control-plane (CLUSTER SLOTS) probe: short connect timeout, normal socket timeout. */
   private static Jedis probeJedis(HostAndPort hp, Integer soTimeoutMs) {
     int so = (soTimeoutMs != null && soTimeoutMs > 0) ? soTimeoutMs : 2000;
-    return new Jedis(hp.getHost(), hp.getPort(), PROBE_CONNECT_TIMEOUT_MS, so);
+    return new Jedis(hp.getHost(), hp.getPort(), PROBE_CONNECT_TIMEOUT_MS, Math.min(so, PROBE_SO_TIMEOUT_MS));
+  }
+
+  /* Every worker connection, per endpoint, across all threads of this JVM. When the poller
+   * finds an endpoint unresponsive it shuts these down: a worker blocked reading a reply from a
+   * dying leader then fails at once (connection dropped -> re-resolve -> the new leader) instead
+   * of hanging until the dead process exits or the 2 s request timeout. */
+  private static final ConcurrentHashMap<HostAndPort, java.util.Set<Jedis>> OPEN_CONNS =
+      new ConcurrentHashMap<>();
+  private static final java.util.concurrent.atomic.AtomicLong INSTR_ABORTED = new java.util.concurrent.atomic.AtomicLong();
+  private static void registerConn(HostAndPort hp, Jedis j) {
+    OPEN_CONNS.computeIfAbsent(hp, k -> ConcurrentHashMap.newKeySet()).add(j);
+  }
+  private static void unregisterConn(HostAndPort hp, Jedis j) {
+    java.util.Set<Jedis> set = OPEN_CONNS.get(hp);
+    if (set != null) { set.remove(j); }
+  }
+  private static void abortConnections(HostAndPort hp) {
+    java.util.Set<Jedis> set = OPEN_CONNS.get(hp);
+    if (set == null) { return; }
+    int n = 0;
+    for (Jedis j : set) {
+      try {
+        java.net.Socket sock = j.getClient().getSocket();
+        if (sock != null && !sock.isClosed()) { sock.shutdownInput(); n++; }
+      } catch (Exception ignore) { /* already closed */ }
+    }
+    if (n > 0) {
+      INSTR_ABORTED.addAndGet(n);
+      System.err.println("[AQRAFT] aborted " + n + " connections to unresponsive " + hp);
+    }
   }
   private static final java.util.concurrent.atomic.AtomicBoolean SLOT_POLLER_STARTED =
       new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -181,6 +238,12 @@ public class RedisClient extends DB {
       while (true) {
         try {
           Thread.sleep(pollMs);
+          /* Every tick, re-abort connections to endpoints still marked dead: a worker that
+           * (re)connects to a dying leader after the first abort (its port still accepts)
+           * would otherwise hang until the process exits, as the dead mark makes the loop
+           * below skip that endpoint for DEAD_TTL_MS. */
+          /* (abort happens below, when another node takes over the endpoint's slots) */
+          java.util.Set<HostAndPort> replaced = new java.util.HashSet<>();
           /* AqRaft S1 fix: also poll the RECIPIENT leaders. sg4 owns no slots at
            * bootstrap (migration hasn't happened), so its nodes are never in the
            * bootstrap slot map / POLL_TARGETS. The recipient leader is learned via
@@ -252,6 +315,7 @@ public class RedisClient extends DB {
                         && !DONOR_HOSTS.contains(fcur.getHost())) {
                       SHARED_PEER[fs] = owner;
                       SHARED_COLLAPSED[fs] = true;
+                      replaced.add(fcur);
                     }
                   }
                 }
@@ -265,7 +329,10 @@ public class RedisClient extends DB {
                    * word (another group's view of this range can be stale). */
                   if (boot != null && !owner.equals(boot) && targetIsDonor
                       && DONOR_HOSTS.contains(owner.getHost())) {
-                    if (owner.equals(target) && !endpointDead(owner)) SHARED_BOOT_OWNER[s] = owner;
+                    if (owner.equals(target) && !endpointDead(owner)) {
+                      replaced.add(boot);
+                      SHARED_BOOT_OWNER[s] = owner;
+                    }
                     continue;
                   }
                   if (boot != null && !owner.equals(boot) && targetIsDonor) {
@@ -290,14 +357,25 @@ public class RedisClient extends DB {
                   }
                 }
               }
+            } catch (JedisConnectionException ce) {
+              /* unreachable, or no reply in PROBE_SO_TIMEOUT_MS (a dying leader accepts
+               * and never answers; a busy live node is only marked briefly). */
+              markEndpointDead(target, ce);
             } catch (Exception inner) {
               /* skip this target this tick (leader moving mid-NARROW etc.);
-               * remember a dead endpoint so re-resolves + later ticks skip it. */
-              markEndpointDead(target);
+               * remember a dead endpoint so re-resolves + later ticks skip it
+               * (an error reply is a live node: not marked, see markEndpointDead). */
+              markEndpointDead(target, inner);
             } finally {
               try { j.close(); } catch (Exception ignore) { /* drain */ }
             }
           }
+          /* Another node took over these endpoints' slots this tick (a new leader). A worker
+           * still blocked on one (a dying leader accepts and never answers) would hang until
+           * the process exits (~1.2 s with 15 GB of RDMA-pinned memory) or the 2 s request
+           * timeout: wake it so it re-resolves to the new owner. A live but slow leader is
+           * never replaced this way, so its connections are left alone. */
+          for (HostAndPort old : replaced) { abortConnections(old); }
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
           return;
@@ -597,6 +675,7 @@ public class RedisClient extends DB {
                             : new Jedis(hp.getHost(), hp.getPort());
     j.connect();
     conns.put(hp, j);
+    registerConn(hp, j);
     DEAD_HOSTS.remove(hp.getHost());
     return j;
   }
@@ -621,6 +700,7 @@ public class RedisClient extends DB {
     if (hp == null) return;
     Jedis bad = conns.remove(hp);
     if (bad != null) {
+      unregisterConn(hp, bad);
       try { bad.close(); } catch (Exception ignore) { /* drain */ }
     }
   }
@@ -675,9 +755,9 @@ public class RedisClient extends DB {
           }
           v.n = n;
         }
-      } catch (Exception ignore) {
+      } catch (Exception e) {
         // Couldn't reach it (dead / unreachable) — remember so peers skip it too.
-        markEndpointDead(probe);
+        markEndpointDead(probe, e);
         v.n = -1;
       } finally {
         if (j != null) { try { j.close(); } catch (Exception ignore) { /* drain */ } }

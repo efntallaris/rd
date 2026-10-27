@@ -13,6 +13,11 @@
 # fires mid-migration off the Nth DONE-SLOTS-CHUNK / forward marker.
 #
 # Env passthrough: RESTART, POST_KILL_DELAY, MAX_WAIT (see crash_inject.sh).
+# A scenario that sets STEPS (C1-C16) runs fault_steps.sh instead of crash_inject.sh.
+# HOOKS="host:name[:ms] ..." (from the scenario) creates /tmp/rdma_hook_<name> on each host
+# before the run (content: pause in ms): a one-shot pause in the server code that makes a
+# window of a few ms wide enough to crash in (see rdmaTestHook in redis/src/cluster_rdma.c).
+# The files are removed when the run ends. SCEN_EXTRA_ARGS: extra ansible args of the scenario.
 # Other topologies (e.g. experiments/custom_scaleout_3to6): SCENARIOS_ENV is the
 # scenario file to source, WORKLOAD_PLAYBOOK the playbook to run (path relative
 # to ansible/), RECIPIENT_LOGS the "host:sg" logs to fetch for the verdict
@@ -22,8 +27,8 @@
 set -euo pipefail
 
 SCENARIO="${1:-}"
-if [[ ! "$SCENARIO" =~ ^S[1-9]$ ]]; then
-  echo "usage: $0 <S1|S2|S3|S4|S5>" >&2; exit 1
+if [[ ! "$SCENARIO" =~ ^(S[1-9]|C[1-9][0-9]?)$ ]]; then
+  echo "usage: $0 <S1..S9|C1..C16>" >&2; exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,17 +39,35 @@ EXP_NAME="${EXP_PREFIX:-}crash_${SCENARIO,,}"
 [ "${RDMA_NAIVE:-no}" = "yes" ] && EXP_NAME="${EXP_NAME}_naive"  # paper: naive durability baseline arm
 
 # shellcheck source=/dev/null
+STEPS=""; HOOKS=""; SCEN_EXTRA_ARGS=""
 source "${SCENARIOS_ENV:-$SCRIPT_DIR/scenarios.env}"
+SSHQ="sudo ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8"
+hooks() {  # hooks set|clear
+  for hk in $HOOKS; do
+    IFS=: read -r h name ms <<< "$hk"
+    if [ "$1" = set ]; then $SSHQ "$h" "echo ${ms:-1500} > /tmp/rdma_hook_$name"
+    else $SSHQ "$h" "rm -f /tmp/rdma_hook_$name"; fi
+  done
+}
 
 echo "=========================================================="
 echo " AqRaft crash scenario $SCENARIO  ($LABEL)"
-echo " kill $TARGET_HOST:$PIDFILE  @  ${ARM_COUNT}x /$ARM_MARKER/"
+if [ -n "$STEPS" ]; then echo " steps: $STEPS"; else echo " kill $TARGET_HOST:$PIDFILE  @  ${ARM_COUNT}x /$ARM_MARKER/"; fi
+[ -n "$HOOKS" ] && echo " hooks: $HOOKS"
+[ -n "$SCEN_EXTRA_ARGS" ] && echo " extra ansible args: $SCEN_EXTRA_ARGS"
 echo " experiment_name=$EXP_NAME"
 echo "=========================================================="
 
 mkdir -p "$RESULT_DIR"
+hooks clear; hooks set
+trap 'hooks clear' EXIT
 
 # 1. Arm the killer in the background (blocks on the marker, then kills).
+if [ -n "$STEPS" ]; then
+STEPS="$STEPS" LABEL="$LABEL" MAX_WAIT="${MAX_WAIT:-1800}" RESULT_DIR="$RESULT_DIR" \
+  bash "$SCRIPT_DIR/fault_steps.sh" &
+INJ_PID=$!
+else
 LABEL="$LABEL" ARM_HOST="$ARM_HOST" ARM_LOG="$ARM_LOG" \
   ARM_MARKER="$ARM_MARKER" ARM_COUNT="$ARM_COUNT" \
   TARGET_HOST="$TARGET_HOST" PIDFILE="$PIDFILE" \
@@ -53,6 +76,7 @@ LABEL="$LABEL" ARM_HOST="$ARM_HOST" ARM_LOG="$ARM_LOG" \
   MAX_WAIT="${MAX_WAIT:-1800}" RESULT_DIR="$RESULT_DIR" \
   bash "$SCRIPT_DIR/crash_inject.sh" &
 INJ_PID=$!
+fi
 echo "[run] crash_inject armed (pid=$INJ_PID); starting base reshard..."
 
 # 2. Run the base 30M background-merge reshard (HOWTO_30M_BGMERGE §1).
@@ -69,7 +93,7 @@ sudo ansible-playbook -i "${INVENTORY:-inventory.ini}" \
   -e pre_reshard_pause="${PRE_PAUSE:-20}" \
   -e '{"rdma_follower_proxy": "no"}' \
   -e redis_workload="${WORKLOAD:-workloada_prod_30m_run10min}" \
-  -e experiment_name="$EXP_NAME" ${EXTRA_ANSIBLE_ARGS:-}
+  -e experiment_name="$EXP_NAME" ${EXTRA_ANSIBLE_ARGS:-} $SCEN_EXTRA_ARGS
 PLAYBOOK_RC=$?
 set -e
 echo "[run] playbook exited rc=$PLAYBOOK_RC"

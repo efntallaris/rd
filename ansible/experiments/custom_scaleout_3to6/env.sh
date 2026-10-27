@@ -1,7 +1,7 @@
 # Environment that points the lincheck / crash harness (ansible/lincheck,
 # ansible/crash) at the 3 -> 6 scale-out. Sourced by run_scenario.sh and run_all.sh.
 #
-# Env: ROUNDS (default 6), SCALEOUT_MODE (sequential|pipelined|parallel), CHUNK_SLOTS (57), SCALEOUT_EXTRA_ARGS (more -e flags),
+# Env: ROUNDS (default 6), SCALEOUT_MODE (sequential|pipelined|parallel|pairwise), CHUNK_SLOTS (57), SCALEOUT_EXTRA_ARGS (more -e flags),
 #      DATASET_SNAPSHOT (PROFILE=full only, default ws30m_3to6), plus everything
 #      run_lin_scenario.sh takes (PROFILE, WORKLOAD, YCSB_THREADS, ROUNDS, ...).
 SCALEOUT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +17,10 @@ export LIN_SLOT_RANGES="0-2729,5461-8190,10922-13651"   # = scaleout_pairs.py pl
 # instances: about 34 x slots-per-round x 2 MiB per host. One round of 2730 slots
 # is > 100 GB and takes the 62 GB hosts down (2026-10-02). 6 rounds of 455 slots
 # is ~32 GB. Keep slots-per-round <= 510 and ROUNDS < 8 (pools are not reused).
+# 2026-10-20: a recipient instance pre-registers only ROUNDS + 1 follower ring pools
+# (CHAIN-WARM + one per round; rdma-chain-follower-prereg-pools) instead of all 8, so
+# ROUNDS=4 (683 slots per round) needs ~5 x 1.47 + 4 x 1.7 GB = ~14 GB per instance,
+# ~43 GB per host, the same as ROUNDS=6 with 8 follower pools.
 export ROUNDS="${ROUNDS:-6}"
 # Load (quick profile). run_lin_scenario.sh's defaults (32 threads per client,
 # zipfian) leave the servers idle: the clients are the limit and the run shows
@@ -42,6 +46,7 @@ EXTRA_ANSIBLE_ARGS="-e @$SCALEOUT_DIR/topology.yml -e n_rounds=$ROUNDS -e rdma_s
 # follow the donor's copy closely (run_lin_scenario.sh passes 342).
 EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_landing_prereg_pools=$(( ROUNDS < 8 ? ROUNDS : 8 )) -e rdma_landing_prereg_slots=$SCALEOUT_ROUND_SLOTS"
 EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_transfer_chunk_slots=${CHUNK_SLOTS:-57}"
+EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_chain_follower_prereg_pools=$(( ROUNDS + 1 < 8 ? ROUNDS + 1 : 8 ))"
 # Client threads open their connections to every recipient replica at start-up (FIXES_LOG 39).
 EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e ycsb_preconnect=10.10.1.4:8000,10.10.1.5:8000,10.10.1.6:8000,10.10.1.4:8001,10.10.1.5:8001,10.10.1.6:8001,10.10.1.4:8002,10.10.1.5:8002,10.10.1.6:8002"
 # 8 merge threads on the recipient leader (server default 3). 16 merges faster but starves the

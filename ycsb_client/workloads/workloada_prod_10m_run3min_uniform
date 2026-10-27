@@ -1,0 +1,16 @@
+# 10M uniform production variant, 3-minute run (crash-recovery suite, 2026-10-22).
+# workloada_prod_30m_run3min with recordcount=10M (30M exceeds the 3->6 hosts with the
+# RDMA pools) and uniform keys, like workloada_lin_quick_uniform.
+recordcount=10000000
+operationcount=200000000
+maxexecutiontime=180
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0.5
+scanproportion=0
+insertproportion=0
+
+requestdistribution=uniform
