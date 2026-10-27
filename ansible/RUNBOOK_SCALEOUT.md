@@ -4,6 +4,10 @@ Last updated 2026-10-06. These two setups, each with its failure scenarios, are 
 now on. Keep this file current: when a command, default or caveat changes, change it here.
 Detailed history of every fix is in `ansible/lincheck/FIXES_LOG.md` (entries 42-45 for 5-6 October).
 
+**Since 20 October:** the crash-recovery suite (C1-C17, 300k and 10M keys) and every setting and
+default that changed for the runs below (chunk notices over RDMA, driver changes, chain warm-up,
+the parallel follower probe) are in `ansible/RUNBOOK_CRASH_SUITE.md`.
+
 Everything runs from redis0 (the control node). The repo is root-owned: edit with `sudo`.
 
 ## 0. Reproduce the campaigns of 5-6 October with one command
