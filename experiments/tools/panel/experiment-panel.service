@@ -1,0 +1,26 @@
+# systemd unit for the experiment panel. Installed by install_service.sh, which fills in
+# @USER@, @HOME@ and @REPO@; see README.md.
+[Unit]
+Description=Experiment panel (launch / watch / replay the scale-out experiments) on :8765
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+Environment=PYTHONUNBUFFERED=1
+# limits of the watchdog can be changed here, e.g.
+# Environment=PANEL_UNREACHABLE_STOP_S=600
+ExecStartPre=/bin/mkdir -p @HOME@/.experiment_panel
+ExecStart=/usr/bin/python3 @REPO@/experiments/tools/panel/panel.py --host 0.0.0.0 --port 8765
+StandardOutput=append:@HOME@/.experiment_panel/panel.log
+StandardError=append:@HOME@/.experiment_panel/panel.log
+Restart=always
+RestartSec=5
+# Jobs started from the panel are its children (setsid, but in the same cgroup). Kill only the
+# panel itself on stop / restart, so a restart never kills a running experiment.
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

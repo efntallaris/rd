@@ -1,0 +1,1697 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experiment Panel</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --ink: #1c2026; --mute: #6b7380; --line: #e2e5ea; --soft: #f0f2f5;
+  --acc: #2f6fdf; --ok: #1f9d55; --bad: #d64545; --warn: #c98a12; --code: #fbfbfc;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #111418; --card: #181c22; --ink: #e5e8ec; --mute: #8d96a3; --line: #2a3039; --soft: #20252d;
+          --acc: #6c9cff; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --ok: #3fbf74; --bad: #ff6b6b; --warn: #e3a93a; --code: #14171c; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--card); border-bottom: 1px solid var(--line);
+         display: flex; gap: 16px; align-items: center; padding: 10px 18px; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+.pill { padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--soft); color: var(--mute); white-space: nowrap; }
+.pill.run { background: color-mix(in srgb, var(--acc) 18%, transparent); color: var(--acc); }
+.pill.busy { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+#conn { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); display: inline-block; }
+#conn.on { background: var(--ok); }
+.nodes { display: flex; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.node { border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font: 11px var(--mono); display: flex; gap: 4px; align-items: center; }
+.node b { font-weight: 600; margin-right: 2px; }
+.dot { width: 14px; height: 14px; border-radius: 3px; background: var(--ok); color: #fff; font-size: 9px; display: grid; place-items: center; }
+.dot.down { background: var(--bad); }
+.node.unreach { border-color: var(--bad); color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+.node.warnh { border-color: var(--warn); }
+#alerts { margin-bottom: 12px; }
+#alerts:empty { display: none; }
+.alert { border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; background: var(--card); font-size: 13px; }
+.alert.bad { border-left-color: var(--bad); }
+.alert b { margin-right: 6px; }
+.alert ul { margin: 4px 0 0; padding-left: 18px; }
+.alert .muted { font-size: 12px; }
+.hline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
+.hline .ok { color: var(--ok); } .hline .bad { color: var(--bad); }
+#launchErr { white-space: pre-wrap; }
+.dot.young { background: var(--warn); }
+main { padding: 16px 18px; max-width: 1900px; margin: 0 auto; }
+.tabsnav { display: flex; gap: 2px; margin-left: 8px; }
+.tabsnav a { padding: 6px 12px; border-radius: 6px; color: var(--mute); text-decoration: none; font-weight: 600; font-size: 13.5px; }
+.tabsnav a:hover { background: var(--soft); color: var(--ink); }
+.tabsnav a.on { background: color-mix(in srgb, var(--acc) 14%, transparent); color: var(--acc); }
+.newgrid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
+.rgrid.live { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1000px) { .newgrid { grid-template-columns: 1fr; } .nodes { margin-left: 0; } .tabsnav { order: 9; width: 100%; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 16px; min-width: 0; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.card h2 .sp { flex: 1; }
+label { font-size: 12px; color: var(--mute); display: block; margin: 8px 0 3px; }
+select, input, textarea { width: 100%; font: 13px var(--mono); padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--code); color: var(--ink); }
+textarea { min-height: 54px; resize: vertical; }
+.envgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+.envgrid .wide { grid-column: 1 / -1; }
+button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--soft); color: var(--ink); cursor: pointer; }
+button:hover { border-color: var(--acc); }
+button.pri { background: var(--acc); color: #fff; border-color: var(--acc); }
+button.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+button.sm { font-size: 11px; padding: 2px 7px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; max-height: 210px; overflow: auto; padding: 2px; }
+.chip { font: 12px var(--mono); padding: 2px 7px; border: 1px solid var(--line); border-radius: 5px; cursor: pointer; user-select: none; }
+.chip.on { background: var(--acc); color: #fff; border-color: var(--acc); }
+.chip.PASS { border-color: var(--ok); color: var(--ok); }
+.chip.FAIL, .chip.bad { border-color: var(--bad); color: var(--bad); }
+.chip.cur { border-color: var(--acc); color: var(--acc); animation: pulse 1.4s infinite; }
+.chip.pend { color: var(--mute); }
+@keyframes pulse { 50% { opacity: .45; } }
+.muted { color: var(--mute); font-size: 12px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.err { color: var(--bad); font-size: 12px; min-height: 16px; margin-top: 6px; white-space: pre-wrap; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+.kv span:nth-child(odd) { color: var(--mute); }
+.chart { width: 100%; height: 230px; display: block; touch-action: none; }
+.chart.small { height: 150px; }
+.phead { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; margin: 6px 0 2px; flex-wrap: wrap; }
+.phead .pt { font-weight: 600; } .phead .pt .muted { font-weight: 400; }
+.phead .pv { margin-left: auto; font-variant-numeric: tabular-nums; }
+.pcl { display: flex; gap: 4px; align-items: center; margin: 0; font-size: 11.5px; }
+.pcl input { width: auto; margin: 0; }
+.zhint { font-size: 11px; }
+.zreset { color: var(--s1); border-color: var(--s1); font-weight: 600; }
+.cwrap { user-select: none; touch-action: none; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; font-size: 11.5px; padding: 2px 9px; background: transparent; color: var(--mute); }
+.seg button.on { background: var(--soft); color: var(--ink); font-weight: 600; }
+.faults { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 2px; min-height: 0; }
+.fchip { font-size: 11.5px; border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--line)); border-radius: 99px; padding: 1px 9px; }
+.fchip b { color: var(--bad); }
+.cwrap { position: relative; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.tile .tl { font-size: 11px; color: var(--mute); text-transform: uppercase; letter-spacing: .03em; }
+.tile .tv { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.tile .tv small { font-size: 12px; font-weight: 500; color: var(--mute); }
+.tile .ts { font-size: 11px; color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile.warn { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.tile.warn .tv { color: var(--bad); }
+.tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.14); min-width: 170px; z-index: 2; }
+.tip .th { color: var(--mute); font-size: 11px; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.tip .tr { display: grid; grid-template-columns: 14px auto 1fr; gap: 6px; align-items: center; }
+.tip .tr i { width: 12px; height: 2.5px; border-radius: 2px; }
+.tip .tr b { font-variant-numeric: tabular-nums; text-align: right; min-width: 52px; }
+.tip .tr span { color: var(--mute); }
+.tip .tr.bad b { color: var(--bad); }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-top: 12px; }
+.tab { padding: 6px 12px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--mute); font-size: 13px; }
+.tab.on { color: var(--ink); border-bottom-color: var(--acc); }
+pre.log { margin: 0; height: 380px; overflow: auto; background: var(--code); border: 1px solid var(--line); border-top: 0; padding: 8px 10px; font: 11.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; }
+pre.log .k { color: var(--bad); font-weight: 600; }
+pre.log .p { color: var(--ok); font-weight: 600; }
+pre.log .t { color: var(--acc); }
+pre.log .d { color: var(--mute); }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; font-weight: 600; color: var(--mute); font-size: 11.5px; border-bottom: 1px solid var(--line); padding: 4px 6px; }
+td { border-bottom: 1px solid var(--line); padding: 5px 6px; vertical-align: top; }
+tr.hroot { cursor: pointer; }
+tr.hroot:hover td { background: var(--soft); }
+.badge { font: 600 11px var(--mono); padding: 1px 6px; border-radius: 4px; }
+.badge.PASS { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.badge.FAIL, .badge.ERR { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.qitem, .jitem { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.qitem .grow, .jitem .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog { max-height: 90vh; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); padding: 0; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog .hd { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+dialog .hd .t { flex: 1; font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dialog .bd { padding: 0; max-height: calc(90vh - 50px); overflow: auto; }
+dialog pre { margin: 0; padding: 10px 14px; font: 11.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; }
+.figs { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 12px; }
+.figs figure { margin: 0; } .figs img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.figs figcaption { font: 11px var(--mono); color: var(--mute); }
+.gal { margin-top: 14px; }
+.gal h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); margin: 0 0 8px; font-weight: 600; }
+.grun { border-top: 1px solid var(--line); padding: 10px 0; }
+.grun .gh { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.grun .gh b { font-family: var(--mono); }
+.gimgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 10px; }
+.hfig .gimgs, #figDlg .gimgs { grid-template-columns: repeat(auto-fill, minmax(320px, 420px)); }
+.gimgs figure { margin: 0; }
+.gimgs img { width: 100%; display: block; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+.gimgs figcaption { font-size: 11px; color: var(--mute); margin-top: 3px; }
+.btnlink { display: inline-block; text-decoration: none; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font-size: 11.5px; background: var(--soft); }
+.btnlink:hover { border-color: var(--acc); }
+.hfig { margin-top: 10px; }
+.spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--line); border-top-color: var(--acc); border-radius: 50%; animation: rot .8s linear infinite; vertical-align: -1px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.topo { width: 100%; height: auto; display: block; max-width: 1180px; margin: 0 auto; }
+.flow { stroke-dasharray: 7 6; animation: dash .45s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -13; } }
+.feed { max-height: 230px; overflow: auto; font: 11.5px/1.5 var(--mono); border-top: 1px solid var(--line); margin-top: 10px; padding-top: 6px; }
+.fe { display: grid; grid-template-columns: 74px 110px 1fr; gap: 8px; }
+.fe .ft, .fe .fw { color: var(--mute); } .fe .ft { text-align: right; }
+.fe.imp { font-weight: 650; } .fe.bad { color: var(--bad); } .fe.dim { opacity: .6; }
+@media (max-width: 640px) { .fe { grid-template-columns: 64px 1fr; } .fe .fw { display: none; } }
+.player { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.player .pl-slider { flex: 1; min-width: 140px; padding: 0; accent-color: var(--s1); background: transparent; border: 0; }
+.player select { width: auto; padding: 2px 4px; font-size: 12px; }
+.player .pl-time { min-width: 70px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.player .pl-play { min-width: 34px; font-weight: 700; }
+.player .pl-live.on { color: var(--bad); border-color: var(--bad); font-weight: 600; }
+.wrapclick, .cwrap { cursor: crosshair; }
+dialog { width: min(1760px, 97vw); }
+.stick { position: sticky; top: 0; z-index: 4; background: var(--card); padding-top: 2px; }
+#livePlayer { position: sticky; top: 56px; z-index: 4; margin-top: 10px; }
+#topoSec.closed .topoBody { display: none !important; }
+.rgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 1250px) { .rgrid { grid-template-columns: 1fr; } }
+.th3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); margin: 6px 0 6px; font-weight: 600; }
+.th3 .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.flash { animation: flash 1.2s; } @keyframes flash { 0% { box-shadow: 0 0 0 3px var(--acc); } 100% { box-shadow: none; } }
+.legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--mute); margin: 6px 0 0; flex-wrap: wrap; align-items: center; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.legend .sp { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Experiment panel</h1>
+  <nav class="tabsnav"><a href="#dashboard" data-tab="dashboard">Dashboard</a><a href="#experiments" data-tab="experiments">Experiments</a><a href="#new" data-tab="new">+ New experiment</a></nav>
+  <span id="conn" title="live connection"></span>
+  <span id="status" class="pill">connecting…</span>
+  <div class="nodes" id="nodes"></div>
+</header>
+<main>
+  <div id="alerts" role="status" aria-live="polite"></div>
+  <section class="tab-page" data-tab="dashboard">
+    <div class="card" id="liveCard">
+      <h2>Run in progress <span class="sp"></span>
+        <button class="sm" id="figBtn" style="display:none">figures</button>
+        <button class="sm danger" id="stopBtn" style="display:none">Stop run</button></h2>
+      <div id="liveHead" class="muted">Nothing running.</div>
+      <div class="chips" id="liveScen" style="margin-top:8px"></div>
+      <div class="rgrid live">
+        <div id="livePlot" style="margin-top:12px"></div>
+        <div>
+      <div id="topoSec">
+        <div id="livePlayer"></div>
+        <h3 style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button class="sm" id="topoToggle" aria-expanded="false">▸ Topology</button> <span class="muted" id="topoInfo" style="text-transform:none;letter-spacing:0;font-weight:400"></span><span style="flex:1"></span>
+          <label class="muted topoBody" style="display:flex;gap:4px;margin:0;align-items:center;text-transform:none;letter-spacing:0;font-weight:400"><input type="checkbox" id="topoDim" checked style="width:auto;margin:0"> hide chunk / apply lines</label></h3>
+        <div class="topoBody">
+        <div id="topo"><div class="muted">loading…</div></div>
+        <div class="legend"><span>● moving dots = data in flight (RDMA copy, chain hop, recovery fetch)</span><span>★ leader · F1/F2 = chain order</span><span>dots under a replica = the rounds it holds</span><span>bars = slots left to send / arrived</span><span><i style="background:var(--bad)"></i>✕ down · no leader · failed</span><span><i style="background:var(--warn)"></i>restarted &lt; 20 s</span><span class="muted">dashed ring = candidate · hover a node or round for details · ▶ replays in slow motion</span></div>
+        <div class="feed" id="topoFeed"></div>
+        </div>
+      </div>
+        </div>
+      </div>
+      <div class="tabs" id="logTabs">
+        <div class="tab on" data-s="run">run.log</div><div class="tab" data-s="playbook">playbook.log</div><div class="tab" data-s="driver">driver</div>
+        <span style="flex:1"></span>
+        <input id="logFilter" placeholder="filter (regex)" style="width:180px;margin:2px 0 4px">
+      </div>
+      <pre class="log" id="log"></pre>
+    </div>
+
+  </section>
+
+  <section class="tab-page" data-tab="experiments" hidden>
+    <div class="card">
+      <h2>Experiments <span class="sp"></span>
+        <input id="histSearch" placeholder="search name / scenario" style="width:220px;text-transform:none;letter-spacing:0">
+        <span class="seg" id="histKind"><button type="button" data-k="all" class="on">all</button><button type="button" data-k="run">runs</button><button type="button" data-k="experiment">experiment folders</button></span>
+        <button class="sm" id="histRefresh">refresh</button></h2>
+      <div class="muted" style="margin:-4px 0 8px">Click a run to open it; ▶ on a scenario replays it (charts, migration timeline, topology, slow motion). Runs: /tmp/lincheck. Experiment folders: experiments/*/data (the copies each run.sh keeps).</div>
+      <div id="history" class="muted">loading…</div>
+    </div>
+  </section>
+
+  <section class="tab-page" data-tab="new" hidden>
+    <div class="newgrid">
+      <div>
+    <div class="card" id="launchCard">
+      <h2>New experiment</h2>
+      <label>Runner</label>
+      <select id="runner"></select>
+      <div class="muted" id="runnerInfo"></div>
+      <label style="display:flex;align-items:center;gap:6px">Scenarios <span class="sp" style="flex:1"></span>
+        <button class="sm" id="selSuite" type="button">suite</button>
+        <button class="sm" id="selAll" type="button">all</button>
+        <button class="sm" id="selNone" type="button">none</button></label>
+      <div class="chips" id="scen"></div>
+      <div class="muted" id="scenOrder"></div>
+      <div class="envgrid" id="env"></div>
+      <label>More env (KEY=VALUE per line)</label>
+      <textarea id="moreEnv" placeholder="RDMA_SOMETHING=1"></textarea>
+      <div class="envgrid">
+        <div><label>Name (OUT_ROOT = /tmp/lincheck/&lt;ts&gt;_name)</label><input id="jname" placeholder="panel"></div>
+        <div><label>OUT_ROOT override</label><input id="outroot" placeholder="(new dir)"></div>
+        <div class="wide"><label>Note</label><input id="note" placeholder="what changed in this run"></div>
+      </div>
+      <div class="hline" id="healthLine"><span class="muted">host health: checking…</span></div>
+      <div class="row" style="margin-top:12px">
+        <button class="pri" id="runNow">Run now</button>
+        <button id="enqueue">Add to queue</button>
+        <label class="muted" style="display:flex;gap:4px;align-items:center;margin:0" title="start even if a host fails the health check (not recommended)"><input type="checkbox" id="forceRun" style="width:auto;margin:0"> skip health check</label>
+        <span class="muted" id="cmdPreview"></span>
+      </div>
+      <div class="err" id="launchErr"></div>
+    </div>
+      </div>
+      <div>
+    <div class="card"><h2>Queue <span class="sp"></span><span class="muted" id="qinfo"></span></h2><div id="queue" class="muted">empty</div></div>
+    <div class="card"><h2>Recent jobs</h2><div id="jobs" class="muted">none yet</div></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg"><div class="hd"><span class="t" id="dlgTitle"></span><button class="sm" id="dlgBottom">end</button><button class="sm" id="dlgClose">close</button></div><div class="bd" id="dlgBody"></div></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60; return (h ? h+"h " : "") + (h||m ? m+"m " : "") + x + "s"; };
+const fmtTime = t => t ? new Date(t*1000).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}) : "";
+const store = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+async function api(path, body) {
+  const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json", "X-Panel": "1"}, body: JSON.stringify(body)} : {});
+  const j = await r.json().catch(() => ({error: "bad reply"}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// ------------------------------------------------------------------ launch form
+let RUNNERS = [], ENVF = [], selected = [];
+async function loadRunners() {
+  const r = await api("/api/runners");
+  RUNNERS = r.runners; ENVF = r.env_fields;
+  $("#runner").innerHTML = RUNNERS.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("");
+  const last = store.get("form", null);
+  if (last) fillForm(last, false); else { $("#runner").value = RUNNERS[0].id; onRunner(true); }
+}
+const curRunner = () => RUNNERS.find(r => r.id === $("#runner").value);
+function onRunner(useSuite) {
+  const r = curRunner(); if (!r) return;
+  $("#runnerInfo").textContent = r.script.replace(/^.*?\/rd\//, "");
+  if (useSuite) selected = r.suite.length ? [...r.suite] : ["HEALTHY"];
+  selected = selected.filter(s => r.scenarios.some(x => x.id === s));
+  renderScen();
+  const vals = collectEnv();
+  $("#env").innerHTML = ENVF.map(([n, help]) => {
+    const wide = /ARGS/.test(n) ? "wide" : "";
+    const def = r.defaults[n];
+    return `<div class="${wide}"><label title="${esc(help)}">${n} <span style="opacity:.7">· ${esc(help)}</span></label><input data-env="${n}" value="${esc(vals[n] || "")}" placeholder="${esc(def !== undefined && def !== "" ? def : "")}" title="${esc(help)}"></div>`;
+  }).join("");
+  $("#figBtn").dataset.dir = r.dir || ""; $("#figBtn").style.display = r.dir ? "" : "none";
+  updatePreview();
+}
+function renderScen() {
+  const r = curRunner();
+  $("#scen").innerHTML = r.scenarios.map(s => `<span class="chip ${selected.includes(s.id) ? "on" : ""}" data-id="${esc(s.id)}" title="${esc((s.label ? s.label + " — " : "") + s.desc)}">${esc(s.id)}</span>`).join("");
+  $("#scenOrder").textContent = selected.length ? "order: " + selected.join(" ") : "";
+  updatePreview();
+}
+$("#scen").addEventListener("click", e => {
+  const id = e.target.dataset?.id; if (!id) return;
+  selected = selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id];
+  renderScen(); saveForm();
+});
+$("#selSuite").onclick = () => { const r = curRunner(); selected = [...(r.suite.length ? r.suite : ["HEALTHY"])]; renderScen(); saveForm(); };
+$("#selAll").onclick = () => { selected = curRunner().scenarios.map(s => s.id); renderScen(); saveForm(); };
+$("#selNone").onclick = () => { selected = []; renderScen(); saveForm(); };
+$("#runner").onchange = () => { onRunner(true); saveForm(); };
+document.addEventListener("input", e => { if (e.target.closest("#launchCard")) { updatePreview(); saveForm(); } });
+function collectEnv() { const o = {}; document.querySelectorAll("[data-env]").forEach(i => { if (i.value.trim()) o[i.dataset.env] = i.value.trim(); }); return o; }
+function formSpec() {
+  return { runner: $("#runner").value, scenarios: selected, env: collectEnv(), more_env: $("#moreEnv").value,
+           name: $("#jname").value, out_root: $("#outroot").value.trim() || undefined, note: $("#note").value,
+           force: $("#forceRun") && $("#forceRun").checked || undefined };
+}
+function saveForm() { store.set("form", formSpec()); }
+function fillForm(spec, flash = true) {
+  if (RUNNERS.some(r => r.id === spec.runner)) $("#runner").value = spec.runner;
+  selected = [...(spec.scenarios || [])];
+  document.querySelectorAll("[data-env]").forEach(i => i.value = "");
+  onRunner(false);
+  const env = spec.env || {}, more = [];
+  for (const [k, v] of Object.entries(env)) {
+    const inp = document.querySelector(`[data-env="${k}"]`);
+    if (inp) inp.value = v; else more.push(`${k}=${v}`);
+  }
+  $("#moreEnv").value = spec.more_env !== undefined && !more.length ? spec.more_env : more.join("\n");
+  $("#jname").value = spec.name || ""; $("#outroot").value = spec.out_root_keep || ""; $("#note").value = spec.note || "";
+  updatePreview(); saveForm();
+  if (flash) showTab("new");
+  if (flash) { const c = $("#launchCard"); c.scrollIntoView({behavior: "smooth", block: "start"}); c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash"); }
+}
+function updatePreview() {
+  const env = collectEnv();
+  $("#cmdPreview").textContent = Object.entries(env).map(([k, v]) => `${k}=${v}`).join(" ").slice(0, 120);
+}
+async function launch(mode) {
+  $("#launchErr").style.color = "";
+  $("#launchErr").textContent = mode === "now" && !$("#forceRun").checked ? "checking every host first (up to 20 s)…" : "";
+  try {
+    const j = await api("/api/launch", {...formSpec(), mode});
+    $("#launchErr").textContent = "";
+    $("#launchErr").style.color = "var(--ok)";
+    $("#launchErr").textContent = (mode === "now" ? "started " : "queued ") + j.id + "  →  " + j.out_root;
+    if (mode === "now") setTimeout(() => showTab("dashboard"), 900);
+    setTimeout(() => { $("#launchErr").style.color = ""; }, 4000);
+  } catch (e) {
+    $("#launchErr").style.color = "";
+    $("#launchErr").textContent = e.message + (mode === "now" && /busy/.test(e.message) ? "\n→ use “Add to queue” to start it when the cluster is free." : "");
+  }
+}
+$("#runNow").onclick = () => launch("now");
+$("#enqueue").onclick = () => launch("queue");
+
+// ------------------------------------------------------------------ live state
+let STATE = {}, LOGS = {run: [], playbook: [], driver: []}, logStream = store.get("logtab", "run");
+let SAMPLES = new Map();
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => $("#conn").classList.add("on");
+  es.onerror = () => { $("#conn").classList.remove("on"); };
+  es.addEventListener("state", e => { STATE = JSON.parse(e.data); stateRecv = Date.now() / 1000; renderState(); scheduleTopo(); });
+  es.addEventListener("topo", e => {
+    const d = JSON.parse(e.data);
+    if (d.reset) TOPO_EV = [];
+    for (const x of d.events) TOPO_EV.push(x);
+    if (TOPO_EV.length > 20000) TOPO_EV = TOPO_EV.slice(-20000);
+    scheduleTopo();
+    scheduleChart();   // the timeline lanes come from these events
+  });
+  es.addEventListener("log", e => {
+    const d = JSON.parse(e.data);
+    if (d.reset) LOGS[d.stream] = [];
+    LOGS[d.stream] = (LOGS[d.stream] || []).concat(d.lines).slice(-4000);
+    if (d.stream === logStream) renderLog(d.reset ? null : d.lines);
+  });
+  es.addEventListener("tput", e => {
+    const d = JSON.parse(e.data);
+    if (d.reset) SAMPLES = new Map();
+    for (const s of d.samples) SAMPLES.set(`${s.host}|${s.phase}|${s.ts}`, s);
+    scheduleChart();
+  });
+}
+
+function renderState() {
+  const s = STATE, a = s.active;
+  const st = $("#status");
+  if (a) { st.className = "pill run"; st.textContent = `running ${a.current || ""} · ${a.name}`; }
+  else if (s.busy) { st.className = "pill busy"; st.textContent = "busy: " + s.busy.slice(0, 80); st.title = s.busy; }
+  else { st.className = "pill ok"; st.textContent = "cluster idle"; }
+  renderNodes(s.nodes || {});
+  renderHealth(s.health, s.hold);
+  renderQueue(s.queue || []);
+  renderJobs(s.jobs || []);
+  renderLive(a);
+}
+
+function hostTip(x) {
+  if (!x) return "";
+  if (!x.ok) return x.err || "not reachable";
+  return `${x.mem_avail_gb} of ${x.mem_total_gb} GB memory free · swap ${x.swap_used_gb} GB · /tmp ${x.disk_pct}% full · load ${x.load1} / ${x.ncpu} cpus · ${x.redis_n} redis-server`;
+}
+function renderNodes(nodes) {
+  const H = (STATE.health && STATE.health.hosts) || {};
+  const hosts = [...new Set([...Object.keys(nodes), ...Object.keys(H).filter(h => h.startsWith("redis"))])].sort();
+  $("#nodes").innerHTML = hosts.map(h => {
+    const n = nodes[h] || {}, x = H[h];
+    if ((x && !x.ok) || n.error) return `<span class="node unreach" title="${esc(hostTip(x) || n.error)}"><b>${h.replace("redis", "r")}</b>✕ unreachable</span>`;
+    const expect = (n.inst || []).length || 0;
+    const dots = (n.inst || []).map(i => `<span class="dot ${i.up < 20 ? "young" : ""}" title="${h}:${i.port}${i.sg ? " sg" + i.sg : ""} pid ${i.pid}, up ${fmtDur(i.up)}">${i.sg ?? ""}</span>`).join("");
+    if (!nodes[h]) return `<span class="node" title="${esc(hostTip(x))}"><b>${h.replace("redis", "r")}</b><span class="muted">…</span></span>`;   // not polled yet
+    const low = x && x.ok && x.mem_avail_gb < 8;
+    return `<span class="node${low ? " warnh" : ""}" title="${esc(hostTip(x))}"><b>${h.replace("redis", "r")}</b>${dots || '<span class="dot down" title="no redis-server">×</span>'}</span>`;
+  }).join("");
+}
+
+function renderHealth(h, hold) {
+  let html = "";
+  if (h) {
+    const bad = (h.alerts || []).filter(a => a.sev === "bad"), warn = (h.alerts || []).filter(a => a.sev !== "bad");
+    if (bad.length) html += `<div class="alert bad"><b>Cluster problem</b>${STATE.active ? "the running job is stopped automatically if this lasts" : "new runs will not start until it is fixed"}<ul>${bad.map(a => `<li>${esc(a.msg)}${a.since ? ` <span class="muted">· for ${fmtDur(STATE.time - a.since)}${STATE.active && a.stop_at ? (a.stop_at > STATE.time ? ` · job auto-stops in ${fmtDur(a.stop_at - STATE.time)}` : " · stopping the job") : ""}</span>` : ""}</li>`).join("")}</ul></div>`;
+    if (warn.length) html += `<div class="alert"><b>Heads-up</b><ul>${warn.map(a => `<li>${esc(a.msg)}</li>`).join("")}</ul></div>`;
+    const ev = (h.events || []).filter(e => /auto-stopped|killed redis/.test(e.msg) && STATE.time - e.t < 6 * 3600);
+    if (ev.length) html += `<div class="alert bad"><b>Watchdog</b><ul>${ev.slice(-4).map(e => `<li>${fmtTime(e.t)} · ${esc(e.msg)}</li>`).join("")}</ul></div>`;
+  }
+  if (hold && (STATE.queue || []).length) html += `<div class="alert"><b>Queue on hold</b>${esc(hold)}</div>`;
+  if (html !== $("#alerts")._last) { $("#alerts").innerHTML = html; $("#alerts")._last = html; }
+  const hl = $("#healthLine");
+  if (hl) {
+    const age = h && h.t ? Math.round(STATE.time - h.t) : null;
+    const bl = h ? h.blockers || [] : [];
+    hl.innerHTML = !h || !h.t ? `<span class="muted">host health: checking…</span>` :
+      (bl.length ? `<span class="bad">✕ ${bl.length} host problem${bl.length > 1 ? "s" : ""}: ${esc(bl.join(" · "))}</span>` : `<span class="ok">✓ all ${Object.keys(h.hosts || {}).length} hosts healthy</span>`) +
+      ` <span class="muted">checked ${age}s ago · runs start only when every host answers and has memory and disk</span> <button class="sm" id="hcheck" type="button">check now</button>`;
+    const b = $("#hcheck"); if (b) b.onclick = async () => { b.disabled = true; b.textContent = "checking…"; try { await api("/api/health/check", {}); } catch (e) {} };
+  }
+}
+
+function renderQueue(q) {
+  $("#qinfo").textContent = q.length ? `${q.length} waiting` : "";
+  $("#queue").innerHTML = q.length ? q.map((j, i) => `<div class="qitem"><span class="mono">${i + 1}.</span>
+    <span class="grow" title="${esc(j.runner)} ${esc(j.scenarios.join(" "))}"><b>${esc(j.name)}</b> <span class="muted">${esc(j.runner)} · ${esc(j.scenarios.join(" "))}</span></span>
+    <button class="sm" onclick="qmove('${j.id}',-1)">↑</button><button class="sm" onclick="qmove('${j.id}',1)">↓</button>
+    <button class="sm danger" onclick="qrm('${j.id}')">✕</button></div>`).join("") : "empty — queued jobs start as soon as the cluster is free";
+}
+window.qmove = (id, d) => api("/api/queue/move", {job_id: id, delta: d});
+window.qrm = id => api("/api/queue/remove", {job_id: id});
+
+function renderJobs(jobs) {
+  const list = jobs.filter(j => j.status !== "queued").slice(0, 12);
+  if (!list.length) { $("#jobs").textContent = "none yet"; return; }
+  $("#jobs").innerHTML = list.map(j => {
+    const cls = {running: "run", done: "ok", failed: "bad", stopped: "busy", cancelled: ""}[j.status] || "";
+    const dur = j.started ? fmtDur((j.ended || STATE.time) - j.started) : "";
+    return `<div class="jitem"><span class="pill ${cls}">${j.status}</span>
+      <span class="grow" title="${esc(j.out_root)}"><b>${esc(j.name)}</b> <span class="muted">${esc(j.scenarios.join(" "))} · ${dur} · ${fmtTime(j.created)}</span>${j.stop_reason ? `<br><span style="color:var(--bad);font-size:12px">${esc(j.stop_reason)}</span>` : ""}</span>
+      <button class="sm" onclick='rerunJob(${JSON.stringify(j.id)})'>rerun</button></div>`;
+  }).join("");
+}
+window.rerunJob = id => { const j = STATE.jobs.find(x => x.id === id); if (j) fillForm({...j}); };
+
+function renderLive(a) {
+  $("#stopBtn").style.display = a ? "" : "none";
+  if (!a) {
+    $("#liveHead").innerHTML = "Nothing running. The chart and logs show the last run until a new one starts.";
+    $("#liveScen").innerHTML = ""; return;
+  }
+  const rows = a.rows || [];
+  const n = a.scenarios.length || rows.length, done = rows.length;
+  const el = a.started ? fmtDur(STATE.time - a.started) : "?";
+  const curEl = a.current_started ? fmtDur(STATE.time - a.current_started) : "";
+  const pass = rows.filter(r => r.overall === "PASS").length;
+  const eta = done && a.started ? fmtDur((STATE.time - a.started) / done * (n - done)) : "";
+  $("#liveHead").innerHTML = `<div class="kv">
+    <span>run</span><span><b>${esc(a.name)}</b> <span class="muted">${a.kind === "external" ? "(started outside the panel, pid " + a.pid + ")" : "panel job"}</span></span>
+    <span>out root</span><span class="mono">${esc(a.out_root)}</span>
+    <span>progress</span><span>${done}/${n} done · ${pass} pass${done - pass ? ` · <b style="color:var(--bad)">${done - pass} not pass</b>` : ""} · elapsed ${el}${eta ? " · ~" + eta + " left" : ""}</span>
+    <span>now</span><span>${a.current ? `<b>${esc(a.current)}</b> for ${curEl}` : "between scenarios"}${a.task ? ` · <span class="mono">${esc(a.task.slice(0, 90))}</span>` : ""}</span>
+    ${(a.events || []).length ? `<span>faults</span><span class="mono" style="color:var(--bad)">${a.events.map(e => esc(e.replace(/^\[crash_inject /, "[").replace(/\s+t_(kill|arm)=.*$/, ""))).join("<br>")}</span>` : ""}
+  </div>`;
+  const byScen = {}; rows.forEach(r => byScen[r.scenario] = r);
+  const seen = {};
+  $("#liveScen").innerHTML = a.scenarios.map(s => {
+    seen[s] = (seen[s] || 0) + 1;
+    const r = byScen[s];
+    const cls = r ? (r.overall === "PASS" ? "PASS" : "FAIL") : (s === a.current ? "cur" : "pend");
+    return `<span class="chip ${cls}" title="${esc(r ? r.lin + " | " + r.post : "")}">${esc(s)}${r ? (r.overall === "PASS" ? " ✓" : " ✗") : ""}</span>`;
+  }).join("");
+  scheduleChart();
+}
+
+$("#stopBtn").onclick = async () => {
+  const a = STATE.active; if (!a) return;
+  const what = a.kind === "external" ? `the run started OUTSIDE the panel (pid ${a.pid})` : `panel job ${a.job_id}`;
+  if (!confirm(`Stop ${what}?\n\nKills the runner, its playbook and crash injector, the YCSB clients, and frees the cluster lock. The scenario in progress is lost.`)) return;
+  try { await api("/api/stop", a.kind === "panel" ? {job_id: a.job_id} : {pid: a.pid}); } catch (e) { alert(e.message); }
+};
+
+// ------------------------------------------------------------------ logs
+document.querySelectorAll("#logTabs .tab").forEach(t => {
+  if (t.dataset.s === logStream) { document.querySelectorAll("#logTabs .tab").forEach(x => x.classList.remove("on")); t.classList.add("on"); }
+  t.onclick = () => { logStream = t.dataset.s; store.set("logtab", logStream); document.querySelectorAll("#logTabs .tab").forEach(x => x.classList.toggle("on", x === t)); renderLog(null, true); };
+});
+$("#logFilter").oninput = () => renderLog(null, true);
+function hl(l) {
+  const e = esc(l);
+  if (/KILLED|MARKER HIT|RESTARTED|STOPPED|PARTITIONED|FAIL|VIOLATING keys=[1-9]|ERROR|fatal:/.test(l)) return `<span class="k">${e}</span>`;
+  if (/OVERALL: PASS|VERDICT: PASS|POSTCHECK \w+\s+PASS/.test(l)) return `<span class="p">${e}</span>`;
+  if (/^(TASK|PLAY) \[|^\[lin /.test(l)) return `<span class="t">${e}</span>`;
+  if (/^(ok|skipping|changed):|RETRYING|^---/.test(l)) return `<span class="d">${e}</span>`;
+  return e;
+}
+function renderLog(newLines, forceBottom) {
+  const pre = $("#log");
+  const atBottom = forceBottom || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+  let re = null; try { const f = $("#logFilter").value; if (f) re = new RegExp(f, "i"); } catch {}
+  const pass = l => !re || re.test(l);
+  if (newLines && !re) pre.insertAdjacentHTML("beforeend", newLines.filter(pass).map(hl).join("\n") + "\n");
+  else pre.innerHTML = (LOGS[logStream] || []).filter(pass).map(hl).join("\n") + "\n";
+  if (pre.childNodes.length > 6000) pre.innerHTML = (LOGS[logStream] || []).slice(-2500).filter(pass).map(hl).join("\n") + "\n";
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+// ------------------------------------------------------------------ charts
+// One component (makePlot) draws a YCSB run: stat tiles; throughput (total, optional per-client
+// lines) and read/update latency on a log axis, the migration window shaded as in the paper
+// figures, faults as red dashed lines whose labels sit in a row ABOVE the plot (never on the data);
+// values live in the panel headers and the shared crosshair tooltip, not at the line ends.
+const C = () => ({ s1: css("--s1"), s2: css("--s2"), s3: css("--s3"), bad: css("--bad"), ink: css("--ink"),
+                   mute: css("--mute"), line: css("--line"), card: css("--card"), soft: css("--soft") });
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function niceStep(max, n) { const raw = Math.max(max, 1e-9) / n, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= raw) return m * p; return 10 * p; }
+const fmtK = v => v == null ? "–" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M" : v >= 1000 ? (v / 1000).toFixed(v >= 1e4 ? 0 : 1) + "k" : String(Math.round(v));
+const fmtMs = v => v == null ? "–" : v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+const fmtT = s => { s = Math.round(s); const neg = s < 0; s = Math.abs(s); return (neg ? "−" : "") + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const median = a => { const b = a.filter(v => v != null).sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
+
+const fmtSec = x => (Math.abs(x) < 10 ? x.toFixed(2) : x.toFixed(1)) + " s";
+function xTicks(X, v0, v1, W, L, R, H, k) {
+  const span = v1 - v0, want = Math.max(3, Math.floor((W - L - R) / 80));
+  const step = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 20, 30, 60, 120, 300].find(s => span / s <= want) || 600;
+  const dec = step < 0.1 ? 2 : step < 1 ? 1 : 0;
+  const fmt = x => span <= 40 ? (x.toFixed(dec) + " s") : fmtT(x);
+  let g = "";
+  for (let i = Math.ceil(v0 / step - 1e-9); i * step <= v1 + 1e-9; i++) { const x = i * step; g += `<text x="${X(x)}" y="${H - 6}" font-size="10.5" text-anchor="middle" fill="${k.mute}">${fmt(x)}</text>`; }
+  return g;
+}
+
+function parseEvents(lines, refTs) {
+  const out = [];
+  for (const e of lines || []) {
+    const m = e.match(/^\[crash_inject (\d\d):(\d\d):(\d\d)\]\s+(.*)$/); if (!m) continue;
+    const body = m[4];
+    let label = null, mm;
+    if ((mm = body.match(/^KILLED (\S+)(?:.*?\((sg\d)\))?/))) label = "kill " + mm[1] + (mm[2] ? " " + mm[2] : "");
+    else if ((mm = body.match(/^RESTARTED (\S+)/))) label = "restart " + mm[1];
+    else if ((mm = body.match(/^STOPPED (\S+)/))) label = "SIGSTOP " + mm[1];
+    else if ((mm = body.match(/^CONTINUED (\S+)/))) label = "SIGCONT " + mm[1];
+    else if ((mm = body.match(/^PARTITIONED (\S+)\s+(\S+)/))) label = "partition " + mm[1] + "–" + mm[2];
+    else if (/^HEALED/.test(body)) label = "heal";
+    if (!label) continue;
+    let t;
+    const tk = body.match(/t_kill=(\d+\.\d+)/);
+    if (tk) t = +tk[1];
+    else { const d = new Date(refTs * 1000); d.setUTCHours(+m[1], +m[2], +m[3], 0); t = d.getTime() / 1000; if (t < refTs - 43200) t += 86400; }
+    out.push({ t, label });
+  }
+  out.sort((a, b) => a.t - b.t);
+  const g = [];
+  for (const e of out) { const l = g[g.length - 1]; if (l && e.t - l.t < 1) l.label += ", " + e.label.replace(/^kill /, ""); else g.push({ ...e }); }
+  return g;
+}
+
+function buildSeries(samples, evLines, mig) {
+  const run = samples.filter(s => s.phase === "run");
+  const load = samples.filter(s => s.phase === "load").sort((a, b) => b.ts - a.ts);
+  const starts = run.filter(s => s.sec <= 1).map(s => s.ts);
+  const maxStart = starts.length ? Math.max(...starts) : (run.length ? Math.min(...run.map(s => s.ts)) : 0);
+  const cur = run.filter(s => s.ts >= maxStart - 25);
+  if (!cur.length) return { n: 0, load: load[0] || null, hosts: [], events: [] };
+  const t0 = Math.min(...cur.map(s => s.ts)), tMax = Math.max(...cur.map(s => s.ts));
+  const hosts = [...new Set(cur.map(s => s.host))].sort();
+  const per = Object.fromEntries(hosts.map(h => [h, new Map()]));
+  cur.forEach(s => per[s.host].set(s.ts, s));
+  const n = tMax - t0 + 1, total = [], read = [], upd = [], cl = Object.fromEntries(hosts.map(h => [h, []]));
+  const last = {};
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i; let sum = 0, any = false, rw = 0, rs = 0, uw = 0, us = 0;
+    for (const h of hosts) {
+      let s = per[h].get(t);
+      if (s) last[h] = s; else if (last[h] && t - last[h].ts <= 2) s = last[h];
+      cl[h].push(s ? s.tput : null);
+      if (!s) continue;
+      sum += s.tput; any = true;
+      const w = Math.max(s.tput, 1);
+      if (s.lat.read != null) { rs += s.lat.read * w; rw += w; }
+      if (s.lat.update != null) { us += s.lat.update * w; uw += w; }
+    }
+    total.push(any ? sum : null);
+    read.push(rw ? rs / rw / 1000 : null);
+    upd.push(uw ? us / uw / 1000 : null);
+  }
+  const events = parseEvents(evLines, t0).map(e => ({ x: e.t - t0, label: e.label })).filter(e => e.x >= -5 && e.x <= n + 5);
+  const f = events.length ? events[0].x : null;
+  let baseline = null, dip = null, under = 0, back = null;
+  if (f != null && f > 8) baseline = median(total.slice(Math.max(3, Math.floor(f) - 20), Math.floor(f)));
+  else if (f == null) baseline = median(total.slice(5, mig && mig[0] ? Math.max(6, Math.floor(mig[0] - t0)) : undefined));
+  if (f != null && baseline) {
+    let mi = null;
+    for (let i = Math.max(0, Math.floor(f)); i < n; i++) if (total[i] != null) {
+      if (mi == null || total[i] < total[mi]) mi = i;
+      if (total[i] < baseline * 0.5) under++;
+    }
+    if (mi != null) {
+      dip = { i: mi, v: total[mi], pct: total[mi] / baseline - 1 };
+      for (let i = mi; i < n; i++) if (total[i] != null && total[i] >= baseline * 0.9) { back = i - f; break; }
+    }
+  }
+  // the client ramp-down at the very end is not "the system": the last 2 s are left out of "after"
+  const m = mig && mig[0] ? [mig[0] - t0, mig[1] ? mig[1] - t0 : null] : null;
+  const afterFrom = m && m[1] != null ? Math.ceil(m[1]) + 2 : null;
+  const after = afterFrom != null && afterFrom < n - 4 ? median(total.slice(afterFrom, n - 2)) : null;
+  return { n, t0, hosts, total, read, upd, clients: cl, events, baseline, dip, under, back, fault: f, load: load[0] || null, mig: m, after };
+}
+
+function makePlot(root, opts = {}) {
+  root.innerHTML = `<div class="tiles"></div>
+    <div class="phead"><span class="pt">Throughput <span class="muted">ops/s, both clients</span></span><span class="pv tv1"></span>
+      <label class="muted pcl"><input type="checkbox" class="percl"> per client</label>
+      <span class="seg"><button type="button" data-z="mig">migration</button><button type="button" data-z="all">whole run</button></span>
+      <button type="button" class="sm zreset" hidden title="back to the migration / whole-run view (or double-click a chart)"></button>
+      <span class="muted zhint">drag on any chart to zoom all three (and the replay) · double-click to reset</span></div>
+    <div class="faults"></div>
+    <div class="cwrap"><svg class="chart"></svg>
+      <div class="phead" style="margin-top:8px"><span class="pt">Latency <span class="muted">ms, mean of clients, log scale</span></span><span class="pv tv2"></span></div>
+      <svg class="chart small"></svg>
+      <div class="phead lhead" style="margin-top:8px" hidden><span class="pt">Migration timeline <span class="muted">per pair, from the server logs</span></span></div>
+      <svg class="chart lanes" style="height:0"></svg><div class="tip" hidden></div></div>
+    <div class="legend"></div>`;
+  const tiles = root.querySelector(".tiles"), [sv1, sv2, sv3] = root.querySelectorAll("svg"), lhead = root.querySelector(".lhead"), tip = root.querySelector(".tip"),
+        legend = root.querySelector(".legend"), wrap = root.querySelector(".cwrap"), faults = root.querySelector(".faults"),
+        tv1 = root.querySelector(".tv1"), tv2 = root.querySelector(".tv2"), percl = root.querySelector(".percl");
+  let S = null, geo = null, hoverI = null, last = null, zoom = "mig", V = [0, 10], customV = null;
+  try { zoom = localStorage.getItem("zoom") || "mig"; } catch (e) {}
+  const segBtns = root.querySelectorAll(".seg button");
+  const syncSeg = () => segBtns.forEach(b => b.classList.toggle("on", b.dataset.z === zoom));
+  segBtns.forEach(b => b.addEventListener("click", () => { zoom = b.dataset.z; customV = null; try { localStorage.setItem("zoom", zoom); } catch (e) {} syncSeg(); if (last) render(...last); if (opts.onZoom) opts.onZoom(null); }));
+  const zreset = root.querySelector(".zreset");
+  const tellZoom = () => { if (opts.onZoom && S) opts.onZoom(customV ? [S.t0 + customV[0], S.t0 + customV[1]] : null); };
+  const resetZoom = () => { customV = null; syncSeg(); if (last) render(...last); tellZoom(); };
+  zreset.addEventListener("click", resetZoom);
+  syncSeg();
+  // visible x range (s since the YCSB start): the migration with 5 s either side, or the whole run
+  function viewRange() {
+    const n1 = Math.max(S.n - 1, 10);
+    if (customV) return customV;
+    if (zoom === "mig" && S.mig) {
+      let a = S.mig[0] - 5, b = (S.mig[1] != null ? S.mig[1] : S.n - 1) + 5;
+      if (S.fault != null) a = Math.min(a, S.fault - 3);
+      b = Math.min(Math.max(n1, b), Math.max(b, a + 10));
+      return [a, b];
+    }
+    return [0, n1];
+  }
+  try { percl.checked = localStorage.getItem("percl") === "1"; } catch (e) {}
+  percl.addEventListener("change", () => { try { localStorage.setItem("percl", percl.checked ? "1" : "0"); } catch (e) {} if (last) render(...last); });
+
+  const tile = (label, value, sub, cls = "") =>
+    `<div class="tile ${cls}"><div class="tl">${esc(label)}</div><div class="tv">${value}</div><div class="ts">${sub || "&nbsp;"}</div></div>`;
+  function renderTiles() {
+    if (!S.n) {
+      tiles.innerHTML = S.load ? tile("loading", fmtK(S.load.ops), `keys inserted · ${esc(S.load.host)} · ${fmtK(S.load.tput)}/s`) : tile("YCSB", "–", "waiting for the run phase");
+      return;
+    }
+    const li = S.total.length - 1;
+    let h = opts.live ? tile("throughput now", fmtK(S.total[li]), `ops/s at ${fmtT(li)}`) : "";
+    h += tile(S.fault != null ? "before fault" : "before migration", fmtK(S.baseline), "ops/s, median");
+    if (S.fault != null) {
+      h += tile("deepest dip", S.dip ? (S.dip.pct * 100).toFixed(0) + "%" : "–", S.dip ? `${fmtK(S.dip.v)} ops/s, ${(S.dip.i - S.fault).toFixed(0)} s after the fault` : "", S.dip && S.dip.pct < -0.5 ? "warn" : "");
+      h += tile("seconds < 50%", String(S.under), S.back != null ? `back to 90% after ${S.back.toFixed(0)} s` : "not back to 90% yet", S.under ? "warn" : "");
+    }
+    if (S.mig) h += tile("migration", S.mig[1] != null ? (S.mig[1] - S.mig[0]).toFixed(1) + "<small> s</small>" : "…", S.mig[1] != null ? "first round start → last round done" : "in progress");
+    if (S.after != null) h += tile("after migration", fmtK(S.after), S.baseline ? `ops/s · ×${(S.after / S.baseline).toFixed(2)} vs before` : "ops/s");
+    tiles.innerHTML = h;
+  }
+
+  function draw(svg, cfg) {
+    const W = svg.clientWidth || 700, H = svg.clientHeight || 220, k = C();
+    const L = 64, R = 10, T = cfg.numbers && S.events.length > 1 ? 20 : 8, B = 22, n = S.n, xMax = Math.max(n - 1, 10);
+    const [v0, v1] = V, X = x => L + (x - v0) / (v1 - v0) * (W - L - R);
+    const vis = (vals, i) => i >= Math.floor(v0) - 1 && i <= Math.ceil(v1) + 1;
+    let Y, ticks;
+    if (cfg.log) {
+      let lo = Infinity, hi = 0;
+      for (const s of cfg.series) s.vals.forEach((v, i) => { if (v != null && v > 0 && vis(s.vals, i)) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+      if (!isFinite(lo)) { lo = 1; hi = 10; }
+      const a = Math.floor(Math.log10(Math.max(lo, 0.01))), b = Math.max(a + 1, Math.ceil(Math.log10(hi * 1.05)));
+      Y = v => H - B - (Math.log10(Math.max(v, Math.pow(10, a))) - a) / (b - a) * (H - T - B);
+      ticks = []; for (let e = a; e <= b; e++) ticks.push(Math.pow(10, e));
+    } else {
+      let yMax = 0; for (const s of cfg.series) s.vals.forEach((v, i) => { if (v != null && v > yMax && vis(s.vals, i)) yMax = v; });
+      const step = niceStep(yMax * 1.05 || 1, 4), top = Math.ceil((yMax * 1.05 || 1) / step) * step;
+      Y = v => H - B - v / top * (H - T - B);
+      ticks = []; for (let v = 0; v <= top + 1e-9; v += step) ticks.push(v);
+    }
+    const cid = "clip" + Math.random().toString(36).slice(2, 8);
+    let g = `<defs><clipPath id="${cid}"><rect x="${L}" y="0" width="${W - L - R}" height="${H}"/></clipPath></defs>`;
+    if (S.mig) {   // migration window, gray band (paper style)
+      const a = X(Math.max(v0, S.mig[0])), b = X(Math.min(v1, S.mig[1] != null ? S.mig[1] : xMax));
+      g += `<rect x="${a}" y="${T}" width="${Math.max(1, b - a)}" height="${H - T - B}" fill="${k.ink}" opacity=".07"/>`;
+    }
+    for (const v of ticks) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${k.line}"/><text x="${L - 6}" y="${Y(v) + 3.5}" font-size="10.5" text-anchor="end" fill="${k.mute}">${cfg.yfmt(v)}</text>`;
+    g += xTicks(X, v0, v1, W, L, R, H, k);
+    g += `<g clip-path="url(#${cid})">`;
+    S.events.forEach((e, i) => {
+      g += `<line x1="${X(e.x)}" x2="${X(e.x)}" y1="${T}" y2="${H - B}" stroke="${k.bad}" stroke-width="1.3" stroke-dasharray="4 3"/>`;
+      if (cfg.numbers && S.events.length > 1) g += `<circle cx="${X(e.x)}" cy="${T + 7}" r="7" fill="${k.bad}"/><text x="${X(e.x)}" y="${T + 10.5}" font-size="10" font-weight="700" text-anchor="middle" fill="#fff">${i + 1}</text>`;
+    });
+    const segs = vals => { const out = []; let cur = null; vals.forEach((v, i) => { if (v == null || !vis(vals, i)) { cur = null; return; } if (!cur) out.push(cur = []); cur.push([X(i), Y(v)]); }); return out; };
+    for (const s of cfg.series) {
+      const sg = segs(s.vals);
+      if (s.area) for (const p of sg) if (p.length > 1)
+        g += `<path d="M${p[0][0]},${Y(cfg.log ? 1e-9 : 0)}L${p.map(q => q[0].toFixed(1) + "," + q[1].toFixed(1)).join("L")}L${p[p.length - 1][0]},${Y(cfg.log ? 1e-9 : 0)}Z" fill="${s.color}" opacity=".10"/>`;
+      g += `<path d="${sg.map(p => "M" + p.map(q => q[0].toFixed(1) + "," + q[1].toFixed(1)).join("L")).join("")}" fill="none" stroke="${s.color}" stroke-width="${s.width}" stroke-linejoin="round" stroke-linecap="round" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/>`;
+    }
+    g += `</g><g class="sel"></g><g class="ph"></g><g class="xh"></g><rect class="hit" x="${L}" y="${T}" width="${W - R - L}" height="${H - T - B}" fill="transparent"/>`;
+    svg.innerHTML = g;
+    return { X, Y, L, R, T, B, W, H, xMax, cfg, svg };
+  }
+
+  let LM = null;
+  function drawLanes() {
+    if (!LM || !S || !S.n) { sv3.innerHTML = ""; sv3.style.height = "0px"; lhead.hidden = true; return null; }
+    lhead.hidden = false;
+    const k = C(), W = sv3.clientWidth || 700, L = 64, R = 10, lh = 13, blk = 3 * lh + 12, B = 22;
+    const H = LM.length * blk + B + 2; sv3.style.height = H + "px";
+    const xMax = Math.max(S.n - 1, 10), [v0, v1] = V, X = x => L + (Math.max(v0, Math.min(v1, x)) - v0) / (v1 - v0) * (W - L - R), XT = t => X(t - S.t0);
+    let g = `<defs><pattern id="hatchNL" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="${k.bad}" stroke-width="2"/></pattern></defs>`;
+    if (S.mig) { const a = X(S.mig[0]), b = X(S.mig[1] != null ? S.mig[1] : xMax); g += `<rect x="${a}" y="0" width="${Math.max(1, b - a)}" height="${H - B}" fill="${k.ink}" opacity=".07"/>`; }
+    LM.forEach((p, pi) => {
+      const y0 = pi * blk + 4, ly = j => y0 + j * lh;
+      g += `<text x="4" y="${ly(0) + 9.5}" font-size="11" font-weight="700" fill="${k.ink}">${String.fromCharCode(65 + pi)}</text>`;
+      ["copy", "chain", "commit"].forEach((n, j) => g += `<text x="${L - 6}" y="${ly(j) + 9}" font-size="9.5" text-anchor="end" fill="${k.mute}">${n}</text><line x1="${L}" x2="${W - R}" y1="${ly(j) + 11.5}" y2="${ly(j) + 11.5}" stroke="${k.line}" stroke-width=".6"/>`);
+      for (const n of p.noL) g += `<rect x="${XT(n.a)}" y="${ly(n.lane) + 1}" width="${Math.max(2, XT(n.b) - XT(n.a))}" height="10" fill="url(#hatchNL)" stroke="${k.bad}" stroke-width=".8"/>`;
+      const bar = (b, j, col) => {
+        const x1 = XT(b.a), x2 = XT(b.b), w = Math.max(2, x2 - x1);
+        const light = Math.abs(b.i) % 2 === 1;
+        let s = `<rect x="${x1}" y="${ly(j) + 1}" width="${w}" height="10" rx="2" fill="${col}" opacity="${light ? 0.5 : 1}"/>`;
+        if (w > 10 && b.i >= 0) s += `<text x="${x1 + w / 2}" y="${ly(j) + 9}" font-size="8.5" text-anchor="middle" fill="${light ? k.ink : "#fff"}" font-weight="700">${b.i + 1}</text>`;
+        if (b.cut || b.fail) s += `<text x="${x2}" y="${ly(j) + 10}" font-size="11" text-anchor="middle" fill="${k.bad}" font-weight="700">✕</text>`;
+        return s;
+      };
+      for (const b of p.copy) g += bar(b, 0, k.s1);
+      for (const b of p.chain) g += bar(b, 1, k.s3);
+      for (const b of p.recs) { const x1 = XT(b.a), w = Math.max(4, XT(b.b) - x1);
+        g += `<rect x="${x1}" y="${ly(1)}" width="${w}" height="12" rx="2" fill="none" stroke="${k.ink}" stroke-width="1.2" stroke-dasharray="2 2"><title>refetch: ${esc({ self: "new leader holds the round", peer: "fetched from a peer", none: "nobody holds it, donor resends" }[b.kind] || "")}</title></rect>`;
+      }
+      for (const m of p.marks) {
+        const x = XT(m.t);
+        if (m.k === "durable") g += `<path d="M${x},${ly(2) - 0.5} l3,3 l-3,3 l-3,-3z" fill="${k.s3}"><title>RECP_DURABLE${m.r ? " " + m.r : ""}</title></path>`;
+        else if (m.k === "done") g += `<rect x="${x - 2.5}" y="${ly(2) + 6}" width="5" height="5" fill="${k.ink}"><title>TXN_DONE${m.r ? " " + m.r : ""}</title></rect>`;
+        else if (m.k === "elect" && m.t > (S.mig ? S.t0 + S.mig[0] - 1 : 0)) g += `<path d="M${x - 5},${ly(m.lane) - 1} l10,0 l-5,7z" fill="${k.ink}"><title>${esc(m.g + " leader " + m.h)}</title></path>`;
+      }
+    });
+    S.events.forEach(e => { if (e.x >= v0 && e.x <= v1) g += `<line x1="${X(e.x)}" x2="${X(e.x)}" y1="0" y2="${H - B}" stroke="${k.bad}" stroke-width="1.3" stroke-dasharray="4 3"/>`; });
+    g += xTicks(X, v0, v1, W, L, R, H, k);
+    g += `<g class="sel"></g><g class="ph"></g><g class="xh"></g>`;
+    sv3.innerHTML = g;
+    return { X, Y: () => 0, L, R, T: 0, B, W, H, xMax, cfg: { series: [] }, svg: sv3 };
+  }
+  function laneAt(i) {   // what each pair is doing at second i (for the tooltip)
+    if (!LM) return [];
+    const t = S.t0 + i;
+    return LM.map((p, pi) => {
+      const c = p.copy.find(b => b.a <= t + 0.5 && b.b >= t - 0.5), h = p.chain.find(b => b.a <= t + 0.5 && b.b >= t - 0.5), n = p.noL.find(b => b.a <= t + 0.5 && b.b >= t - 0.5);
+      const q = (p.recs || []).find(b => b.a <= t + 0.5 && b.b >= t - 0.5);
+      const parts = [c ? "copy r" + (c.i + 1) : "", h ? "chain r" + (h.i + 1) : "", n ? "no leader " + n.g : "",
+        q ? "refetch: " + ({ self: "kept on new leader", peer: "from a peer", none: "donor resends" }[q.kind] || "?") : ""].filter(Boolean);
+      return parts.length ? String.fromCharCode(65 + pi) + ": " + parts.join(" · ") : "";
+    }).filter(Boolean);
+  }
+
+  function logSeries(topoEv, evLines, mig) {   // no YCSB left: the time axis of the server logs
+    const ev = [...topoEv].sort((a, b) => a.t - b.t), fr = ev.find(e => e.k === "d_round") || ev[0];
+    const t0 = Math.floor(fr.t) - 5, tEnd = mig && mig[1] ? mig[1] + 5 : ev[ev.length - 1].t, n = Math.ceil(tEnd - t0) + 1;
+    const nul = Array(n).fill(null), events = parseEvents(evLines, t0).map(e => ({ x: e.t - t0, label: e.label }));
+    return { n, t0, hosts: [], total: nul, read: nul, upd: nul, clients: {}, events, baseline: null, dip: null, under: 0, back: null,
+             fault: events.length ? events[0].x : null, load: null, mig: mig && mig[0] ? [mig[0] - t0, mig[1] ? mig[1] - t0 : null] : null, after: null, noYcsb: true };
+  }
+  function render(samples, evLines, title, mig, topoEv) {
+    last = [samples, evLines, title, mig, topoEv];
+    LM = topoEv ? laneModel(topoEv, evLines) : null;
+    S = buildSeries(samples, evLines, mig);
+    if (!S.n && LM && topoEv.length) S = logSeries(topoEv, evLines, mig);
+    root.querySelectorAll(".phead, svg.chart:not(.lanes)").forEach(e => { if (!e.classList.contains("lhead")) e.style.display = S.noYcsb ? "none" : ""; });
+    if (S.noYcsb) root.querySelector(".seg").style.display = "";
+    renderTiles();
+    const k = C();
+    if (!S.n) {
+      sv1.innerHTML = `<text x="46" y="40" font-size="12" fill="${k.mute}">${esc(title || "waiting for the YCSB run phase…")}</text>`;
+      sv2.innerHTML = ""; legend.innerHTML = ""; faults.innerHTML = ""; tv1.textContent = tv2.textContent = ""; geo = null; tip.hidden = true; return;
+    }
+    const cols = [k.s2, k.s3], showCl = percl.checked;
+    V = viewRange();
+    root.querySelector(".seg").style.display = S.mig ? "" : "none";
+    zreset.hidden = !customV; if (customV) zreset.textContent = `zoom ${fmtSec(V[0])} – ${fmtSec(V[1])} · reset`;
+    if (S.noYcsb) {
+      tiles.innerHTML = tile("YCSB", "–", "no throughput data left for this run") + (S.mig ? tile("migration", S.mig[1] != null ? (S.mig[1] - S.mig[0]).toFixed(1) + "<small> s</small>" : "…", "first round start → last round done") : "");
+      V = viewRange(); tv1.textContent = tv2.textContent = "";
+      zreset.hidden = !customV; if (customV) zreset.textContent = `zoom ${fmtSec(V[0])} – ${fmtSec(V[1])} · reset`;
+      faults.innerHTML = S.events.map((e, i) => `<span class="fchip">${S.events.length > 1 ? `<b>${i + 1}</b>` : "✕"} ${esc(e.label)} <span class="muted">at ${fmtT(e.x)}</span></span>`).join("");
+      const g3 = drawLanes(); geo = g3 ? [g3] : null;
+      legend.innerHTML = `<span class="muted">${esc(title || "")} · timeline and topology from the server logs (no YCSB data)</span>`;
+      if (PH != null) setPlayhead(PH);
+      return;
+    }
+    const g1 = draw(sv1, { yfmt: fmtK, numbers: true, series: [
+      ...(showCl ? S.hosts.map((h, i) => ({ name: h, vals: S.clients[h], color: cols[i % 2], width: 1.3 })) : []),
+      { name: "total", vals: S.total, color: k.s1, width: 2, area: true }] });
+    const g2 = draw(sv2, { yfmt: v => v >= 1 ? String(Math.round(v)) : String(v), log: true, series: [
+      { name: "update", vals: S.upd, color: k.mute, width: 1.4, dash: "4 3" }, { name: "read", vals: S.read, color: k.s1, width: 2 }] });
+    const g3 = drawLanes();
+    geo = g3 ? [g1, g2, g3] : [g1, g2];
+    const li = S.total.length - 1;
+    tv1.innerHTML = `<b>${fmtK(S.total[li])}</b> <span class="muted">at ${fmtT(li)}</span>`;
+    tv2.innerHTML = `read <b>${fmtMs(S.read[li])}</b> · update <b>${fmtMs(S.upd[li])}</b>`;
+    faults.innerHTML = S.events.length ? S.events.map((e, i) => `<span class="fchip">${S.events.length > 1 ? `<b>${i + 1}</b>` : "✕"} ${esc(e.label)} <span class="muted">at ${fmtT(e.x)}</span></span>`).join("") : "";
+    const key = (c, t, dash) => `<span><i style="background:${dash ? "repeating-linear-gradient(90deg," + c + " 0 4px,transparent 4px 7px)" : c}"></i>${esc(t)}</span>`;
+    legend.innerHTML = key(k.s1, "total ops/s · read latency") + (showCl ? S.hosts.map((h, i) => key(cols[i % 2], h)).join("") : "") + key(k.mute, "update latency", true) +
+      (S.mig ? `<span><i style="background:${k.ink};opacity:.15;height:10px"></i>migration</span>` : "") +
+      `<span><i style="background:${k.bad};height:2px"></i>fault</span>` +
+      (LM ? `<span><i style="background:${k.s1};height:8px"></i>RDMA copy (round n)</span><span><i style="background:${k.s3};height:8px"></i>chain L→F1→F2</span><span>◆ durable · ■ done · ▼ new leader</span><span><i style="background:repeating-linear-gradient(45deg,${k.bad} 0 2px,transparent 2px 5px);height:8px"></i>no leader</span>` : "") +
+      `<span class="sp"></span>` +
+      `<span class="muted">${title ? esc(title) + " · " : ""}YCSB run from ${new Date(S.t0 * 1000).toISOString().slice(11, 19)} UTC</span><button class="sm csv" type="button">csv</button>`;
+    legend.querySelector(".csv").onclick = csv;
+    if (hoverI != null) hover(hoverI);
+    if (PH != null) setPlayhead(PH);
+  }
+
+  function hover(i) {
+    if (!geo || !S || !S.n) return;
+    i = Math.max(0, Math.min(S.n - 1, i)); hoverI = i;
+    const k = C();
+    for (const G of geo) {
+      const x = G.X(i); let h = `<line x1="${x}" x2="${x}" y1="${G.T}" y2="${G.H - G.B}" stroke="${k.ink}" stroke-width="1" opacity=".45"/>`;
+      for (const s of G.cfg.series) if (s.vals[i] != null) h += `<circle cx="${x}" cy="${G.Y(s.vals[i])}" r="3.5" fill="${s.color}" stroke="${k.card}" stroke-width="2"/>`;
+      const xh = G.svg.querySelector(".xh"); if (xh) xh.innerHTML = h;
+    }
+    const row = (c, v, name) => `<div class="tr"><i style="background:${c}"></i><b>${v}</b><span>${esc(name)}</span></div>`;
+    const evs = S.events.filter(e => Math.abs(e.x - i) < 1);
+    const inMig = S.mig && i >= S.mig[0] && (S.mig[1] == null || i <= S.mig[1]);
+    tip.innerHTML = `<div class="th">${fmtT(i)} · ${new Date((S.t0 + i) * 1000).toISOString().slice(11, 19)} UTC${inMig ? " · migrating" : ""}</div>` +
+      (S.noYcsb ? "" : row(k.s1, fmtK(S.total[i]), "total ops/s" + (S.baseline && S.total[i] != null ? ` (${((S.total[i] / S.baseline - 1) * 100).toFixed(0)}%)` : ""))) +
+      S.hosts.map((h, j) => row([k.s2, k.s3][j % 2], fmtK(S.clients[h][i]), h)).join("") +
+      (S.noYcsb ? "" : row(k.s1, fmtMs(S.read[i]) + " ms", "read latency") + row(k.mute, fmtMs(S.upd[i]) + " ms", "update latency")) +
+      evs.map(e => `<div class="tr bad"><i style="background:${k.bad}"></i><b>✕</b><span>${esc(e.label)}</span></div>`).join("") +
+      laneAt(i).map(t => `<div class="tr"><i style="background:${k.s3}"></i><b></b><span>${esc(t)}</span></div>`).join("");
+    tip.hidden = false;
+    if (opts.onHover) opts.onHover(S.t0 + i);
+    const G = geo[0], wr = wrap.getBoundingClientRect(), x = G.X(i), tw = tip.offsetWidth;
+    tip.style.left = (x + 14 + tw > wr.width ? x - 14 - tw : x + 14) + "px";
+    tip.style.top = "8px";
+  }
+  wrap.addEventListener("pointermove", e => {
+    if (!geo) return;
+    const G = geo[0], r = G.svg.getBoundingClientRect(), x = e.clientX - r.left;
+    if (x < G.L - 4 || x > G.W - G.R + 4) return leave();
+    if (!drag) hover(Math.round(V[0] + (x - G.L) / (G.W - G.L - G.R) * (V[1] - V[0])));
+  });
+  const leave = () => { hoverI = null; tip.hidden = true; [sv1, sv2, sv3].forEach(s => { const x = s.querySelector(".xh"); if (x) x.innerHTML = ""; }); if (opts.onHover) opts.onHover(null); };
+  wrap.addEventListener("pointerleave", leave);
+
+  let PH = null;
+  function setPlayhead(t) {
+    PH = t;
+    if (!geo || !S) return;
+    const k = C();
+    for (const G of geo) {
+      const ph = G.svg.querySelector(".ph"); if (!ph) continue;
+      if (t == null) { ph.innerHTML = ""; continue; }
+      const x = t - S.t0;
+      if (x < V[0] || x > V[1]) { ph.innerHTML = ""; continue; }
+      const X = G.X(x), top = G === geo[geo.length - 1] && geo.length === 3 ? 0 : G.T;
+      ph.innerHTML = `<line x1="${X}" x2="${X}" y1="${top}" y2="${G.H - G.B}" stroke="${k.ink}" stroke-width="1.6"/><path d="M${X - 5},${top} l10,0 l-5,6z" fill="${k.ink}"/>`;
+    }
+  }
+  // drag across a chart: zoom all plots to that range; a plain click seeks the replay; double-click resets
+  let drag = null;
+  const toSec = x => { const G = geo[0]; return V[0] + (x - G.L) / (G.W - G.L - G.R) * (V[1] - V[0]); };
+  const localX = e => { const G = geo[0], r = G.svg.getBoundingClientRect(); return Math.max(G.L, Math.min(G.W - G.R, e.clientX - r.left)); };
+  function drawSel() {
+    for (const G of geo) {
+      const el = G.svg.querySelector(".sel"); if (!el) continue;
+      if (!drag || Math.abs(drag.x1 - drag.x0) < 3) { el.innerHTML = ""; continue; }
+      const a = Math.min(drag.x0, drag.x1), w = Math.abs(drag.x1 - drag.x0), top = G.T || 0;
+      el.innerHTML = `<rect x="${a}" y="${top}" width="${w}" height="${G.H - G.B - top}" fill="${css("--s1")}" opacity=".15" stroke="${css("--s1")}" stroke-width="1"/>`;
+    }
+  }
+  wrap.addEventListener("pointerdown", e => {
+    if (!geo || e.button !== 0 || e.target.closest("button, input, a")) return;
+    const G = geo[0], r = G.svg.getBoundingClientRect(), x = e.clientX - r.left;
+    if (x < G.L || x > G.W - G.R) return;
+    drag = { x0: x, x1: x }; try { wrap.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault();
+  });
+  wrap.addEventListener("pointermove", e => { if (drag && geo) { drag.x1 = localX(e); drawSel(); } });
+  wrap.addEventListener("pointerup", e => {
+    if (!drag || !geo) { drag = null; return; }
+    const d = drag; drag = null; drawSel();
+    if (Math.abs(d.x1 - d.x0) > 6) {
+      let a = toSec(Math.min(d.x0, d.x1)), b = toSec(Math.max(d.x0, d.x1));
+      if (b - a < 0.2) { const m = (a + b) / 2; a = m - 0.1; b = m + 0.1; }
+      customV = [a, b]; if (last) render(...last); tellZoom();
+    } else if (opts.onSeek) opts.onSeek(S.t0 + toSec(d.x0));
+  });
+  wrap.addEventListener("dblclick", e => { if (customV) { e.preventDefault(); resetZoom(); } });
+  function csv() {
+    const head = ["t_s", "utc", "total_ops", ...S.hosts.map(h => h + "_ops"), "read_ms", "update_ms"];
+    const rows = [head.join(",")];
+    for (let i = 0; i < S.n; i++) rows.push([i, new Date((S.t0 + i) * 1000).toISOString(), S.total[i] ?? "", ...S.hosts.map(h => S.clients[h][i] ?? ""), S.read[i]?.toFixed(3) ?? "", S.upd[i]?.toFixed(3) ?? ""].join(","));
+    rows.push("", "# faults", ...S.events.map(e => `${e.x.toFixed(2)},${e.label}`));
+    if (S.mig) rows.push("# migration", `${S.mig[0].toFixed(2)},${S.mig[1] != null ? S.mig[1].toFixed(2) : ""}`);
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([rows.join("\n")], { type: "text/csv" }));
+    a.download = `ycsb_${new Date(S.t0 * 1000).toISOString().slice(0, 19).replace(/:/g, "")}.csv`; a.click();
+  }
+  return { render, setPlayhead };
+}
+
+// migration timeline (lanes under the latency chart, same time axis): per pair the donor's RDMA copy
+// of each round, the recipient chain forward (leader -> F1 -> F2), durable / done / election marks,
+// and "no leader" from a leader's kill to the next election in its group.
+function laneModel(evIn, crashLines) {
+  if (!TOPO || !TOPO.groups || !TOPO.groups.length || !evIn || !evIn.length) return null;
+  const ev = [...evIn].sort((a, b) => a.t - b.t);
+  const crashes = crashList(crashLines, ev);
+  const wasLeader = (g, h, t) => { let l = null; for (const e of ev) { if (e.t > t) break; if (e.k === "role" && e.g === g) l = e.x.role === "leader" ? e.h : (l === e.h ? null : l); } return l === h; };
+  const tEnd = ev[ev.length - 1].t;
+  return TOPO.groups.filter(g => g.role === "donor").map(d => {
+    const r = TOPO.groups.find(g => g.id === d.recipient);
+    const [lo, hi] = (d.slots || "0:16383").split(":").map(Number);
+    const inPair = x => { const a = +String(x).split("-")[0]; return a >= lo && a <= hi; };
+    const ranges = [];
+    const idx = x => { if (!x) return -1; if (!ranges.includes(x)) { ranges.push(x); ranges.sort((a, b) => +a.split("-")[0] - +b.split("-")[0]); } return ranges.indexOf(x); };
+    const copy = [], chain = [], marks = [], recs = []; let recOpen = null;
+    let open = null, cur = null, ch = null;
+    for (const e of ev) {
+      if (e.r && !inPair(e.r)) continue;
+      if (e.g === d.id) {
+        if (e.k === "d_round") { cur = e.r; idx(e.r); }
+        else if (e.k === "d_copy") open = { a: e.t, r: e.r || cur, h: e.h };
+        else if ((e.k === "d_copied" || e.k === "d_fail") && open) { copy.push({ ...open, b: e.t, fail: e.k === "d_fail" }); open = null; }
+        else if (e.k === "d_commit") marks.push({ t: e.t, k: "done", r: e.r || cur });
+        else if (e.k === "role" && e.x.role === "leader") marks.push({ t: e.t, k: "elect", g: e.g, h: e.h, lane: 0 });
+      } else if (e.g === r.id) {
+        if (e.k === "c_fwd") { if (ch) chain.push({ ...ch, b: e.t }); ch = { a: e.t, r: e.r, h: e.h }; }
+        else if (e.k === "c_fwd_done" && ch) { chain.push({ ...ch, b: e.t }); ch = null; }
+        else if (e.k === "r_durable") marks.push({ t: e.t, k: "durable", r: e.r });
+        else if (e.k === "rec_probe") recOpen = { a: e.t, h: e.h };
+        else if (e.k === "rec_found" && recOpen) { recs.push({ ...recOpen, b: e.t, kind: e.x.kind }); recOpen = null; }
+        else if (e.k === "role" && e.x.role === "leader") marks.push({ t: e.t, k: "elect", g: e.g, h: e.h, lane: 1 });
+      }
+    }
+    const hits = crashes.filter(c => c.kind === "KILLED" && c.t && c.sgs.some(g => g === d.id || g === r.id));
+    const endAt = (a, lane) => { const c = hits.find(c => c.t > a && c.sgs.includes(lane === 0 ? d.id : r.id)); return c ? { b: c.t, cut: true } : { b: tEnd, cut: false, open: true }; };
+    if (open) copy.push({ ...open, ...endAt(open.a, 0) });
+    if (ch) chain.push({ ...ch, ...endAt(ch.a, 1) });
+    const noL = [];
+    for (const c of hits) for (const g of c.sgs) if ((g === d.id || g === r.id) && wasLeader(g, c.host, c.t - 0.001)) {
+      const nl = ev.find(e => e.k === "role" && e.g === g && e.x.role === "leader" && e.t > c.t);
+      noL.push({ a: c.t, b: nl ? nl.t : tEnd, g, lane: g === d.id ? 0 : 1, open: !nl });
+    }
+    const killOf = (b, g) => crashes.find(c => c.kind === "KILLED" && c.t && c.host === b.h && c.t > b.a && c.t < b.b && (!c.sgs.length || c.sgs.includes(g)));
+    for (const b of copy) { const c = killOf(b, d.id); if (c) { b.b = c.t; b.cut = true; b.fail = false; } }
+    for (const b of chain) { const c = killOf(b, r.id); if (c) { b.b = c.t; b.cut = true; } }
+    copy.forEach(b => b.i = idx(b.r)); chain.forEach(b => b.i = idx(b.r));
+    return { d, r, copy, chain, marks, noL, recs, nRounds: ranges.length };
+  });
+}
+
+// live chart: the migration window comes from the server-log events of the topology feed
+let LIVE_ZOOM = null;
+const LIVE = makePlot($("#livePlot"), { live: true, onHover: t => { SCRUB = t != null ? t : PLAY_T; renderTopo(); },
+  onSeek: t => LIVEPLAYER && LIVEPLAYER.seek(t), onZoom: r => { LIVE_ZOOM = r; if (LIVEPLAYER && r) LIVEPLAYER.seek(r[0]); else if (LIVEPLAYER) LIVEPLAYER.refresh(); } });
+let chartPending = false, lastEvents = [];
+function scheduleChart() { if (!chartPending) { chartPending = true; setTimeout(() => { chartPending = false; drawCharts(); }, 300); } }
+function liveMig() {
+  // [first round start, last round committed]; open-ended until every donor committed all its rounds
+  let a = null, b = null; const per = {}, got = {};
+  for (const e of TOPO_EV) {
+    if (e.k === "d_round") { a = a == null ? e.t : Math.min(a, e.t); per[e.g] = per[e.g] || e.x.n; }
+    if (e.k === "d_commit" && e.r) { b = b == null ? e.t : Math.max(b, e.t); (got[e.g] = got[e.g] || new Set()).add(e.r); }
+  }
+  if (a == null) return null;
+  const donors = TOPO ? TOPO.groups.filter(g => g.role === "donor").map(g => g.id) : Object.keys(per);
+  const total = (TOPO && TOPO.total) || 2730;
+  const anyN = Object.values(per).find(x => x) || 0;
+  const finished = anyN && donors.every(g => got[g] && got[g].size >= Math.round(total / (per[g] || anyN)));
+  return [a, finished ? b : null];
+}
+function drawCharts() {
+  const a = STATE.active;
+  if (a && a.events) lastEvents = a.events;
+  LIVE.render([...SAMPLES.values()], lastEvents, a && a.current ? a.current : "", liveMig(), TOPO_EV);
+}
+window.addEventListener("resize", scheduleChart);
+if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", scheduleChart);
+
+async function showRunChart(dir) {
+  $("#dlgTitle").textContent = "YCSB · " + dir; dlg.showModal();
+  $("#dlgBody").innerHTML = `<div style="padding:12px 14px" id="histPlot"><div class="muted">loading…</div></div>`;
+  try {
+    const r = await api("/api/ycsb?dir=" + encodeURIComponent(dir));
+    const setup = (r.topo || []).some(e => e.g === "sg5" || e.g === "sg6") ? "3to6" : "3to4";
+    await loadTopology(setup);
+    $("#histPlot").innerHTML = `<div id="histPlayer" class="stick"></div><div class="rgrid"><div id="histChart"></div><div><h3 class="th3">Topology <span class="muted" id="histTopoInfo"></span></h3><div id="histTopo"></div><div class="feed" id="histFeed"></div></div></div>`;
+    const ev = r.topo || [], end = ev.length ? ev[ev.length - 1].t : null;
+    const first = (ev.find(e => e.k === "d_round") || ev[0] || { t: 0 }).t;
+    const hr = [first - 3, r.mig && r.mig[1] ? r.mig[1] + 2 : (end || first + 10)];
+    let ht = null;
+    const topoAt = t => renderTopoView({ box: $("#histTopo"), feed: $("#histFeed"), info: $("#histTopoInfo"),
+      src: { events: ev, crashLines: r.events, nodes: null, at: t || ht || hr[1], live: false } });
+    $("#dlgTitle").textContent = "Replay · " + dir.split("/").slice(-2).join(" / ");
+    let zr = null;   // zoomed range (epoch): the player plays only that
+    const p = makePlot($("#histChart"), { onHover: t => topoAt(t), onSeek: t => pl.seek(t),
+      onZoom: r => { zr = r; pl.seek(r ? r[0] : (ht || hr[0])); } });
+    const pl = makePlayer($("#histPlayer"), { range: () => zr || hr, zero: () => first, onTime: t => { ht = t; topoAt(t); p.setPlayhead(t); } });
+    const parts = dir.replace(/\/$/, "").split("/"), scen = parts[parts.length - 1] === "lincheck" ? parts[parts.length - 2] : parts[parts.length - 1].split("_q")[0];
+    p.render(r.samples, r.events, scen, r.mig, ev);
+    pl.seek(hr[0]); window.__replay = pl;
+
+  } catch (e) { $("#histPlot").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+// ------------------------------------------------------------------ history
+let OPEN = new Set(store.get("openRoots", []));
+async function loadHistory() {
+  try { renderHistory(await api("/api/history")); } catch (e) { $("#history").textContent = e.message; }
+}
+let HIST = [];
+let HIST_ALL = [];
+function renderHistory(hAll) {
+  HIST_ALL = hAll;
+  const q = ($("#histSearch").value || "").toLowerCase();
+  const h = hAll.filter(r => (HIST_KIND === "all" || r.kind === HIST_KIND) &&
+    (!q || r.name.toLowerCase().includes(q) || r.rows.some(x => x.scenario.toLowerCase() === q) || (r.meta && (r.meta.note || "").toLowerCase().includes(q))));
+  HIST = h;
+  if (!h.length) { $("#history").textContent = "no runs under /tmp/lincheck"; return; }
+  const act = STATE.active && STATE.active.out_root;
+  $("#history").innerHTML = `<table><thead><tr><th>out root</th><th>when</th><th>result</th><th>scenarios</th><th></th></tr></thead><tbody>` +
+    h.map((r, i) => {
+      const open = OPEN.has(r.out_root);
+      const chips = r.rows.map(x => `<span class="chip ${x.overall === "PASS" ? "PASS" : "FAIL"}">${esc(x.scenario)}</span>`).join(" ");
+      const res = r.rows.length ? `<span class="badge PASS">${r.pass}</span>${r.fail ? ` <span class="badge FAIL">${r.fail}</span>` : ""}` : `<span class="muted">${r.n_dirs} dirs</span>`;
+      let s = `<tr class="hroot" data-i="${i}"><td class="mono">${open ? "▾" : "▸"} ${esc(r.name)}${r.kind === "experiment" ? ' <span class="pill">experiment folder</span>' : ""}${r.out_root === act ? ' <span class="pill run">live</span>' : ""}${r.meta && r.meta.note ? `<div class="muted">${esc(r.meta.note)}</div>` : ""}</td>
+        <td class="muted">${fmtTime(r.mtime)}</td><td>${res}</td><td><div class="chips" style="max-height:none">${chips}</div></td>
+        <td style="white-space:nowrap"><button class="sm" data-act="rerun" data-i="${i}">rerun all</button> ${r.fail ? `<button class="sm" data-act="rerunfail" data-i="${i}">rerun failed</button>` : ""}
+        ${r.rows.length && r.kind !== "experiment" ? `<button class="sm" data-act="rootfigs" data-i="${i}">figures</button>` : ""}
+        ${r.kind === "experiment" ? `<button class="sm" data-act="figs" data-i="${i}">figures</button>` : ""}</td></tr>`;
+      if (open) {
+        s += `<tr><td colspan="5" style="background:var(--soft)"><div class="muted mono" style="margin-bottom:4px">${r.meta ? esc(r.meta.runner + " · " + Object.entries(r.meta.env || {}).map(([k, v]) => k + "=" + v).join(" ")) : "parameters unknown (started before the panel)"}</div>
+          <table><thead><tr><th>scenario</th><th>overall</th><th>lincheck</th><th>postcheck</th><th></th></tr></thead><tbody>` +
+          r.rows.map((x, k) => `<tr><td class="mono">${x.dir ? `<a href="#" data-act="chart" data-p="${esc(x.dir)}" title="replay this scenario"><b>${esc(x.scenario)}</b> ▶</a>` : `<b>${esc(x.scenario)}</b>`}<div class="muted">${esc(x.ts.replace("T", " ").replace("Z", ""))}</div></td>
+            <td><span class="badge ${x.overall === "PASS" ? "PASS" : "FAIL"}">${esc(x.overall)}</span></td>
+            <td class="mono">${esc(x.lin.replace(/\s+/g, " "))}</td><td class="mono">${esc(x.post)}</td>
+            <td style="white-space:nowrap">${x.dir ? `<button class="sm" data-act="file" data-p="${esc(x.dir)}/run.log">run.log</button>
+              <button class="sm" data-act="file" data-p="${esc(x.dir)}/postcheck.txt">postcheck</button>
+              <button class="sm" data-act="file" data-p="${esc(x.dir)}/playbook.log">playbook</button>
+              <button class="sm" data-act="files" data-p="${esc(x.dir)}">files</button>
+              <button class="sm pri" data-act="chart" data-p="${esc(x.dir)}">▶ replay</button>
+              ${r.kind !== "experiment" ? `<button class="sm" data-act="runfigs" data-p="${esc(x.dir)}" data-root="${esc(r.out_root)}">figures</button>` : ""}` : ""}
+              <button class="sm" data-act="rerun1" data-i="${i}" data-s="${esc(x.scenario)}">rerun</button></td></tr>`).join("") +
+          `</tbody></table><div class="hfig gal" data-root="${esc(r.out_root)}"><div class="muted">loading figures…</div></div></td></tr>`;
+      }
+      return s;
+    }).join("") + `</tbody></table>`;
+  fillHistFigs();
+}
+const FIGCACHE = {};
+async function fillHistFigs() {
+  for (const el of document.querySelectorAll("#history .hfig")) {
+    const root = el.dataset.root, c = FIGCACHE[root];
+    const paint = list => renderGallery(el, list.filter(r => r.files.length || r.status), { title: "Figures", zipDir: root, reload: () => { delete FIGCACHE[root]; fillHistFigs(); },
+      empty: '<div class="muted">no figures for this run yet</div>' });
+    if (c && Date.now() - c.t < 60000) { if (el._painted !== c.t) { paint(c.list); el._painted = c.t; } continue; }
+    try { const list = await api("/api/runfigs?dir=" + encodeURIComponent(root)); FIGCACHE[root] = { t: Date.now(), list }; paint(list); el._painted = FIGCACHE[root].t; }
+    catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  }
+}
+$("#history").addEventListener("click", async e => {
+  const b = e.target.closest("button, a[data-act]"), tr = e.target.closest("tr.hroot");
+  if (b && b.tagName === "A") e.preventDefault();
+  if (b) {
+    const r = HIST[+b.dataset.i], act = b.dataset.act;
+    const base = r ? (r.meta || {runner: "3to6", env: {}}) : null;
+    if (act === "rerun") fillForm({...base, scenarios: r.rows.length ? r.rows.map(x => x.scenario) : base.scenarios || [], name: "rerun_" + r.name.slice(0, 30)});
+    if (act === "rerunfail") fillForm({...base, scenarios: r.rows.filter(x => x.overall !== "PASS").map(x => x.scenario), name: "rerunfail_" + r.name.slice(0, 26)});
+    if (act === "rerun1") fillForm({...base, scenarios: [b.dataset.s], name: "rerun_" + b.dataset.s});
+    if (act === "file") showFile(b.dataset.p);
+    if (act === "files") showFiles(b.dataset.p);
+    if (act === "chart") showRunChart(b.dataset.p);
+    if (act === "rootfigs") showFigDialog(r.out_root, null, r.name);
+    if (act === "runfigs") showFigDialog(b.dataset.root, b.dataset.p, b.dataset.p.split("/").pop());
+    if (act === "figs") showFigs(r.kind === "experiment" ? r.out_root.replace(/\/data\/?$/, "") : (RUNNERS.find(x => x.id === r.meta.runner) || {}).dir);
+    return;
+  }
+  if (tr) { const r = HIST[+tr.dataset.i]; OPEN.has(r.out_root) ? OPEN.delete(r.out_root) : OPEN.add(r.out_root); store.set("openRoots", [...OPEN]); renderHistory(HIST); }
+});
+$("#histRefresh").onclick = loadHistory;
+$("#figBtn").onclick = () => showFigs($("#figBtn").dataset.dir);
+
+// ------------------------------------------------------------------ dialog
+const dlg = $("#dlg");
+$("#dlgClose").onclick = () => dlg.close();
+$("#dlgBottom").onclick = () => { const b = $("#dlgBody"); b.scrollTop = b.scrollHeight; };
+async function showFile(p) {
+  $("#dlgTitle").textContent = p; $("#dlgBody").innerHTML = "<pre>loading…</pre>"; dlg.showModal();
+  try { const f = await api("/api/file?tail=5000&path=" + encodeURIComponent(p));
+    $("#dlgBody").innerHTML = `<pre>${f.lines.map(hl).join("\n")}</pre>`; $("#dlgBody").scrollTop = $("#dlgBody").scrollHeight;
+  } catch (e) { $("#dlgBody").innerHTML = `<pre>${esc(e.message)}</pre>`; }
+}
+async function showFiles(d) {
+  $("#dlgTitle").textContent = d; $("#dlgBody").innerHTML = "<pre>loading…</pre>"; dlg.showModal();
+  const r = await api("/api/run?dir=" + encodeURIComponent(d));
+  const item = (n, s) => `<tr><td class="mono"><a href="#" data-p="${esc(d + "/" + n)}">${esc(n)}</a></td><td class="muted">${(s / 1024).toFixed(1)} KB</td></tr>`;
+  $("#dlgBody").innerHTML = `<div style="padding:10px 14px"><table>${r.files.map(f => item(f.name, f.size)).join("")}${r.logs.map(f => item(f.name, f.size)).join("")}</table></div>`;
+  $("#dlgBody").querySelectorAll("a").forEach(a => a.onclick = ev => { ev.preventDefault(); showFile(a.dataset.p); });
+}
+async function showFigs(dir) {
+  if (!dir) return;
+  $("#dlgTitle").textContent = dir + "/figures"; $("#dlgBody").innerHTML = "<pre>loading…</pre>"; dlg.showModal();
+  const f = await api("/api/figures?dir=" + encodeURIComponent(dir));
+  $("#dlgBody").innerHTML = f.length ? `<div class="figs">${f.map(x => `<figure><a href="/api/raw?path=${encodeURIComponent(x.path)}" target="_blank"><img loading="lazy" src="/api/raw?path=${encodeURIComponent(x.path)}"></a><figcaption>${esc(x.name)} · ${fmtTime(x.mtime)}</figcaption></figure>`).join("")}</div>` : "<pre>no figures/ PNGs yet</pre>";
+}
+
+
+// ------------------------------------------------------------------ house-style figures
+// figures_for_run.sh draws them after each scenario (the experiment's figures.sh scripts:
+// tputlat_<S> and, for crash scenarios, paper_<S>_recovery), into $OUT_ROOT/figures.
+const rawUrl = f => `/api/raw?path=${encodeURIComponent(f.path)}&v=${Math.round(f.mtime)}`;
+function renderGallery(el, list, opts = {}) {
+  const runs = opts.newestFirst ? [...list].reverse() : list;
+  if (!runs.length) { el.innerHTML = opts.empty || ""; return; }
+  el.innerHTML = (opts.title || opts.zipDir ? `<h3 style="display:flex;gap:10px;align-items:center">${esc(opts.title || "Figures")}<span style="flex:1"></span>${opts.zipDir && runs.some(r => r.files.length) ? `<a class="sm btnlink" href="/api/figzip?dir=${encodeURIComponent(opts.zipDir)}">download all (PNG + PDF, zip)</a>` : ""}</h3>` : "") + runs.map(r => {
+    const st = r.status || "";
+    const stHtml = st === "running" ? `<span class="muted"><span class="spin"></span> drawing…</span>`
+      : st === "done" ? "" : st ? `<span class="muted" style="color:var(--bad)">${esc(st)}</span>` : `<span class="muted">no figures yet</span>`;
+    const main = r.files.filter(f => /^(tputlat_|gantt_)|_recovery_wide\.png$|_tput_lat\.png$/.test(f.name));
+    const more = r.files.filter(f => !main.includes(f));
+    return `<div class="grun"><div class="gh"><b>${esc(r.scenario)}</b>
+      ${r.overall ? `<span class="badge ${r.overall === "PASS" ? "PASS" : "FAIL"}">${esc(r.overall)}</span>` : ""}
+      <span class="muted mono">${esc(r.base)}</span> ${stHtml}<span style="flex:1"></span>
+      ${more.map(f => `<a class="muted" target="_blank" href="${rawUrl(f)}">${esc(f.label)}</a>${f.pdf ? ` <a class="muted" target="_blank" href="/api/raw?path=${encodeURIComponent(f.pdf)}">(pdf)</a>` : ""}`).join(" · ")}
+      ${r.table ? `<button class="sm" data-fp="${esc(r.table)}">phase table</button>` : ""}
+      ${r.log ? `<button class="sm" data-fp="${esc(r.log)}">log</button>` : ""}
+      ${r.files.length && opts.zipDir ? `<a class="sm btnlink" href="/api/figzip?dir=${encodeURIComponent(opts.zipDir)}&run=${encodeURIComponent(r.dir)}">zip</a>` : ""}
+      ${st !== "running" && !r.readonly ? `<button class="sm" data-make="${esc(r.dir)}">${st === "done" ? "redraw" : "draw"}</button>` : ""}</div>
+      ${main.length ? `<div class="gimgs">${main.map(f => `<figure><a href="${rawUrl(f)}" target="_blank"><img loading="lazy" src="${rawUrl(f)}" alt="${esc(f.name)}"></a><figcaption>${esc(f.label)} · <a href="${rawUrl(f)}" target="_blank">PNG</a>${f.pdf ? ` · <a href="/api/raw?path=${encodeURIComponent(f.pdf)}&v=${Math.round(f.mtime)}" target="_blank">PDF</a>` : ""}</figcaption></figure>`).join("")}</div>` : ""}
+    </div>`;
+  }).join("");
+  el.querySelectorAll("[data-fp]").forEach(b => b.onclick = () => showFile(b.dataset.fp));
+  el.querySelectorAll("[data-make]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api("/api/figures/make", {dir: b.dataset.make}); } catch (e) { alert(e.message); }
+    setTimeout(() => opts.reload && opts.reload(), 600);
+  });
+}
+let liveFigRoot = null, liveFigKey = "";
+async function loadLiveFigs() {
+  const a = STATE.active;
+  if (a) liveFigRoot = a.out_root;
+  if (!liveFigRoot) return;
+  try {
+    const list = await api("/api/runfigs?dir=" + encodeURIComponent(liveFigRoot));
+    const done = list.filter(r => r.status || r.files.length);
+    const key = JSON.stringify(done.map(r => [r.base, r.status, r.files.map(f => f.mtime)]));
+    if (key === liveFigKey) return; liveFigKey = key;
+    renderGallery($("#liveFigs"), done, {newestFirst: true, title: `Figures · ${liveFigRoot.split("/").pop()}`, reload: loadLiveFigs, empty: ""});
+    $("#liveFigs").classList.add("gal");
+  } catch (e) {}
+}
+
+async function showFigDialog(root, run, title) {
+  $("#dlgTitle").textContent = "Figures · " + title; dlg.showModal();
+  $("#dlgBody").innerHTML = `<div style="padding:4px 14px 12px" id="figDlg"><div class="muted" style="padding:10px 0">loading…</div></div>`;
+  const load = async () => {
+    try {
+      const list = await api("/api/runfigs?dir=" + encodeURIComponent(root) + (run ? "&run=" + encodeURIComponent(run) : ""));
+      renderGallery($("#figDlg"), list, {reload: load, zipDir: root, empty: '<div class="muted" style="padding:10px 0">no scenario runs here</div>'});
+      if (list.some(r => r.status === "running") && dlg.open) setTimeout(load, 3000);
+    } catch (e) { $("#figDlg").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  };
+  load();
+}
+
+
+
+// ------------------------------------------------------------------ live topology
+// Replays the server-log events (SSE "topo") into: per donor -> recipient pair, the donor group's
+// replicas (leader nearest the recipient), the RDMA transfer arrow, the recipient chain in its
+// current order (leader -> F1 -> F2) with the forwarding hops, and one cell per round with its
+// stage. Replica up/down/restarted comes from the redis-server process poll; crashes from crash_inject.
+let TOPO = null, TOPO_SETUP = null, TOPO_EV = [], topoPending = false;
+const HOLD = 1.5;   // s an arrow keeps flowing after its last event, so a 0.5 s round is visible
+async function loadTopology(setup) {
+  if (setup === TOPO_SETUP && TOPO) return;
+  TOPO_SETUP = setup;
+  try { TOPO = await api("/api/topology?setup=" + setup); } catch (e) { TOPO = null; }
+  scheduleTopo(); scheduleChart();
+}
+function scheduleTopo() { if (!topoPending) { topoPending = true; setTimeout(() => { topoPending = false; renderTopo(); }, 200); } }
+setInterval(() => { if (STATE.active) scheduleTopo(); }, 500);
+
+// src = {events, crashLines, nodes (process poll, or null = derive up/down from the crash log), at (replay
+// time, epoch s, or null = now), live}
+function topoModel(src) {
+  const G = Object.fromEntries(TOPO.groups.map(g => [g.id, g]));
+  const all = [...src.events].sort((a, b) => a.t - b.t);
+  const ev = src.at ? all.filter(e => e.t <= src.at) : all;
+  const fr = all.find(e => e.k === "d_round");   // time zero = the first round, also while replaying before it
+  const t0 = fr ? fr.t : ev.length ? ev[0].t : 0, tl = ev.length ? ev[ev.length - 1].t : 0;
+  const live = src.live || !!src.at;
+  const now = src.at || (src.live ? Math.max(tl, serverNow()) : tl);
+  // roles: latest role event per (sg, host); leader = latest "leader"
+  const role = {}, leader = {}, term = {};
+  for (const e of ev) if (e.k === "role") {
+    role[e.g + "|" + e.h] = e.x.role;
+    if (e.x.role === "leader") { leader[e.g] = e.h; term[e.g] = e.x.term; }
+    else if (leader[e.g] === e.h) delete leader[e.g];
+  }
+  const crashes = crashList(src.crashLines, ev);
+  const nodes = src.nodes;
+  let inst;
+  if (nodes) inst = (h, g) => { const n = nodes[h]; if (!n || !n.inst) return null; return n.inst.find(i => i.port === G[g].port) || false; };
+  else {   // replay: an instance is down from its kill to its restart
+    const down = {};
+    for (const c of crashes) if (c.t != null && c.t <= now) {
+      if (c.kind === "KILLED" || c.kind === "STOPPED") for (const g of c.sgs) down[c.host + "|" + g] = c.kind;
+      if (c.kind === "RESTARTED" || c.kind === "CONTINUED") for (const g of c.sgs) delete down[c.host + "|" + g];
+    }
+    inst = (h, g) => down[h + "|" + g] ? false : { up: 999, port: G[g].port };
+  }
+  const chain = {};
+  for (const e of ev) if (e.k === "c_view" && e.x.chain && e.x.chain.length) chain[e.g] = e.x.chain;
+  const pairs = TOPO.groups.filter(g => g.role === "donor").map(d => ({ d, r: G[d.recipient] }));
+  for (const p of pairs) {
+    const rounds = new Map(); let cur = null, curR = null, n = 0;
+    const [lo, hi] = (p.d.slots || "0:16383").split(":").map(Number);
+    const inPair = r => { const a = +String(r).split("-")[0]; return a >= lo && a <= hi; };
+    const R = r => { if (!rounds.has(r)) rounds.set(r, { r, start: +r.split("-")[0], attempts: 0, chunksD: 0, chunksR: 0, holders: new Set(), index: new Set(), t: {} }); return rounds.get(r); };
+    for (const e of ev) {
+      const mine = e.g === p.d.id ? "d" : e.g === p.r.id ? "r" : null; if (!mine) continue;
+      if (e.r && !inPair(e.r)) continue;   // a recipient shared by several donors (3 -> 4)
+      if (mine === "d" && e.k === "d_round") { const x = R(e.r); x.attempts++; x.t.round = e.t; x.fail = false; x.copied = x.done = x.commit = null; cur = e.r; n = n || e.x.n; continue; }
+      let r = e.r || (mine === "d" ? cur : (curR || cur)); if (!r) continue;
+      if (mine === "r" && e.r && (e.k === "c_fwd" || e.k === "r_chunk")) curR = e.r;
+      if (!rounds.has(r) && !e.r) continue;
+      const x = R(r);
+      switch (e.k) {
+        case "d_copy": x.t.copy = e.t; break;
+        case "d_chunk": x.chunksD++; x.t.chunk = e.t; break;
+        case "d_copied": x.copied = e.t; break;
+        case "d_done": x.done = e.t; break;
+        case "d_fail": x.fail = e.t; break;
+        case "d_commit": x.commit = e.t; break;
+        case "r_chunk": x.chunksR++; x.t.rchunk = e.t; x.holders.add(e.h); break;
+        case "c_fwd": x.t.fwd = e.t; break;
+        case "c_recv": x.holders.add(e.h); x.t["recv_" + e.h] = e.t; break;
+        case "c_fwd_done": x.t.fwdDone = e.t; break;
+        case "r_index": x.index.add(e.h); break;
+        case "r_merged": x.merged = e.t; x.holders.add(e.h); break;
+        case "r_durable": x.durable = e.t; x.holders.add(e.h); break;
+        // after a crash: where the interrupted round comes from
+        case "rec_probe": (x.rec = x.rec || {}).probe = { t: e.t, h: e.h, peers: e.x.peers }; break;
+        case "rec_found": (x.rec = x.rec || {}).found = { t: e.t, kind: e.x.kind }; break;
+        case "rec_ask": (x.rec = x.rec || {}).ask = { t: e.t, holder: e.x.holder }; break;
+        case "rec_adopt": (x.rec = x.rec || {}).adopt = e.t; break;
+        case "d_reship": (x.rec = x.rec || {}).reship = { t: e.t, h: e.h, to: e.x.to }; break;
+        case "d_plan": (x.rec = x.rec || {}).plan = e.x; break;
+      }
+    }
+    p.rounds = [...rounds.values()].sort((a, b) => a.start - b.start);
+    p.cur = cur && rounds.get(cur);
+    p.perRound = n;
+  }
+  // rounds alternate 682/683 slots: round, not ceil; a pair that has not started borrows the size
+  const anyN = (pairs.find(p => p.perRound) || {}).perRound || 0;
+  for (const p of pairs) { const n = p.perRound || anyN; p.N = Math.max(n ? Math.round(TOPO.total / n) : 1, p.rounds.length); }
+  return { G, ev, t0, now, live, role, leader, term, inst, chain, pairs, crashes };
+}
+// "now" on the panel host's clock (the cluster's), not the browser's
+let stateRecv = 0;
+function serverNow() { return (STATE.time || 0) + (stateRecv ? Date.now() / 1000 - stateRecv : 0); }
+
+function srcOf(r) {   // where a round came from after a crash (round cell)
+  if (!r || !r.rec) return "";
+  const c = r.rec;
+  if (c.plan && c.plan.missing === 0 && c.plan.durable > 0) return "kept (already durable)";
+  if (c.found) return { self: "kept on the new leader", peer: "fetched from " + ((c.ask && c.ask.holder) || "a peer"), none: "resent by the donor" }[c.found.kind];
+  if (c.reship) return "resent by the donor";
+  return "";
+}
+function stageOf(x, p) {
+  if (x.commit || x.done) return { k: 5, text: "done", cls: "done" };
+  if (x.fail) return { k: 0, text: "failed", cls: "bad" };
+  if (x.durable) return { k: 4, text: "durable", cls: "act" };
+  if (x.t.fwd) return { k: 3, text: `replicating · ${x.holders.size}/3`, cls: "act" };
+  if (x.copied) return { k: 2, text: "landed", cls: "act" };
+  if (x.t.copy || x.t.round) return { k: 1, text: x.chunksD || x.chunksR ? `copying · ${Math.max(x.chunksD, x.chunksR)} chunks` : "copying", cls: "act" };
+  return { k: 0, text: "", cls: "" };
+}
+
+// crash_inject lines -> {kind, host, sgs (the instances hit: by pid from the instance start lines,
+// else the "(sgN)" tag, else the groups that host led at that moment), t}
+function crashList(lines, ev) {
+  const pidOf = {}, leaderAt = (g, t) => { let l = null; for (const e of ev) { if (e.t > t) break; if (e.k === "role" && e.g === g) l = e.x.role === "leader" ? e.h : (l === e.h ? null : l); } return l; };
+  for (const e of ev) if (e.k === "start" && e.x && e.x.pid) pidOf[e.x.pid] = e.g;
+  const out = [], lastSgs = {};
+  for (const l of lines || []) {
+    const m = l.match(/^\[crash_inject (\d\d):(\d\d):(\d\d)\]\s+(KILLED|RESTARTED|STOPPED|CONTINUED|PARTITIONED|HEALED) (\S+)/); if (!m) continue;
+    const tk = l.match(/t_kill=([\d.]+)/), pid = (l.match(/pid=(\d+)/) || [])[1], tag = (l.match(/\((sg\d)\)/) || [])[1];
+    let t = tk ? +tk[1] : null;
+    if (t == null && ev.length) { const d = new Date(ev[0].t * 1000); d.setUTCHours(+m[1], +m[2], +m[3], 0); t = d.getTime() / 1000; if (t < ev[0].t - 43200) t += 86400; }
+    const host = m[5];
+    let sgs = pid && pidOf[pid] ? [pidOf[pid]] : tag ? [tag] : [];
+    if (!sgs.length && t != null) sgs = TOPO.groups.filter(g => g.hosts.includes(host) && leaderAt(g.id, t) === host).map(g => g.id);
+    if (!sgs.length && (m[4] === "RESTARTED" || m[4] === "CONTINUED")) sgs = lastSgs[host] || [];
+    if (m[4] === "KILLED" || m[4] === "STOPPED") lastSgs[host] = sgs;
+    out.push({ kind: m[4], host, sgs, t, line: l });
+  }
+  return out;
+}
+
+let SCRUB = null;   // epoch s while the pointer is over the live charts: the topology shows that moment
+let TOPO_OPEN = store.get("topoOpen", false);
+function setTopoOpen(v) {
+  TOPO_OPEN = v; store.set("topoOpen", v);
+  $("#topoSec").classList.toggle("closed", !v);
+  const b = $("#topoToggle"); b.textContent = (v ? "▾" : "▸") + " Topology"; b.setAttribute("aria-expanded", v);
+  if (v) renderTopo();
+}
+function renderTopo() {
+  if (!TOPO_OPEN) { const st = (STATE.active && STATE.active.setup) || TOPO_SETUP || "3to6"; if (st !== TOPO_SETUP || !TOPO) loadTopology(st);   // the timeline lanes need it
+    const i = $("#topoInfo"); if (i) i.textContent = "hidden · shows who holds which slots, transfers, chain hops and crash recovery"; return; }
+  renderTopoView({ box: $("#topo"), feed: $("#topoFeed"), info: $("#topoInfo"),
+    src: { events: TOPO_EV, crashLines: (STATE.active && STATE.active.events) || lastEvents, nodes: SCRUB ? null : (STATE.active ? STATE.nodes : null), at: SCRUB, live: !!STATE.active && !SCRUB } });
+}
+function renderTopoView(o) {
+  const box = o.box; if (!box) return;
+  const setup = (STATE.active && STATE.active.setup) || TOPO_SETUP || "3to6";
+  if (setup !== TOPO_SETUP) { loadTopology(setup); return; }
+  if (!TOPO || !TOPO.groups || !TOPO.groups.length) { box.innerHTML = `<div class="muted">topology not available${TOPO && TOPO.error ? ": " + esc(TOPO.error) : ""}</div>`; return; }
+  const M = topoModel(o.src);
+  const P = (box.id || "t") + "-";   // ids per picture: two topologies live in the page (one hidden)
+  const k = C(), W = 1000, MAPH = 66, rowH = 210, H = MAPH + M.pairs.length * rowH + 2;
+  const hold = o.src.at ? 0.3 : HOLD;   // replay: links flow only while their data moves (slow motion shows it)
+  const recent = t => M.live && t && M.now - t < hold;
+  const warn = css("--warn"), RM = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const HUES = ["s1", "s2", "s3"];
+  // data in flight: dots running along the link
+  const dots = (d, col, n = 3, dur = 1.1) => RM ? "" : Array.from({ length: n }, (_, i) =>
+    `<circle r="4" fill="${col}" stroke="${k.card}" stroke-width="1.2"><animateMotion dur="${dur}s" begin="${(-i * dur / n).toFixed(2)}s" repeatCount="indefinite" path="${d}"/></circle>`).join("");
+  const link = (d, hk, on, o2 = {}) => {
+    const col = o2.bad ? k.bad : on ? k[hk] : k.line, mk = o2.bad ? "bad" : on ? hk : "line";
+    return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${on ? 3.2 : 1.6}" stroke-linecap="round" opacity="${on ? 0.4 : 1}" ${o2.dash ? `stroke-dasharray="${o2.dash}"` : ""} marker-end="url(#${P}ah-${mk})"/>` + (on ? dots(d, col, o2.n || 3) : "");
+  };
+  const killT = {};
+  for (const c of M.crashes) if (c.t != null && c.t <= M.now && (c.kind === "KILLED" || c.kind === "STOPPED")) for (const g of c.sgs) killT[c.host + "|" + g] = c.t;
+  const rsz = r => { const [a, b] = String(r.r).split("-").map(Number); return b >= a ? b - a + 1 : 0; };
+  const segs = p => {   // the pair's rounds as slices of the slots it moves (unstarted rounds share the rest)
+    const N = Math.max(p.N, p.rounds.length), known = p.rounds.reduce((a, r) => a + rsz(r), 0);
+    const tot = Math.max(TOPO.total || known, known), rest = N > p.rounds.length ? (tot - known) / (N - p.rounds.length) : 0;
+    return Array.from({ length: N }, (_, i) => { const r = p.rounds[i]; return { r, n: r ? rsz(r) : rest, st: r ? stageOf(r, p) : { k: 0, cls: "" } }; });
+  };
+  const NR = 21;   // node radius
+  const node = (cx, cy, h, g, hk, tag, rounds) => {
+    const i = M.inst(h, g.id), dead = i === false, young = i && i.up < 20, isL = M.leader[g.id] === h && !dead;
+    const role = M.role[g.id + "|" + h], cand = role === "candidate" && !dead && !isL;
+    const ring = dead ? k.bad : young ? warn : isL ? k.ink : k.mute;
+    let s = `<g><title>${h} · ${g.id} · ${dead ? "down" : isL ? "leader" : cand ? "candidate" : young ? "restarted < 20 s" : tag || "follower"}</title>`;
+    const kt = killT[h + "|" + g.id];
+    if (dead && kt != null && M.now - kt < 8 && !RM) s += `<circle cx="${cx}" cy="${cy}" r="${NR}" fill="none" stroke="${k.bad}" stroke-width="2"><animate attributeName="r" values="${NR};${NR + 16}" dur="1.3s" repeatCount="indefinite"/><animate attributeName="opacity" values=".9;0" dur="1.3s" repeatCount="indefinite"/></circle>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${NR}" fill="${dead ? k.bad : isL ? k[hk] : k.card}" fill-opacity="${dead ? 0.12 : isL ? 0.2 : 1}" stroke="${ring}" stroke-width="${isL || dead || young ? 2.6 : 1.2}" ${cand ? 'stroke-dasharray="4 3"' : ""}/>`;
+    if (dead) s += `<path d="M${cx - 8},${cy - 8}L${cx + 8},${cy + 8}M${cx + 8},${cy - 8}L${cx - 8},${cy + 8}" stroke="${k.bad}" stroke-width="3" stroke-linecap="round"/>`;
+    else if (isL) s += `<text x="${cx}" y="${cy + 6}" font-size="18" text-anchor="middle" fill="${k.ink}">★</text>`;
+    else s += `<text x="${cx}" y="${cy + 4}" font-size="11" font-weight="700" text-anchor="middle" fill="${k.mute}">${cand ? "?" : esc(tag || "")}</text>`;
+    s += `<text x="${cx}" y="${cy + NR + 15}" font-size="12" font-family="var(--mono)" text-anchor="middle" font-weight="${isL ? 700 : 500}" fill="${dead ? k.bad : young ? warn : k.ink}">${h}</text>`;
+    if (rounds && rounds.length) {   // one dot per round: filled = this replica holds it
+      const gap = rounds.length > 10 ? 7 : 10, x0 = cx - (rounds.length - 1) * gap / 2;
+      rounds.forEach((r, j) => {
+        const has = r && (r.holders.has(h) || r.index.has(h)), firm = r && (r.durable || r.done || r.commit);
+        s += has ? `<circle cx="${x0 + j * gap}" cy="${cy + NR + 27}" r="3.4" fill="${k[hk]}" opacity="${firm ? 1 : 0.5}"/>`
+                 : `<circle cx="${x0 + j * gap}" cy="${cy + NR + 27}" r="3" fill="none" stroke="${k.line}" stroke-width="1.2"/>`;
+      });
+    }
+    return s + "</g>";
+  };
+  const bar = (x0, w, y, p, side, hk) => {   // donor: what is left to send · recipient: what has arrived
+    const S = segs(p), tot = S.reduce((a, b) => a + b.n, 0) || 1; let x = x0, moved = 0;
+    let out = `<rect x="${x0}" y="${y}" width="${w}" height="9" rx="4.5" fill="${k.soft}" stroke="${k.line}" stroke-width=".8"/>`;
+    for (const g of S) {
+      const sw = w * g.n / tot, done = g.st.k === 5, fail = g.st.cls === "bad", fly = g.r && !done && !fail;
+      if (done) moved += g.n;
+      const fill = fail ? k.bad : fly ? `url(#${P}st-${hk})` : (side === "d" ? !done : done) ? k[hk] : null;
+      if (fill && sw > 2) out += `<rect x="${x + 1}" y="${y + 0.5}" width="${sw - 2}" height="8" rx="4" fill="${fill}"/>`;
+      x += sw;
+    }
+    return { svg: out, moved: Math.round(moved), tot: Math.round(tot) };
+  };
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="topo" role="img" aria-label="cluster topology">
+    <defs>${["s1", "s2", "s3", "mute", "bad", "line"].map(c => `<marker id="${P}ah-${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="${k[c]}"/></marker>`).join("")}
+    ${["s1", "s2", "s3", "bad"].map(c => `<pattern id="${P}st-${c}" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="${k[c]}" opacity=".25"/><rect width="3.5" height="7" fill="${k[c]}"/>${RM ? "" : `<animateTransform attributeName="patternTransform" type="translate" from="0 0" to="7 0" dur=".7s" repeatCount="indefinite" additive="sum"/>`}</pattern>`).join("")}</defs>`;
+  // ---- slot map: who owns which of the 16384 slots right now
+  {
+    const X = v => 30 + v / 16384 * (W - 60), y = 22;
+    s += `<text x="30" y="12" font-size="10.5" font-weight="650" letter-spacing=".05em" fill="${k.mute}">SLOT MAP</text>
+      <text x="96" y="12" font-size="10.5" fill="${k.mute}">gray = still on the donor · color = moved to the recipient · stripes = in flight · red = failed</text>
+      <rect x="30" y="${y}" width="${W - 60}" height="16" rx="4" fill="${k.soft}" stroke="${k.line}" stroke-width=".8"/>`;
+    M.pairs.forEach((p, pi) => {
+      const hk = HUES[pi % 3], [lo, hi] = (p.d.slots || "0:16383").split(":").map(Number);
+      s += `<rect x="${X(lo) + 1}" y="${y + 1}" width="${X(hi + 1) - X(lo) - 2}" height="14" rx="3" fill="${k.mute}" opacity=".28"/>`;
+      for (const r of p.rounds) {
+        const [a, b] = String(r.r).split("-").map(Number), st = stageOf(r, p);
+        const fill = st.cls === "bad" ? k.bad : st.k === 5 ? k[hk] : `url(#${P}st-${hk})`;
+        s += `<rect x="${X(a)}" y="${y + 1}" width="${Math.max(1.5, X(b + 1) - X(a))}" height="14" fill="${fill}"><title>${r.r} · ${p.d.id} → ${p.r.id} · ${st.text || "starting"}</title></rect>`;
+      }
+      const moved = p.rounds.filter(r => r.done || r.commit).length;
+      s += `<text x="${(X(lo) + X(hi)) / 2}" y="${y + 30}" font-size="10.5" text-anchor="middle" fill="${k.mute}"><tspan font-weight="700" fill="${k.ink}">${String.fromCharCode(65 + pi)}</tspan> ${p.d.id} → <tspan fill="${k[hk]}" font-weight="650">${p.r.id}</tspan> · ${moved}/${p.N}</text>`;
+    });
+    s += `<text x="30" y="${y + 30}" font-size="9.5" fill="${k.mute}">0</text><text x="${W - 30}" y="${y + 30}" font-size="9.5" text-anchor="end" fill="${k.mute}">16383</text>`;
+  }
+  M.pairs.forEach((p, pi) => {
+    const hk = HUES[pi % 3], y0 = MAPH + pi * rowH, cy = y0 + 72;
+    const dl = M.leader[p.d.id], rl = M.leader[p.r.id];
+    const dh = [...p.d.hosts].sort((a, b) => (a === dl) - (b === dl));   // donor leader next to the recipient
+    const ch = (M.chain[p.r.id] || []).filter(h => h !== rl);            // recipient: leader, then chain order
+    const rest = p.r.hosts.filter(h => h !== rl && !ch.includes(h));
+    const rh = [...(rl ? [rl] : []), ...ch, ...rest];
+    const x = p.cur, st = x ? stageOf(x, p) : null, ri = x ? p.rounds.indexOf(x) + 1 : 0;
+    const DX = [95, 200, 305], RX = [665, 795, 925];
+    s += `<text x="8" y="${y0 + 30}" font-size="16" font-weight="700" fill="${k[hk]}">${String.fromCharCode(65 + pi)}</text>`;
+    const card = (x0, w, g, sub, ldr, b, verb) => {
+      const had = M.ev.some(e => e.k === "role" && e.g === g.id && e.x.role === "leader");
+      const noL = had && (!ldr || M.inst(ldr, g.id) === false), wait = !had;   // before the first election: starting, not a fault
+      return `<rect x="${x0}" y="${y0 + 8}" width="${w}" height="146" rx="12" fill="${noL ? k.bad : k.card}" fill-opacity="${noL ? 0.04 : 1}" stroke="${noL ? k.bad : k.line}" stroke-width="${noL ? 1.6 : 1}"/>
+        <text x="${x0 + 14}" y="${y0 + 28}" font-size="14" font-weight="700" fill="${k.ink}">${g.id}</text>
+        <text x="${x0 + 50}" y="${y0 + 28}" font-size="11.5" fill="${k.mute}">${esc(sub)}${M.term[g.id] ? " · term " + M.term[g.id] : ""}</text>
+        ${noL ? `<text x="${x0 + w - 14}" y="${y0 + 28}" font-size="11.5" text-anchor="end" fill="${k.bad}" font-weight="700">✕ no leader</text>` : wait ? `<text x="${x0 + w - 14}" y="${y0 + 28}" font-size="11.5" text-anchor="end" fill="${k.mute}">starting · no leader yet</text>` : ""}
+        <text x="${x0 + w - 14}" y="${y0 + 144}" font-size="10.5" text-anchor="end" fill="${k.mute}"><tspan font-weight="650" fill="${k.ink}">${b.moved}</tspan> / ${b.tot} ${verb}</text>
+        ${b.svg}`;
+    };
+    const bd = bar(44, 190, y0 + 136, p, "d", hk), br = bar(614, 236, y0 + 136, p, "r", hk);
+    s += card(30, 330, p.d, "donor · " + p.d.slots.replace(":", "–"), dl, bd, "sent");
+    s += card(600, 392, p.r, "recipient", rl, br, "arrived");
+    dh.forEach((h, j) => s += node(DX[j], cy, h, p.d, hk, ""));
+    rh.forEach((h, j) => s += node(RX[j], cy, h, p.r, hk, rl ? (j ? "F" + j : "") : "", p.rounds.length ? Array.from({ length: Math.max(p.N, p.rounds.length) }, (_, i) => p.rounds[i]) : null));
+    // chain hops: leader -> F1 -> F2
+    for (let j = 0; j + 1 < rh.length; j++) {
+      const a = rh[j], b = rh[j + 1];
+      let active = false;
+      if (x && x.t.fwd) {
+        const ta = j === 0 ? x.t.fwd : x.t["recv_" + a], tb = x.t["recv_" + b];
+        active = M.live && ta && (!tb ? M.now - ta < (o.src.at ? 3 : 8) : recent(tb));
+      }
+      const deadB = M.inst(b, p.r.id) === false;
+      s += link(`M${RX[j] + NR + 4},${cy} L${RX[j + 1] - NR - 6},${cy}`, hk, active && !deadB, { bad: deadB, dash: deadB ? "4 4" : "", n: 2 });
+    }
+    // the RDMA transfer: donor leader -> recipient leader
+    const copying = x && M.live && !x.copied && !x.fail && !x.done && !x.commit && ((x.t.copy && M.now - x.t.copy < 20) || recent(x.t.chunk) || recent(x.t.rchunk));
+    const blocked = x && !x.done && !x.commit && (!dl || M.inst(dl, p.d.id) === false || !rl || M.inst(rl, p.r.id) === false);
+    s += link(`M${DX[2] + NR + 4},${cy} L${RX[0] - NR - 6},${cy}`, hk, copying && !blocked, { bad: blocked, dash: blocked ? "6 5" : "", n: 4 });
+    const done = p.rounds.filter(r => r.done || r.commit).length;
+    const tl = !p.rounds.length ? "idle" : blocked ? "paused: no leader" : copying ? `${x.rec && x.rec.reship ? "↻ re-ship" : "RDMA copy"} r${ri}/${p.N}` : done >= p.N ? `✓ ${p.N}/${p.N} rounds moved` : st ? `r${ri}/${p.N} · ${st.text}` : "";
+    if (tl) {
+      const mx = (DX[2] + RX[0]) / 2, tw = tl.length * 6.6 + 22, on = copying && !blocked;
+      s += `<rect x="${mx - tw / 2}" y="${cy - 36}" width="${tw}" height="22" rx="11" fill="${blocked ? k.bad : on ? k[hk] : k.soft}" fill-opacity="${blocked || on ? 0.14 : 1}" stroke="${blocked ? k.bad : on ? k[hk] : k.line}"/>
+        <text x="${mx}" y="${cy - 21}" font-size="11.5" text-anchor="middle" font-weight="650" fill="${blocked ? k.bad : k.ink}">${esc(tl)}</text>`;
+    }
+    if (x && !x.done && !x.commit && (x.chunksD || x.chunksR)) s += `<text x="${(DX[2] + RX[0]) / 2}" y="${cy + 22}" font-size="10.5" text-anchor="middle" fill="${k.mute}">${x.chunksR || x.chunksD} chunk${(x.chunksR || x.chunksD) > 1 ? "s" : ""} landed</text>`;
+    // recovery: where the interrupted round comes from after the crash (arcs over the recipient nodes)
+    const RR = p.rounds.filter(r => r.rec).slice(-1)[0], ty = y0 + 172;
+    if (RR) {
+      const rc = RR.rec, rri = p.rounds.indexOf(RR) + 1;
+      const cxr = h => { const j = rh.indexOf(h); return j < 0 ? null : RX[j]; };
+      const arc = (h1, h2, on, dash, hkk = hk) => {
+        const a = cxr(h1), b = cxr(h2); if (a == null || b == null || a === b) return "";
+        const d = `M${a},${cy - NR - 3} C${a},${y0 + 30} ${b},${y0 + 30} ${b},${cy - NR - 6}`;
+        return dash ? `<path d="${d}" fill="none" stroke="${k.mute}" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#${P}ah-mute)"/>` : link(d, hkk, on, { n: 3 });
+      };
+      const probing = rc.probe && (!rc.found || M.now < rc.found.t);
+      let rtxt = "", rcol = k.ink;
+      if (probing) {
+        const nl = rc.probe.h;
+        for (const h of rh) if (h !== nl && M.inst(h, p.r.id) !== false) s += arc(nl, h, false, true);
+        rtxt = `${nl} (new leader) asks ${rc.probe.peers} peers + the donor: who holds r${rri}?`;
+      } else if (rc.found) {
+        const nl = rc.probe ? rc.probe.h : rl;
+        if (rc.found.kind === "self") rtxt = `r${rri} found on ${nl} itself (it held it as a follower) → no resend`;
+        else if (rc.found.kind === "peer") { const hd = rc.ask && rc.ask.holder; s += arc(hd, nl, M.live && !RR.durable, false); rtxt = `r${rri} held by ${hd || "a peer"} → the new leader fetches it from there`; }
+        else { rtxt = `no live replica holds r${rri} → the donor sends it again`; rcol = k.bad; }
+      }
+      if (rtxt) s += `<text x="604" y="${ty}" font-size="11.5" fill="${rcol}">↻ ${esc(rtxt)}</text>`;
+      if (rc.reship) {
+        const miss = rc.plan ? rc.plan.missing : null;
+        const dtx = miss === 0 ? `r${rri} already durable on the recipient → nothing resent` : miss == null ? `${rc.reship.h} asks ${rc.reship.to || "the new leader"} what is missing of r${rri}` : `${rc.reship.h} re-ships r${rri} → ${rc.reship.to || "?"} (${miss} slots missing)`;
+        s += `<text x="34" y="${ty}" font-size="11.5" fill="${miss ? k.bad : k.ink}">↻ ${esc(dtx)}</text>`;
+      }
+    }
+    // rounds: one cell each, filled by stage
+    const S = segs(p), sy = y0 + 182, sw = (W - 60) / Math.max(S.length, 1);
+    S.forEach((g, i) => {
+      const r = g.r, rs = g.st, sx = 30 + i * sw, isCur = r && r === x && rs.k < 5, bad = rs.cls === "bad";
+      s += `<g><title>r${i + 1}${r ? " · slots " + r.r : " · pending"}${r && rs.text ? " · " + rs.text : ""}${srcOf(r) ? " · " + srcOf(r) : ""}${r && r.index.size ? " · index " + r.index.size + "/3" : ""}${r && r.attempts > 1 ? " · retransferred" : ""}</title>
+        <rect x="${sx + 2}" y="${sy}" width="${sw - 4}" height="22" rx="6" fill="none" stroke="${isCur ? k[hk] : k.line}" stroke-width="${isCur ? 1.8 : 1}" ${r ? "" : 'stroke-dasharray="4 3"'}/>`;
+      if (rs.k > 0) s += `<rect x="${sx + 3}" y="${sy + 1}" width="${(sw - 6) * rs.k / 5}" height="20" rx="5" fill="${bad ? k.bad : k[hk]}" opacity="${rs.k === 5 ? 0.3 : 0.18}"/>`;
+      const extra = srcOf(r) && (`r${i + 1} ${rs.text || ""} · ${srcOf(r)}`).length * 5.6 + 24 < sw ? " · " + srcOf(r) : "";   // only when it fits the cell
+      s += `<text x="${sx + 10}" y="${sy + 15}" font-size="10.5" fill="${bad ? k.bad : k.ink}"><tspan font-weight="700">r${i + 1}</tspan> <tspan fill="${bad ? k.bad : k.mute}">${rs.k === 5 ? "✓ " : ""}${esc(rs.text || (r ? "" : "pending"))}${esc(extra)}</tspan>${r && r.attempts > 1 ? ` <tspan fill="${k.bad}">↻</tspan>` : ""}</text></g>`;
+    });
+  });
+  s += `</svg>`;
+  // event feed
+  const nice = e => {
+    const r = e.r ? ` · ${e.r}` : "";
+    switch (e.k) {
+      case "role": return [`${e.x.role}${e.x.term ? " (term " + e.x.term + ")" : ""}`, e.x.role === "leader" ? "imp" : ""];
+      case "start": return ["instance started", ""];
+      case "d_round": return [`round start (TXN_START)${r}`, "imp"];
+      case "d_start": return [`migrate worker started · ${e.x.n} slots`, ""];
+      case "d_copy": return [`RDMA copy begins${r}`, ""];
+      case "d_chunk": return [`copied chunk ${e.x.seq} (${e.x.n} slots)`, "dim"];
+      case "d_copied": return [`copy finished${r}`, ""];
+      case "d_done": return [`round done${r}`, "imp"];
+      case "d_fail": return [`round FAILED${r}`, "bad"];
+      case "d_commit": return [`TXN_DONE logged${r}`, ""];
+      case "r_open": return [`recipient session open${r}`, "dim"];
+      case "r_chunk": return [`chunk ${e.x.seq} landed (${e.x.n} slots)`, "dim"];
+      case "c_view": return [`chain view: ${e.x.chain.join(" → ")}${r}`, ""];
+      case "c_fwd": return [`chain forward leader → F1 starts${r}`, ""];
+      case "c_recv": return [`holds the round${e.x.tail ? " (tail)" : ", forwarding on"}${r}`, ""];
+      case "c_fwd_done": return [`chain forward complete${r}`, ""];
+      case "r_index": return [`index update done (${e.x.role})${r}`, "dim"];
+      case "r_merged": return [`merge done${r}`, "dim"];
+      case "r_durable": return [`RECP_DURABLE logged${r}`, "imp"];
+      case "r_durable_f": return [`RECP_DURABLE applied${r}`, "dim"];
+      case "hook": return [`TEST HOOK ${e.x.name}`, "bad"];
+      case "recover": return [e.x.msg, "bad"];
+      case "rec_probe": return [`new leader holds ${e.x.have}/${e.x.n} slots → asks ${e.x.peers} peers + the donor who holds the round${r}`, "bad"];
+      case "rec_found": return [{ self: "it holds the round itself → no resend", peer: "a peer holds the round → fetch it from there", none: "no live replica holds the round → donor resends" }[e.x.kind] + r, "bad"];
+      case "rec_ask": return [`asks holder ${e.x.holder} to send the round${r}`, "bad"];
+      case "rec_adopt": return [`applies the round it held as a follower${r}`, "imp"];
+      case "rec_told": return [`tells the donor: recipient leader is now ${e.x.leader}${r}`, ""];
+      case "d_reship": return [`re-ships the round to ${e.x.to}${r}`, "bad"];
+      case "d_plan": return [`resume plan: recipient has ${e.x.durable} durable, ${e.x.missing} missing${r}`, "imp"];
+    }
+    return [e.k, ""];
+  };
+  const hideDim = $("#topoDim") && $("#topoDim").checked;
+  const items = M.ev.map(e => { const [txt, cls] = nice(e); return { t: e.t, who: `${e.g} ${e.h}`, txt, cls }; })
+    .concat(M.crashes.filter(c => c.t && (!o.src.at || c.t <= o.src.at)).map(c => ({ t: c.t, who: c.host + (c.sgs.length ? " " + c.sgs.join(",") : ""), txt: c.kind.toLowerCase() + " (crash_inject)", cls: "bad" })))
+    .filter(i => !(hideDim && i.cls === "dim")).sort((a, b) => b.t - a.t).slice(0, 250);
+  const feed = items.map(i => `<div class="fe ${i.cls}"><span class="ft">${i.t >= M.t0 ? "+" : "−"}${Math.abs(i.t - M.t0).toFixed(3)}</span><span class="fw">${esc(i.who)}</span><span>${esc(i.txt)}</span></div>`).join("");
+  // replace only what changed: a re-render would restart the flowing-arrow animation
+  if (s !== box._last) { box.innerHTML = s; box._last = s; const sv = box.querySelector("svg"); if (sv && sv.setCurrentTime) sv.setCurrentTime((performance.now() / 1000) % 3600); }
+  const fd = o.feed, fh = feed || '<div class="muted">no server-log events yet (they appear once the instances start)</div>';
+  if (fh !== fd._last) { const keep = fd.scrollTop; fd.innerHTML = fh; fd._last = fh; fd.scrollTop = keep; }
+  if (o.info) o.info.textContent = o.src.at ? `replay at ${o.src.at >= M.t0 ? "+" : "−"}${Math.abs(o.src.at - M.t0).toFixed(2)} s` : M.ev.length ? `${M.ev.length} events · ${o.src.live ? "live" : "last scenario"}` : "";
+}
+
+// ------------------------------------------------------------------ replay player
+// Plays the server-log timeline back at a chosen speed (slow motion down to 0.05x): drives the
+// topology picture (o.onTime(t)) and the playhead on the charts / timeline. t is epoch seconds.
+function makePlayer(el, o) {
+  el.innerHTML = `<div class="player">
+    <button type="button" class="sm pl-start" title="back to the start">⇤</button>
+    <button type="button" class="sm pl-back" title="−0.1 s">‹</button>
+    <button type="button" class="sm pl-play" title="play / pause (space)">▶</button>
+    <button type="button" class="sm pl-fwd" title="+0.1 s">›</button>
+    <select class="pl-speed" title="speed">${[0.05, 0.1, 0.25, 0.5, 1, 2].map(v => `<option value="${v}" ${v === 0.25 ? "selected" : ""}>${v}×</option>`).join("")}</select>
+    <input type="range" class="pl-slider" min="0" max="10000" value="0" step="1">
+    <span class="pl-time mono"></span>
+    ${o.live ? `<button type="button" class="sm pl-live on" title="follow the run live">● live</button>` : ""}</div>`;
+  const q = s => el.querySelector(s), slider = q(".pl-slider"), btn = q(".pl-play"), tl = q(".pl-time"), liveB = q(".pl-live");
+  let t = null, playing = false, raf = null, lastTs = 0;
+  try { q(".pl-speed").value = localStorage.getItem("plspeed") || "0.25"; } catch (e) {}
+  const range = () => o.range() || [0, 1];
+  const speed = () => +q(".pl-speed").value;
+  function show() {
+    const [a, b] = range();
+    if (t == null) { slider.value = 10000; tl.textContent = "live"; return; }
+    slider.value = Math.round((t - a) / Math.max(b - a, 0.001) * 10000);
+    const ref = o.zero ? o.zero() : a;
+    tl.textContent = `${t >= ref ? "+" : "−"}${Math.abs(t - ref).toFixed(2)} s`;
+  }
+  function seek(nt, fromUser) {
+    const [a, b] = range();
+    t = Math.max(a, Math.min(b, nt));
+    if (liveB) liveB.classList.remove("on");
+    show(); o.onTime(t);
+  }
+  function frame(ts) {
+    if (!playing) return;
+    const dt = lastTs ? (ts - lastTs) / 1000 : 0; lastTs = ts;
+    const [, b] = range();
+    t = Math.min(b, (t == null ? range()[0] : t) + dt * speed());
+    show(); o.onTime(t);
+    if (t >= b) { pause(); return; }
+    raf = requestAnimationFrame(frame);
+  }
+  function play() {
+    const [a, b] = range();
+    if (t == null || t >= b - 0.01) t = a;
+    playing = true; lastTs = 0; btn.textContent = "⏸"; if (liveB) liveB.classList.remove("on");
+    raf = requestAnimationFrame(frame);
+  }
+  function pause() { playing = false; btn.textContent = "▶"; if (raf) cancelAnimationFrame(raf); }
+  function goLive() { pause(); t = null; if (liveB) liveB.classList.add("on"); show(); o.onTime(null); }
+  btn.onclick = () => playing ? pause() : play();
+  q(".pl-start").onclick = () => { pause(); seek(range()[0]); };
+  q(".pl-back").onclick = () => { pause(); seek((t ?? range()[1]) - 0.1); };
+  q(".pl-fwd").onclick = () => { pause(); seek((t ?? range()[0]) + 0.1); };
+  q(".pl-speed").onchange = () => { try { localStorage.setItem("plspeed", q(".pl-speed").value); } catch (e) {} };
+  slider.oninput = () => { pause(); const [a, b] = range(); seek(a + slider.value / 10000 * (b - a)); };
+  if (liveB) liveB.onclick = goLive;
+  el.addEventListener("keydown", e => { if (e.key === " " && e.target.tagName !== "SELECT") { e.preventDefault(); btn.click(); } });
+  show();
+  return { seek: nt => { pause(); seek(nt); }, time: () => t, range: () => range(), playing: () => playing, refresh: show, goLive };
+}
+
+// live view: replay range = 3 s before the first round to the last event
+function liveRange() {
+  if (!TOPO_EV.length) return null;
+  let a = null, b = 0;
+  for (const e of TOPO_EV) { if (e.k === "d_round" && (a == null || e.t < a)) a = e.t; if (e.t > b) b = e.t; }
+  if (a == null) a = TOPO_EV[0].t;
+  return [a - 3, b + 1];
+}
+let LIVEPLAYER = null, PLAY_T = null;
+function initLivePlayer() {
+  LIVEPLAYER = makePlayer($("#livePlayer"), { live: true, range: () => LIVE_ZOOM || liveRange(), zero: () => { const r = liveRange(); return r ? r[0] + 3 : 0; },
+    onTime: t => { PLAY_T = t; SCRUB = t; renderTopo(); if (LIVE.setPlayhead) LIVE.setPlayhead(t); } });
+}
+
+
+// ------------------------------------------------------------------ tabs
+function showTab(t) {
+  if (!document.querySelector(`.tab-page[data-tab="${t}"]`)) t = "dashboard";
+  document.querySelectorAll(".tab-page").forEach(p => p.hidden = p.dataset.tab !== t);
+  document.querySelectorAll(".tabsnav a").forEach(a => a.classList.toggle("on", a.dataset.tab === t));
+  if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
+  window.dispatchEvent(new Event("resize"));   // charts drawn while hidden get their real width
+  if (t === "experiments") loadHistory();
+}
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+$("#status").style.cursor = "pointer"; $("#status").onclick = () => showTab("dashboard");
+let HIST_KIND = "all";
+document.querySelectorAll("#histKind button").forEach(b => b.onclick = () => { HIST_KIND = b.dataset.k; document.querySelectorAll("#histKind button").forEach(x => x.classList.toggle("on", x === b)); renderHistory(HIST_ALL); });
+$("#histSearch").oninput = () => renderHistory(HIST_ALL);
+
+// ------------------------------------------------------------------ go
+$("#topoDim").onchange = () => renderTopo();
+initLivePlayer();
+$("#topoToggle").onclick = () => setTopoOpen(!TOPO_OPEN);
+setTopoOpen(TOPO_OPEN);
+showTab(location.hash.slice(1) || "dashboard");
+loadRunners().then(() => { connect(); loadHistory(); });
+setInterval(loadHistory, 20000);
+let lastRows = "";
+setInterval(() => { const k = JSON.stringify(STATE.active && STATE.active.rows || []); if (k !== lastRows) { lastRows = k; loadHistory(); } }, 3000);
+</script>
+</body>
+</html>
