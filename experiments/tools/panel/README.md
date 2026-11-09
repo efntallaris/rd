@@ -30,6 +30,18 @@ Restarting or stopping the panel **does not stop a running experiment**: jobs ru
 unit uses `KillMode=process`. The panel picks running jobs up again when it comes back. After
 editing `index.html`, a reload in the browser is enough; edits to `panel.py` need the restart.
 
+### On a new CloudLab cluster (automatic)
+
+The profile's startup service runs `scripts_copy/install_preqs.sh` (from `master`) on every node,
+as root, at every boot. Its last step checks out this branch in `/users/entall/rd`, then calls
+`experiments/tools/panel/cloudlab_setup.sh`. On **redis0** that script installs and starts the
+service for the owner of the checkout (`entall`). On the other nodes it does nothing.
+
+The URL with the token is printed in `/var/tmp/startup-2.txt` and saved in
+`~/.experiment_panel/url`. Because the startup service runs at every boot, the service is
+reinstalled each time, which is harmless. To use another controller or user, set
+`PANEL_CONTROLLER` / `PANEL_USER` for the script.
+
 ### By hand
 
 ```bash
@@ -120,8 +132,9 @@ in `panel.py` for the full list. What the watchdog did is logged in
 | `panel.py` | server: jobs and queue, SSE stream, log / YCSB / server-log tails, health watchdog, API |
 | `index.html` | the whole page (no build step, no external scripts) |
 | `figures_for_run.sh` | house-style figures of one scenario run: `figures_for_run.sh <run dir> [out root]` |
-| `experiment-panel.service`, `install_service.sh` | start at boot |
-| `~/.experiment_panel/` | `jobs/*.json`, `queue.json`, `token`, `panel.log`, `watchdog.json` |
+| `experiment-panel.service`, `install_service.sh` | start at boot (`--user <name>` when run as root) |
+| `cloudlab_setup.sh` | CloudLab startup hook: runs `install_service.sh` on the controller only |
+| `~/.experiment_panel/` | `jobs/*.json`, `queue.json`, `token`, `url`, `panel.log`, `watchdog.json` |
 | `$OUT_ROOT/panel_data/` | snapshot of each scenario's `/tmp/experiments/<exp>`, which the next run would overwrite |
 
 ## Troubleshooting
