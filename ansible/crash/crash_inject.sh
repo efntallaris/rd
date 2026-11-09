@@ -49,6 +49,10 @@ log() { echo "[crash_inject $(date -u +%H:%M:%S)] $*" | tee -a "$RES" >&2; }
 log "==== scenario=$LABEL ===="
 log "ARM   : $ARM_HOST:$ARM_LOG  marker=/$ARM_MARKER/  x$ARM_COUNT"
 log "TARGET: $TARGET_HOST  kill -9 \$(cat $PIDFILE)"
+# NOTE (2026-11-05): ssh ControlMaster pre-warming was tried here to shrink the
+# double-crash skew further. It is NOT worth it — with the parallel one-round-trip
+# kills below the skew is already +-3 ms over 3 dummy-process trials, and the
+# pre-warmed runs measured 58/0/-1 ms, i.e. no better and occasionally worse.
 log "waiting for marker (max ${MAX_WAIT}s)..."
 
 # Remote POLL loop (single ssh), two phases:
@@ -76,40 +80,66 @@ else
   exit 2
 fi
 
-# Optional second target (TARGET_HOST2/PIDFILE2): killed at the same instant as
-# the first, from a parallel ssh started as soon as the marker hits.
+# Both targets are killed by ONE ssh round trip each, fired in parallel: the
+# remote shell resolves the pidfile, verifies the pid is alive and kill -9s it
+# (together with PIDFILE_EXTRA, for a whole-host crash) in the same session.
+#
+# 2026-11-05: the primary target used to need three SEQUENTIAL ssh connections
+# (cat the pidfile, then kill -0, then kill -9) while the second target already
+# used one, so S5's "simultaneous" double crash landed 345 ms apart and the
+# SECOND target died FIRST (2026-11-04: redis3 at t_kill+0.191, redis0 at
+# +0.403, and sg4 was 0.33 s into its election before sg1 even died). One round
+# trip each also makes verify-then-kill atomic on the target rather than two
+# handshakes apart, which is what the stale-pidfile guard below wants anyway.
+killTarget() {   # host pidfile extra -> "OK <pid> <extra...>" | "NOPID" | "STALE <pid>"
+  local host="$1" pf="$2" extra="${3:-/dev/null}"
+  sudo ssh $SSH_OPTS "$host" "
+    p=\$(cat '$pf' 2>/dev/null | tr -d '[:space:]')
+    [ -z \"\$p\" ] && { echo NOPID; exit 0; }
+    kill -0 \"\$p\" 2>/dev/null || { echo \"STALE \$p\"; exit 0; }
+    e=\$(cat $extra 2>/dev/null | tr '\n' ' ')
+    kill -9 \$p \$e 2>/dev/null
+    echo \"OK \$p \$e\""
+}
+
+R1="$RESULT_DIR/.kill1.$$"; R2="$RESULT_DIR/.kill2.$$"
+( killTarget "$TARGET_HOST" "$PIDFILE" "${PIDFILE_EXTRA:-/dev/null}" > "$R1"
+  date -u +%s.%N >> "$R1" ) &
+K1=$!
 if [ -n "${TARGET_HOST2:-}" ] && [ -n "${PIDFILE2:-}" ]; then
-  ( P2=$(sudo ssh $SSH_OPTS "$TARGET_HOST2" "p=\$(cat '$PIDFILE2' 2>/dev/null); kill -0 \$p 2>/dev/null && kill -9 \$p && echo \$p")
-    if [ -n "$P2" ]; then log "KILLED $TARGET_HOST2 pid=$P2 (verified alive)  t_kill=$(date -u +%s.%N)"
-    else log "ERROR: second target $TARGET_HOST2:$PIDFILE2 not alive -- NO KILL"; fi ) &
-  KILL2_PID=$!
+  ( killTarget "$TARGET_HOST2" "$PIDFILE2" > "$R2"
+    date -u +%s.%N >> "$R2" ) &
+  K2=$!
 fi
+wait "$K1"; [ -n "${K2:-}" ] && wait "$K2"
 
-PID=$(sudo ssh $SSH_OPTS "$TARGET_HOST" "cat '$PIDFILE' 2>/dev/null" | tr -d '[:space:]')
-if [ -z "${PID:-}" ]; then
-  log "ERROR: pidfile $PIDFILE empty/missing on $TARGET_HOST — NO KILL"
-  echo "result=NO_PID label=$LABEL" >> "$RES"
-  exit 3
-fi
-
-# Verify the pid is ALIVE before killing — a stale pidfile from a previous
-# run points at a dead pid and kill -9 would be a silent no-op reported as
-# a kill (observed: phantom kill -> scenario silently not exercised).
-if ! sudo ssh $SSH_OPTS "$TARGET_HOST" "kill -0 $PID 2>/dev/null"; then
-  log "ERROR: pid $PID from $PIDFILE is NOT alive on $TARGET_HOST — stale pidfile, NO KILL"
-  echo "result=STALE_PID label=$LABEL target=$TARGET_HOST pid=$PID" >> "$RES"
-  exit 3
-fi
-EXTRA_PIDS=""
-if [ -n "${PIDFILE_EXTRA:-}" ]; then
-  EXTRA_PIDS=$(sudo ssh $SSH_OPTS "$TARGET_HOST" "cat $PIDFILE_EXTRA 2>/dev/null" | tr '\n' ' ')
-  log "also killing on $TARGET_HOST: $PIDFILE_EXTRA -> pids ${EXTRA_PIDS:-<none>}"
-fi
-sudo ssh $SSH_OPTS "$TARGET_HOST" "kill -9 $PID $EXTRA_PIDS"
-T_KILL=$(date -u +%s.%N)
+read -r ST1 PID1 EXTRA1 < "$R1"; T_KILL=$(tail -1 "$R1"); rm -f "$R1"
+case "${ST1:-}" in
+  NOPID)
+    log "ERROR: pidfile $PIDFILE empty/missing on $TARGET_HOST - NO KILL"
+    echo "result=NO_PID label=$LABEL" >> "$RES"; exit 3 ;;
+  STALE)
+    log "ERROR: pid ${PID1:-?} from $PIDFILE is NOT alive on $TARGET_HOST - stale pidfile, NO KILL"
+    echo "result=STALE_PID label=$LABEL target=$TARGET_HOST pid=${PID1:-}" >> "$RES"; exit 3 ;;
+  OK) : ;;
+  *)
+    log "ERROR: no answer from $TARGET_HOST for $PIDFILE (ssh failed?) - NO KILL"
+    echo "result=NO_PID label=$LABEL" >> "$RES"; exit 3 ;;
+esac
+PID="$PID1"
+[ -n "${PIDFILE_EXTRA:-}" ] && log "also killed on $TARGET_HOST: $PIDFILE_EXTRA -> pids ${EXTRA1:-<none>}"
 log "KILLED $TARGET_HOST pid=$PID (verified alive)  t_kill=$T_KILL"
 echo "result=KILLED label=$LABEL target=$TARGET_HOST pid=$PID t_arm=$T_ARM t_kill=$T_KILL" >> "$RES"
-[ -n "${KILL2_PID:-}" ] && wait "$KILL2_PID"
+
+if [ -n "${K2:-}" ]; then
+  read -r ST2 PID2 _ < "$R2"; T_KILL2=$(tail -1 "$R2"); rm -f "$R2"
+  if [ "${ST2:-}" = OK ]; then
+    log "KILLED $TARGET_HOST2 pid=$PID2 (verified alive)  t_kill=$T_KILL2"
+    log "double-crash skew: $(awk "BEGIN{printf \"%+.0f ms ($TARGET_HOST2 relative to $TARGET_HOST)\", ($T_KILL2-$T_KILL)*1000}")"
+  else
+    log "ERROR: second target $TARGET_HOST2:$PIDFILE2 not alive (${ST2:-no answer}) -- NO KILL"
+  fi
+fi
 
 # Durable leader-log snapshot. The arm-host (recipient LEADER) log is WIPED at
 # end-of-run (the instance is restarted at teardown), destroying the re-form /

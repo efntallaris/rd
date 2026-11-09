@@ -1493,6 +1493,12 @@ void rdmaChainInitQpCommand(client *c) {
  *  Pools persist + are reused across migrations. Registrations are rounded *
  *  up to a grain so 682- and 683-slot rounds share one pre-warmed pool.    */
 #define N_FOLLOWER_LANDING_POOLS 8   /* > sessions/migration (n_rounds*n_donors) */
+/* Chain WARM-UP session ids are >= 9e17: the harness's RDMA CHAIN-WARM uses
+ * RDMA_CHAIN_WARM_SESS = 9e17 and a promoted recipient leader uses 9e17 + 1 + term
+ * (cluster_rdma.c). Real chain sessions are 7e17 + ..., re-ship ids 8e17 + ...
+ * A warm-up only establishes QPs and is never forwarded data, so it claims no
+ * ring pool (see rdmaChainPrepCommand). */
+#define CHAIN_WARM_SESS_MIN 900000000000000000LL
 #define FLP_GRAIN ((size_t) 64 * 1024 * 1024)
 static void                  *g_flp_pool[N_FOLLOWER_LANDING_POOLS]  = {0};
 static size_t                 g_flp_bytes[N_FOLLOWER_LANDING_POOLS] = {0};
@@ -1637,7 +1643,56 @@ void rdmaChainPrepCommand(client *c) {
 
     pthread_mutex_lock(&g_chain_state_mu);
     rdmaFollowerChainState *st = findFollowerState(src_mig_id);
-    if (st == NULL) {
+    int is_warm = (src_mig_id >= CHAIN_WARM_SESS_MIN);
+    if (st == NULL && is_warm) {
+        /* 2026-11-05: a chain WARM-UP session claims NO ring pool. Its purpose is the
+         * QPs (the next real session reuses them: "reusing existing chain QP"); nothing
+         * is ever RDMA-written to a warm-up pool -- no CHAIN-FORWARDED, forward, recipe
+         * or repair runs for a warm-up id. Claiming one anyway cost a pre-registered
+         * pool per warm-up: the startup CHAIN-WARM (pool[0] in every run) and the
+         * promoted recipient leader's warm-up. In a recipient-leader failover (S1, S5,
+         * S6) that, plus the abandoned round, used 7 claims against ROUNDS+1 = 5
+         * pre-registered pools, so rounds 3 and 4 mmap+ibv_reg_mr'd a 1.43 GB pool ON
+         * THE MAIN THREAD (332/327 ms) -- with the dead leader gone that follower was
+         * sg4's only quorum partner, and every sg4 commit and quorum read stalled with
+         * it (S5 2026-11-05: -34% client throughput for 2 s). With warm-ups free a
+         * healthy run uses ROUNDS claims and a single failover ROUNDS+1.
+         * The state is still created: CHAIN-WIRE needs it. Pool fields stay 0, which
+         * every reader already handles (chain worker successor registration, forward,
+         * recipe, CHAIN-PING all check for a NULL pool). */
+        struct rdma_cm_id *cm = (server.rdma_server != NULL)
+                              ? rdmamig_server_cm_id(server.rdma_server) : NULL;
+        int need_prewarm, next_idx;
+        pthread_mutex_lock(&g_flp_mu);
+        need_prewarm = (!g_flp_prewarmed && cm != NULL);
+        if (need_prewarm) g_flp_prewarmed = 1;
+        next_idx = g_flp_next % N_FOLLOWER_LANDING_POOLS;
+        pthread_mutex_unlock(&g_flp_mu);
+
+        st = zcalloc(sizeof(*st));
+        st->src_mig_id = src_mig_id;   /* landing_pool* stay NULL / 0 */
+
+        /* Unchanged: with startup pre-registration off, the first CHAIN-PREP (normally
+         * this warm-up) still starts the background pre-warm of the ring. */
+        if (need_prewarm) {
+            flpPrewarmArg *a = zmalloc(sizeof(*a));
+            a->cm = cm; a->bytes = (size_t) pool_bytes;
+            pthread_t tid;
+            if (pthread_create(&tid, NULL, followerPrewarmThread, a) == 0)
+                pthread_detach(tid);
+            else zfree(a);
+        }
+
+        if (insertFollowerState(st) != C_OK) {
+            pthread_mutex_unlock(&g_chain_state_mu);
+            zfree(st);
+            addReplyError(c, "CHAIN-PREP: too many concurrent chain sessions");
+            return;
+        }
+        serverLog(LL_NOTICE,
+            "CHAIN-PREP: sess=%lld warm-up -- QPs only, no ring pool claimed "
+            "(next real session takes pool[%d])", src_mig_id, next_idx);
+    } else if (st == NULL) {
         size_t bytes = (size_t) pool_bytes;
         /* AqRaft: claim a PRE-REGISTERED ring pool (round-robin) instead of a
          * fresh mmap+ibv_reg_mr — that ~340 ms registration is exactly what gated
@@ -1744,7 +1799,7 @@ void rdmaChainPrepCommand(client *c) {
         serverLog(LL_NOTICE,
             "CHAIN-PREP: sess=%lld already applied here — re-delivery gets fresh ring pool[%d] @ %p",
             src_mig_id, idx, st->landing_pool);
-    } else if (st->landing_pool_bytes < (size_t) pool_bytes) {
+    } else if (!is_warm && st->landing_pool_bytes < (size_t) pool_bytes) {
         /* Repeated CHAIN-PREP: only an error if the already-claimed pool is too
          * SMALL for the new request. st->landing_pool_bytes now holds the actual
          * (grain-rounded) capacity, which is >= the original request, so a retry
@@ -1770,7 +1825,8 @@ void rdmaChainPrepCommand(client *c) {
     serverLog(LL_NOTICE,
         "RDMA CHAIN-PREP: sess=%lld pool_bytes=%zu addr=0x%llx rkey=0x%x%s",
         src_mig_id, bytes, (unsigned long long) addr, rkey,
-        rkey == 0 ? " (no upstream connect yet → chain RDMA-WRITE will fail)" : "");
+        is_warm ? " (warm-up: QPs only, no landing pool)"
+                : (rkey == 0 ? " (no upstream connect yet → chain RDMA-WRITE will fail)" : ""));
 }
 
 /*
@@ -2092,6 +2148,7 @@ static void *chainApplyWorker(void *arg) {
             (total_staged == 0 && any_registered)
                 ? " — NO keys in the delivered blocks: the predecessor's write did not land" : "");
     }
+    rdmaLogIndexUpdateDone("follower", job->src_mig_id, job->slots, job->n_slots);
     /* GATE: this node's blocks are stable again, so it may serve as a source
      * for a later repair of this session. */
     pthread_mutex_lock(&g_chain_state_mu);
@@ -2157,9 +2214,10 @@ int rdmaChainApplyHeldRange(int lo, int hi, long long timeout_ms) {
             serverLog(LL_NOTICE, "CHAIN apply: sess=%lld slots=%d-%d applied here on promotion, "
                       "before the forward to the successor", sess, lo, hi);
             chainApplyWorker(job);   /* sets apply_state = 2, frees job */
+            rdmaTestHookRelease(sess);   /* S12: promoted holder, the held forward may go */
             return 1;
         }
-        if (state == 2) return 1;
+        if (state == 2) { rdmaTestHookRelease(sess); return 1; }
         if (mstime() - t0 > timeout_ms) return 0;
         usleep(5000);   /* the forward is writing the pool, or another apply runs */
     }
@@ -2872,6 +2930,78 @@ static void *chainProbeThread(void *arg) {
     return NULL;
 }
 
+/* 2026-11-06: what the newly promoted recipient leader's recovery probe found.
+ * The probe (rdmaRecipientRecover -> recoverCountPeersFull, all peers at once, 100 ms)
+ * learns within ~0.1 s that the old leader is gone. The warm-up chain spawned in the
+ * same millisecond used to find that out by itself: its INIT-QP connect to the dead
+ * node failed only when the node's sockets went away, 1.0 s after promotion for a
+ * killed process (S1) and 2.2 s for a crashed host (S6), and every round's chain
+ * waited behind it (the establish is serialized). Leaving a silent peer out takes the
+ * same path as an INIT-QP failure; a live peer that was just slow misses this session
+ * and gets the batch from the catch-up. A peer is left out only when enough others
+ * answered for a majority (need), and the verdict expires after RPROBE_VALID_MS. */
+#define RPROBE_MAX 16
+#define RPROBE_WAIT_MS 300        /* longest an establish waits for a probe in progress */
+#define RPROBE_VALID_MS 5000
+static pthread_mutex_t g_rprobe_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_rprobe_cv = PTHREAD_COND_INITIALIZER;
+static int       g_rprobe_running = 0;
+static long long g_rprobe_begin_ms = 0, g_rprobe_done_ms = 0;
+static struct { char host[128]; int port; } g_rprobe_silent[RPROBE_MAX];
+static int       g_rprobe_n_silent = 0;
+
+void rdmaChainRecoverProbeBegin(void) {
+    pthread_mutex_lock(&g_rprobe_mu);
+    g_rprobe_running++;
+    g_rprobe_begin_ms = mstime();
+    pthread_mutex_unlock(&g_rprobe_mu);
+}
+
+void rdmaChainRecoverProbeEnd(int n, const char **hosts, const int *ports,
+                              const int *answered, int need) {
+    pthread_mutex_lock(&g_rprobe_mu);
+    if (n > 0) {
+        int n_ans = 0;
+        for (int i = 0; i < n; i++) n_ans += answered[i] ? 1 : 0;
+        g_rprobe_n_silent = 0;
+        if (n_ans >= need)
+            for (int i = 0; i < n && g_rprobe_n_silent < RPROBE_MAX; i++)
+                if (!answered[i]) {
+                    snprintf(g_rprobe_silent[g_rprobe_n_silent].host,
+                             sizeof(g_rprobe_silent[0].host), "%s", hosts[i]);
+                    g_rprobe_silent[g_rprobe_n_silent].port = ports[i];
+                    g_rprobe_n_silent++;
+                }
+        g_rprobe_done_ms = mstime();
+    }
+    if (g_rprobe_running > 0) g_rprobe_running--;
+    pthread_cond_broadcast(&g_rprobe_cv);
+    pthread_mutex_unlock(&g_rprobe_mu);
+}
+
+/* Did host:port just fail to answer the recovery probe? Waits (off the main thread)
+ * for a probe that is still running, at most RPROBE_WAIT_MS after it began. */
+static int chainPeerSilentInRecovery(const char *host, int port, long long *ago_ms) {
+    int silent = 0;
+    pthread_mutex_lock(&g_rprobe_mu);
+    while (g_rprobe_running > 0 && mstime() - g_rprobe_begin_ms < RPROBE_WAIT_MS) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += 5 * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+        pthread_cond_timedwait(&g_rprobe_cv, &g_rprobe_mu, &ts);
+    }
+    if (g_rprobe_done_ms > 0 && mstime() - g_rprobe_done_ms <= RPROBE_VALID_MS)
+        for (int i = 0; i < g_rprobe_n_silent; i++)
+            if (g_rprobe_silent[i].port == port && strcmp(g_rprobe_silent[i].host, host) == 0) {
+                silent = 1;
+                if (ago_ms) *ago_ms = mstime() - g_rprobe_done_ms;
+                break;
+            }
+    pthread_mutex_unlock(&g_rprobe_mu);
+    return silent;
+}
+
 static void chainProbeFollowers(long long sess, int n, const char **hosts, int *ports,
                                 unsigned char *alive_out) {
     for (int i = 0; i < n; i++) alive_out[i] = 1;
@@ -2981,6 +3111,16 @@ static int rdmaLeaderChainEstablishLocked(long long src_mig_id, long long pool_b
     int n_live = 0;
     unsigned char probe_alive[CLUSTER_NAMELEN];
     chainProbeFollowers(src_mig_id, n_followers, hosts, ports, probe_alive);
+    for (int i = 0; i < n_followers; i++) {
+        long long ago = 0;
+        if (probe_alive[i] && chainPeerSilentInRecovery(hosts[i], ports[i], &ago)) {
+            probe_alive[i] = 0;
+            serverLog(LL_WARNING,
+                "CHAIN: sess=%lld peer%d %s:%d left out: it did not answer the new leader's "
+                "recovery probe (%lld ms ago), so no INIT-QP connect to wait out",
+                src_mig_id, i, hosts[i], ports[i], ago);
+        }
+    }
     for (int i = 0; i < n_followers; i++) {
         st->peers[i].host = sdsnew(hosts[i]);
         st->peers[i].port = ports[i];
@@ -4324,6 +4464,7 @@ void rdmaChainStatusCommand(client *c) {
                   "held batch (%d blocks) to %s:%d (+%d more), attempt=%lld",
                   item->src_mig_id, lo, hi, item->n_slots, item->recipe_hosts[0],
                   item->recipe_ports[0], k - 1, attempt);
+        rdmaTestHookRelease(item->src_mig_id);
         ensureChainWorker();
         chainWorkPush(item);
         addReply(c, shared.ok);

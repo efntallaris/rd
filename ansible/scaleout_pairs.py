@@ -74,7 +74,8 @@ class _Resp:
             for _ in range(max(int(v), 0)):
                 self._read(out)
         else:
-            raise ConnectionError("unexpected reply %r" % ln)
+            # A protocol surprise, not a lost connection: _cli still retries it with redis-cli.
+            raise ValueError("unexpected reply %r" % ln)
 
     def close(self):
         try:
@@ -107,6 +108,15 @@ def _cli(ip, port, *args, t=5):
         return "Could not connect to Redis at %s:%s: Connection refused\n" % (ip, port)
     except socket.timeout:
         return "ERR timeout"
+    except OSError as e:
+        # 2026-11-05: a connection the server reset or closed means the server is gone; report
+        # it like a refused connect (unreachable() matches it). It used to fall through to the
+        # redis-cli retry below, whose -t bounds only the connect: a killed redis keeps accepting
+        # connections until its RDMA-pinned memory is released and only then resets them, so
+        # that retry waited for the reset instead of t. S7 2026-11-05 (donor host crash): the
+        # 1 s MIGRATE-STATUS poll on the dead donor took 2.45 s, and since poll() is one loop,
+        # round 2 started 0.87 s after round 1 had been committed.
+        return "Could not connect to Redis at %s:%s: %s\n" % (ip, port, type(e).__name__)
     except Exception:
         return cli_proc(ip, port, *args, t=t)
     finally:

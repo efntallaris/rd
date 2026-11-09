@@ -179,5 +179,18 @@ int rdmaChainApplyHeldRange(int lo, int hi, long long timeout_ms);
 
 /* Crash-scenario test hook (cluster_rdma.c): a one-shot pause when /tmp/rdma_hook_<name> exists. */
 void rdmaTestHook(const char *name, long long id);
+void rdmaTestHookRelease(long long id);
+
+/* 2026-11-06: a newly promoted recipient leader's recovery probe tells the chain
+ * establish which peers did not answer, so the establish leaves them out instead of
+ * waiting 1-2 s for its own connect to a dead node to fail. Begin before the warm-up
+ * chain is spawned; End once the probe has answered (n = 0: no verdict). */
+void rdmaChainRecoverProbeBegin(void);
+/* AqRaft 2026-11-06: one NOTICE line whenever this node finishes the index update of a
+ * round ("INDEX-UPDATE done: role=leader|follower|promoted sess=.. slots=lo-hi n=.."), so a
+ * post-run check can tell that every replica indexed every round (ansible/lincheck/postcheck.py). */
+void rdmaLogIndexUpdateDone(const char *role, long long sess, const int *slots, int n_slots);
+void rdmaChainRecoverProbeEnd(int n, const char **hosts, const int *ports,
+                              const int *answered, int need);
 
 #endif /* __CLUSTER_RDMA_CHAIN_H */

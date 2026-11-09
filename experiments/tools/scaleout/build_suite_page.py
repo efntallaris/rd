@@ -40,12 +40,14 @@ M = {
  "S3": ("Donor follower (= C9)", "fs", "None needed", ""),
  "S4": ("Recipient follower (= C8)", "fs", "Chain re-forms", ""),
  "S5": ("Both leaders (= C10)", "fs", "Two resumes", ""),
+ "S6": ("Recipient host: A's recipient leader + a chain follower of B and of C", "fs", "Re-home, re-ship; two chains re-form", "One fault, three roles: every recipient group keeps 2 of 3 replicas."),
+ "S7": ("Donor host: A's donor leader + a donor follower of B and of C", "fs", "Donor resume", "One fault, three roles: every donor group keeps 2 of 3 replicas."),
  "S8": ("Donor leader, after block registration", "fs", "Donor resume", ""),
  "S9": ("Donor leader of A + recipient leader of B", "fs", "Two independent resumes", ""),
 }
 TAG = {"base": ("Baseline", "tag-base"), "fs": ("Fail-stop", "tag-fs"), "net": ("Network / timeouts", "tag-net"),
        "out": ("Beyond fail-stop", "tag-out")}
-ORDER = ["HEALTHY"] + ["C%d" % i for i in range(1, 18)] + ["S1", "S2", "S3", "S4", "S5", "S8", "S9"]
+ORDER = ["HEALTHY"] + ["C%d" % i for i in range(1, 18)] + ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9"]
 
 rows = {r["scenario"]: r for r in csv.DictReader(open(E + "/figures/suite_table.csv"))}
 when = {}

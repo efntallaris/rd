@@ -1277,6 +1277,9 @@ static int cmdRaftShardGroup(RedisModuleCtx *ctx, RedisModuleString **argv, int 
     if (!strncasecmp(cmd, "GET", cmd_len)) {
         ShardGroupGet(rr, ctx);
         return REDISMODULE_OK;
+    } else if (!strncasecmp(cmd, "REFRESH", cmd_len)) {
+        ShardGroupRefresh(rr, ctx, argv, argc);
+        return REDISMODULE_OK;
     } else if (!strncasecmp(cmd, "ADD", cmd_len)) {
         if (argc < 4) {
             RedisModule_WrongArity(ctx);

@@ -31,9 +31,11 @@ CRASH_LABEL = {"S1": "recipient leader crash", "S2": "donor leader crash", "S3":
                "S4": "recipient follower crash", "S5": "donor + recipient leader crash",
                "S6": "recipient host crash", "S7": "donor host crash",
                "S8": "donor leader crash (after registration)",
-               "S9": "donor A + recipient B leader crash"}
+               "S9": "donor A + recipient B leader crash",
+               "S10": "recipient leader crash (no majority)", "S11": "recipient leader crash (majority)",
+               "S12": "recipient leader crash (data on F1)"}
 CRASH_SHORT = {"S5": "two leader crashes", "S9": "two leader crashes", "S6": "host crash", "S7": "host crash",
-               "S8": "donor leader crash"}
+               "S8": "donor leader crash", "S10": "no majority", "S11": "majority", "S12": "data on F1"}
 
 
 def find(pat):
@@ -54,11 +56,11 @@ plan = find(r"probe peers") + find(r"donor decides")
 if plan:
     a, b = min(p[1] for p in plan), max(p[2] for p in plan)
     if b - a >= 0.03:                       # a donor's own resume plan takes ~1 ms: nothing to draw
-        rec.append((a, b, "plan: probe peers, re-home donor" if find(r"probe peers") else "resume plan",
-                    "plan", "ctrl"))
+        rec.append((a, b, "refetch group",
+                    "refetch group", "ctrl"))
 for n, a, b in find(r"rebuild replication chain"):
     if b - a >= 0.03:
-        rec.append((a, b, "chain rebuild (dead peer)", "chain rebuild", "chain"))
+        rec.append((a, b, "chain reconstruction", "chain reconstruction", "chain"))
 for n, a, b in find(r"forward to the dead F1"):
     rec.append((a, b, "forward to dead follower (stalls)", "stalled forward", "chain"))
 for n, a, b in find(r"re-forward the round"):
@@ -81,6 +83,36 @@ for r in rounds:
         k += 1; num.append(k)
         if not r["ok"]:
             lost_k = k
+# what the refetch found: where the round the crash interrupted was afterwards (a note on the
+# Recipient recovery row, so the reader sees whether the round came from a replica or the donor)
+RF = (d.get("refetch") or {}).get(PAIR)
+RF_NOTE = None
+if RF:
+    k0_ = kills[0]
+    rn = next((n for r, n in zip(rounds, num) if not r["ok"]), None) or next(
+        (n for r, n in zip(rounds, num) if r["copy"][0] < k0_ and (r.get("done") or 1e9) > k0_), None) or 1
+    ARW = r"$\rightarrow$"
+    kind = RF["kind"]
+    if kind == "none":
+        RF_NOTE = ("no live replica has round %d %s donor resends" % (rn, ARW)) if RF.get("leader") else \
+                  ("recipient lacks round %d %s donor resends" % (rn, ARW))
+    elif kind == "self":
+        RF_NOTE = "new leader (was F1) has round %d %s no resend" % (rn, ARW)
+    elif kind == "peer":
+        RF_NOTE = "a follower has round %d %s fetched from it, no resend" % (rn, ARW)
+    elif kind == "durable":
+        RF_NOTE = "round %d already committed in the group %s no resend" % (rn, ARW)
+    elif kind == "partial":
+        RF_NOTE = "recipient has %d/%d slots of round %d %s donor resends the rest" % (
+            RF.get("durable", 0), RF.get("durable", 0) + RF.get("missing", 0), rn, ARW)
+RF_SHORT = None
+if RF_NOTE:
+    RF_SHORT = {"none": ("no replica has round %d" if RF.get("leader") else "recipient lacks round %d") % rn
+                        + "\n" + ARW + " donor resends",
+                "self": "new leader has round %d\n%s no resend" % (rn, ARW),
+                "peer": "a follower has round %d\n%s fetched from it" % (rn, ARW),
+                "durable": "round %d committed\n%s no resend" % (rn, ARW),
+                "partial": "recipient has part of round %d\n%s donor resends the rest" % (rn, ARW)}.get(RF["kind"])
 yc = d.get("ycsb_kops") or []
 pair_end = max([r["done"] for r in rounds if r.get("done") is not None] + [kills[-1] + 1.0])
 pair_start = min([r["copy"][0] for r in rounds] + [kills[0]])
@@ -103,6 +135,10 @@ plt.rcParams.update({"font.family": ["Times New Roman", "Times", "STIXGeneral"],
                      "xtick.labelsize": FT - 0.5, "ytick.labelsize": FT, "hatch.linewidth": 0.5,
                      "pdf.fonttype": 42, "ps.fonttype": 42})
 
+import os as _os, glob as _glob, matplotlib.font_manager as _fm
+if _os.environ.get("CMU_DIR"):     # Computer Modern (CMU Serif) for every label, LaTeX-style math
+    for _f in _glob.glob(_os.environ["CMU_DIR"] + "/*.ttf"): _fm.fontManager.addfont(_f)
+    plt.rcParams.update({"font.family": ["CMU Serif"], "mathtext.fontset": "cm"})
 # ---- rows, top to bottom: (key, label, height in row units) ----------------------------------------
 lanes = []                                  # recovery steps in non-overlapping lanes
 for it in sorted(rec):
@@ -119,9 +155,11 @@ for it in sorted(rec):
 #   Recovery: plan, chain rebuild, stalled forward / re-forward (up to 2 lanes)
 #   Copy / Replication / Index update: the pair's rounds
 REC_H = 1.3
-layout = [("recip", "Recipient", 1.0), ("donor", "Donor", 1.0), ("rec", "Recovery", REC_H),
-          ("copy", "Copy\n(round)" if COMPACT else "Copy (round)", 1.0), ("repl", "Replication", 1.0),
-          ("idx", "Index\nupdate" if COMPACT else "Index update", 1.0)]
+layout = [("donor", "Donor", 1.0), ("recip", "Recipient", 1.0), ("rec", "Recipient\nrecovery" if COMPACT else "Recipient recovery", REC_H),
+          ("copy", "Recipient (L)\ntransfer" if COMPACT else "Recipient (L) transfer", 1.0),
+          ("idx", "Index\nupdate" if COMPACT else "Index update", 1.0),
+          ("repl", "Chain\nreplication" if COMPACT else "Chain replication", 1.0),
+          ("async", "Async chain\nreplication" if COMPACT else "Async chain replication", 1.0)]
 RECIP_HOSTS, DONOR_HOSTS = ("redis3", "redis4", "redis5"), ("redis0", "redis1", "redis2")
 side_of = lambda h: "recip" if h in RECIP_HOSTS else "donor"
 faults = d.get("faults", [])
@@ -182,7 +220,7 @@ x1 = max(pair_end + (0.25 if COMPACT else 0.7), max(kills) + 4.0,   # >= 4 s aft
          max([b + 0.5 for it in side_items.values() for a, b, k, lab in it if b is not None] or [0]))
 
 
-L_IN, R_IN = (0.80 if COMPACT else 1.15), 0.05                 # left/right margins (in), see subplots_adjust
+L_IN, R_IN = (1.02 if COMPACT else 1.45), 0.05                 # left/right margins (in), see subplots_adjust
 IN_PER_S = (WIDTH - L_IN - R_IN) / (x1 - x0)                    # inches per second on the time axis
 # margins now (not at the end): the bars below are sized in inches from the axes geometry
 fig.subplots_adjust(left=L_IN / WIDTH, right=1 - R_IN / WIDTH, top=1 - (0.03 + LEG_IN) / HEIGHT,
@@ -212,7 +250,7 @@ def short_of(lab):
     return m.group(1) if m else lab.split()[-1]
 
 
-def bar(y, a, b, fill, txt="", txtcol=INK, h=H, hatch=None, edge=None, lw=0.0, z=2, fs=None):
+def bar(y, a, b, fill, txt="", txtcol=INK, h=H, hatch=None, edge=None, lw=0.0, z=2, fs=None, ls=0.85):
     """A box from a to b (s) on row y: slightly rounded corners, and a hair of white on each side
     so boxes that touch stay apart."""
     g = GAP_X if (b - a) > 3 * GAP_X else 0.0
@@ -225,7 +263,7 @@ def bar(y, a, b, fill, txt="", txtcol=INK, h=H, hatch=None, edge=None, lw=0.0, z
                                 linewidth=lw if (edge or hatch) else 0))
     if txt:
         ax.text((a + b) / 2, y, txt, ha="center", va="center", fontsize=fs or FS, color=txtcol, zorder=z + 1,
-                linespacing=0.85)
+                linespacing=ls)
 
 
 # grid: light alternating row bands, vertical lines at every second through both panels
@@ -246,6 +284,9 @@ for g, a, b in dead:
                                  "index update %.0f ms" % ms, "%.0f ms" % ms)
                      if text_w(t, FS) / IN_PER_S + 0.12 <= nxt - ia), "")
         idx_notes.append((ia, note, ia + 0.08 + text_w(note, FS) / IN_PER_S if note else ia))
+# The index update of the durable data takes ~1 ms right at the end of the time without a leader:
+# not drawn (the faulty phase ends where the new leader serves).
+idx_notes = []
 # Recipient / Donor rows: items in up to two lanes when they overlap in time
 for sd, items in side_items.items():
     items = sorted((a, (b if b is not None else x1), k, lab) for a, b, k, lab in items)
@@ -267,7 +308,7 @@ for sd, items in side_items.items():
                 col = INK
             else:   # no leader, down, frozen, partition: the fault, red
                 bar(y, a, b, "white", hatch="/////", edge=RED, lw=0.6, h=h)
-                col = RED
+                col = INK   # label text black (red text on the red hatching was hard to read)
             # the label inside the box if it fits there (full, on two lines, or short), else the
             # short form next to the box where the lane is free -- never across the box's edge
             f0 = FS if nl == 1 else FS - 0.8
@@ -296,6 +337,22 @@ for ia, note, _ in idx_notes:
     if note:
         ax.text(ia + 0.08, y, note, fontsize=FS, color=INK, va="center")
 # recovery steps, one lane each, labels inside and durations to the right
+RF_DONE = False
+# re-pack the recovery steps now that label widths are known: a step's label sits to the right of
+# its bar, so the next step on the same line must start after that label, not just after the bar
+def _step_end(it):
+    a, b, long_lab, short_lab, fill = it
+    lab = short_lab if COMPACT else long_lab
+    if fits(lab, FS - 0.3, a, b):
+        return b + 0.06 + text_w("0.00 s", FS - 0.3) / IN_PER_S
+    return b + 0.06 + text_w(lab + " 0.00 s", FS - 0.3) / IN_PER_S
+lanes = []
+for it in sorted(rec):
+    for ln in lanes:
+        if _step_end(ln[-1]) + 0.04 <= it[0]:
+            ln.append(it); break
+    else:
+        lanes.append([it])
 if lanes:
     n_l, rh = len(lanes), REC_H
     lane_h = rh / max(2, n_l)
@@ -306,20 +363,60 @@ if lanes:
             inside = fits(lab, FS - 0.3, a, b)
             bar(y, a, b, G[fill], lab if inside else "", h=min(0.5, lane_h * 0.78), edge=MUTED, lw=0.4,
                 fs=FS - 0.3)
-            ax.text(b + 0.06, y, ("%.2f s" if inside else lab + " %.2f s") % (b - a), fontsize=FS - 0.3,
-                    color=INK, va="center")
+            txt = ("%.2f s" if inside else lab + " %.2f s") % (b - a)
+            if RF_NOTE and long_lab == "refetch group" and not COMPACT:
+                txt += ": " + RF_NOTE
+                RF_DONE = True
+            ax.text(b + 0.06, y, txt, fontsize=FS - 0.3, color=INK, va="center")
+if RF_SHORT and COMPACT:      # column figure: no room beside the refetch bar -- two lines on the
+    # Recipient row, right of the no-leader interval
+    # right of the recipient group's no-leader bar (and of its label when it sits outside the bar)
+    nx = RF["t"] + 0.08
+    for g, a, b in dead:
+        if g in ("sg4", "sg5", "sg6") and GROUP_PAIR.get(g) == PAIR:
+            dl = "%.2f s" % (b - a)
+            e = b + text_w(dl, FS) / IN_PER_S + 0.16      # past the bar and a label beside it
+            nx = max(nx, e)
+    ax.text(nx, Y["recip"], RF_SHORT, fontsize=FS - 1.0, color=INK, va="center", linespacing=1.1)
+elif RF_NOTE and not RF_DONE:   # no refetch bar (the donor asked the recipient, ~1 ms): the note alone
+    li = len(lanes) if len(lanes) < 2 else 0
+    lane_h = REC_H / 2
+    y = Y["rec"] + REC_H / 2 - lane_h * (li + 0.5)
+    ax.text(RF["t"], y, "refetch: " + RF_NOTE, fontsize=FS - 0.3, color=INK, va="center")
 # the pair's rounds: copy, replication to F1, index update
 for r, n in zip(rounds, num):
     ca, cb = r["copy"]
     if cb is None:           # its donor died mid-copy: the copy ends at that kill
         cb = next((kt for kt in sorted(kills) if kt > ca), ca + 0.05)
-    if not r["ok"]:          # a round its crash cut short: red, like the crash
-        bar(Y["copy"], ca, cb, "white", hatch="/////", edge=RED, lw=0.5)
-        if r["repl"][0] is not None:
-            bar(Y["repl"], r["repl"][0], max(r["repl"][0], min(kills)), "white", hatch="/////", edge=RED, lw=0.5)
-        ax.text((ca + cb) / 2, Y["copy"], str(n), fontsize=FS, color=RED, ha="center", va="center", zorder=4,
-                bbox=dict(boxstyle="square,pad=0.1", fc="white", ec="none"))
-        ax.text(cb + 0.06, Y["copy"], "lost", fontsize=FS, color=RED, va="center", style="italic")
+    if not r["ok"]:          # a round its crash cut short: its own round color up to the crash,
+        # and a red x where each of its bars meets the crash line (transfer, index update, chain
+        # replication alike)
+        kt = next((t for t in sorted(kills) if t >= ca - 1e-6), cb)
+        rc, rt = ROUND_COL[(n - 1) % len(ROUND_COL)]
+        # drawn at its true length (a round cut right after it started is a sliver); its number
+        # only when it fits
+        ce = min(cb, kt)
+        # the donor sending it, the recipient leader receiving it (a round cut in its setup moved
+        # no byte yet: the donor row only)
+        rws = ("donor",) if r.get("setup") else ("donor", "copy")
+        for row in rws:
+            bar(Y[row], ca, ce, rc, str(n) if fits(str(n), FS - 1.0, ca, ce, pad=0.01) else "",
+                txtcol=rt, fs=FS - 1.0)
+        # an x only where a bar meets the crash line: a copy that had finished gets none
+        cut = [Y[w] for w in rws] if ce >= kt - 0.02 else []
+        held = r.get("held")
+        for key in ("idx", "repl"):
+            a0 = r[key][0]
+            if a0 is None and held:   # landed, waiting to be forwarded to F1 when the leader died
+                a0 = held[0]
+                lab = "held" if fits("held", FS - 1.0, a0, kt, pad=0.16) else ""
+                bar(Y[key], a0, kt, rc, lab, txtcol=rt, fs=FS - 1.0)
+                cut.append(Y[key])
+            elif a0 is not None and a0 < kt:
+                bar(Y[key], a0, kt, rc)
+                cut.append(Y[key])
+        for yy in cut:
+            ax.plot([kt], [yy], marker="x", color=RED, ms=6.0 if not COMPACT else 5.2, mew=2.0, zorder=6, clip_on=False)
         continue
     # each bar carries its duration (copy: round number above it), when it fits the bar
     # the duration at one size, or one step smaller, before it is left out
@@ -331,16 +428,66 @@ for r, n in zip(rounds, num):
             lab, DFS = str(n), FS - 1.0
     # one color per round, the same for its copy, replication and index update
     rc, rt = ROUND_COL[(n - 1) % len(ROUND_COL)]
-    if r["reship"]:
-        bar(Y["copy"], ca, cb, rc, lab, txtcol=rt, edge=INK, lw=1.0, z=3, fs=DFS)   # outlined: re-ship
-    else:
-        bar(Y["copy"], ca, cb, rc, lab, txtcol=rt, fs=DFS)
+    # the transfer of the round: the donor sending it (Donor row) and the recipient leader
+    # receiving it (Recipient (L) transfer row) -- the same RDMA writes, seen from each side
+    for row in ("donor", "copy"):
+        if r["reship"]:
+            # the retransfer: the color of the round it sends again (the one the crash cut), no outline
+            bar(Y[row], ca, cb, rc, lab, txtcol=rt, z=3, fs=DFS, ls=1.35)
+        else:
+            bar(Y[row], ca, cb, rc, lab, txtcol=rt, fs=DFS, ls=1.35)
+    ad = r.get("adopted")
     for key, (a, b), col, tc in (("repl", r["repl"], rc, rt), ("idx", r["idx"], rc, rt)):
+        if a is not None and b is None and ad:
+            # the old leader died before finishing this step for the round (S12: its index update):
+            # cut at the crash, like a lost round
+            kt = next((t for t in sorted(kills) if t >= a - 1e-6), None)
+            if kt is not None and kt > a:
+                bar(Y[key], a, kt, col)
+                ax.plot([kt], [Y[key]], marker="x", color=RED, ms=6.0 if not COMPACT else 5.2, mew=2.0,
+                        zorder=6, clip_on=False)
+            continue
         if a is None or b is None:
             continue
         d = "%.2f s" % (b - a)
         f_ = next((f for f in (FS - 1.0, FS - 1.8) if fits(d, f, a, b, pad=0.015)), None)
         bar(Y[key], a, b, col, d if f_ else "", txtcol=tc, fs=f_ or DFS)
+    # the rest of the chain after the majority hop (F1 -> F2), when the round had one; if F1 held
+    # the round for a while before sending it, that wait as a thin line with its length
+    aa, ab = (r.get("async") or [None, None])
+    # F1 holding the round for F2 when the leader died (S12: the test hook held F1's forward
+    # across the crash): the hold up to the crash, cut there, like S10's held forward
+    aw = r.get("async_wait")
+    if aw and aw[0] is not None:
+        kw = next((t for t in sorted(kills) if aw[0] < t < aw[1]), None)
+        if kw is not None:
+            bar(Y["async"], aw[0], kw, rc, "held" if fits("held", FS - 1.0, aw[0], kw, pad=0.16) else "",
+                txtcol=rt, fs=FS - 1.0)
+            ax.plot([kw], [Y["async"]], marker="x", color=RED, ms=6.0 if not COMPACT else 5.2, mew=2.0,
+                    zorder=6, clip_on=False)
+    if aa is not None and ab is not None and ab > aa:
+        d = "%.2f s" % (ab - aa)
+        # (a bar running past the right edge: label only what is visible)
+        f_ = next((f for f in (FS - 1.0, FS - 1.8) if fits(d, f, aa, min(ab, x1), pad=0.015)), None)
+        bar(Y["async"], aa, ab, rc, d if f_ and ab <= x1 else "", txtcol=rt, fs=f_ or DFS)
+    if ad:
+        # finished from a follower's copy after the crash: F1's forward to the new leader (chain
+        # replication) and the new leader's index update -- no transfer from the donor
+        # labelled with who did it: before the crash the round went leader -> F1 and the old leader
+        # indexed it; these are the rest of the chain for the same round (F1 -> F2, and F1 and F2
+        # indexing it), which would otherwise read as the same step running twice
+        for key, who in (("repl", "F1\u2192F2"), ("idx", "F1, F2")):
+            if key not in ad:
+                continue
+            a, b = ad[key]
+            if a is None or b is None or b <= a:
+                continue
+            lab2 = "%s\n%.2f s" % (who, b - a)
+            f_ = next((f for f in (FS - 1.0, FS - 1.8) if fits(lab2, f, a, b, pad=0.015, h=H)), None)
+            if f_ is None:
+                lab2 = who
+                f_ = next((f for f in (FS - 1.0, FS - 1.8) if fits(lab2, f, a, b, pad=0.01)), None)
+            bar(Y[key], a, b, rc, lab2 if f_ else "", txtcol=rt, fs=f_ or DFS, ls=1.35)
 for kt in kills:
     for a_ in (ax, ay):
         # behind the boxes and their labels in the top panel; over the throughput frame below
@@ -353,13 +500,13 @@ ax.tick_params(axis="y", length=0, pad=2)
 ax.tick_params(axis="x", length=2.5, width=0.45, color="#000000", labelbottom=False)
 ax.set_ylabel("Phase", fontsize=FT, color=INK, labelpad=2)
 # legend: what the marks mean, one band above the top panel
-leg = [Patch(facecolor="white", edgecolor=RED, hatch="/////", lw=0.6, label="fault (no leader, down, lost)" if not COMPACT else "fault"),
-       Line2D([], [], color=RED, ls=(0, (3, 2)), lw=0.8, label="crash / fault" if not COMPACT else "crash"),
-       Patch(facecolor=ROUND_COL[1][0], edgecolor=INK, lw=1.0, label="re-shipped round" if not COMPACT else "re-ship"),
+leg = [Patch(facecolor="white", edgecolor=RED, hatch="/////", lw=0.6, label="faulty phase"),
+       Line2D([], [], color=RED, ls=(0, (3, 2)), lw=0.8, label="crash"),
+       Line2D([], [], color=RED, ls="none", marker="x", ms=5.5, mew=1.8, label="cut by the crash"),
        Patch(facecolor=G["ctrl"], edgecolor=MUTED, lw=0.4, label="recovery step" if not COMPACT else "recovery"),
        Patch(facecolor=G["fill"], edgecolor=MUTED, lw=0.4, label="replica refill" if not COMPACT else "refill"),
-       Line2D([], [], color=INK, marker="|", ls="none", ms=6, mew=1.4, label="index update / in sync" if not COMPACT else "serve / in sync")]
-fig.legend(handles=leg, loc="upper center", ncol=3 if COMPACT else 6, fontsize=FS - 0.5, frameon=False,
+       Line2D([], [], color=INK, marker="|", ls="none", ms=6, mew=1.4, label="replica in sync")]
+fig.legend(handles=leg, loc="upper center", ncol=4 if COMPACT else 7, fontsize=FS - 0.5, frameon=False,
            bbox_to_anchor=(0.5, 1.0), handlelength=1.6, handleheight=0.8,
            columnspacing=0.8, handletextpad=0.4, borderaxespad=0.1, labelspacing=0.25)
 FRAME = dict(color="#000000", lw=0.6)    # borders: each panel in a thin black box, flush with the data
@@ -374,14 +521,9 @@ if served is not None:
     ay.annotate("", xy=(kills[0], 385), xytext=(served, 385), zorder=4,
                 arrowprops=dict(arrowstyle="<->", lw=0.6, color=INK, shrinkA=0, shrinkB=0))
     ay.plot([served, served], [0, 400], color=INK, lw=0.5, zorder=2)
-    lab = ("clients unavailable %.2f s" if COMPACT else "clients unavailable %.2f s, then served") % (
-        served - kills[0])
-    if fits(lab, FS, kills[0], served, pad=0.1):
-        ay.text((kills[0] + served) / 2, 412, lab, fontsize=FS, color=INK, va="center", ha="center")
-    elif served + 0.08 + text_w(lab, FS) / IN_PER_S <= x1:
-        ay.text(served + 0.08, 385, lab, fontsize=FS, color=INK, va="center")
-    else:
-        ay.text(served - 0.08, 412, lab, fontsize=FS, color=INK, va="center", ha="right")
+    # the outage as its duration only, centred under the arrow (2026-11-06)
+    ay.text((kills[0] + served) / 2, 368, "%.2f s" % (served - kills[0]), fontsize=FS, color=INK,
+            va="top", ha="center")
 ay.set_xlim(x0, x1); ay.set_ylim(0, 440); ay.set_yticks([0, 150, 300])
 ay.set_ylabel("YCSB\nKops/s", fontsize=FT, color=INK, linespacing=0.9, labelpad=2)
 ay.set_xlabel("Time after the %s (s)" % ("crash" if FIRST_KIND == "kill" else "fault"), fontsize=FT, color=INK,
@@ -393,7 +535,11 @@ ay.tick_params(axis="both", color=FRAME["color"])
 # tight_layout does not handle the shared-x grid: explicit margins (inches)
 fig.subplots_adjust(left=L_IN / WIDTH, right=1 - R_IN / WIDTH, top=1 - (0.03 + LEG_IN) / HEIGHT,
                     bottom=(0.36 if COMPACT else 0.31) / HEIGHT, hspace=0.12)   # the two frames divide the panels
-fig.align_ylabels([ax, ay])
+# Both axis titles at the same x, inside the left margin (the longest row label, "Recipient (L)
+# transfer", used to push them past the figure edge).
+_axw = WIDTH - L_IN - R_IN
+for a_ in (ax, ay):
+    a_.yaxis.set_label_coords(-(L_IN - 0.24) / _axw, 0.5)   # 0.24 in: room for a 2-line title
 fig.savefig(out, dpi=400)
 if out.endswith(".pdf"):
     fig.savefig(out[:-4] + ".png", dpi=400)

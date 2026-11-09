@@ -4,6 +4,8 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include <netdb.h>
+#include <arpa/inet.h>
 #include "log.h"
 #include "redisraft.h"
 
@@ -1834,9 +1836,17 @@ void ShardGroupGet(RedisRaftCtx *rr, RedisModuleCtx *ctx)
 
     RedisModule_ReplyWithArray(ctx, REDISMODULE_POSTPONED_ARRAY_LEN);
 
+    /* AqRaft 2026-11-06: the leader first, then the others in index order. Another group
+     * stores this list (UPDATE_SHARDGROUP) and lists it as-is in its CLUSTER SLOTS, where
+     * clients take the first node as the master; in index order a replaced leader stayed
+     * first there for good. */
     int node_count = 0;
-    for (int i = 0; i < raft_get_num_nodes(rr->raft); i++) {
-        raft_node_t *raft_node = raft_get_node_from_idx(rr->raft, i);
+    raft_node_t *gleader = raft_get_leader_node(rr->raft);
+    for (int k = -1; k < raft_get_num_nodes(rr->raft); k++) {
+        raft_node_t *raft_node = (k < 0) ? gleader : raft_get_node_from_idx(rr->raft, k);
+        if (raft_node == NULL || (k >= 0 && raft_node == gleader)) {
+            continue;
+        }
         if (!raft_node_is_active(raft_node)) {
             continue;
         }
@@ -1866,6 +1876,80 @@ void ShardGroupGet(RedisRaftCtx *rr, RedisModuleCtx *ctx)
     }
 
     RedisModule_ReplySetArrayLength(ctx, node_count);
+}
+
+/* AqRaft 2026-11-06: RAFT.SHARDGROUP REFRESH <slot> <host> <port>
+ *
+ * Sent to a donor's leader by a recipient group's newly elected leader (with the
+ * DONOR-REHOME that re-homes the round). Refreshes this node's view of the external
+ * shardgroup that has host:port as a node from that node now, instead of at the next
+ * shardgroup-update-interval (5 s). The reply lists the new leader first, which the
+ * UPDATE_SHARDGROUP entry replicates to every replica of this group, so their CLUSTER
+ * SLOTS stop naming the dead leader as the master. Until then clients kept being sent
+ * to it (S6 2026-11-06: clients out 2.7 s with the new sg4 leader serving at +0.70 s).
+ * Changes only the node list of an external group, never slot ownership
+ * (ShardingInfoUpdateShardGroup). The group's connection is replaced, not reused: it may
+ * be stuck on the dead leader, and a terminated connection drops any late reply. */
+void ShardGroupRefresh(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc)
+{
+    long long slot = -1, port = 0;
+    if (argc != 5 || RedisModule_StringToLongLong(argv[2], &slot) != REDISMODULE_OK ||
+        RedisModule_StringToLongLong(argv[4], &port) != REDISMODULE_OK || port <= 0) {
+        RedisModule_ReplyWithError(ctx, "ERR usage: RAFT.SHARDGROUP REFRESH <slot> <host> <port>");
+        return;
+    }
+    size_t hlen;
+    const char *host = RedisModule_StringPtrLen(argv[3], &hlen);
+
+    /* the stored node addresses may be IPs while the caller names itself by host name */
+    char want_ip[INET6_ADDRSTRLEN] = "";
+    struct addrinfo hints = {0}, *res = NULL;
+    hints.ai_family = AF_INET;
+    if (getaddrinfo(host, NULL, &hints, &res) == 0 && res) {
+        inet_ntop(AF_INET, &((struct sockaddr_in *) res->ai_addr)->sin_addr, want_ip, sizeof(want_ip));
+        freeaddrinfo(res);
+    }
+
+    ShardGroup *found = NULL;
+    unsigned int node_idx = 0;
+    size_t key_len;
+    ShardGroup *sg;
+    RedisModuleDictIter *iter = RedisModule_DictIteratorStartC(rr->sharding_info->shard_group_map, "^", NULL, 0);
+    while (!found && RedisModule_DictNextC(iter, &key_len, (void **) &sg) != NULL) {
+        if (sg->local || sg->nodes_num == 0) {
+            continue;
+        }
+        for (unsigned int i = 0; i < sg->nodes_num; i++) {
+            NodeAddr *a = &sg->nodes[i].addr;
+            if (a->port == (unsigned int) port &&
+                (!strcmp(a->host, host) || (want_ip[0] && !strcmp(a->host, want_ip)))) {
+                found = sg;
+                node_idx = i;
+                break;
+            }
+        }
+    }
+    RedisModule_DictIteratorStop(iter);
+    if (!found) {
+        RedisModule_ReplyWithError(ctx, "ERR no external shardgroup has that node");
+        return;
+    }
+
+    if (found->conn) {
+        ConnAsyncTerminate(found->conn);
+        found->conn = NULL;
+    }
+    found->conn_addr = found->nodes[node_idx].addr;
+    found->use_conn_addr = true;
+    found->update_in_progress = false;
+    found->last_updated = 0;
+    if (!rr->config.external_sharding) {
+        found->conn = ConnCreate(rr, found, establishShardGroupConn, NULL,
+                                 rr->config.cluster_user, rr->config.cluster_password);
+    }
+    LOG_NOTICE("RAFT.SHARDGROUP REFRESH: shardgroup %s refreshing now from %s:%u (asked for slot %lld)",
+               found->id, found->conn_addr.host, found->conn_addr.port, slot);
+    RedisModule_ReplyWithSimpleString(ctx, "OK");
 }
 
 void ShardGroupAdd(RedisRaftCtx *rr,

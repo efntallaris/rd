@@ -44,8 +44,27 @@ EXTRA_ANSIBLE_ARGS="-e @$SCALEOUT_DIR/topology.yml -e n_rounds=$ROUNDS -e rdma_s
 # registered at start-up (a pool is not reusable, and registering one inside a
 # round costs 0.3 s), and 57-slot chunks so the leader -> follower -> tail copies
 # follow the donor's copy closely (run_lin_scenario.sh passes 342).
-EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_landing_prereg_pools=$(( ROUNDS < 8 ? ROUNDS : 8 )) -e rdma_landing_prereg_slots=$SCALEOUT_ROUND_SLOTS"
+# 2026-11-04: ROUNDS + 1 landing pools, not ROUNDS. A donor failover costs the pair
+# an extra session (the lost round is re-shipped), so a crash run opens ROUNDS + 1
+# sessions and the last round found no free pool: S2/S7/S9 each paid ~0.6 s of
+# ibv_reg_mr inside the round ("landing pool N registered - no free pool to reuse").
+# rdma_chain_follower_prereg_pools also budgets ROUNDS + 1, but on its own that was
+# NOT enough until 2026-11-05 (see the line below).
+# Costs one more pool per INSTANCE (every instance pre-registers, not just leaders):
+# ~2.1 GiB x 3 instances = ~6 GiB per host, so ~51 GiB pinned per host at ROUNDS=4.
+# Watch LANDING-PREREG at start-up if ROUNDS or slots-per-round go up.
+EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_landing_prereg_pools=$(( ROUNDS + 1 < 8 ? ROUNDS + 1 : 8 )) -e rdma_landing_prereg_slots=$SCALEOUT_ROUND_SLOTS"
 EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_transfer_chunk_slots=${CHUNK_SLOTS:-57}"
+# Follower ring pools (cluster_rdma_chain.c). Until 2026-11-05 every chain WARM-UP
+# session also claimed one, though nothing is ever written to it: the startup
+# CHAIN-WARM in every run, and a promoted recipient leader's warm-up. A recipient-
+# leader failover then made 7 claims against these 5 (warm, r1, abandoned r2,
+# warm-up, re-ship, r3, r4), and rounds 3-4 registered 1.43 GB ON THE FOLLOWER'S MAIN
+# THREAD (330 ms each). In S5 that follower was sg4's only quorum partner, so sg4
+# stalled and clients lost 34% throughput for 2 s. Warm-ups now claim no pool:
+# healthy = ROUNDS claims (one spare), one failover = ROUNDS + 1 (exactly full).
+# Two failovers in one migration would still overrun this; grep the follower logs
+# for "registered on the main thread".
 EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e rdma_chain_follower_prereg_pools=$(( ROUNDS + 1 < 8 ? ROUNDS + 1 : 8 ))"
 # Client threads open their connections to every recipient replica at start-up (FIXES_LOG 39).
 EXTRA_ANSIBLE_ARGS="$EXTRA_ANSIBLE_ARGS -e ycsb_preconnect=10.10.1.4:8000,10.10.1.5:8000,10.10.1.6:8000,10.10.1.4:8001,10.10.1.5:8001,10.10.1.6:8001,10.10.1.4:8002,10.10.1.5:8002,10.10.1.6:8002"

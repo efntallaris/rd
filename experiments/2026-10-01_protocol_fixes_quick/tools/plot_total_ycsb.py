@@ -83,8 +83,8 @@ if win:
     if before > 0:
         note = (f"all clients running: {before/1000:.0f}K before -> {after/1000:.0f}K after "
                 f"({(after/before-1)*100:+.0f}%)   migration {win[1]-win[0]:.1f}s")
-        a1.hlines(before / 1000, b0, b1, colors="tab:red", linestyles="--", lw=1)
-        a1.hlines(after / 1000, win[1] + 5, min(win[1] + 65, x[-1]), colors="tab:red", linestyles="--", lw=1)
+        # 2026-11-06: no red dashed before/after levels on the throughput panel; the two
+        # numbers are in the title.
     lat = [v for xx, v in zip(x, up) if win[0] - 5 <= xx <= win[1] + 5 and v == v]
     base = sorted(v for v in up if v == v)
     if base: a2.set_ylim(0, max(base[int(len(base) * .98)] * 1.3, 1))

@@ -994,6 +994,7 @@ RRStatus ShardGroupAppendLogEntry(RedisRaftCtx *rr, ShardGroup *sg, int type, vo
 RRStatus ShardGroupsAppendLogEntry(RedisRaftCtx *rr, int num_sg, ShardGroup **sg, int type, void *user_data);
 void ShardGroupLink(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void ShardGroupGet(RedisRaftCtx *rr, RedisModuleCtx *ctx);
+void ShardGroupRefresh(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void ShardGroupAdd(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void ShardGroupReplace(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);
 void ShardGroupNarrow(RedisRaftCtx *rr, RedisModuleCtx *ctx, RedisModuleString **argv, int argc);

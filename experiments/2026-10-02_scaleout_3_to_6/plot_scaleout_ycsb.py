@@ -28,12 +28,13 @@ PANELS = [
     ("scaleout3to6_lin_healthy", "HEALTHY", "No fault"),
     ("scaleout3to6_crash_s1", "S1", "S1: recipient leader"),
     ("scaleout3to6_crash_s2", "S2", "S2: donor leader"),
-    ("scaleout3to6_crash_s3", "S3", "S3: donor follower"),
-    ("scaleout3to6_crash_s4", "S4", "S4: recipient follower"),
-    # ("scaleout3to6_crash_s6", "S6", "S6: recipient host"),   # not shown since 2026-10-04; uncomment to bring it back
-    # ("scaleout3to6_crash_s7", "S7", "S7: donor host"),   # not shown since 2026-10-04; uncomment to bring it back
+    # S3 (donor follower) and S4 (recipient follower) removed 2026-11-06
     ("scaleout3to6_crash_s5", "S5", "S5: both leaders"),   # called S8 until 2026-10-05
-    # ("scaleout3to6_crash_s9", "S9", "S9: two leaders, two pairs"),   # not shown since 2026-10-05 (user); uncomment to bring it back
+    ("scaleout3to6_crash_s8", "S8", "S8: donor leader, registered"),
+    ("scaleout3to6_crash_s9", "S9", "S9: two leaders, two pairs"),
+    ("scaleout3to6_crash_s10", "S10", "S10: no majority"),              # recipient leader, round only on it
+    ("scaleout3to6_crash_s11", "S11", "S11: majority, after durable"),  # recipient leader after RECP_DURABLE
+    ("scaleout3to6_crash_s12", "S12", "S12: majority, data on F1"),     # recipient leader, round on F1 not F2
 ]
 # SETUP=3to4 in the environment: the single-recipient runs (lin_healthy, crash_s1 ... or HEALTHY, S1 ...).
 if os.environ.get("SETUP") == "3to4":
@@ -47,7 +48,8 @@ COMPACT = sys.argv[4].split(",") if len(sys.argv) > 4 else None
 if COMPACT:
     SHORT = {"HEALTHY": "No fault", "S1": "S1: recip. leader", "S2": "S2: donor leader", "S3": "S3: donor follower",
              "S4": "S4: recip. follower", "S5": "S5: both leaders", "S6": "S6: recipient host", "S7": "S7: donor host",
-             "S8": "S8: two leaders", "S9": "S9: two leaders"}
+             "S8": "S8: donor leader", "S9": "S9: two leaders",
+             "S10": "S10: no majority", "S11": "S11: majority", "S12": "S12: data on F1"}
     PANELS = [(n, sc, SHORT[sc]) for want in COMPACT for n, sc, _ in PANELS if sc == want]
     NCOL, WIDTH = len(PANELS), 3.33                                  # USENIX column width
 else:
@@ -56,18 +58,19 @@ else:
 FS_TITLE, FS_LABEL, FS_TICK = (7.5, 7, 6.5) if COMPACT else (8.5, 8, 7.5)
 INK, MUTED, AXIS, CRASH = "#1a1a1a", "#555555", "#333333", "#c0392b"
 LINE, BAND = "#000000", "#e9e9e9"
-READ, WRITE = "#0072B2", "#D55E00"
+FAILC = "#c0392b"   # failed reads: the fault color
+READ, WRITE = ("#111111", "#8c8c8c") if os.environ.get("GRAY") else ("#0072B2", "#D55E00")
 P99_LS = (0, (1, 1.2))
 # Stroke widths (pt), one hierarchy: data > p99 > crash marker > axes.
 LW_DATA, LW_P99, LW_CRASH, LW_AXIS = (0.9, 0.8, 0.7, 0.5) if COMPACT else (1.1, 0.9, 0.8, 0.6)
 # seconds shown; the quick runs last about 90 s. XLIM=30,110 in the environment for the 3-minute 30M runs.
 XLIM = tuple(int(v) for v in os.environ.get("XLIM", "10,60").split(","))
 pat = re.compile(r'^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d):\d+ \d+ sec: \d+ operations; ([\d.]+) current ops/sec')
-lat_pat = {op: re.compile(r'\[%s AverageLatency\(us\)=([\d.]+)\]' % op) for op in ("READ", "UPDATE")}
+lat_pat = {op: re.compile(r'\[%s AverageLatency\(us\)=([\d.]+)\]' % op) for op in ("READ", "UPDATE", "READ-FAILED")}
 FMT = "%Y-%m-%d %H:%M:%S"
 
 def load(run):
-    clients, lats = [], {"READ": {}, "UPDATE": {}}
+    clients, lats = [], {"READ": {}, "UPDATE": {}, "READ-FAILED": {}}
     for f in sorted(run.glob("ycsb/*/tmp/ycsb_output_ycsb*")):
         if "load" in f.name: continue
         d = {}
@@ -110,7 +113,9 @@ def p99_series(lin, t0):
     for l in open(lin / "history.jsonl", errors="ignore"):
         try: r = json.loads(l)
         except ValueError: continue                      # a line cut short when the client was stopped
-        if r.get("phase") != "run" or r.get("status") != "ok" or not r.get("ret"): continue
+        # every attempt that returned, ok or not: a read that fails during a crash (a double read
+        # with one leg down) took that long too, and leaving it out hid the outage (2026-11-07)
+        if r.get("phase") != "run" or not r.get("ret"): continue
         sec = int(r["ret"] // 10**9 + off)
         b["read" if r["op"] == "get" else "write"][sec].append((r["ret"] - r["inv"]) / 1e6)
     res = {}
@@ -119,6 +124,23 @@ def p99_series(lin, t0):
         res[op] = (xs, [sorted(d[s])[min(len(d[s]) - 1, int(0.99 * len(d[s])))] for s in xs])
     return res
 
+def read_fail_share(lin, t0):
+    """Per second: share of the probe client's reads that did not succeed (a double read with a
+    leg down, a timeout). YCSB's status lines give the mean of its successful and of its failed
+    reads but not how many of each, so this share weights the two (see below)."""
+    m = re.search(r"\[lin (\d\d:\d\d:\d\d)\] history client started", (lin / "run.log").read_text(errors="ignore"))
+    if not m or not (lin / "history.jsonl").exists(): return {}
+    off = near(t0, m.group(1))
+    n, f = collections.Counter(), collections.Counter()
+    for l in open(lin / "history.jsonl", errors="ignore"):
+        try: r = json.loads(l)
+        except ValueError: continue
+        if r.get("phase") != "run" or r.get("op") != "get" or not r.get("ret"): continue
+        sec = int(r["ret"] // 10**9 + off)
+        n[sec] += 1
+        if r.get("status") != "ok": f[sec] += 1
+    return {sec: f[sec] / n[sec] for sec in n}
+
 tz = round((datetime.datetime.utcnow() - datetime.datetime.now()).total_seconds() / 3600)
 # Drawn at print size (6 or 7 in wide; the USENIX text width is 7 in), so 7-9 pt here is 7-9 pt on paper.
 plt.rcParams.update({"font.family": ["Times New Roman", "Times", "STIXGeneral"], "mathtext.fontset": "stix", "font.size": FS_LABEL,
@@ -126,6 +148,10 @@ plt.rcParams.update({"font.family": ["Times New Roman", "Times", "STIXGeneral"],
                      "xtick.color": AXIS, "ytick.color": AXIS, "xtick.labelcolor": INK,
                      "ytick.labelcolor": INK, "xtick.labelsize": FS_TICK, "ytick.labelsize": FS_TICK,
                      "pdf.fonttype": 42, "ps.fonttype": 42})
+import os as _os, glob as _glob, matplotlib.font_manager as _fm
+if _os.environ.get("CMU_DIR"):     # Computer Modern (CMU Serif) for every label, LaTeX-style math
+    for _f in _glob.glob(_os.environ["CMU_DIR"] + "/*.ttf"): _fm.fontManager.addfont(_f)
+    plt.rcParams.update({"font.family": ["CMU Serif"], "mathtext.fontset": "cm"})
 nrow = -(-len(PANELS) // NCOL)
 # Rows alternate throughput / latency, so each scenario is a throughput panel with its latency below.
 spare = nrow * NCOL - len(PANELS)             # empty grid cells: room for the legend
@@ -142,16 +168,19 @@ for i, ((ax, lax), (name, sc, title)) in enumerate(zip(pairs, PANELS)):
     # The last samples are the clients shutting down, not the system: drop them.
     tail = sorted(total[-12:-2])[5] if len(total) > 14 else 0
     while len(total) > 2 and total[-1] < 0.9 * tail:
-        x.pop(); total.pop(); lat["READ"].pop(); lat["UPDATE"].pop()
+        x.pop(); total.pop(); lat["READ"].pop(); lat["UPDATE"].pop(); lat["READ-FAILED"].pop()
     ymax, xmax = max(ymax, max(total)), max(xmax, x[-1])
     m = re.search(r"FULL.*\[(\d\d:\d\d:\d\d)\.\d+ -> (\d\d:\d\d:\d\d)\.\d+\]", (run / "migration_window.txt").read_text())
     md = re.search(r"FULL[^\n]*?([\d.]+)s", (run / "migration_window.txt").read_text())
     if md and float(md.group(1)) > 0:
         # nominal data moved (every slot is one 2 MiB block) over the whole migration window;
         # after a crash some rounds are sent twice, which this does not count
-        gib = (3 * 1365 if os.environ.get("SETUP") == "3to4" else 3 * 2730) * 2 / 1024
+        gib = (3 * 1365 if os.environ.get("SETUP") == "3to4" else 3 * 2730) * float(os.environ.get("BLOCK_MIB", "2")) / 1024
         dur = float(md.group(1))
-        title += "\n%.1f s, %.1f GiB, %.1f Gb/s" % (dur, gib, gib * 8 * 1.073741824 / dur)
+        if os.environ.get("RDMA_GBPS"):   # the rate while the RDMA transfers run, not the window average
+            title += "\n%.1f s, %.1f GiB, RDMA %s Gb/s" % (dur, gib, os.environ["RDMA_GBPS"])
+        else:
+            title += "\n%.1f s, %.1f GB, %.1f Gb/s" % (dur, gib * 1.073741824, gib * 8 * 1.073741824 / dur)
     if m:
         w0, w1 = near(t0, m.group(1), tz), near(t0, m.group(2), tz)   # redis logs: local time
         for a in (ax, lax): a.axvspan(w0, w1, color=BAND, lw=0, zorder=0)
@@ -168,7 +197,19 @@ for i, ((ax, lax), (name, sc, title)) in enumerate(zip(pairs, PANELS)):
             if keep: lax.plot(*zip(*keep), color=c, lw=LW_P99, ls=P99_LS, zorder=3)
     ax.plot(x, total, color=LINE, lw=LW_DATA, solid_capstyle="round", solid_joinstyle="round", zorder=3)
     lax.plot(x, lat["UPDATE"], color=WRITE, lw=LW_DATA, solid_capstyle="round", solid_joinstyle="round", zorder=4)
-    lax.plot(x, lat["READ"], color=READ, lw=LW_DATA, solid_capstyle="round", solid_joinstyle="round", zorder=5)
+    # Mean read latency over ALL reads, failed ones included (2026-11-07): in a second with failed
+    # reads, mean = (1-f)*mean_ok + f*mean_failed, with f the share of the probe client's reads that
+    # failed in that second. Failed reads faster than 1 ms are reads of absent keys (YCSB counts them
+    # as failed all run long) and are left out.
+    share = read_fail_share(lin, t0) if lin is not None else {}
+    rd = []
+    for a, ok_ms, f_ms in zip(x, lat["READ"], lat["READ-FAILED"]):
+        f = share.get(int(round(a)), 0.0)
+        if f_ms == f_ms and f_ms >= 1.0 and f > 0:
+            rd.append((1 - f) * ok_ms + f * f_ms if ok_ms == ok_ms else f_ms)
+        else:
+            rd.append(ok_ms)
+    lax.plot(x, rd, color=READ, lw=LW_DATA, solid_capstyle="round", solid_joinstyle="round", zorder=5)
     ax.set_title(title, fontsize=FS_TITLE, loc="center", color=INK, pad=3 if COMPACT else 4)
     col = i % NCOL
     for a in (ax, lax):
@@ -179,7 +220,7 @@ for i, ((ax, lax), (name, sc, title)) in enumerate(zip(pairs, PANELS)):
     if col == 0:
         ax.set_ylabel("Tput (kops/s)" if COMPACT else "YCSB throughput\n(kops/s)", color=INK)
         lax.set_ylabel("Latency (ms)" if COMPACT else "Latency\n(ms)", color=INK)
-        for a in (ax, lax): a.yaxis.set_label_coords(-0.36 if COMPACT else -0.22 if NCOL == 3 else -0.27, 0.5)        # same x for both: labels line up
+        for a in (ax, lax): a.yaxis.set_label_coords(-0.12 * NCOL if COMPACT else -0.22 if NCOL == 3 else -0.27, 0.5)        # same x for both: labels line up
 # Latency goes from under 1 ms to seconds after a crash: log scale.
 lax0 = pairs[0][1]
 lax0.set_yscale("log"); lax0.set_ylim(0.3, 3000); lax0.set_yticks([1, 10, 100, 1000])
@@ -216,8 +257,12 @@ if COMPACT:
             (last, 0, "lower right", [Line2D([], [], color=CRASH, lw=LW_CRASH, ls=(0, (3, 2)), label="Crash")]),
             (0, 1, "upper right", [Line2D([], [], color=READ, lw=LW_DATA, label="Read"), Line2D([], [], color=WRITE, lw=LW_DATA, label="Write")]),
             (last, 1, "upper right", [Line2D([], [], color=GREY, lw=LW_DATA, label="Mean"), Line2D([], [], color=GREY, lw=LW_P99, ls=P99_LS, label="p99")])]
+    # one panel: first and last are the same, and a second legend() would replace the first
+    merged = {}
     for i, row, loc, h in keys:
-        pairs[i][row].legend(handles=h, loc=loc, **ikw)
+        merged.setdefault((i, row), [loc, []])[1].extend(h)
+    for (i, row), (loc, h) in merged.items():
+        pairs[i][row].legend(handles=h, loc=loc, ncol=2 if len(h) > 2 else 1, columnspacing=1.0, **ikw)
 elif spare:
     # Centre the legend in the empty cells (their position is known only after the layout has run).
     fig.canvas.draw()

@@ -161,8 +161,31 @@ public class RedisClient extends DB {
    * the endpoint dead only briefly; a refused / reset connection keeps the long TTL. */
   private static final long DEAD_TTL_TIMEOUT_MS = 500;
   private static void markEndpointDead(HostAndPort hp) {
+    LAST_FAIL.put(hp, System.currentTimeMillis());
     DEAD_UNTIL.put(hp, System.currentTimeMillis() + DEAD_TTL_MS);
   }
+  /* AqRaft 2026-11-06. When was each endpoint's last failed probe or request. */
+  private static final ConcurrentHashMap<HostAndPort, Long> LAST_FAIL = new ConcurrentHashMap<>();
+  /* Recently failed, or its current probe has gone unanswered for UNRESPONSIVE_MS. Used to accept
+   * a recipient group's new leader: requiring endpointDead() of the old one meant waiting until the
+   * crashed process stopped accepting connections (~2 s after the kill, S1 and S6), because a
+   * "no reply" mark lasts only DEAD_TTL_TIMEOUT_MS. */
+  private static final long UNRESPONSIVE_MS = 150;
+  private static final long RECENT_FAIL_MS = 3000;
+  private static boolean unresponsive(HostAndPort hp) {
+    if (endpointDead(hp)) return true;
+    long now = System.currentTimeMillis();
+    Long f = LAST_FAIL.get(hp);
+    if (f != null && now - f < RECENT_FAIL_MS) return true;
+    Long since = PROBE_SINCE.get(hp);
+    return since != null && now - since > UNRESPONSIVE_MS;
+  }
+  /* An endpoint whose slots a new leader took over stays out of routing this long, so a stale
+   * view of the group (another group's stored node list still names it first) cannot send the
+   * workers back to it. A crashed instance's port keeps ACCEPTING while its RDMA-pinned memory is
+   * torn down, so going back to it cost a second 2 s request timeout (S7: donor keys out 2.34 s
+   * with the abort at +1.31 s). */
+  private static final long REPLACED_TTL_MS = 5000;
   /* An error REPLY (e.g. "-CLUSTERDOWN No raft leader" from a follower while its group elects
    * a leader) comes from a live node: it is not marked dead at all. Marking it for DEAD_TTL_MS
    * hid the follower that won the election for 2 s (C1, 2026-10-22: clients out 3.0 s with the
@@ -174,6 +197,7 @@ public class RedisClient extends DB {
       if (t instanceof java.net.SocketTimeoutException) { timeout = true; break; }
     }
     boolean wasDead = endpointDead(hp);
+    LAST_FAIL.put(hp, System.currentTimeMillis());
     DEAD_UNTIL.put(hp, System.currentTimeMillis() + (timeout ? DEAD_TTL_TIMEOUT_MS : DEAD_TTL_MS));
     if (!wasDead) {
       System.err.println("[AQRAFT] endpoint " + hp + " marked dead (" + (timeout ? "no reply" : "unreachable") + ")");
@@ -211,7 +235,8 @@ public class RedisClient extends DB {
     }
     if (n > 0) {
       INSTR_ABORTED.addAndGet(n);
-      System.err.println("[AQRAFT] aborted " + n + " connections to unresponsive " + hp);
+      System.err.println("[AQRAFT] t=" + System.currentTimeMillis() + " aborted " + n
+          + " connections to unresponsive " + hp);
     }
   }
   private static final java.util.concurrent.atomic.AtomicBoolean SLOT_POLLER_STARTED =
@@ -227,6 +252,117 @@ public class RedisClient extends DB {
   private static final java.util.Set<HostAndPort> POLL_TARGETS =
       java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+  /* One CLUSTER SLOTS answer from a poll target: learn replicas, follow leader changes, union the
+   * migrated ranges. Endpoints another node took over go into 'replaced' (their connections are
+   * aborted by the caller). */
+  @SuppressWarnings("unchecked")
+  private static void applySlotsReply(HostAndPort target, Object reply,
+                                      java.util.Set<HostAndPort> replaced) {
+    for (Object rangeObj : (List<Object>) reply) {
+      List<Object> range = (List<Object>) rangeObj;
+      int startSlot = (int) (long) (Long) range.get(0);
+      int endSlot   = (int) (long) (Long) range.get(1);
+      List<Object> masterInfo = (List<Object>) range.get(2);
+      String mh = SafeEncoder.encode((byte[]) masterInfo.get(0));
+      long   mp = (Long) masterInfo.get(1);
+      HostAndPort owner = new HostAndPort(mh, (int) mp);
+      // AqRaft S1 fix: learn this range's REPLICAS as poll targets, so a
+      // promoted replica is discoverable after a leader crash (especially
+      // the sg4 recipient group, whose replicas were never in the
+      // bootstrap slot map). The promoted replica reports ITSELF as master
+      // in its own CLUSTER SLOTS, letting the union below re-resolve
+      // ownership to the new leader.
+      for (int ri = 3; ri < range.size(); ri++) {
+        try {
+          List<Object> rep = (List<Object>) range.get(ri);
+          POLL_TARGETS.add(new HostAndPort(
+              SafeEncoder.encode((byte[]) rep.get(0)),
+              (int) (long) (Long) rep.get(1)));
+        } catch (Exception ignore) { /* skip malformed replica */ }
+      }
+      /* AqRaft ownership fix: ONLY trust a collapse report from a DONOR
+       * host. During migration the recipient sg4 advertises its full
+       * configured range (0-16383); polling sg4 would collapse EVERY slot
+       * onto it and route the whole keyspace to one leader (throughput
+       * collapse). Donors correctly announce ONLY the slots they narrowed
+       * to sg4, so a donor-only union yields exactly the migrated ranges.
+       * sg4's replicas stay in POLL_TARGETS for leader discovery but must
+       * not drive collapse. */
+      boolean targetIsDonor = DONOR_HOSTS.contains(target.getHost());
+      /* AqRaft dead-leader failover (S1 recipient-leader crash): when we
+       * poll a RECIPIENT node reporting ITSELF as owner of this range (a
+       * promoted sg4 leader), fail over any slot whose CURRENT owner is a
+       * now-DEAD recipient leader to this live node IMMEDIATELY — instead
+       * of waiting ~tens of seconds for the donor's post-reconcile CLUSTER
+       * SLOTS to propagate (clients otherwise keep writing to the dead
+       * leader). Safe: only overrides a slot whose current owner is a dead
+       * RECIPIENT; donor slots have live owners, and sg4's full-range
+       * self-advertisement can't collapse the keyspace here because a
+       * non-migrated slot's owner is never dead. */
+      if (!targetIsDonor && owner.equals(target)
+          && !DEAD_HOSTS.contains(owner.getHost()) && !endpointDead(owner)) {
+        for (int fs = startSlot; fs <= endSlot && fs < 16384; fs++) {
+          HostAndPort fcur = SHARED_PEER[fs];
+          if (fcur != null && !fcur.equals(owner) && unresponsive(fcur)
+              && !DONOR_HOSTS.contains(fcur.getHost())) {
+            SHARED_PEER[fs] = owner;
+            SHARED_COLLAPSED[fs] = true;
+            replaced.add(fcur);
+          }
+        }
+      }
+      for (int s = startSlot; s <= endSlot && s < 16384; s++) {
+        HostAndPort boot = SHARED_BOOT_OWNER[s];
+        /* A donor reporting ANOTHER DONOR node as owner is a leader change
+         * inside the donor group, not a migration: the slot has not moved to
+         * the recipient. Collapsing on it made the new donor leader pass for
+         * the recipient, and reads returned its frozen copy until NARROW.
+         * Follow the donor leg instead, and only on the new leader's own
+         * word (another group's view of this range can be stale). */
+        if (boot != null && !owner.equals(boot) && targetIsDonor
+            && DONOR_HOSTS.contains(owner.getHost())) {
+          if (owner.equals(target) && !endpointDead(owner)) {
+            replaced.add(boot);
+            SHARED_BOOT_OWNER[s] = owner;
+          }
+          continue;
+        }
+        if (boot != null && !owner.equals(boot) && targetIsDonor) {
+          /* AqRaft fix: never DOWNGRADE the write target from a recipient
+           * (sg4) to a donor. Reads learn the true recipient leader from
+           * the migration-window slot-meta and set SHARED_PEER=sg4, but a
+           * donor's post-NARROW CLUSTER SLOTS is inconsistent (it still
+           * reports ITSELF as owner of a migrated slot), and the poller's
+           * union would overwrite the sg4 value with that donor -> every
+           * write to the migrated slot routes to the donor and -MOVED
+           * storms to sg4 (tens of millions of redirects). Only overwrite
+           * SHARED_PEER when not replacing a recipient with a donor.
+           * SHARED_COLLAPSED stays set so reads keep fast-collapsing. */
+          HostAndPort cur = SHARED_PEER[s];
+          boolean curIsRecipient = (cur != null) && !DONOR_HOSTS.contains(cur.getHost());
+          boolean ownerIsDonor = DONOR_HOSTS.contains(owner.getHost());
+          if (!(curIsRecipient && ownerIsDonor)
+              && !DEAD_HOSTS.contains(owner.getHost())) {
+            SHARED_PEER[s] = owner;
+          }
+          SHARED_COLLAPSED[s] = true;
+        }
+      }
+    }
+  }
+
+  /* Parallel poller probes (see the poller loop). */
+  private static final java.util.concurrent.ExecutorService POLL_POOL =
+      java.util.concurrent.Executors.newCachedThreadPool(r -> {
+        Thread th = new Thread(r, "redis-slot-probe");
+        th.setDaemon(true);
+        return th;
+      });
+  private static final ConcurrentHashMap<HostAndPort, Long> PROBE_SINCE = new ConcurrentHashMap<>();
+  private static final java.util.concurrent.LinkedBlockingQueue<Object[]> PROBE_RESULTS =
+      new java.util.concurrent.LinkedBlockingQueue<>();
+  private static final long PROBE_COLLECT_MS = 20;
+
   /** Start the shared CLUSTER SLOTS poller once. pollMs<=0 disables it (baseline). */
   @SuppressWarnings("unchecked")
   private static void startSlotPollerOnce(final HostAndPort seed, final Integer timeoutMs,
@@ -238,11 +374,6 @@ public class RedisClient extends DB {
       while (true) {
         try {
           Thread.sleep(pollMs);
-          /* Every tick, re-abort connections to endpoints still marked dead: a worker that
-           * (re)connects to a dying leader after the first abort (its port still accepts)
-           * would otherwise hang until the process exits, as the dead mark makes the loop
-           * below skip that endpoint for DEAD_TTL_MS. */
-          /* (abort happens below, when another node takes over the endpoint's slots) */
           java.util.Set<HostAndPort> replaced = new java.util.HashSet<>();
           /* AqRaft S1 fix: also poll the RECIPIENT leaders. sg4 owns no slots at
            * bootstrap (migration hasn't happened), so its nodes are never in the
@@ -254,120 +385,44 @@ public class RedisClient extends DB {
             HostAndPort peer = SHARED_PEER[s];
             if (peer != null) { POLL_TARGETS.add(peer); }
           }
-          /* Poll every known master and UNION sg4-owned ranges. We only ever
-           * SET collapsed (never unset): a node's stale view of another donor's
-           * slots reports the BOOT owner (== SHARED_BOOT_OWNER) and is a no-op,
-           * while the donor's own view reports sg4 (!= boot) and flips it. */
+          /* AqRaft 2026-11-06: probe every target IN PARALLEL. Probed one after another, each
+           * endpoint of a crashed host cost up to PROBE_SO_TIMEOUT_MS (a dying instance accepts
+           * and never answers), so with a whole host down (S6, S7: three instances plus the seed
+           * alias) one sweep took ~1.6 s before it reached the new leader, and only then were the
+           * workers blocked on the dead leader woken: clients out 2.4-2.6 s for a 0.9-1.0 s
+           * election. A target whose previous probe is still waiting is not probed again. */
           for (HostAndPort target : POLL_TARGETS) {
             if (endpointDead(target)) continue;   // skip a known-dead endpoint this tick
-            Jedis j = probeJedis(target, timeoutMs);  // short connect timeout
-            try {
-              j.connect();
-              j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
-              Object reply = j.getClient().getOne();
-              if (!(reply instanceof List)) { continue; }
-              for (Object rangeObj : (List<Object>) reply) {
-                List<Object> range = (List<Object>) rangeObj;
-                int startSlot = (int) (long) (Long) range.get(0);
-                int endSlot   = (int) (long) (Long) range.get(1);
-                List<Object> masterInfo = (List<Object>) range.get(2);
-                String mh = SafeEncoder.encode((byte[]) masterInfo.get(0));
-                long   mp = (Long) masterInfo.get(1);
-                HostAndPort owner = new HostAndPort(mh, (int) mp);
-                // AqRaft S1 fix: learn this range's REPLICAS as poll targets, so a
-                // promoted replica is discoverable after a leader crash (especially
-                // the sg4 recipient group, whose replicas were never in the
-                // bootstrap slot map). The promoted replica reports ITSELF as master
-                // in its own CLUSTER SLOTS, letting the union below re-resolve
-                // ownership to the new leader.
-                for (int ri = 3; ri < range.size(); ri++) {
-                  try {
-                    List<Object> rep = (List<Object>) range.get(ri);
-                    POLL_TARGETS.add(new HostAndPort(
-                        SafeEncoder.encode((byte[]) rep.get(0)),
-                        (int) (long) (Long) rep.get(1)));
-                  } catch (Exception ignore) { /* skip malformed replica */ }
-                }
-                /* AqRaft ownership fix: ONLY trust a collapse report from a DONOR
-                 * host. During migration the recipient sg4 advertises its full
-                 * configured range (0-16383); polling sg4 would collapse EVERY slot
-                 * onto it and route the whole keyspace to one leader (throughput
-                 * collapse). Donors correctly announce ONLY the slots they narrowed
-                 * to sg4, so a donor-only union yields exactly the migrated ranges.
-                 * sg4's replicas stay in POLL_TARGETS for leader discovery but must
-                 * not drive collapse. */
-                boolean targetIsDonor = DONOR_HOSTS.contains(target.getHost());
-                /* AqRaft dead-leader failover (S1 recipient-leader crash): when we
-                 * poll a RECIPIENT node reporting ITSELF as owner of this range (a
-                 * promoted sg4 leader), fail over any slot whose CURRENT owner is a
-                 * now-DEAD recipient leader to this live node IMMEDIATELY — instead
-                 * of waiting ~tens of seconds for the donor's post-reconcile CLUSTER
-                 * SLOTS to propagate (clients otherwise keep writing to the dead
-                 * leader). Safe: only overrides a slot whose current owner is a dead
-                 * RECIPIENT; donor slots have live owners, and sg4's full-range
-                 * self-advertisement can't collapse the keyspace here because a
-                 * non-migrated slot's owner is never dead. */
-                if (!targetIsDonor && owner.equals(target)
-                    && !DEAD_HOSTS.contains(owner.getHost()) && !endpointDead(owner)) {
-                  for (int fs = startSlot; fs <= endSlot && fs < 16384; fs++) {
-                    HostAndPort fcur = SHARED_PEER[fs];
-                    if (fcur != null && !fcur.equals(owner) && endpointDead(fcur)
-                        && !DONOR_HOSTS.contains(fcur.getHost())) {
-                      SHARED_PEER[fs] = owner;
-                      SHARED_COLLAPSED[fs] = true;
-                      replaced.add(fcur);
-                    }
-                  }
-                }
-                for (int s = startSlot; s <= endSlot && s < 16384; s++) {
-                  HostAndPort boot = SHARED_BOOT_OWNER[s];
-                  /* A donor reporting ANOTHER DONOR node as owner is a leader change
-                   * inside the donor group, not a migration: the slot has not moved to
-                   * the recipient. Collapsing on it made the new donor leader pass for
-                   * the recipient, and reads returned its frozen copy until NARROW.
-                   * Follow the donor leg instead, and only on the new leader's own
-                   * word (another group's view of this range can be stale). */
-                  if (boot != null && !owner.equals(boot) && targetIsDonor
-                      && DONOR_HOSTS.contains(owner.getHost())) {
-                    if (owner.equals(target) && !endpointDead(owner)) {
-                      replaced.add(boot);
-                      SHARED_BOOT_OWNER[s] = owner;
-                    }
-                    continue;
-                  }
-                  if (boot != null && !owner.equals(boot) && targetIsDonor) {
-                    /* AqRaft fix: never DOWNGRADE the write target from a recipient
-                     * (sg4) to a donor. Reads learn the true recipient leader from
-                     * the migration-window slot-meta and set SHARED_PEER=sg4, but a
-                     * donor's post-NARROW CLUSTER SLOTS is inconsistent (it still
-                     * reports ITSELF as owner of a migrated slot), and the poller's
-                     * union would overwrite the sg4 value with that donor -> every
-                     * write to the migrated slot routes to the donor and -MOVED
-                     * storms to sg4 (tens of millions of redirects). Only overwrite
-                     * SHARED_PEER when not replacing a recipient with a donor.
-                     * SHARED_COLLAPSED stays set so reads keep fast-collapsing. */
-                    HostAndPort cur = SHARED_PEER[s];
-                    boolean curIsRecipient = (cur != null) && !DONOR_HOSTS.contains(cur.getHost());
-                    boolean ownerIsDonor = DONOR_HOSTS.contains(owner.getHost());
-                    if (!(curIsRecipient && ownerIsDonor)
-                        && !DEAD_HOSTS.contains(owner.getHost())) {
-                      SHARED_PEER[s] = owner;
-                    }
-                    SHARED_COLLAPSED[s] = true;
-                  }
-                }
+            if (PROBE_SINCE.putIfAbsent(target, System.currentTimeMillis()) != null) continue;
+            POLL_POOL.execute(() -> {
+              Jedis j = probeJedis(target, timeoutMs);  // short connect + reply timeout
+              try {
+                j.connect();
+                j.getClient().cluster(new byte[][]{SafeEncoder.encode("SLOTS")});
+                Object reply = j.getClient().getOne();
+                if (reply instanceof List) { PROBE_RESULTS.add(new Object[]{target, reply}); }
+              } catch (JedisConnectionException ce) {
+                /* unreachable, or no reply in PROBE_SO_TIMEOUT_MS (a dying leader accepts
+                 * and never answers; a busy live node is only marked briefly). */
+                markEndpointDead(target, ce);
+              } catch (Exception inner) {
+                markEndpointDead(target, inner);
+              } finally {
+                try { j.close(); } catch (Exception ignore) { /* drain */ }
+                PROBE_SINCE.remove(target);
               }
-            } catch (JedisConnectionException ce) {
-              /* unreachable, or no reply in PROBE_SO_TIMEOUT_MS (a dying leader accepts
-               * and never answers; a busy live node is only marked briefly). */
-              markEndpointDead(target, ce);
+            });
+          }
+          /* Live nodes answer in a few ms: wait briefly for this tick's answers, then apply every
+           * answer that has arrived (this tick's, or a slower one from an earlier tick). */
+          long deadline = System.nanoTime() + PROBE_COLLECT_MS * 1_000_000L;
+          Object[] res;
+          while ((res = PROBE_RESULTS.poll(Math.max(0L, deadline - System.nanoTime()),
+                                           java.util.concurrent.TimeUnit.NANOSECONDS)) != null) {
+            try {
+              applySlotsReply((HostAndPort) res[0], res[1], replaced);
             } catch (Exception inner) {
-              /* skip this target this tick (leader moving mid-NARROW etc.);
-               * remember a dead endpoint so re-resolves + later ticks skip it
-               * (an error reply is a live node: not marked, see markEndpointDead). */
-              markEndpointDead(target, inner);
-            } finally {
-              try { j.close(); } catch (Exception ignore) { /* drain */ }
+              /* malformed / mid-NARROW answer: skip it */
             }
           }
           /* Another node took over these endpoints' slots this tick (a new leader). A worker
@@ -375,7 +430,12 @@ public class RedisClient extends DB {
            * the process exits (~1.2 s with 15 GB of RDMA-pinned memory) or the 2 s request
            * timeout: wake it so it re-resolves to the new owner. A live but slow leader is
            * never replaced this way, so its connections are left alone. */
-          for (HostAndPort old : replaced) { abortConnections(old); }
+          for (HostAndPort old : replaced) {
+            DEAD_UNTIL.put(old, System.currentTimeMillis() + REPLACED_TTL_MS);
+            System.err.println("[AQRAFT] t=" + System.currentTimeMillis()
+                + " slots of " + old + " taken over by a new leader");
+            abortConnections(old);
+          }
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
           return;
@@ -1465,6 +1525,11 @@ public class RedisClient extends DB {
     }
     if (ra != null) updateSlotCache(slot, ra);
 
+    /* AqRaft 2026-11-06: a double read needs BOTH legs. If either the donor or the
+     * recipient did not answer (crashed, no leader, error reply), the read fails
+     * (UNKNOWN), even when the other leg has a value: serving from one side alone
+     * while the other is unavailable is not a double read. */
+    if (ra == null || !ra.ok) return new OpResult(Outcome.UNKNOWN, null);
     if (rb == null || !rb.ok) return new OpResult(Outcome.UNKNOWN, null);
     if (rb.value != null) return new OpResult(Outcome.OK, rb.value);
     if (rb.authoritative()) return new OpResult(Outcome.OK, null);

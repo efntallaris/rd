@@ -13,6 +13,11 @@ keys. This adds the migration / fault-tolerance side, once the run is over:
              answer from their own data) — the durability claim behind RECP_DURABLE
   bulk       every YCSB key of the migrated slots in the donor's frozen copy is
              present on the recipient leader (YCSB never deletes, EVICT is off)
+  indexed    the index update ran on EVERY live replica of every recipient group:
+             (keys) each live replica holds every donor YCSB key of its migrated
+             range(s), read from that replica's own data; (log) each live replica's
+             log has "INDEX-UPDATE done: ... slots=lo-hi" lines that together cover
+             its whole migrated range
 
 Exit 0 = all PASS, 1 = some FAIL. One line per check on stdout.
 """
@@ -380,6 +385,66 @@ def check_bulk(res):
         checked, missing_total, ("; " + "; ".join(notes)) if notes else "")
 
 
+INDEX_RE = r"INDEX-UPDATE done: role=(\w+) sess=(-?\d+) slots=(\d+)-(\d+) n=(\d+)"
+
+
+def index_coverage(logs_dir, host, rid):
+    """Slots this replica logged as indexed, from its copied log (<logs_dir>/<host>/<host>_<rid>.log)."""
+    import re
+    cov, roles = set(), {}
+    f = os.path.join(logs_dir or "", host, "%s_%s.log" % (host, rid))
+    if not logs_dir or not os.path.exists(f):
+        return None, roles
+    with open(f, errors="replace") as fh:
+        for m in re.finditer(INDEX_RE, fh.read()):
+            role, lo, hi, n = m.group(1), int(m.group(3)), int(m.group(4)), int(m.group(5))
+            roles[role] = roles.get(role, 0) + 1
+            if n == hi - lo + 1:          # a contiguous range: count it
+                cov.update(range(lo, hi + 1))
+    return cov, roles
+
+
+def check_indexed(res, logs_dir):
+    """Every live replica of every recipient group indexed every round it received."""
+    bad, notes = 0, []
+    donor_keys = {}
+    for (lo, hi), members in DONORS.items():
+        ldr = leader_of(members) or next(((h, p) for h, p in members if raft_role(h, p) is not None), None)
+        if ldr is None:
+            notes.append("%d-%d: no live donor replica" % (lo, hi))
+            bad += 1
+            continue
+        donor_keys[(lo, hi)] = [k for k in local_keys(*ldr, want_slot=lambda s, lo=lo, hi=hi: lo <= s <= hi)
+                                if k.startswith(b"user")]
+    for rid, members in RECIPIENTS.items():
+        ranges = [r for r, x in RANGE_RECIPIENT.items() if x == rid]
+        want_slots = set()
+        for lo, hi in ranges:
+            want_slots.update(range(lo, hi + 1))
+        live = [hp for hp in members if raft_role(*hp) is not None]
+        for hp in live:
+            if res and hp in res:
+                have = res[hp][2]
+            else:
+                have = dict.fromkeys(local_keys(*hp, want_slot=lambda s: s in want_slots))
+            n_d = sum(len(donor_keys.get(r, [])) for r in ranges)
+            miss = [k for r in ranges for k in donor_keys.get(r, []) if k not in have]
+            cov, roles = index_coverage(logs_dir, hp[0], rid)
+            if cov is None:
+                lmsg, lok = "no log", False
+            else:
+                lack = sorted(want_slots - cov)
+                lok = not lack
+                lmsg = ("log covers %d/%d slots %s" % (len(want_slots) - len(lack), len(want_slots),
+                        "/".join("%s=%d" % kv for kv in sorted(roles.items())) or "-")
+                        + ("" if lok else " (lacks e.g. %s)" % lack[:3]))
+            if miss or not lok:
+                bad += 1
+            notes.append("%s %s keys %d/%d%s, %s" % (rid, hp[0], n_d - len(miss), n_d,
+                         (" missing e.g. %s" % miss[:2]) if miss else "", lmsg))
+    return bad == 0 and bool(donor_keys), "; ".join(notes)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--playbook-rc", type=int, required=True)
@@ -407,6 +472,11 @@ def main():
     except Exception as e:   # noqa: BLE001
         ok, msg = False, "error: %s" % e
     results.append(("bulk", ok, msg))
+    try:
+        ok, msg = check_indexed(res, a.logs_dir)
+    except Exception as e:   # noqa: BLE001
+        ok, msg = False, "error: %s" % e
+    results.append(("indexed", ok, msg))
 
     for name, ok, msg in results:
         print("POSTCHECK %-9s %s  %s" % (name, "PASS" if ok else "FAIL", msg))

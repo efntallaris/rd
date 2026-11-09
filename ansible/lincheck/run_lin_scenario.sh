@@ -28,8 +28,8 @@
 set -uo pipefail
 
 SCENARIO="${1:-}"
-if [[ ! "$SCENARIO" =~ ^(HEALTHY|S[1-9]|C[1-9][0-9]?)$ ]]; then
-  echo "usage: $0 <HEALTHY|S1..S9|C1..C16>" >&2; exit 1
+if [[ ! "$SCENARIO" =~ ^(HEALTHY|S[1-9][0-9]?|C[1-9][0-9]?)$ ]]; then
+  echo "usage: $0 <HEALTHY|S1..S12|C1..C17>" >&2; exit 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

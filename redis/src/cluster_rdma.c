@@ -1015,7 +1015,18 @@ static void *chainEstablishThread(void *arg) {
          * the raft check-quorum window (election_timeout * 2 = 2000ms) and
          * the leader steps down. */
         char ensure_err[256] = {0};
-        if (rdmaLeaderChainEnsureSrcPool(job->src_mig_id, ensure_err,
+        /* AqRaft 2026-11-06: not for the warm-up session a newly elected leader starts
+         * (ids >= 9e17, see CHAIN_WARM_SESS_MIN). Registering the follower-forward twins
+         * of every landing pool takes ~0.3 s of page pinning, and the first re-sent
+         * round's block registration waited out all of it (S1/S6: REGISTER-BLOCK-SLOTS
+         * answered the same millisecond "twins ensured" was logged, the copy 0.3 s after
+         * the donor re-shipped). The forwarder registers its own pool's twin on demand
+         * (rdmaLandingFwdBufFor), and the real session that follows still runs this. */
+        if (job->src_mig_id >= 900000000000000000LL) {
+            serverLog(LL_NOTICE,
+                "CHAIN: sess=%lld warm-up -- landing twins left to the real session",
+                job->src_mig_id);
+        } else if (rdmaLeaderChainEnsureSrcPool(job->src_mig_id, ensure_err,
                                          sizeof(ensure_err)) != C_OK) {
             serverLog(LL_WARNING,
                 "CHAIN: sess=%lld src pool pre-register failed: %s "
@@ -2015,6 +2026,7 @@ static int migrationBackpatchTick(struct aeEventLoop *el, long long id, void *cl
  * holds (1500 if none) and delete it, so it fires once. It widens a window of a few ms
  * (e.g. between two protocol steps) enough for an external kill -9 to land in it. The
  * line logged here is what the injector arms on. Absent file: one access() call. */
+static long long g_test_hook_release_id = -1;
 void rdmaTestHook(const char *name, long long id) {
     char path[96];
     snprintf(path, sizeof(path), "/tmp/rdma_hook_%s", name);
@@ -2024,7 +2036,24 @@ void rdmaTestHook(const char *name, long long id) {
     if (f) { if (fscanf(f, "%d", &ms) != 1 || ms <= 0) ms = 1500; fclose(f); }
     if (unlink(path) != 0) return;   /* another thread took it */
     serverLog(LL_WARNING, "TEST HOOK %s: id=%lld pausing %d ms", name, id, ms);
-    usleep((useconds_t) ms * 1000);
+    /* follower_forward (S12/C6) only has to keep F2 without the round until F2 is
+     * elected. A new leader's pull for this session (CHAIN-STATUS SEND) ends the
+     * pause, so the run measures the protocol's fetch, not the rest of the sleep. */
+    int releasable = strcmp(name, "follower_forward") == 0;
+    long long t0 = mstime();
+    while (mstime() - t0 < ms) {
+        if (releasable && __atomic_load_n(&g_test_hook_release_id, __ATOMIC_ACQUIRE) == id) {
+            serverLog(LL_WARNING, "TEST HOOK %s: id=%lld released after %lld ms "
+                      "(a new leader asked for this round)", name, id, mstime() - t0);
+            return;
+        }
+        usleep(5000);
+    }
+}
+
+/* Called by the CHAIN-STATUS SEND handler: a new leader asks this node for round `id`. */
+void rdmaTestHookRelease(long long id) {
+    __atomic_store_n(&g_test_hook_release_id, id, __ATOMIC_RELEASE);
 }
 
 /* Same value bio.c uses for its worker threads. */
@@ -3571,24 +3600,48 @@ static struct rdmamig_buffer *g_lpr_fwd_buf[N_RETIRED_LANDING_POOLS];
 static struct rdma_cm_id     *g_lpr_fwd_cm[N_RETIRED_LANDING_POOLS];
 static int                    g_lpr_next = 0;
 
+void rdmaLogIndexUpdateDone(const char *role, long long sess, const int *slots, int n_slots) {
+    if (slots == NULL || n_slots <= 0) return;
+    int lo = CLUSTER_SLOTS, hi = -1;
+    for (int i = 0; i < n_slots; i++) {
+        if (slots[i] < lo) lo = slots[i];
+        if (slots[i] > hi) hi = slots[i];
+    }
+    serverLog(LL_NOTICE, "INDEX-UPDATE done: role=%s sess=%lld slots=%d-%d n=%d",
+              role, sess, lo, hi, n_slots);
+}
+
 void rdmaEnsureLandingFwdReg(struct rdma_cm_id *f1_cm) {
     if (f1_cm == NULL) return;
-    pthread_mutex_lock(&g_lp_mu);
+    /* AqRaft 2026-11-06: register WITHOUT holding g_lp_mu. Pinning the pages of every
+     * landing pool (N_LANDING_POOLS x 1.43 GB) takes ~0.3 s, and holding g_lp_mu across
+     * it made a newly elected leader's first re-sent round wait to claim its landing pool
+     * (S1: copy started 0.30 s after the donor re-shipped, right when "twins ensured" was
+     * logged). Each pool is noted under the lock, registered unlocked, and the twin stored
+     * only if the slot still holds the same buffer and still lacks a twin for f1_cm. */
     for (int i = 0; i < N_LANDING_POOLS; i++) {
-        if (g_lp_buf[i] == NULL) continue;                 /* slot not created yet */
-        if (g_lp_fwd_buf[i] != NULL && g_lp_fwd_cm[i] == f1_cm) continue;
-        struct rdmamig_buffer *fb =
-            rdmamig_buffer_create_qp_pd(f1_cm, (char *) g_lp_pool[i], g_lp_bytes[i], 0);
-        if (fb != NULL) {
+        pthread_mutex_lock(&g_lp_mu);
+        struct rdmamig_buffer *lb = g_lp_buf[i];
+        int need = (lb != NULL) && !(g_lp_fwd_buf[i] != NULL && g_lp_fwd_cm[i] == f1_cm);
+        char *pool = (char *) g_lp_pool[i];
+        size_t bytes = g_lp_bytes[i];
+        pthread_mutex_unlock(&g_lp_mu);
+        if (!need) continue;                               /* not created yet, or done */
+        struct rdmamig_buffer *fb = rdmamig_buffer_create_qp_pd(f1_cm, pool, bytes, 0);
+        if (fb == NULL) {
+            serverLog(LL_WARNING,
+                "CHAIN: F1-PD reg of landing pool[%d] (%zu B) failed", i, bytes);
+            continue;
+        }
+        pthread_mutex_lock(&g_lp_mu);
+        if (g_lp_buf[i] == lb && !(g_lp_fwd_buf[i] != NULL && g_lp_fwd_cm[i] == f1_cm)) {
             g_lp_fwd_buf[i] = fb;          /* leak old twin: no destroy helper, same
                                               no-destroy contract as the src_pool MR */
             g_lp_fwd_cm[i]  = f1_cm;
-        } else {
-            serverLog(LL_WARNING,
-                "CHAIN: F1-PD reg of landing pool[%d] (%zu B) failed", i, g_lp_bytes[i]);
-        }
+        }                                  /* else: slot changed or a lazy register won
+                                              the race -- this twin is leaked, unused */
+        pthread_mutex_unlock(&g_lp_mu);
     }
-    pthread_mutex_unlock(&g_lp_mu);
 }
 
 /* Return the F1-PD twin MR of landing buffer `landing_buf` (a g_lp_buf[i]),
@@ -4697,6 +4750,10 @@ static int mergeBackpatchTickOne(struct aeEventLoop *el, long long id, void *cli
              * donor's poll correctly waits until chain has replicated to
              * majority AND MGN_RECP_DURABLE has committed. */
             atomic_store_explicit(&b->merge_done, 1, memory_order_release);
+            /* chunked batches carry no eager slot list (b->slots == NULL): the slots that
+             * arrived are in covered_slots, as for MGN_RECP_DURABLE */
+            rdmaLogIndexUpdateDone("leader", b->src_mig_id,
+                                   b->slots ? b->slots : b->covered_slots, b->n_slots);
             /* Local inventory: session merge FULLY applied on this node —
              * the local "mgn executed" watermark advances (no Raft involved). */
             rdmaInvMarkExecuted(b->src_mig_id);
@@ -8815,16 +8872,21 @@ static int rdmaSessionOpenHelper(rdmaMigration *mig, sds *err_out) {
  * re-shipping whatever the survivors already hold idempotent. Returns 0 if no
  * re-home was recorded within ~30 s or the re-ship could not start; the caller
  * then fails the migration as before. */
-static int donorRehomeReship(rdmaMigration *mig, const char *phase) {
+static int donorRehomeReship(rdmaMigration *mig, const char *phase, int wait_ms, int need_new) {
     char nh[128]; int nport = 0;
     int slot_lo = (mig->n_slots > 0) ? mig->chosen[0] : -1;
     if (slot_lo < 0) return 0;
     /* Death detection is fast, but the successor records the re-home endpoint
-     * only after election + its become-leader hook. Poll up to ~30 s at 100 ms. */
+     * only after election + its become-leader hook. Poll up to wait_ms every 10 ms
+     * (was 100 ms: up to 0.1 s between the re-home arriving and the re-ship).
+     * need_new: only a re-home announced after this worker started counts
+     * (mig->rehome_seq); an older entry for the same range can name the leader
+     * that just died. */
     int got_rehome = 0;
-    for (int w = 0; w < 300 && !got_rehome; w++) {
-        if (donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) { got_rehome = 1; break; }
-        usleep(100000);
+    for (int w = 0; w < wait_ms / 10 && !got_rehome; w++) {
+        if ((!need_new || donorRehomeSeq(slot_lo) != mig->rehome_seq) &&
+            donorRehomeLookup(slot_lo, nh, sizeof(nh), &nport)) { got_rehome = 1; break; }
+        usleep(10000);
     }
     if (!got_rehome) return 0;
     /* The link to the dead recipient is never used again. If it holds the
@@ -9066,6 +9128,27 @@ static void *migrationWorker(void *arg) {
      * comes from the dispatching client; cluster mode is single-DB). */
     if (rdmaReshardTransferHelper(mig->L, &server.db[0], mig->chosen, mig->n_slots,
                               mig->id, &err) != 0) {
+        /* 2026-11-06: the recipient leader can die DURING the transfer as well as in
+         * BACKPATCH, and then the donor must roll forward the same way: wait for the
+         * successor's DONOR-REHOME and re-ship there. The re-ship asks the new leader
+         * first (MGN-RESUME-STATUS = QUERY_STATE): DURABLE -> nothing to send;
+         * TRANSFERRED -> the leader is fetching the round from a replica that holds it
+         * and reports the range pending, so the re-ship waits for that; MISSING -> it
+         * sends the round. Until now this path failed at once, and the round waited for
+         * the external controller to re-drive it: S1 2026-11-05, the chunk notice was
+         * reset at +0.36 s, the new leader re-homed the range at +1.18 s, and the
+         * controller re-drove it only at +2.48 s.
+         * 5 s, not BACKPATCH's 30 s: a TRANSFER failure that is not a leader change gets
+         * no re-home, and must not hold up the failure report for long. An election plus
+         * the new leader's peer probe took ~1.2 s in S1. */
+        serverLog(LL_WARNING,
+            "RDMA MIGRATE worker: id=%lld TRANSFER failed (%s) -- waiting up to 5 s for a new "
+            "recipient leader to re-home slots from %d", mig->id, err ? err : "?",
+            mig->n_slots > 0 ? mig->chosen[0] : -1);
+        if (donorRehomeReship(mig, "transfer", 5000, 1)) {
+            if (err) sdsfree(err);
+            return NULL;
+        }
         migFail(mig, err);
         return NULL;
     }
@@ -9235,7 +9318,7 @@ static void *migrationWorker(void *arg) {
         }
         if (!done) {
             /* B#1 donor re-home: the recipient leader died mid-backpatch. */
-            if (donorRehomeReship(mig, "backpatch")) return NULL;
+            if (donorRehomeReship(mig, "backpatch", 30000, 0)) return NULL;
             migFail(mig, sdsnew("recipient leader dead and no re-home endpoint "
                                 "recorded within 30s"));
             return NULL;
@@ -10392,6 +10475,16 @@ static void recoverPushRehome(recipientRecoverJob *j) {
         "slots=%d-%d is now %s:%d%s", j->sess, j->dhost, j->dport, j->lo, j->hi, self,
         (int) server.port, rep ? "" : " (no reply)");
     if (rep) freeReplyObject(rep);
+    /* 2026-11-06: and have the donor refresh its view of this group from us now. Its
+     * CLUSTER SLOTS lists our nodes in a stored order and clients take the first as the
+     * master; that order was refreshed only every 5 s, so clients kept being sent to the
+     * dead leader for seconds after we were serving (S6: out 2.7 s, leader at +0.70 s). */
+    rep = redisCommand(ctx, "RAFT.SHARDGROUP REFRESH %d %s %d", j->lo, self, (int) server.port);
+    serverLog(LL_NOTICE,
+        "AqRaft recipient-recover: sess=%lld — asked donor %s:%d to refresh its view of this "
+        "group from %s:%d (%s)", j->sess, j->dhost, j->dport, self, (int) server.port,
+        rep == NULL ? "no reply" : (rep->type == REDIS_REPLY_ERROR ? rep->str : "ok"));
+    if (rep) freeReplyObject(rep);
     redisFree(ctx);
 }
 
@@ -10408,20 +10501,46 @@ static int recoverRangeMergedHere(int lo, int hi) {
 }
 
 /* How many of the job's peers hold the whole range right now. */
+/* Ask every peer at once (one thread each) whether it holds the whole range, and wait
+ * at most RECOVER_PROBE_MS for an answer.
+ * 2026-11-06: was one peer after another with 500 ms each. The new leader's peer list
+ * holds the leader that just died, which accepts the connection and never answers, so
+ * every recovery spent 0.5 s on it before re-homing the donor (S1/S6: the whole
+ * "probe peers" step). A live peer answers in ~1 ms. A slower one is counted as not
+ * holding the range, which can only cost an unnecessary re-ship from the donor (the
+ * re-ship is idempotent) -- never a RECP_DURABLE for a range a majority lacks. */
+#define RECOVER_PROBE_MS 100
+typedef struct { const char *host; int port; long long sess; int lo, hi, nrange, result; } recoverProbeArg;
+
+static void *recoverProbeOne(void *v) {
+    recoverProbeArg *a = v;
+    struct timeval tv = { RECOVER_PROBE_MS / 1000, (RECOVER_PROBE_MS % 1000) * 1000 };
+    a->result = 0;
+    redisContext *pc = redisConnectWithTimeout(a->host, a->port, tv);
+    if (pc == NULL || pc->err) { if (pc) redisFree(pc); return NULL; }
+    redisSetTimeout(pc, tv);
+    redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d", a->sess, a->lo, a->hi);
+    if (rep && rep->type == REDIS_REPLY_ARRAY)
+        a->result = ((int) rep->elements == a->nrange) ? 1 : 2;
+    if (rep) freeReplyObject(rep);
+    redisFree(pc);
+    return NULL;
+}
+
 static int recoverCountPeersFull(recipientRecoverJob *j) {
     int nrange = j->hi - j->lo + 1, full = 0;
+    recoverProbeArg a[RECOVER_MAX_PEERS];
+    pthread_t tid[RECOVER_MAX_PEERS];
+    int started[RECOVER_MAX_PEERS];
     for (int i = 0; i < j->npeers; i++) {
-        struct timeval tv = { 0, 500000 };
-        redisContext *pc = redisConnectWithTimeout(j->phost[i], j->pport[i], tv);
-        if (pc == NULL || pc->err) { if (pc) redisFree(pc); j->pfull[i] = 0; continue; }
-        redisSetTimeout(pc, tv);
-        redisReply *rep = redisCommand(pc, "RDMA CHAIN-STATUS %lld %d %d", j->sess, j->lo, j->hi);
-        if (rep && rep->type == REDIS_REPLY_ARRAY) {
-            j->pfull[i] = ((int) rep->elements == nrange) ? 1 : 2;
-            if (j->pfull[i] == 1) full++;
-        } else j->pfull[i] = 0;
-        if (rep) freeReplyObject(rep);
-        redisFree(pc);
+        a[i] = (recoverProbeArg) { j->phost[i], j->pport[i], j->sess, j->lo, j->hi, nrange, 0 };
+        started[i] = (pthread_create(&tid[i], NULL, recoverProbeOne, &a[i]) == 0);
+        if (!started[i]) recoverProbeOne(&a[i]);   /* no thread: ask inline */
+    }
+    for (int i = 0; i < j->npeers; i++) {
+        if (started[i]) pthread_join(tid[i], NULL);
+        j->pfull[i] = a[i].result;
+        if (a[i].result == 1) full++;
     }
     return full;
 }
@@ -10448,11 +10567,17 @@ static void *recipientRecoverWorker(void *arg) {
             "follower was applied on promotion%s (%lld ms)", j->sess, j->lo, j->hi,
             have_me ? " and merged" : ", NOT merged within 20 s", mstime() - t0);
     }
+    long long t_probe = mstime();
     int peers_full = recoverCountPeersFull(j);
+    {   /* hand the chain establish who answered */
+        const char *ph[RECOVER_MAX_PEERS]; int ans[RECOVER_MAX_PEERS];
+        for (int i = 0; i < j->npeers; i++) { ph[i] = j->phost[i]; ans[i] = (j->pfull[i] != 0); }
+        rdmaChainRecoverProbeEnd(j->npeers, ph, j->pport, ans, need);
+    }
     serverLog(LL_NOTICE,
         "AqRaft recipient-recover: sess=%lld range=%d-%d — I %s the range, %d/%d peers "
-        "hold all of it", j->sess, j->lo, j->hi, have_me ? "hold" : "lack", peers_full,
-        j->npeers);
+        "hold all of it (asked in %lld ms)", j->sess, j->lo, j->hi, have_me ? "hold" : "lack", peers_full,
+        j->npeers, mstime() - t_probe);
     recoverPushRehome(j);
     if (!have_me && peers_full == 0) {
         /* Nobody holds the range: the donor re-ships it. */
@@ -10545,6 +10670,9 @@ static void *recipientRecoverWorker(void *arg) {
 static long long g_chain_warm_term = -1;
 
 static void rdmaRecipientRecover(long long sess, const char *payload) {
+    /* The warm-up chain below waits for this recovery's peer probe (see
+     * rdmaChainRecoverProbeBegin); every path out of here ends it or hands it on. */
+    rdmaChainRecoverProbeBegin();
     redisDb *db = &server.db[0];
     unsigned long long db_before = dbSize(db);
     int slots_with_blocks = 0, staged = 0;
@@ -10560,6 +10688,8 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
     if (term < 0 || term != merged_term) {
         long long t0 = ustime();
         int already_merged = 0;
+        int *pm_slots = zmalloc(sizeof(int) * CLUSTER_SLOTS);   /* slots merged here */
+        int pm_n = 0;
         for (int slot = 0; slot < CLUSTER_SLOTS; slot++) {
             int nb = r_allocator_get_landing_blocks_for_slot(slot, NULL, 0);
             if (nb > 0) {
@@ -10570,6 +10700,7 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
                  * still merged here, before the new leader serves. */
                 if (rdmaInvSlotFullyMerged(slot)) { already_merged++; continue; }
                 slots_with_blocks++;
+                pm_slots[pm_n++] = slot;
                 staged += rdmaFollowerEnqueueSlotMerge(db, slot, NULL, 0);   /* promotion: all held blocks */
             }
         }
@@ -10577,6 +10708,8 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
                   "staged in %lld ms (term=%lld; %d slots to merge, %d already merged as follower)",
                   sess, (ustime() - t0) / 1000, term, slots_with_blocks, already_merged);
         mergeQueueDrainSync(sess);
+        rdmaLogIndexUpdateDone("promoted", sess, pm_slots, pm_n);
+        zfree(pm_slots);
         merged_term = term;
         /* A new leader has no connections to its followers and has not registered
          * its landing memory for them: the first re-sent round paid for both while
@@ -10614,6 +10747,7 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
     const char *asp = payload ? strstr(payload, "slots=") : NULL;
     if (asp) sscanf(asp, "slots=%d-%d", &alo, &ahi);
     if (alo < 0 || ahi < alo || ahi >= CLUSTER_SLOTS) {
+        rdmaChainRecoverProbeEnd(0, NULL, NULL, NULL, 0);
         serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — no slot range in the "
                   "payload; nothing to recover", sess);
         return;
@@ -10671,6 +10805,7 @@ static void rdmaRecipientRecover(long long sess, const char *payload) {
     } else {
         rdmaMgnAdoptingClear(alo, ahi);
         zfree(job);
+        rdmaChainRecoverProbeEnd(0, NULL, NULL, NULL, 0);
         serverLog(LL_WARNING, "AqRaft recipient-recover: sess=%lld — could not start the "
                   "recovery thread; the donor's own timeout drives the re-ship", sess);
     }
