@@ -97,3 +97,8 @@ git config --global --add safe.directory /users/entall/rd
 sudo git config --global --add safe.directory /users/entall/rd
 
 
+
+# Experiment panel (web dashboard on :8765): installed on redis0, skipped on the other nodes.
+if [ -x experiments/tools/panel/cloudlab_setup.sh ]; then
+    sudo experiments/tools/panel/cloudlab_setup.sh || echo "experiment panel setup failed (continuing)"
+fi
